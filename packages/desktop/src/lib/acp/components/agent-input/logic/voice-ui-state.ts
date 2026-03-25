@@ -11,5 +11,5 @@ export function canCancelVoiceInteraction(phase: VoiceInputPhase): boolean {
 }
 
 export function shouldShowVoiceOverlay(phase: VoiceInputPhase): boolean {
-	return phase === "error";
+	return phase === "checking_permission" || phase === "recording" || phase === "error";
 }

@@ -224,4 +224,28 @@ describe("VoiceInputState", () => {
 		expect(stopRecordingMock).toHaveBeenCalledWith("session-keyboard", null);
 		expect(state.phase).toBe("transcribing");
 	});
+
+	it("shows a tenths timer while recording and clears it after stop", async () => {
+		vi.useFakeTimers();
+		getModelStatusMock.mockReturnValue(okAsync({ is_downloaded: true, is_loaded: true }));
+
+		const state = new VoiceInputState({ sessionId: "session-timer" });
+		state.onMicPointerDown(createPointerEvent());
+		state.onMicPointerUp();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(state.phase).toBe("recording");
+		expect(state.recordingElapsedLabel).toBe("0.0s");
+
+		vi.advanceTimersByTime(150);
+		expect(state.recordingElapsedLabel).toBe("0.1s");
+
+		state.onMicPointerUp();
+		await Promise.resolve();
+
+		expect(state.phase).toBe("transcribing");
+		expect(state.recordingElapsedLabel).toBeNull();
+		vi.useRealTimers();
+	});
 });

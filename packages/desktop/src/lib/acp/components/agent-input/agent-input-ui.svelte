@@ -73,6 +73,7 @@ import {
 	shouldRestoreInitialDraft,
 } from "$lib/components/main-app-view/components/content/logic/empty-state-send-state.js";
 import { normalizeVoiceInputText } from "./logic/voice-input-text.js";
+import { shouldStartVoiceHold, shouldStopVoiceHold } from "./logic/voice-keyboard.js";
 import { AgentInputState } from "./state/agent-input-state.svelte.js";
 import type { AgentInputProps } from "./types/agent-input-props.js";
 
@@ -92,9 +93,14 @@ const inputState = new AgentInputState(sessionStore, panelStore, () => props.pro
 
 let voiceState: VoiceInputState | null = $state(null);
 const voiceEnabled = $derived(voiceSettingsStore.enabled);
-const voiceOverlayActive = $derived(
-	voiceState ? shouldShowVoiceOverlay(voiceState.phase) : false
-);
+const voiceOverlayActive = $derived.by(() => {
+	const currentVoiceState = voiceState;
+	if (currentVoiceState === null) {
+		return false;
+	}
+
+	return shouldShowVoiceOverlay(currentVoiceState.phase);
+});
 
 const panelHotState = $derived(props.panelId ? panelStore.getHotState(props.panelId) : null);
 
@@ -488,8 +494,36 @@ function handleEditorInput(options?: { suppressAutocomplete?: boolean }): void {
 	}
 }
 
+async function initializeVoiceState(): Promise<void> {
+	if (!effectiveVoiceSessionId || !voiceEnabled) {
+		return;
+	}
+
+	const nextVoiceState = new VoiceInputState({
+		sessionId: effectiveVoiceSessionId,
+		getSelectedLanguage: () => voiceSettingsStore.language,
+		getSelectedModelId: () => voiceSettingsStore.selectedModelId,
+		onTranscriptionReady: (text) => {
+			const normalizedText = normalizeVoiceInputText(text);
+			if (!normalizedText) {
+				return;
+			}
+			const sep = inputState.message.length > 0 ? " " : "";
+			inputState.insertPlainTextAtOffsets(
+				sep + normalizedText,
+				inputState.message.length,
+				inputState.message.length,
+			);
+			syncEditorFromMessage(inputState.message.length);
+		},
+	});
+
+	await nextVoiceState.registerListeners();
+	voiceState = nextVoiceState;
+}
+
 // Initialize on mount (file preloading is now handled reactively by state class)
-onMount(async () => {
+onMount(() => {
 	const handleWindowKeyDown = (event: KeyboardEvent) => {
 		if (event.key === "Shift") {
 			isShiftPressed = true;
@@ -499,36 +533,17 @@ onMount(async () => {
 		if (event.key === "Shift") {
 			isShiftPressed = false;
 		}
+
+		if (voiceState && shouldStopVoiceHold(event, voiceState.isPressAndHold)) {
+			event.preventDefault();
+			voiceState.onKeyboardHoldEnd();
+		}
 	};
 	window.addEventListener("keydown", handleWindowKeyDown);
 	window.addEventListener("keyup", handleWindowKeyUp);
 
 	inputState.initialize();
-	if (effectiveVoiceSessionId && voiceEnabled) {
-		// VoiceInputState is created with the current sessionId and lives for the lifetime of this
-		// component instance. If the parent re-keys the component (new sessionId), a fresh
-		// VoiceInputState is created. dispose() in onDestroy handles cleanup.
-		const vs = new VoiceInputState({
-			sessionId: effectiveVoiceSessionId,
-			getSelectedLanguage: () => voiceSettingsStore.language,
-			getSelectedModelId: () => voiceSettingsStore.selectedModelId,
-			onTranscriptionReady: (text) => {
-				const normalizedText = normalizeVoiceInputText(text);
-				if (!normalizedText) {
-					return;
-				}
-				const sep = inputState.message.length > 0 ? " " : "";
-				inputState.insertPlainTextAtOffsets(
-					sep + normalizedText,
-					inputState.message.length,
-					inputState.message.length,
-				);
-				syncEditorFromMessage(inputState.message.length);
-			},
-		});
-		await vs.registerListeners();
-		voiceState = vs;
-	}
+	void initializeVoiceState();
 	// Restore initial draft from PanelStore if panelId is provided
 	if (props.panelId) {
 		const draft = panelStore.getMessageDraft(props.panelId);
@@ -947,14 +962,11 @@ function cycleModeOnTab(event: KeyboardEvent): boolean {
 }
 
 function shouldUseSpaceForVoiceHold(event: KeyboardEvent): boolean {
-	const isSpaceKey = event.code === "Space" || event.key === " " || event.key === "Spacebar";
-	if (!isSpaceKey || event.repeat) {
+	const currentVoiceState = voiceState;
+	if (!shouldStartVoiceHold(event)) {
 		return false;
 	}
-	if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
-		return false;
-	}
-	if (!voiceEnabled || !voiceState || isSending || isStreaming) {
+	if (!voiceEnabled || currentVoiceState === null || isSending || isStreaming) {
 		return false;
 	}
 	if (inputState.showFileDropdown || inputState.showSlashDropdown) {
@@ -964,14 +976,15 @@ function shouldUseSpaceForVoiceHold(event: KeyboardEvent): boolean {
 	if (liveMessage.trim().length > 0) {
 		return false;
 	}
-	return voiceState.phase === "idle";
+	return currentVoiceState.phase === "idle";
 }
 
 function shouldBlockSpaceBeforeInput(event: InputEvent): boolean {
+	const currentVoiceState = voiceState;
 	if (event.data !== " ") {
 		return false;
 	}
-	if (!voiceEnabled || !voiceState || isSending || isStreaming) {
+	if (!voiceEnabled || currentVoiceState === null || isSending || isStreaming) {
 		return false;
 	}
 	if (inputState.showFileDropdown || inputState.showSlashDropdown) {
@@ -981,7 +994,7 @@ function shouldBlockSpaceBeforeInput(event: InputEvent): boolean {
 	if (liveMessage.trim().length > 0) {
 		return false;
 	}
-	return voiceState.phase === "idle" || voiceState.isPressAndHold;
+	return currentVoiceState.phase === "idle" || currentVoiceState.isPressAndHold;
 }
 
 function handleEditorKeyDown(event: KeyboardEvent): void {
@@ -992,9 +1005,10 @@ function handleEditorKeyDown(event: KeyboardEvent): void {
 		return;
 	}
 
-	if (shouldUseSpaceForVoiceHold(event)) {
+	const currentVoiceState = voiceState;
+	if (currentVoiceState !== null && shouldUseSpaceForVoiceHold(event)) {
 		event.preventDefault();
-		voiceState.onKeyboardHoldStart();
+		currentVoiceState.onKeyboardHoldStart();
 		return;
 	}
 
@@ -1098,15 +1112,7 @@ function handleEditorKeyDown(event: KeyboardEvent): void {
 }
 
 function handleEditorKeyUp(event: KeyboardEvent): void {
-	if (
-		(event.code === "Space" || event.key === " " || event.key === "Spacebar") &&
-		!event.shiftKey &&
-		!event.metaKey &&
-		!event.ctrlKey &&
-		!event.altKey &&
-		voiceState &&
-		voiceState.isPressAndHold
-	) {
+	if (voiceState && shouldStopVoiceHold(event, voiceState.isPressAndHold)) {
 		event.preventDefault();
 		voiceState.onKeyboardHoldEnd();
 	}
@@ -1446,8 +1452,8 @@ async function handleCancel() {
 	{:else}
 		<InputContainer class="flex-shrink-0 border border-border" contentClass={voiceOverlayActive ? "relative" : "p-2"}>
 			{#snippet content()}
-				{#if voiceState && voiceOverlayActive}
-					<VoiceRecordingOverlay {voiceState} />
+				{#if voiceState !== null && voiceOverlayActive}
+					<VoiceRecordingOverlay voiceState={voiceState} />
 				{:else if inputReady}
 					{#if inputState.attachments.length > 0}
 						<div class="flex flex-wrap gap-1.5">
@@ -1591,8 +1597,9 @@ async function handleCancel() {
 			{/snippet}
 		{#snippet footer()}
 			{#if inputReady}
-				{@const isVoiceRecordingUi = voiceState ? (voiceState.phase === "checking_permission" || voiceState.phase === "recording") : false}
-				{@const isVoiceActive = voiceState ? (voiceState.phase !== "idle" && voiceState.phase !== "error") : false}
+				{@const currentVoiceState = voiceState}
+				{@const isVoiceRecordingUi = currentVoiceState !== null && (currentVoiceState.phase === "checking_permission" || currentVoiceState.phase === "recording")}
+				{@const isVoiceActive = currentVoiceState !== null && currentVoiceState.phase !== "idle" && currentVoiceState.phase !== "error"}
 				<!-- Normal toolbar: fades out during recording -->
 				<div
 					class="flex items-center h-7 transition-opacity duration-200 ease-out"
@@ -1628,27 +1635,15 @@ async function handleCancel() {
 
 				<!-- Right side: recording visualization OR normal controls -->
 				<div class="flex items-center h-7 ml-auto">
-					{#if isVoiceRecordingUi}
-						<!-- Apple-like centered recording bar -->
-						<div class="voice-recording-bar flex items-center gap-2 pr-0.5">
-							<!-- Live meter bars: 25 super-slim bars, center-out symmetric -->
-							<div class="flex items-center justify-center h-6 motion-reduce:hidden" aria-hidden="true">
-								<div class="voice-meter flex items-center gap-px">
-									{#each voiceState.waveform.meterLevels as level, index (index)}
-										{@const dist = Math.abs(index - Math.floor(voiceState.waveform.barCount / 2))}
-										{@const maxH = 27 - dist * 1.05}
-										<div
-										class="voice-bar rounded-full"
-										style:width="1.5px"
-										style:height="{level > 0.005 ? 1.5 + level * (maxH - 1.5) : 0}px"
-										style:background-color="#F9C396"
-									></div>
-									{/each}
-								</div>
-							</div>
-							<!-- Stop button -->
+					{#if currentVoiceState !== null && isVoiceRecordingUi}
+						<div class="voice-recording-bar flex items-center pr-0.5">
+							{#if currentVoiceState.recordingElapsedLabel}
+								<span class="mr-2 font-mono text-[10px] text-muted-foreground tabular-nums">
+									{currentVoiceState.recordingElapsedLabel}
+								</span>
+							{/if}
 							<MicButton
-								{voiceState}
+								voiceState={currentVoiceState}
 								disabled={isStreaming || isSending}
 							/>
 						</div>
@@ -1669,12 +1664,12 @@ async function handleCancel() {
 								{@render props.checkpointButton()}
 							{/if}
 						</div>
-						{#if voiceState && voiceEnabled}
-							{#if voiceState.phase === "error"}
+						{#if currentVoiceState !== null && voiceEnabled}
+							{#if currentVoiceState.phase === "error"}
 								<button
 									type="button"
 									class="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline mr-1"
-									onclick={() => voiceState.dismissError()}
+									onclick={() => currentVoiceState.dismissError()}
 								>
 									{m.common_close()}
 								</button>
@@ -1682,7 +1677,7 @@ async function handleCancel() {
 							<div class="voice-controls flex items-center">
 								<VoiceModelMenu {voiceSettingsStore} />
 								<MicButton
-									{voiceState}
+									voiceState={currentVoiceState}
 									disabled={isStreaming || isSending}
 								/>
 							</div>

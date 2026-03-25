@@ -11,10 +11,28 @@ interface Props {
 const { voiceState }: Props = $props();
 
 const isError = $derived(voiceState.phase === "error");
+const isLiveCapture = $derived(
+	voiceState.phase === "checking_permission" || voiceState.phase === "recording"
+);
 </script>
 
 <div class="voice-overlay flex flex-col items-center justify-center gap-3 min-h-[72px] py-4">
-	{#if isError}
+	{#if isLiveCapture}
+		<div class="flex items-center justify-center h-6 motion-reduce:hidden" aria-hidden="true">
+			<div class="voice-meter flex items-center gap-px">
+				{#each voiceState.waveform.meterLevels as level, index (index)}
+					{@const dist = Math.abs(index - Math.floor(voiceState.waveform.barCount / 2))}
+					{@const maxH = 27 - dist * 1.05}
+					<div
+						class="voice-bar rounded-full"
+						style:width="1.5px"
+						style:height="{level > 0.005 ? 1.5 + level * (maxH - 1.5) : 0}px"
+						style:background-color="#F9C396"
+					></div>
+				{/each}
+			</div>
+		</div>
+	{:else if isError}
 		<div
 			class="voice-error-card flex max-w-[280px] flex-col items-center gap-1.5 text-center"
 			role="alert"
@@ -34,6 +52,15 @@ const isError = $derived(voiceState.phase === "error");
 
 	.voice-error-card {
 		animation: voice-error-appear 250ms ease-out;
+	}
+
+	.voice-meter {
+		min-height: 28px;
+		align-items: center;
+	}
+
+	.voice-bar {
+		transition: height 90ms linear;
 	}
 
 	@keyframes voice-fade-in {

@@ -13,6 +13,8 @@ describe("voice-ui-state", () => {
 	];
 
 	const OVERLAY_PHASES: VoiceInputPhase[] = [
+		"checking_permission",
+		"recording",
 		"error",
 	];
 

@@ -64,6 +64,7 @@ export class VoiceInputState {
 	/** Derived: show waveform overlay (recording or transcribing) */
 	readonly showOverlay = $derived(shouldShowVoiceOverlay(this.phase));
 
+	private recordingElapsedTenths = $state(0);
 	/** Derived: mic button is in a non-idle voice workflow state. */
 	readonly isBusy = $derived(
 		this.phase === "checking_permission" ||
@@ -71,10 +72,14 @@ export class VoiceInputState {
 		this.phase === "loading_model" ||
 		this.phase === "transcribing"
 	);
+	readonly recordingElapsedLabel = $derived(
+		this.phase === "recording" ? `${(this.recordingElapsedTenths / 10).toFixed(1)}s` : null
+	);
 
 	private readonly unlisteners: UnlistenFn[] = [];
 	private pressTimer: ReturnType<typeof setTimeout> | null = null;
 	private errorResetTimer: ReturnType<typeof setTimeout> | null = null;
+	private recordingElapsedTimer: ReturnType<typeof setInterval> | null = null;
 	private transcribingWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
 	private readonly sessionId: string;
@@ -184,6 +189,7 @@ export class VoiceInputState {
 		this.unlisteners.length = 0;
 		this.clearPressTimer();
 		this.clearWatchdog();
+		this.stopRecordingElapsedTimer();
 		if (this.errorResetTimer !== null) {
 			clearTimeout(this.errorResetTimer);
 			this.errorResetTimer = null;
@@ -449,6 +455,11 @@ export class VoiceInputState {
 		const result = transition(this.phase, next);
 		if (result !== null) {
 			this.phase = result;
+			if (result === "recording") {
+				this.startRecordingElapsedTimer();
+			} else if (prev === "recording") {
+				this.stopRecordingElapsedTimer();
+			}
 			log(`transition: ${prev} → ${result}`);
 		} else {
 			log(`transition BLOCKED: ${prev} → ${next}`);
@@ -493,6 +504,28 @@ export class VoiceInputState {
 			clearTimeout(this.transcribingWatchdogTimer);
 			this.transcribingWatchdogTimer = null;
 		}
+	}
+
+	private startRecordingElapsedTimer(): void {
+		this.stopRecordingElapsedTimer();
+		this.recordingElapsedTenths = 0;
+		this.recordingElapsedTimer = setInterval(() => {
+			if (this.isDisposed || this.phase !== "recording") {
+				this.stopRecordingElapsedTimer();
+				return;
+			}
+
+			this.recordingElapsedTenths += 1;
+		}, 100);
+	}
+
+	private stopRecordingElapsedTimer(): void {
+		if (this.recordingElapsedTimer !== null) {
+			clearInterval(this.recordingElapsedTimer);
+			this.recordingElapsedTimer = null;
+		}
+
+		this.recordingElapsedTenths = 0;
 	}
 
 	private shouldContinueFromPhase(expectedPhase: VoiceInputPhase, operation: string): boolean {

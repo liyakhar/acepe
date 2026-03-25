@@ -120,6 +120,7 @@ const STOP_RED = "#FF5D5A";
 						label=""
 						percent={voiceState.downloadPercent}
 						segmentCount={20}
+						showPercent={false}
 					/>
 				{:else if visualState === "spinner"}
 					<!-- Loading spinner (uses shared LoadingIcon) -->
