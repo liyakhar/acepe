@@ -27,9 +27,7 @@ function handleSingleAgentClick(event: MouseEvent) {
 }
 
 function handleAgentSelect(agent: AgentInfo) {
-	if (agent.available) {
-		onSelect(projectPath, agent.id);
-	}
+	onSelect(projectPath, agent.id);
 }
 </script>
 
@@ -57,19 +55,14 @@ function handleAgentSelect(agent: AgentInfo) {
 				<Tooltip.Root>
 					<Tooltip.Trigger>
 						<DropdownMenu.Item
-							class="p-1.5 rounded-md {!agent.available
-								? 'opacity-50 cursor-not-allowed'
-								: 'hover:bg-accent'}"
-							disabled={!agent.available}
+							class="p-1.5 rounded-md hover:bg-accent"
 							onclick={() => handleAgentSelect(agent)}
 						>
 							<img src={getAgentIcon(agent.id, effectiveTheme)} alt={agent.name} class="h-5 w-5" />
 						</DropdownMenu.Item>
 					</Tooltip.Trigger>
 					<Tooltip.Content>
-						{agent.available
-							? m.thread_list_new_agent_session({ agentName: agent.name })
-							: `${agent.name} (not installed)`}
+						{m.thread_list_new_agent_session({ agentName: agent.name })}
 					</Tooltip.Content>
 				</Tooltip.Root>
 			{/each}

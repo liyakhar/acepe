@@ -87,6 +87,11 @@ export class MainAppViewState {
 	commandPaletteOpen = $state(false);
 
 	/**
+	 * Whether the file explorer modal is open.
+	 */
+	fileExplorerOpen = $state(false);
+
+	/**
 	 * Whether the skills manager is open.
 	 */
 	skillsManagerOpen = $state(false);
@@ -184,6 +189,19 @@ export class MainAppViewState {
 	 */
 	getSessionStore(): SessionStore {
 		return this.sessionStore;
+	}
+
+	get fileExplorerVisible(): boolean {
+		if (!this.fileExplorerOpen) return false;
+		if (this.panelStore.focusedPanel && this.panelStore.focusedPanel.projectPath) return true;
+		if (this.panelStore.focusedViewProjectPath) return true;
+		return this.projectManager.projects.length > 0;
+	}
+
+	private hasFileExplorerProjectContext(): boolean {
+		if (this.panelStore.focusedPanel && this.panelStore.focusedPanel.projectPath) return true;
+		if (this.panelStore.focusedViewProjectPath) return true;
+		return this.projectManager.projects.length > 0;
 	}
 
 	/**
@@ -670,6 +688,33 @@ export class MainAppViewState {
 			this.closeSqlStudio();
 		} else {
 			this.openSqlStudio();
+		}
+	}
+
+	/**
+	 * Opens the file explorer modal.
+	 */
+	openFileExplorer(): void {
+		if (this.showSplash === true) return;
+		if (!this.hasFileExplorerProjectContext()) return;
+		this.fileExplorerOpen = true;
+	}
+
+	/**
+	 * Closes the file explorer modal.
+	 */
+	closeFileExplorer(): void {
+		this.fileExplorerOpen = false;
+	}
+
+	/**
+	 * Toggles the file explorer modal open/closed.
+	 */
+	toggleFileExplorer(): void {
+		if (this.fileExplorerOpen) {
+			this.closeFileExplorer();
+		} else {
+			this.openFileExplorer();
 		}
 	}
 

@@ -194,6 +194,8 @@ describe("PanelStore.closePanel cleans up embedded terminals", () => {
 		panelStore.panels = [
 			{
 				id: "test-panel",
+				kind: "agent",
+				ownerPanelId: null,
 				sessionId: null,
 				width: 500,
 				pendingProjectSelection: false,

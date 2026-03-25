@@ -182,6 +182,25 @@ describe("createTextReveal", () => {
 		reveal.destroy();
 	});
 
+	it("reveals characters across text-node boundaries in a single frame", async () => {
+		const container = document.createElement("div");
+		container.innerHTML = "<p>AB</p>";
+
+		const reveal = createTextReveal(container);
+		reveal.setStreaming(true);
+
+		container.innerHTML = "<p>AB<strong>C</strong>DEF</p>";
+		await flushObserver();
+
+		flushOneFrame();
+		expect(visibleText(container)).toBe("ABCDE");
+
+		flushAllFrames();
+		expect(visibleText(container)).toBe("ABCDEF");
+
+		reveal.destroy();
+	});
+
 	it("skips elements with data-reveal-skip attribute", async () => {
 		const container = document.createElement("div");
 		container.innerHTML = "<p>Hi</p>";
@@ -239,6 +258,53 @@ describe("createTextReveal", () => {
 
 		flushAllFrames();
 		expect(visibleText(container)).toBe("ABC");
+
+		reveal.destroy();
+	});
+
+	it("keeps pending text intact when unrelated child mutations happen mid-reveal", async () => {
+		const container = document.createElement("div");
+		container.innerHTML = "<p>AB</p>";
+
+		const reveal = createTextReveal(container);
+		reveal.setStreaming(true);
+
+		container.innerHTML = "<p>ABCDEFGHIJ</p>";
+		await flushObserver();
+		flushOneFrame();
+		expect(visibleText(container)).toBe("ABCDE");
+
+		const marker = document.createElement("span");
+		marker.setAttribute("data-marker", "true");
+		container.appendChild(marker);
+		await flushObserver();
+
+		flushAllFrames();
+		expect(visibleText(container)).toBe("ABCDEFGHIJ");
+
+		reveal.destroy();
+	});
+
+	it("animates in-place text node updates", async () => {
+		const container = document.createElement("div");
+		container.innerHTML = "<p>Hello</p>";
+
+		const reveal = createTextReveal(container);
+		reveal.setStreaming(true);
+
+		const textNode = container.querySelector("p")?.firstChild;
+		if (!(textNode instanceof Text)) {
+			throw new Error("expected text node");
+		}
+
+		textNode.textContent = "Hello world";
+		await flushObserver();
+
+		expect(visibleText(container)).toBe("Hello");
+		flushOneFrame();
+		expect(visibleText(container)).toBe("Hello wo");
+		flushOneFrame();
+		expect(visibleText(container)).toBe("Hello world");
 
 		reveal.destroy();
 	});
@@ -770,6 +836,123 @@ describe("createTextReveal", () => {
 			// Animate past hr position
 			flushOneFrame();
 			expect(isHidden(hr)).toBe(false);
+
+			reveal.destroy();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Fade span edge cases
+	// -----------------------------------------------------------------------
+
+	describe("fade span", () => {
+		it("preserves inline formatting when stableLen is 0", async () => {
+			const container = document.createElement("div");
+			container.innerHTML = "<p>Hi </p>";
+
+			const reveal = createTextReveal(container);
+			reveal.setStreaming(true);
+
+			// New content: bold text that starts at the frontier
+			container.innerHTML = "<p>Hi <strong>bold</strong></p>";
+			await flushObserver();
+
+			// "Hi " = 3 chars already revealed. "bold" = 4 new chars.
+			// stableLen = 0 for the "bold" text node — the fade span must stay
+			// inside <strong>, not escape as a sibling.
+			flushOneFrame();
+			const strong = container.querySelector("strong");
+			expect(strong).not.toBeNull();
+			// The fade span should be inside <strong>, preserving bold styling
+			const spanInStrong = strong!.querySelector("span");
+			expect(spanInStrong).not.toBeNull();
+			expect(visibleText(container)).toContain("bo");
+
+			flushAllFrames();
+			expect(visibleText(container)).toBe("Hi bold");
+
+			reveal.destroy();
+		});
+
+		it("cleans up fade span on mid-fade DOM replacement", async () => {
+			const container = document.createElement("div");
+			container.innerHTML = "<p>AB</p>";
+
+			const reveal = createTextReveal(container);
+			reveal.setStreaming(true);
+
+			// Trigger content with fade span
+			container.innerHTML = "<p>ABCDEFGHIJ</p>";
+			await flushObserver();
+			flushOneFrame(); // partially revealed with fade span
+
+			// External DOM replacement wipes the fade span
+			container.innerHTML = "<p>ABCDEFGHIJKLMNO</p>";
+			await flushObserver();
+
+			// Should not throw and should continue animating
+			flushAllFrames();
+			expect(visibleText(container)).toBe("ABCDEFGHIJKLMNO");
+
+			reveal.destroy();
+		});
+
+		it("handles hr as the very last element", async () => {
+			const container = document.createElement("div");
+			container.innerHTML = "<p>Above</p>";
+
+			const reveal = createTextReveal(container);
+			reveal.setStreaming(true);
+
+			container.innerHTML = "<p>Above</p><hr>";
+			await flushObserver();
+
+			const hr = container.querySelector("hr") as HTMLElement;
+			expect(hr).not.toBeNull();
+			// hr at the end has charPos = totalChars. With inclusive comparison
+			// (revealedChars <= charPos), it stays hidden while streaming — there's
+			// no text after it to advance the cursor past its position.
+			expect(hr.style.display).toBe("none");
+
+			flushAllFrames();
+			// Still hidden — revealedChars === totalChars === charPos
+			expect(hr.style.display).toBe("none");
+
+			// Unhidden when streaming stops (isStreaming becomes false)
+			reveal.setStreaming(false);
+			expect(hr.style.display).not.toBe("none");
+
+			reveal.destroy();
+		});
+
+		it("destroy works when hideableElements are detached from DOM", async () => {
+			const container = document.createElement("div");
+			container.innerHTML = "<p>first</p>";
+
+			const reveal = createTextReveal(container);
+			reveal.setStreaming(true);
+
+			container.innerHTML = "<p>first</p><p>second</p>";
+			await flushObserver();
+
+			// Replace DOM entirely — old paragraph references are now detached
+			container.innerHTML = "<p>different content</p>";
+			await flushObserver();
+
+			// destroy should not throw on detached hideableElements
+			expect(() => reveal.destroy()).not.toThrow();
+		});
+
+		it("setStreaming(true) twice is idempotent", () => {
+			const container = document.createElement("div");
+			container.innerHTML = "<p>Hello</p>";
+
+			const reveal = createTextReveal(container);
+			reveal.setStreaming(true);
+			reveal.setStreaming(true); // should be no-op
+
+			expect(visibleText(container)).toBe("Hello");
+			expect(rafQueue.length).toBe(0);
 
 			reveal.destroy();
 		});

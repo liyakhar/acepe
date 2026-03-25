@@ -69,7 +69,7 @@ function createUserEntry(id: string, content: string): SessionEntry {
 }
 
 describe("aggregateFileEdits", () => {
-	describe("empty and edge cases", () => {
+		describe("empty and edge cases", () => {
 		it("should return empty state for empty entries", () => {
 			const result = aggregateFileEdits([]);
 			expect(result.fileCount).toBe(0);
@@ -108,6 +108,70 @@ describe("aggregateFileEdits", () => {
 			} as SessionEntry;
 			const result = aggregateFileEdits([entry]);
 			expect(result.fileCount).toBe(0);
+		});
+
+		it("should handle legacy edit entries without edits array", () => {
+			const entry: SessionEntry = {
+				id: "1",
+				type: "tool_call",
+				message: {
+					id: "tc-1",
+					name: "Edit",
+					kind: "edit",
+					status: "completed",
+					arguments: {
+						kind: "edit",
+						file_path: "/src/app.ts",
+						old_string: "a",
+						new_string: "b",
+					},
+				},
+			} as unknown as SessionEntry;
+
+			const result = aggregateFileEdits([entry]);
+
+			expect(result.fileCount).toBe(1);
+			expect(result.totalEditCount).toBe(1);
+			expect(result.files[0]?.filePath).toBe("/src/app.ts");
+			expect(result.files[0]?.originalContent).toBe("a");
+			expect(result.files[0]?.finalContent).toBe("b");
+		});
+
+		it("should preserve empty strings in legacy edit entries", () => {
+			const entry: SessionEntry = {
+				id: "1",
+				type: "tool_call",
+				message: {
+					id: "tc-1",
+					name: "Edit",
+					kind: "edit",
+					status: "completed",
+					arguments: {
+						kind: "edit",
+						file_path: "/src/app.ts",
+						old_string: "a",
+						new_string: "",
+					},
+				},
+			} as unknown as SessionEntry;
+
+			const result = aggregateFileEdits([entry]);
+
+			expect(result.fileCount).toBe(1);
+			expect(result.files[0]?.originalContent).toBe("a");
+			expect(result.files[0]?.finalContent).toBe("");
+			expect(result.files[0]?.totalRemoved).toBe(1);
+		});
+
+		it("should preserve empty strings in normalized edit entries", () => {
+			const entries = [createEditEntry("1", "/src/app.ts", "a", "")];
+
+			const result = aggregateFileEdits(entries);
+
+			expect(result.fileCount).toBe(1);
+			expect(result.files[0]?.originalContent).toBe("a");
+			expect(result.files[0]?.finalContent).toBe("");
+			expect(result.files[0]?.totalRemoved).toBe(1);
 		});
 	});
 

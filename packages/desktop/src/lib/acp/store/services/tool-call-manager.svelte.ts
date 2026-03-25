@@ -92,6 +92,12 @@ function areToolArgumentsEqual(
 				currentArgs.skill_args === nextArgs.skill_args &&
 				JSON.stringify(currentArgs.raw ?? null) === JSON.stringify(nextArgs.raw ?? null)
 			);
+		case "taskOutput":
+			return (
+				nextArgs.kind === "taskOutput" &&
+				currentArgs.task_id === nextArgs.task_id &&
+				currentArgs.timeout === nextArgs.timeout
+			);
 		case "move":
 			return (
 				nextArgs.kind === "move" &&

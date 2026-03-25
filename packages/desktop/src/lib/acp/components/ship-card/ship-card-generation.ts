@@ -6,7 +6,7 @@
  * The session is destroyed after generation completes.
  */
 
-import { ResultAsync } from "neverthrow";
+import { okAsync, ResultAsync } from "neverthrow";
 import { AgentError } from "$lib/acp/errors/app-error.js";
 import { EventSubscriber } from "$lib/acp/logic/event-subscriber.js";
 import type { SessionUpdate, TurnErrorData } from "$lib/services/converted-session-types.js";
@@ -27,18 +27,32 @@ const logger = createLogger({ id: "ship-card-generation", name: "ShipCardGenerat
  * @param prompt  - The full context prompt (from collectShipContext)
  * @param cwd     - Working directory for the ephemeral session (project or worktree path)
  * @param agentId - Optional agent ID to use; defaults to the server's default agent
+ * @param modelId - Optional model ID to use; when set, switches the ephemeral session's model before sending the prompt
  */
 export function generateShipContent(
 	prompt: string,
 	cwd: string,
 	agentId?: string,
+	modelId?: string,
 ): ResultAsync<ShipCardData, AgentError> {
 	return tauriClient.acp
 		.newSession(cwd, agentId)
 		.mapErr((e) => new AgentError("newSession", e))
 		.andThen((sessionResult) => {
 			const ephemeralSessionId = sessionResult.sessionId;
-			logger.info("Ship card generation: ephemeral session created", { ephemeralSessionId });
+			logger.info("Ship card generation: ephemeral session created", { ephemeralSessionId, modelId });
+
+			// If a specific model was requested, set it on the ephemeral session
+			const modelSetup = modelId
+				? tauriClient.acp
+						.setModel(ephemeralSessionId, modelId)
+						.mapErr((e) => new AgentError("setModel", e))
+				: okAsync<void, AgentError>(undefined);
+
+			return modelSetup.map(() => ephemeralSessionId);
+		})
+		.andThen((ephemeralSessionId) => {
+			logger.info("Ship card generation: session ready, starting generation", { ephemeralSessionId });
 
 			const closeEphemeral = (): void => {
 				void tauriClient.acp.closeSession(ephemeralSessionId);

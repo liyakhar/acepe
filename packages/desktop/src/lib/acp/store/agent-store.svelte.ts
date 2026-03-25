@@ -78,7 +78,6 @@ export class AgentStore {
 					name: a.name,
 					description: a.description,
 					icon: a.icon ?? a.id,
-					available: a.available ?? true,
 					availability_kind: a.availability_kind ?? { kind: "bundled" as const },
 				}));
 				this.agentsLoading = false;
@@ -150,8 +149,8 @@ export class AgentStore {
 	getDefaultAgentId(): string | null {
 		const priorityOrder = ["claude-code", "cursor", "opencode", "codex"];
 		return (
-			priorityOrder.find((id) => this.agents.some((a) => a.id === id && a.available)) ??
-			this.agents.find((a) => a.available)?.id ??
+			priorityOrder.find((id) => this.agents.some((a) => a.id === id)) ??
+			this.agents[0]?.id ??
 			null
 		);
 	}

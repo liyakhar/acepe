@@ -19,6 +19,9 @@ describe("PanelHandler", () => {
 
 		mockPanelStore = {
 			panels: [{ id: "panel-1", sessionId: "session-1" }],
+			workspacePanels: [
+				{ id: "panel-1", sessionId: "session-1", kind: "agent", ownerPanelId: null },
+			],
 			closePanel: mock(() => {}),
 			resizePanel: mock(() => {}),
 			toggleFullscreen: mock(() => {}),
@@ -57,6 +60,9 @@ describe("PanelHandler", () => {
 		it("should not disconnect session when panel has no session", () => {
 			// Update mock to have panel without session
 			mockPanelStore.panels = [{ id: "panel-2", sessionId: null }] as any;
+			(mockPanelStore as any).workspacePanels = [
+				{ id: "panel-2", sessionId: null, kind: "agent", ownerPanelId: null },
+			];
 
 			handler.closePanel("panel-2");
 
@@ -72,6 +78,7 @@ describe("PanelHandler", () => {
 
 		it("should handle non-existent panel gracefully", () => {
 			mockPanelStore.panels = [];
+			(mockPanelStore as any).workspacePanels = [];
 
 			handler.closePanel("non-existent");
 
@@ -127,6 +134,9 @@ describe("PanelHandler", () => {
 
 		it("does not reconnect when the focused panel has no session", () => {
 			mockPanelStore.panels = [{ id: "panel-2", sessionId: null }] as never;
+			(mockPanelStore as any).workspacePanels = [
+				{ id: "panel-2", sessionId: null, kind: "agent", ownerPanelId: null },
+			];
 
 			handler.focusPanel("panel-2");
 

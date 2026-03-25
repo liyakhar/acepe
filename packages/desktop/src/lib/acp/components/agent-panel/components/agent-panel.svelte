@@ -33,7 +33,8 @@ import { sessionEntriesToMarkdown } from "../../../utils/session-to-markdown.js"
 import AgentInput from "../../agent-input/agent-input-ui.svelte";
 import { CheckpointTimeline } from "../../checkpoint/index.js";
 import { aggregateFileEdits } from "../../modified-files/logic/aggregate-file-edits.js";
-import ModifiedFilesHeader from "../../modified-files/modified-files-header.svelte";
+import ModifiedFilesHeader, { type PrGenerationConfig } from "../../modified-files/modified-files-header.svelte";
+import * as agentModelPrefs from "../../../store/agent-model-preferences-store.svelte.js";
 import PrStatusCard from "../../pr-status-card/pr-status-card.svelte";
 import PlanDialog from "../../plan-dialog.svelte";
 import PlanHeader from "../../plan-header.svelte";
@@ -63,6 +64,7 @@ import { shouldAutoScrollOnPanelActivation } from "../logic/should-auto-scroll-o
 import { resolveWorktreeToggleProjectPath } from "../logic/worktree-toggle-project-path.js";
 import { AgentPanelState } from "../state/agent-panel-state.svelte";
 import type { AgentPanelProps } from "../types";
+import { BrowserPanel as BrowserPanelComponent } from "../../browser-panel/index.js";
 import AgentPanelContent from "./agent-panel-content.svelte";
 import AgentPanelFooter from "./agent-panel-footer.svelte";
 import AgentPanelHeader from "./agent-panel-header.svelte";
@@ -162,6 +164,17 @@ const sessionProjectPath = $derived(sessionIdentity?.projectPath ?? null);
 const sessionAgentId = $derived(sessionIdentity?.agentId ?? null);
 const sessionWorktreePath = $derived(sessionIdentity?.worktreePath ?? null);
 const sessionTitle = $derived(sessionMetadata?.title ?? null);
+
+// Cached models for the active agent (used by PR generation popover)
+const prAgentId = $derived(sessionAgentId || selectedAgentId);
+const prCachedModels = $derived(
+	prAgentId ? agentModelPrefs.getCachedModels(prAgentId) : []
+);
+
+// Current model from session hot state (for PR popover default)
+const sessionCurrentModelId = $derived(
+	sessionId ? sessionStore.getHotState(sessionId)?.currentModel?.id ?? null : null
+);
 
 // ✅ State manager for local UI state only (drag, dialog)
 const panelState = new AgentPanelState();
@@ -266,6 +279,10 @@ const effectivePathForGit = $derived.by(() => {
 const isTerminalDrawerOpen = $derived(
 	panelId ? panelStore.isEmbeddedTerminalDrawerOpen(panelId) : false
 );
+
+/** Browser sidebar state. */
+const showBrowserSidebar = $derived(panelId ? panelStore.isBrowserSidebarExpanded(panelId) : false);
+const browserSidebarUrl = $derived(panelId ? (panelStore.getHotState(panelId)?.browserSidebarUrl ?? null) : null);
 
 // Canonical runtime state from session machine.
 const runtimeState = $derived(sessionId ? sessionStore.getSessionRuntimeState(sessionId) : null);
@@ -391,23 +408,14 @@ $effect(() => {
 		return;
 	}
 
-	worktreeSetupState =
-		pendingSetup.phase === "creating-worktree"
-			? createWorktreeCreationState({
-					projectPath: pendingSetup.projectPath,
-					worktreePath: pendingSetup.worktreePath,
-				})
-			: {
-				projectPath: pendingSetup.projectPath,
-				worktreePath: pendingSetup.worktreePath,
-				isVisible: true,
-				status: "running",
-				commandCount: 0,
-				activeCommandIndex: null,
-				activeCommand: null,
-				outputText: "",
-				error: null,
-			};
+	if (pendingSetup.phase === "creating-worktree") {
+		worktreeSetupState = createWorktreeCreationState({
+			projectPath: pendingSetup.projectPath,
+			worktreePath: pendingSetup.worktreePath,
+		});
+	}
+	// "running" phase: don't pre-show the card — let the Tauri "started" event drive visibility.
+	// If there are no setup commands, no event fires and the card correctly stays hidden.
 });
 
 $effect(() => {
@@ -536,6 +544,7 @@ const hasPlan = $derived(planState.plan !== null);
 const ATTACHED_COLUMN_WIDTH = 450;
 const PLAN_SIDEBAR_COLUMN_WIDTH = 450;
 const REVIEW_COLUMN_WIDTH = 450;
+const BROWSER_SIDEBAR_COLUMN_WIDTH = 500;
 const ATTACHED_COLUMN_GAP_WIDTH = 2;
 
 // Dynamic minimum width reported by the toolbar's intrinsic content measurement.
@@ -547,21 +556,17 @@ let mergePrRunning = $state(false);
 let prDetails = $state<import("$lib/utils/tauri-client/git.js").PrDetails | null>(null);
 let prFetchError = $state<string | null>(null);
 let worktreeSetupState = $state<WorktreeSetupState | null>(null);
-let agentInstallFailed = $state(false);
-let pendingInstallSessionProject = $state<Project | null>(null);
-
 /** Derived: is the selected agent currently being installed? */
 const agentInstallState = $derived.by(() => {
 	if (!selectedAgentId) return null;
 	const progress = agentStore.installing[selectedAgentId];
-	if (!progress && !agentInstallFailed) return null;
+	if (!progress) return null;
 	const agent = availableAgents.find((a) => a.id === selectedAgentId);
 	return {
 		agentId: selectedAgentId,
 		agentName: agent?.name ?? selectedAgentId,
-		stage: progress?.stage ?? "",
-		progress: progress?.progress ?? 0,
-		failed: agentInstallFailed,
+		stage: progress.stage,
+		progress: progress.progress,
 	};
 });
 
@@ -645,6 +650,7 @@ const effectiveWidth = $derived.by(() => {
 	let w = baseWidth;
 	if (showPlanSidebar && hasPlan) w += PLAN_SIDEBAR_COLUMN_WIDTH;
 	if (reviewMode && reviewFilesState) w += REVIEW_COLUMN_WIDTH;
+	if (showBrowserSidebar) w += BROWSER_SIDEBAR_COLUMN_WIDTH;
 	return w;
 });
 
@@ -913,37 +919,9 @@ function handleWorktreeCloseCancel() {
 	worktreeDirtyCheckPending = false;
 }
 
-/**
- * Check if an agent needs installation; if so, install first then create session.
- */
-async function installAgentThenCreateSession(project: Project, agentId: string): Promise<void> {
-	const agent = availableAgents.find((a) => a.id === agentId);
-	const needsInstall =
-		agent && !agent.available && agent.availability_kind?.kind === "installable";
-
-	if (!needsInstall) {
-		onCreateSessionForProject?.(project);
-		return;
-	}
-
-	agentInstallFailed = false;
-	pendingInstallSessionProject = project;
-	await agentStore.installAgent(agentId);
-
-	// Check if install succeeded (agent should now be available after store refresh)
-	const refreshed = agentStore.agents.find((a) => a.id === agentId);
-	if (refreshed?.available) {
-		pendingInstallSessionProject = null;
-		onCreateSessionForProject?.(project);
-	} else {
-		agentInstallFailed = true;
-	}
-}
-
 function handleProjectAgentSelected(project: Project, agentId: string) {
-	// Set the agent first, then create session
 	onAgentChange?.(agentId);
-	void installAgentThenCreateSession(project, agentId);
+	onCreateSessionForProject?.(project);
 }
 
 function handleSessionCreated(sessionIdParam: string) {
@@ -979,9 +957,38 @@ function handleWorktreeCreated(info: WorktreeInfo) {
 	}
 }
 
-async function handleCreatePr() {
+function handleWorktreeRenamed(info: WorktreeInfo): void {
+	activeWorktreePath = info.directory;
+	activeWorktreeOwnerProjectPath = worktreeToggleProjectPath ?? sessionProjectPath ?? null;
+
+	if (!sessionId) {
+		return;
+	}
+
+	sessionStore.updateSession(sessionId, {
+		worktreeDeleted: false,
+		worktreePath: info.directory,
+	});
+
+	void tauriClient.history
+		.setSessionWorktreePath(
+			sessionId,
+			info.directory,
+			sessionProjectPath ? sessionProjectPath : undefined,
+			sessionAgentId ? sessionAgentId : undefined
+		)
+		.mapErr((error) => {
+			logger.error("Failed to persist renamed worktree path to DB", {
+				sessionId,
+				worktreePath: info.directory,
+				error,
+			});
+		});
+}
+
+async function handleCreatePr(config?: PrGenerationConfig) {
 	const path = effectivePathForGit;
-	logger.info("handleCreatePr called", { path, sessionId, panelId });
+	logger.info("handleCreatePr called", { path, sessionId, panelId, config });
 	if (!path) {
 		logger.warn("handleCreatePr: no effectivePathForGit, aborting");
 		return;
@@ -1026,7 +1033,8 @@ async function handleCreatePr() {
 		const genResult = await generateShipContent(
 			ctx.prompt,
 			path,
-			sessionAgentId || selectedAgentId || undefined,
+			config?.agentId || sessionAgentId || selectedAgentId || undefined,
+			config?.modelId || undefined,
 		);
 		if (genResult.isOk()) {
 			const gen = genResult.value;
@@ -1543,12 +1551,7 @@ function handleCheckpointRevertComplete() {
 									agentName={agentInstallState.agentName}
 									stage={agentInstallState.stage}
 									progress={agentInstallState.progress}
-									failed={agentInstallState.failed}
-									onRetry={() => {
-										if (pendingInstallSessionProject && selectedAgentId) {
-											void installAgentThenCreateSession(pendingInstallSessionProject, selectedAgentId);
-										}
-									}}
+									failed={false}
 								/>
 							</div>
 						</div>
@@ -1578,9 +1581,14 @@ function handleCheckpointRevertComplete() {
 									onOpenFullscreenReview={onOpenFullscreenReview && sessionId
 										? (_, fileIndex) => onOpenFullscreenReview(sessionId, fileIndex)
 										: undefined}
-									onCreatePr={createdPr || createPrRunning ? undefined : () => void handleCreatePr()}
+									onCreatePr={createdPr || createPrRunning ? undefined : (config) => void handleCreatePr(config)}
 									createPrLoading={createPrRunning}
 									{createPrLabel}
+									{availableAgents}
+									currentAgentId={sessionAgentId || selectedAgentId}
+									availableModels={prCachedModels}
+									currentModelId={sessionCurrentModelId}
+									{effectiveTheme}
 								/>
 							</div>
 						</div>
@@ -1616,8 +1624,9 @@ function handleCheckpointRevertComplete() {
 									{sessionIsStreaming}
 									{sessionCanSubmit}
 									{sessionShowStop}
-									{panelId}
-									projectPath={worktreeToggleProjectPath ?? undefined}
+								{panelId}
+								voiceSessionId={panelId}
+								projectPath={worktreeToggleProjectPath ?? undefined}
 									projectName={effectiveProjectName ?? undefined}
 									worktreePath={effectiveActiveWorktreePath ?? undefined}
 									{worktreePending}
@@ -1668,14 +1677,20 @@ function handleCheckpointRevertComplete() {
 							{worktreeDeleted}
 							{hasEdits}
 							{hasMessages}
-							hideWorktreeButton={hasMessages && !effectiveActiveWorktreePath}
 							{isTerminalDrawerOpen}
+							isBrowserSidebarOpen={showBrowserSidebar}
+							onToggleBrowser={() => {
+								if (panelId) {
+									panelStore.toggleBrowserSidebar(panelId);
+								}
+							}}
 							onToggleTerminal={() => {
 								if (panelId && effectivePathForGit) {
 									panelStore.toggleEmbeddedTerminalDrawer(panelId, effectivePathForGit);
 								}
 							}}
 							onWorktreeCreated={handleWorktreeCreated}
+							onWorktreeRenamed={handleWorktreeRenamed}
 							onPendingChange={(pending) => { worktreePending = pending; }}
 						/>
 					{/if}
@@ -1702,6 +1717,24 @@ function handleCheckpointRevertComplete() {
 					onOpenFullscreen={() => panelState.openPlanDialog()}
 					onClose={() => panelStore.setPlanSidebarExpanded(panelId, false)}
 				/>
+			{/if}
+
+			<!-- Browser Sidebar (embedded, right side of content row) -->
+			{#if showBrowserSidebar && panelId}
+				<div
+					class="flex flex-col h-full border-l border-border/50 shrink-0"
+					style="min-width: {BROWSER_SIDEBAR_COLUMN_WIDTH}px; width: {BROWSER_SIDEBAR_COLUMN_WIDTH}px; max-width: {BROWSER_SIDEBAR_COLUMN_WIDTH}px;"
+				>
+					<BrowserPanelComponent
+						panelId="embedded-browser-{panelId}"
+						url={browserSidebarUrl ?? "https://www.google.com"}
+						title="Browser"
+						width={BROWSER_SIDEBAR_COLUMN_WIDTH}
+						isFillContainer={true}
+						onClose={() => panelStore.setBrowserSidebarExpanded(panelId, false)}
+						onResize={() => {}}
+					/>
+				</div>
 			{/if}
 		</div>
 

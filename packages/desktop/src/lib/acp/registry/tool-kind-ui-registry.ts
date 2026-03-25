@@ -1,22 +1,4 @@
-import { BuildIcon } from "@acepe/ui/icons";
-import {
-	ArrowsClockwise,
-	Brain,
-	ChatTeardropText,
-	FileDashed,
-	FileText,
-	Globe,
-	ListChecks,
-	MagnifyingGlass,
-	Package,
-	PencilRuler,
-	Robot,
-	Terminal,
-	Trash,
-} from "phosphor-svelte";
-import type { Component } from "svelte";
 import * as m from "$lib/paraglide/messages.js";
-import type { IconComponentProps } from "$lib/types/phosphor-icon-types.js";
 import type { TurnState } from "../store/types.js";
 import type { ToolCall } from "../types/tool-call.js";
 import type { ToolKind } from "../types/tool-kind.js";
@@ -28,22 +10,12 @@ import {
 	truncateText,
 } from "../utils/tool-state-utils.js";
 
-/** Props for standard Phosphor icons (from phosphor-svelte). */
-export type PhosphorIconProps = IconComponentProps;
-
-/** Icon component type - Phosphor icons or custom (e.g. BuildIcon with size "sm"|"md"|"lg"). */
-export type IconComponent =
-	| Component<IconComponentProps, {}, "">
-	| Component<{ size?: "sm" | "md" | "lg"; class?: string; style?: string }, {}, "">;
-
 /**
  * Tool UI metadata for a specific tool kind.
  *
  * This provides all the information needed to render a tool's UI based on its canonical kind.
  */
 export interface ToolKindUI {
-	/** Icon component to display - Phosphor icon (optional - some tools don't show an icon) */
-	icon?: IconComponent;
 	/** Dynamic title based on tool state */
 	title: (toolCall: ToolCall, turnState?: TurnState) => string;
 	/** Optional subtitle for additional context */
@@ -93,7 +65,6 @@ function formatOtherToolName(name: string): string {
  */
 export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	read: {
-		icon: FileText,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_read_running() : m.tool_read_completed();
@@ -112,7 +83,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	edit: {
-		icon: FileDashed,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			if (status.isPending) return m.tool_edit_running();
@@ -138,7 +108,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	execute: {
-		icon: Terminal,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_bash_running() : m.tool_bash_completed();
@@ -156,7 +125,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	search: {
-		icon: MagnifyingGlass,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			if (status.isPending) return m.tool_grep_running();
@@ -181,7 +149,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	glob: {
-		icon: MagnifyingGlass,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			if (status.isPending) return m.tool_glob_running();
@@ -203,7 +170,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	fetch: {
-		icon: Globe,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_web_fetch_running() : m.tool_web_fetch_completed();
@@ -218,7 +184,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	web_search: {
-		icon: Globe,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			const query = toolCall.arguments.kind === "webSearch" ? toolCall.arguments.query : null;
@@ -237,7 +202,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	think: {
-		icon: Brain,
 		title: () => m.tool_thinking(),
 		subtitle: (toolCall) => {
 			if (toolCall.arguments.kind === "think" && toolCall.arguments.description) {
@@ -248,7 +212,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	todo: {
-		icon: ListChecks,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_todo_running() : m.tool_todo_completed();
@@ -268,7 +231,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	question: {
-		icon: ChatTeardropText,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_ask_running() : m.tool_ask_completed();
@@ -284,7 +246,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	task: {
-		icon: Robot,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_task_running() : m.tool_task_completed();
@@ -298,7 +259,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	skill: {
-		icon: Package,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			const skillName = extractSkillCallInput(toolCall.arguments).skill;
@@ -316,7 +276,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	move: {
-		icon: ArrowsClockwise,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_move_running() : m.tool_move_completed();
@@ -334,7 +293,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	delete: {
-		icon: Trash,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_delete_running() : m.tool_delete_completed();
@@ -344,7 +302,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	enter_plan_mode: {
-		icon: ArrowsClockwise,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending
@@ -354,7 +311,6 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	exit_plan_mode: {
-		icon: ArrowsClockwise,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_exit_plan_mode_running() : m.tool_exit_plan_mode_completed();
@@ -362,15 +318,25 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 	},
 
 	create_plan: {
-		icon: PencilRuler,
 		title: (toolCall, turnState) => {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_create_plan_running() : m.tool_create_plan_completed();
 		},
 	},
 
+	task_output: {
+		title: (toolCall, turnState) => {
+			const status = getToolStatus(toolCall, turnState);
+			return status.isPending ? m.tool_task_output_running() : m.tool_task_output_completed();
+		},
+		subtitle: (toolCall) => {
+			const taskId =
+				toolCall.arguments.kind === "taskOutput" ? toolCall.arguments.task_id : null;
+			return typeof taskId === "string" ? truncateText(taskId, 40) : "";
+		},
+	},
+
 	other: {
-		icon: BuildIcon,
 		title: (toolCall) => toolCall.title || formatOtherToolName(toolCall.name),
 		subtitle: (toolCall) => {
 			if (!toolCall.title) return "";
@@ -417,18 +383,6 @@ export function getToolKindTitle(
 export function getToolKindSubtitle(kind: ToolKind, toolCall: ToolCall): string {
 	const ui = getToolKindUI(kind);
 	return ui.subtitle?.(toolCall) ?? "";
-}
-
-/**
- * Get tool icon for a given kind.
- * Each kind has its own icon defined in the registry.
- *
- * @param kind - The canonical tool kind
- * @returns Icon component or undefined
- */
-export function getToolKindIcon(kind: ToolKind): IconComponent | undefined {
-	const ui = getToolKindUI(kind);
-	return ui.icon;
 }
 
 /**

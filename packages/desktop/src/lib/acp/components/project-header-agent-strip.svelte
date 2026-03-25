@@ -1,4 +1,6 @@
 <script lang="ts">
+import Browser from "phosphor-svelte/lib/Browser";
+import Terminal from "phosphor-svelte/lib/Terminal";
 import X from "phosphor-svelte/lib/X";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";
@@ -12,6 +14,8 @@ interface Props {
 	effectiveTheme: "light" | "dark";
 	onCancel: (projectPath: string) => void;
 	onCreateSession: (projectPath: string, agentId: string) => void;
+	onOpenTerminal?: (projectPath: string) => void;
+	onOpenBrowser?: (projectPath: string) => void;
 }
 
 let {
@@ -21,6 +25,8 @@ let {
 	effectiveTheme,
 	onCancel,
 	onCreateSession,
+	onOpenTerminal,
+	onOpenBrowser,
 }: Props = $props();
 
 function handleCancel(event: MouseEvent) {
@@ -28,28 +34,67 @@ function handleCancel(event: MouseEvent) {
 	onCancel(projectPath);
 }
 
+function handleOpenTerminal(event: MouseEvent) {
+	event.stopPropagation();
+	onOpenTerminal?.(projectPath);
+}
+
+function handleOpenBrowser(event: MouseEvent) {
+	event.stopPropagation();
+	onOpenBrowser?.(projectPath);
+}
+
 function handleAgentClick(event: MouseEvent, agent: AgentInfo) {
 	event.stopPropagation();
-	if (agent.available) {
-		onCreateSession(projectPath, agent.id);
-	}
+	onCreateSession(projectPath, agent.id);
 }
 </script>
 
-<div class="flex items-center justify-end h-7 w-full">
-	<!-- Agent icons (left of X) -->
+
+<div class="flex h-7 w-full items-center justify-between">
 	<div class="flex items-center">
-		{#each [...availableAgents] as agent (agent.id)}
+		{#if onOpenTerminal}
 			<Tooltip.Root>
 				<Tooltip.Trigger>
 					<button
 						type="button"
-						class="inline-flex items-center justify-center h-7 w-7 p-1.5 rounded-none border-l border-border/50 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-						disabled={!agent.available}
+						class="inline-flex h-7 w-7 items-center justify-center cursor-pointer text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						onclick={handleOpenTerminal}
+						aria-label={m.sidebar_open_terminal({ projectName })}
+					>
+						<Terminal class="h-3.5 w-3.5" weight="fill" />
+					</button>
+				</Tooltip.Trigger>
+				<Tooltip.Content>{m.sidebar_open_terminal({ projectName })}</Tooltip.Content>
+			</Tooltip.Root>
+		{/if}
+
+		{#if onOpenBrowser}
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					<button
+						type="button"
+						class="inline-flex h-7 w-7 items-center justify-center cursor-pointer text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						onclick={handleOpenBrowser}
+						aria-label={m.sidebar_open_browser({ projectName })}
+					>
+						<Browser class="h-3.5 w-3.5" weight="fill" />
+					</button>
+				</Tooltip.Trigger>
+				<Tooltip.Content>{m.sidebar_open_browser({ projectName })}</Tooltip.Content>
+			</Tooltip.Root>
+		{/if}
+	</div>
+
+	<div class="flex items-center">
+		{#each availableAgents as agent (agent.id)}
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					<button
+						type="button"
+						class="inline-flex items-center justify-center h-7 w-7 p-1.5 rounded-none border-l border-border/50 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
 						onclick={(e) => handleAgentClick(e, agent)}
-						aria-label={agent.available
-							? m.thread_list_new_agent_session({ agentName: agent.name })
-							: `${agent.name} (not installed)`}
+						aria-label={m.thread_list_new_agent_session({ agentName: agent.name })}
 					>
 						<img
 							src={getAgentIcon(agent.id, effectiveTheme)}
@@ -59,26 +104,23 @@ function handleAgentClick(event: MouseEvent, agent: AgentInfo) {
 					</button>
 				</Tooltip.Trigger>
 				<Tooltip.Content>
-					{agent.available
-						? m.thread_list_new_agent_session({ agentName: agent.name })
-						: `${agent.name} (not installed)`}
+					{m.thread_list_new_agent_session({ agentName: agent.name })}
 				</Tooltip.Content>
 			</Tooltip.Root>
 		{/each}
-	</div>
 
-	<!-- Cancel (X) on the right (plus icon position) -->
-	<Tooltip.Root>
-		<Tooltip.Trigger>
-			<button
-				type="button"
-				class="inline-flex items-center justify-center h-7 w-7 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors border-l border-border/50"
-				onclick={handleCancel}
-				aria-label={m.common_cancel()}
-			>
-				<X class="h-3 w-3" weight="bold" />
-			</button>
-		</Tooltip.Trigger>
-		<Tooltip.Content>{m.common_cancel()}</Tooltip.Content>
-	</Tooltip.Root>
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				<button
+					type="button"
+					class="inline-flex items-center justify-center h-7 w-7 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors border-l border-border/50"
+					onclick={handleCancel}
+					aria-label={m.common_cancel()}
+				>
+					<X class="h-3 w-3" weight="bold" />
+				</button>
+			</Tooltip.Trigger>
+			<Tooltip.Content>{m.common_cancel()}</Tooltip.Content>
+		</Tooltip.Root>
+	</div>
 </div>

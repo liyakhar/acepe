@@ -17,6 +17,8 @@
 		onSettings?: () => void;
 		/** Override the add-project button (e.g. desktop wraps in a dropdown) */
 		addProjectButton?: Snippet;
+		/** Extra actions rendered after sidebar/add-project on the left */
+		extraLeftActions?: Snippet;
 		/** Extra actions rendered before settings (e.g. discord, theme toggle) */
 		extraRightActions?: Snippet;
 		/** Override the avatar area (e.g. AvatarPlaceholder in desktop) */
@@ -39,6 +41,7 @@
 		onSearch,
 		onSettings,
 		addProjectButton,
+		extraLeftActions,
 		extraRightActions,
 		avatar,
 		showAvatar = true,
@@ -89,9 +92,10 @@
 				</HeaderCell>
 			{/if}
 		</div>
+		{#if extraLeftActions}
+			{@render extraLeftActions()}
+		{/if}
 	</div>
-
-	<!-- Center: search -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="flex-1 flex justify-center"

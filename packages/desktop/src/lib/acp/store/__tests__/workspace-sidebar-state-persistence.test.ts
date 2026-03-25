@@ -17,6 +17,7 @@ import { WorkspaceStore } from "../workspace-store.svelte.js";
 
 function createPanelStoreStub(): PanelStore {
 	return {
+		workspacePanels: [],
 		panels: [],
 		filePanels: [],
 		terminalPanels: [],
@@ -24,7 +25,6 @@ function createPanelStoreStub(): PanelStore {
 		scrollX: 0,
 		focusedPanelId: null,
 		fullscreenPanelId: null,
-		fullscreenAuxPanel: null,
 		viewMode: "multi",
 		focusedViewProjectPath: null,
 		embeddedTerminals: {

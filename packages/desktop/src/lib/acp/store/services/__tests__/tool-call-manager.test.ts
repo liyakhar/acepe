@@ -879,6 +879,26 @@ describe("ToolCallManager", () => {
 			expect(manager.getStreamingArguments("tc-1")).toBe(changedArgs);
 		});
 
+		it("skips no-op writes when task output arguments are identical", () => {
+			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+
+			const firstArgs: ToolArguments = {
+				kind: "taskOutput",
+				task_id: "task-1",
+				timeout: 30,
+			};
+			const identicalArgs: ToolArguments = {
+				kind: "taskOutput",
+				task_id: "task-1",
+				timeout: 30,
+			};
+
+			manager.setStreamingArguments("s1", "tc-1", firstArgs);
+			manager.setStreamingArguments("s1", "tc-1", identicalArgs);
+
+			expect(manager.getStreamingArguments("tc-1")).toBe(firstArgs);
+		});
+
 		it("dedupe is isolated per tool and session", () => {
 			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
 

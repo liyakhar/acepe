@@ -9,6 +9,7 @@ import { Button } from "$lib/components/ui/button/index.js";
 import { Kbd, KbdGroup } from "$lib/components/ui/kbd/index.js";
 import { Skeleton } from "$lib/components/ui/skeleton/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
+import { getKeybindingsService } from "$lib/keybindings/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { getVoiceSettingsStore } from "$lib/stores/voice-settings-store.svelte.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
@@ -27,6 +28,7 @@ import ModelSelectorMetricsChip from "../model-selector.metrics-chip.svelte";
 import SlashCommandDropdown from "../slash-command-dropdown/slash-command-dropdown-ui.svelte";
 import { runWorktreeSetup } from "../worktree-toggle/worktree-setup-orchestrator.js";
 import MicButton from "./components/mic-button.svelte";
+import VoiceModelMenu from "./components/voice-model-menu.svelte";
 import PastedTextOverlay from "./components/pasted-text-overlay.svelte";
 import VoiceRecordingOverlay from "./components/voice-recording-overlay.svelte";
 import { VoiceInputState } from "./state/voice-input-state.svelte.js";
@@ -42,6 +44,7 @@ import {
 	getInlineTokenValue,
 	getSerializedCursorOffset,
 	getSerializedRangeForNode,
+	getSerializedSelectionRange,
 	getSerializedSelectionEnd,
 	renderInlineComposerMessage,
 	serializeInlineComposerMessage,
@@ -64,12 +67,14 @@ import {
 	shouldClearPersistedDraftBeforeAsyncSend,
 	shouldRestoreInitialDraft,
 } from "$lib/components/main-app-view/components/content/logic/empty-state-send-state.js";
+import { normalizeVoiceInputText } from "./logic/voice-input-text.js";
 import { AgentInputState } from "./state/agent-input-state.svelte.js";
 import type { AgentInputProps } from "./types/agent-input-props.js";
 
 // Keep props as reactive object instead of destructuring
 const props: AgentInputProps = $props();
 const logger = createLogger({ id: "agent-input-send-trace", name: "AgentInputSendTrace" });
+const kb = getKeybindingsService();
 
 const sessionStore = getSessionStore();
 const panelStore = getPanelStore();
@@ -480,9 +485,13 @@ onMount(async () => {
 			getSelectedLanguage: () => voiceSettingsStore.language,
 			getSelectedModelId: () => voiceSettingsStore.selectedModelId,
 			onTranscriptionReady: (text) => {
+				const normalizedText = normalizeVoiceInputText(text);
+				if (!normalizedText) {
+					return;
+				}
 				const sep = inputState.message.length > 0 ? " " : "";
 				inputState.insertPlainTextAtOffsets(
-					sep + text,
+					sep + normalizedText,
 					inputState.message.length,
 					inputState.message.length,
 				);
@@ -540,6 +549,7 @@ onMount(async () => {
 // Cleanup on destroy — flush any pending draft before teardown
 onDestroy(() => {
 	voiceState?.dispose();
+	kb.setContext("inputFocused", false);
 	logger.info("[first-send-trace] agent input destroy", {
 		panelId: props.panelId ?? null,
 		sessionId: props.sessionId ?? null,
@@ -889,11 +899,55 @@ function cycleModeOnTab(event: KeyboardEvent): boolean {
 	return true;
 }
 
+function shouldUseSpaceForVoiceHold(event: KeyboardEvent): boolean {
+	const isSpaceKey = event.code === "Space" || event.key === " " || event.key === "Spacebar";
+	if (!isSpaceKey || event.repeat) {
+		return false;
+	}
+	if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+		return false;
+	}
+	if (!voiceEnabled || !voiceState || isSending || isStreaming) {
+		return false;
+	}
+	if (inputState.showFileDropdown || inputState.showSlashDropdown) {
+		return false;
+	}
+	const liveMessage = editorRef ? serializeInlineComposerMessage(editorRef) : inputState.message;
+	if (liveMessage.trim().length > 0) {
+		return false;
+	}
+	return voiceState.phase === "idle";
+}
+
+function shouldBlockSpaceBeforeInput(event: InputEvent): boolean {
+	if (event.data !== " ") {
+		return false;
+	}
+	if (!voiceEnabled || !voiceState || isSending || isStreaming) {
+		return false;
+	}
+	if (inputState.showFileDropdown || inputState.showSlashDropdown) {
+		return false;
+	}
+	const liveMessage = editorRef ? serializeInlineComposerMessage(editorRef) : inputState.message;
+	if (liveMessage.trim().length > 0) {
+		return false;
+	}
+	return voiceState.phase === "idle" || voiceState.isPressAndHold;
+}
+
 function handleEditorKeyDown(event: KeyboardEvent): void {
 	if (inputState.showFileDropdown && inputState.fileDropdownRef?.handleKeyDown(event)) {
 		return;
 	}
 	if (inputState.showSlashDropdown && inputState.slashDropdownRef?.handleKeyDown(event)) {
+		return;
+	}
+
+	if (shouldUseSpaceForVoiceHold(event)) {
+		event.preventDefault();
+		voiceState.onKeyboardHoldStart();
 		return;
 	}
 
@@ -987,6 +1041,60 @@ function handleEditorKeyDown(event: KeyboardEvent): void {
 	inputState.removeInlineTokenRange(range.start, range.end);
 	syncEditorFromMessage(range.start);
 	handleEditorInput();
+}
+
+function handleEditorKeyUp(event: KeyboardEvent): void {
+	if (
+		(event.code === "Space" || event.key === " " || event.key === "Spacebar") &&
+		!event.shiftKey &&
+		!event.metaKey &&
+		!event.ctrlKey &&
+		!event.altKey &&
+		voiceState &&
+		voiceState.isPressAndHold
+	) {
+		event.preventDefault();
+		voiceState.onKeyboardHoldEnd();
+	}
+}
+
+function handleEditorBeforeInput(event: InputEvent): void {
+	if (!shouldBlockSpaceBeforeInput(event)) {
+		return;
+	}
+	event.preventDefault();
+}
+
+function handleEditorCut(event: ClipboardEvent): void {
+	if (!editorRef) {
+		return;
+	}
+
+	const serializedRange = getSerializedSelectionRange(editorRef);
+	if (!serializedRange || serializedRange.start === serializedRange.end) {
+		return;
+	}
+
+	const selection = window.getSelection();
+	const selectedDomText = selection ? selection.toString() : "";
+	const fallbackText = inputState.message.slice(serializedRange.start, serializedRange.end);
+	const clipboardText = selectedDomText.length > 0 ? selectedDomText : fallbackText;
+	if (event.clipboardData) {
+		event.clipboardData.setData("text/plain", clipboardText);
+	}
+
+	event.preventDefault();
+	inputState.removeInlineTokenRange(serializedRange.start, serializedRange.end);
+	syncEditorFromMessage(serializedRange.start);
+	handleEditorInput({ suppressAutocomplete: true });
+}
+
+function handleEditorFocus(): void {
+	kb.setContext("inputFocused", true);
+}
+
+function handleEditorBlur(): void {
+	kb.setContext("inputFocused", false);
 }
 
 function handleCommandSelect(command: AvailableCommand): void {
@@ -1363,13 +1471,18 @@ async function handleCancel() {
 								contenteditable="true"
 								autocapitalize="off"
 								spellcheck={false}
-								class="min-h-[72px] max-h-[400px] overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground outline-none"
-								oninput={() => handleEditorInput()}
+							class="min-h-[72px] max-h-[400px] overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground outline-none"
+							onbeforeinput={handleEditorBeforeInput}
+							oninput={() => handleEditorInput()}
 								onkeydown={handleEditorKeyDown}
+								onkeyup={handleEditorKeyUp}
+								onfocus={handleEditorFocus}
+								onblur={handleEditorBlur}
 								onclick={handleEditorClick}
-								onmouseover={handleEditorMouseOver}
+							onmouseover={handleEditorMouseOver}
 								onmouseout={handleEditorMouseOut}
 								onpaste={(event) => handleEditorPaste(event)}
+								oncut={handleEditorCut}
 							></div>
 							{#if overlayMode && overlayRefId && overlayAnchorRect}
 								{@const overlayText = inputState.getInlineTextReferenceContent(overlayRefId) ?? ""}
@@ -1422,68 +1535,137 @@ async function handleCancel() {
 					onClose={() => inputState.handleFileDropdownClose()}
 				/>
 			{/snippet}
-			{#snippet footer()}
-				{#if inputReady}
-					<div class="flex items-center h-7">
-						{#if visibleModes.length > 0}
-							<ModeSelector
-								availableModes={visibleModes}
-								currentModeId={effectiveCurrentModeId}
-								onModeChange={handleModeChange}
-								panelId={props.panelId}
-							/>
-							<div class="h-full w-px bg-border/50"></div>
-						{:else if selectorsLoading}
-							<Skeleton class="h-7 w-7" />
-							<div class="h-full w-px bg-border/50"></div>
-						{/if}
-						<ModelSelector
-							availableModels={effectiveAvailableModels}
-							currentModelId={effectiveCurrentModelId}
-							modelsDisplay={sessionCapabilities?.modelsDisplay ?? cachedModelsDisplay}
-							onModelChange={handleModelChange}
-							isLoading={selectorsLoading}
+		{#snippet footer()}
+			{#if inputReady}
+				{@const isVoiceRecordingUi = voiceState ? (voiceState.phase === "checking_permission" || voiceState.phase === "recording") : false}
+				{@const isVoiceActive = voiceState ? (voiceState.phase !== "idle" && voiceState.phase !== "error") : false}
+				<!-- Normal toolbar: fades out during recording -->
+				<div
+					class="flex items-center h-7 transition-opacity duration-200 ease-out"
+					class:opacity-0={isVoiceRecordingUi}
+					class:pointer-events-none={isVoiceRecordingUi}
+				>
+					{#if visibleModes.length > 0}
+						<ModeSelector
+							availableModes={visibleModes}
+							currentModeId={effectiveCurrentModeId}
+							onModeChange={handleModeChange}
 							panelId={props.panelId}
 						/>
-						{#if props.agentProjectPicker}
-							<div class="h-full w-px bg-border/50"></div>
-							{@render props.agentProjectPicker()}
-						{/if}
 						<div class="h-full w-px bg-border/50"></div>
-					</div>
-					<div class="flex items-center h-7 ml-auto gap-1">
-						{#if voiceState && voiceEnabled}
-							{#if voiceState.phase === "recording"}
-								<!-- Compact waveform bars centered vertically -->
-								<div class="flex items-center h-5 motion-reduce:hidden" aria-hidden="true">
-									<div class="flex items-center gap-[1.5px]">
-										{#each voiceState.waveform.barHeights as height, _i}
-											{@const h = 2 + ((height - 3) / 45) * 14}
-											<div
-												class="w-[2px] rounded-[1px] bg-primary transition-none"
-												style:height="{h}px"
-											></div>
-										{/each}
-									</div>
+					{:else if selectorsLoading}
+						<Skeleton class="h-7 w-7" />
+						<div class="h-full w-px bg-border/50"></div>
+					{/if}
+					<ModelSelector
+						availableModels={effectiveAvailableModels}
+						currentModelId={effectiveCurrentModelId}
+						modelsDisplay={sessionCapabilities?.modelsDisplay ?? cachedModelsDisplay}
+						onModelChange={handleModelChange}
+						isLoading={selectorsLoading}
+						panelId={props.panelId}
+					/>
+					{#if props.agentProjectPicker}
+						<div class="h-full w-px bg-border/50"></div>
+						{@render props.agentProjectPicker()}
+					{/if}
+					<div class="h-full w-px bg-border/50"></div>
+				</div>
+
+				<!-- Right side: recording visualization OR normal controls -->
+				<div class="flex items-center h-7 ml-auto">
+					{#if isVoiceRecordingUi}
+						<!-- Apple-like centered recording bar -->
+						<div class="voice-recording-bar flex items-center gap-2 pr-0.5">
+							<!-- Live meter bars: 25 super-slim bars, center-out symmetric -->
+							<div class="flex items-center justify-center h-6 motion-reduce:hidden" aria-hidden="true">
+								<div class="voice-meter flex items-center gap-px">
+									{#each voiceState.waveform.meterLevels as level, index (index)}
+										{@const dist = Math.abs(index - Math.floor(voiceState.waveform.barCount / 2))}
+										{@const maxH = 27 - dist * 1.05}
+										<div
+										class="voice-bar rounded-full"
+										style:width="1.5px"
+										style:height="{level > 0.005 ? 1.5 + level * (maxH - 1.5) : 0}px"
+										style:background-color="#F9C396"
+									></div>
+									{/each}
 								</div>
-							{/if}
+							</div>
+							<!-- Stop button -->
 							<MicButton
 								{voiceState}
 								disabled={isStreaming || isSending}
 							/>
+						</div>
+					{:else}
+						<!-- Normal right-side controls -->
+						<div
+							class="flex items-center gap-1.5 transition-opacity duration-200 ease-out"
+							class:opacity-0={isVoiceActive}
+							class:pointer-events-none={isVoiceActive}
+						>
+							{#if props.sessionId}
+								<ModelSelectorMetricsChip
+									sessionId={props.sessionId}
+									agentId={capabilitiesAgentId}
+								/>
+							{/if}
+							{#if props.checkpointButton}
+								{@render props.checkpointButton()}
+							{/if}
+						</div>
+						{#if voiceState && voiceEnabled}
+							{#if voiceState.phase === "error"}
+								<button
+									type="button"
+									class="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline mr-1"
+									onclick={() => voiceState.dismissError()}
+								>
+									{m.common_close()}
+								</button>
+							{/if}
+							<div class="voice-controls flex items-center">
+								<VoiceModelMenu {voiceSettingsStore} />
+								<MicButton
+									{voiceState}
+									disabled={isStreaming || isSending}
+								/>
+							</div>
 						{/if}
-						{#if props.sessionId}
-							<ModelSelectorMetricsChip
-								sessionId={props.sessionId}
-								agentId={capabilitiesAgentId}
-							/>
-						{/if}
-						{#if props.checkpointButton}
-							{@render props.checkpointButton()}
-						{/if}
-					</div>
-				{/if}
-			{/snippet}
+					{/if}
+				</div>
+			{/if}
+		{/snippet}
 		</InputContainer>
 	{/if}
 </div>
+
+<style>
+	/* Voice recording bar: fade-in when entering recording state */
+	.voice-recording-bar {
+		animation: voice-bar-enter 180ms ease-out;
+	}
+
+	@keyframes voice-bar-enter {
+		from {
+			opacity: 0;
+			transform: translateX(8px);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
+	}
+
+	/* Individual meter bars: GPU-accelerated smooth height transition */
+	.voice-bar {
+		transition: height 130ms cubic-bezier(0.2, 0.9, 0.2, 1), opacity 130ms ease-out;
+		will-change: height;
+	}
+
+	/* Meter container */
+	.voice-meter {
+		min-width: 16px;
+	}
+</style>

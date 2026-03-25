@@ -15,7 +15,7 @@ import type { PanelStore } from "$lib/acp/store/panel-store.svelte.js";
 /** Minimal panel shape needed to resolve fullscreen panel and active project */
 export interface PanelWithProject {
 	readonly id: string;
-	readonly sessionProjectPath: string | null;
+	readonly projectPath: string | null;
 }
 
 /** Minimal group shape for active project and focusedModeAllProjects */
@@ -84,7 +84,7 @@ export function getViewModeState(
 						return manual;
 					}
 					const focused = panelsWithState.find((p) => p.id === panelStore.focusedPanelId);
-					return focused?.sessionProjectPath ?? allGroups[0]?.projectPath ?? null;
+					return focused?.projectPath ?? allGroups[0]?.projectPath ?? null;
 				})();
 
 	const focusedModeAllProjects:

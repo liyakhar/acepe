@@ -74,10 +74,6 @@ function advanceFromSplash() {
 }
 
 function getOnboardingDefaultAgents(): string[] {
-	const installed = agentStore.agents.filter((agent) => agent.available).map((agent) => agent.id);
-	if (installed.length > 0) {
-		return installed;
-	}
 	return agentStore.agents.map((agent) => agent.id);
 }
 
@@ -358,12 +354,11 @@ async function finishOnboarding(): Promise<void> {
 						{#each agentStore.agents as agent (agent.id)}
 							<AgentCard
 								agentId={agent.id}
-								agentName={agent.name}
-								iconSrc={getAgentIcon(agent.id, theme)}
-								isSelected={onboardingSelectedAgents.includes(agent.id)}
-								isAvailable={agent.available}
-								onclick={() => toggleOnboardingAgent(agent.id)}
-							/>
+							agentName={agent.name}
+							iconSrc={getAgentIcon(agent.id, theme)}
+							isSelected={onboardingSelectedAgents.includes(agent.id)}
+							onclick={() => toggleOnboardingAgent(agent.id)}
+						/>
 						{/each}
 					</div>
 

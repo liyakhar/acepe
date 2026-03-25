@@ -22,6 +22,7 @@ type KeybindingState = Pick<
 	| "handleClosePanel"
 	| "debugPanelOpen"
 	| "sidebarOpen"
+	| "toggleFileExplorer"
 >;
 type KeybindingServiceLike = Pick<KeybindingsService, "upsertAction">;
 type SelectorRegistryLike = Pick<SelectorRegistry, "toggleFocused" | "cycleFocused">;
@@ -200,6 +201,16 @@ export class KeybindingManager {
 			category: "navigation",
 			handler: () => {
 				// Handler will be set by main-app-view
+			},
+		});
+
+		// File explorer toggle
+		this.keybindingsService.upsertAction({
+			id: KEYBINDING_ACTIONS.FILE_EXPLORER_TOGGLE,
+			label: "Toggle File Explorer",
+			category: "navigation",
+			handler: () => {
+				this.state.toggleFileExplorer();
 			},
 		});
 	}

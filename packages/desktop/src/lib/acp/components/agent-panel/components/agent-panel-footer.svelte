@@ -6,11 +6,15 @@
 -->
 <script lang="ts">
 import { EmbeddedIconButton } from "@acepe/ui/panel-header";
+import Browser from "phosphor-svelte/lib/Browser";
 import Gear from "phosphor-svelte/lib/Gear";
 import { Terminal } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import { WorktreeToggleControl } from "../../worktree-toggle/index.js";
-import type { OnWorktreeCreatedCallback } from "../../worktree-toggle/types.js";
+import type {
+	OnWorktreeCreatedCallback,
+	OnWorktreeRenamedCallback,
+} from "../../worktree-toggle/types.js";
 
 interface Props {
 	panelId: string;
@@ -21,11 +25,13 @@ interface Props {
 	hasMessages: boolean;
 	globalWorktreeDefault?: boolean;
 	worktreeDeleted?: boolean;
-	hideWorktreeButton?: boolean;
 	onWorktreeCreated: OnWorktreeCreatedCallback;
+	onWorktreeRenamed?: OnWorktreeRenamedCallback;
 	onPendingChange?: (pending: boolean) => void;
 	onToggleTerminal: () => void;
 	isTerminalDrawerOpen: boolean;
+	onToggleBrowser: () => void;
+	isBrowserSidebarOpen: boolean;
 	onSettings?: () => void;
 }
 
@@ -38,11 +44,13 @@ let {
 	hasMessages,
 	globalWorktreeDefault = false,
 	worktreeDeleted = false,
-	hideWorktreeButton = false,
 	onWorktreeCreated,
+	onWorktreeRenamed,
 	onPendingChange,
 	onToggleTerminal,
 	isTerminalDrawerOpen,
+	onToggleBrowser,
+	isBrowserSidebarOpen,
 	onSettings,
 }: Props = $props();
 
@@ -62,8 +70,8 @@ const worktreeProjectPath = $derived(projectPath || "");
 			{hasMessages}
 			{globalWorktreeDefault}
 			{worktreeDeleted}
-			{hideWorktreeButton}
 			{onWorktreeCreated}
+			{onWorktreeRenamed}
 			{onPendingChange}
 		/>
 	{/if}
@@ -81,6 +89,14 @@ const worktreeProjectPath = $derived(projectPath || "");
 	{/if}
 
 	<div class="ml-auto flex items-center border-l border-border/50">
+		<EmbeddedIconButton
+			active={isBrowserSidebarOpen}
+			title="Toggle browser"
+			ariaLabel="Toggle browser"
+			onclick={onToggleBrowser}
+		>
+			<Browser class="h-3.5 w-3.5" weight={isBrowserSidebarOpen ? "fill" : "regular"} />
+		</EmbeddedIconButton>
 		<EmbeddedIconButton
 			active={isTerminalDrawerOpen}
 			disabled={!hasEffectiveCwd}

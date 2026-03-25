@@ -52,11 +52,6 @@ import { createLogger } from "$lib/acp/utils/logger.js";
 import { getChangelogEntriesSince } from "$lib/changelog/index.js";
 import type { KeybindingsService } from "$lib/keybindings/service.svelte.js";
 import { getZoomService } from "$lib/services/zoom.svelte.js";
-// MCP Plugin listeners for execute-js, get-dom, etc.
-import {
-	cleanupPluginListeners,
-	setupPluginListeners,
-} from "../../../../../../src-tauri/packages/tauri-plugin-mcp/guest-js/index.js";
 import type { MainAppViewState } from "../main-app-view-state.svelte.js";
 
 const logger = createLogger({ id: "initialization-manager", name: "InitializationManager" });
@@ -123,13 +118,11 @@ export class InitializationManager {
 		// - Keybindings (synchronous but wrapped)
 		// - Session update subscription (sets up event listener)
 		// - Basic metadata (agents, projects, user keybindings - already parallel internally)
-		// - MCP plugin listeners (execute-js, get-dom, etc.)
 		return (
 			NeverthrowResultAsync.combine([
 				this.initializeKeybindings(),
 				this.initializeSessionUpdates(),
 				this.loadBasicMetadata(),
-				this.initializeMcpPluginListeners(),
 			])
 				.map(() => undefined)
 				.andThen(() => this.initializeAgentPreferences())
@@ -256,26 +249,6 @@ export class InitializationManager {
 		this.keybindingsService.install(window);
 
 		return okAsync(undefined);
-	}
-
-	/**
-	 * Initializes MCP plugin event listeners for execute-js, get-dom, etc.
-	 *
-	 * @returns ResultAsync indicating success or error
-	 */
-	private initializeMcpPluginListeners(): ResultAsync<void, MainAppViewError> {
-		if (!this.hasTauriInvoke()) {
-			return okAsync(undefined);
-		}
-
-		return NeverthrowResultAsync.fromPromise(
-			setupPluginListeners(),
-			(error) =>
-				new InitializationError(
-					"mcpPluginListeners",
-					error instanceof Error ? error : new Error(String(error))
-				)
-		);
 	}
 
 	/**
@@ -506,18 +479,25 @@ export class InitializationManager {
 	 */
 	private earlyPreloadPanelSessions(): void {
 		for (const panel of this.panelStore.panels) {
-			if (!panel.sessionId || !panel.projectPath || !panel.agentId) continue;
+			if (!panel.sessionId) continue;
 			if (this.sessionStore.isPreloaded(panel.sessionId)) continue;
+
+			const session = this.sessionStore.getSessionCold(panel.sessionId);
+			const projectPath = panel.projectPath ?? session?.projectPath;
+			const agentId = panel.agentId ?? session?.agentId;
+			const sessionTitle = panel.sessionTitle ?? session?.title;
+
+			if (!projectPath || !agentId) continue;
 
 			const panelId = panel.id;
 			const sessionId = panel.sessionId;
 			this.sessionStore
 				.loadSessionById(
 					sessionId,
-					panel.projectPath,
-					panel.agentId,
+					projectPath,
+					agentId,
 					undefined,
-					panel.sessionTitle ?? undefined
+					sessionTitle ?? undefined
 				)
 				.andThen(() => {
 					return this.sessionStore.connectSession(sessionId).map(() => undefined);
@@ -538,7 +518,6 @@ export class InitializationManager {
 	 */
 	cleanup(): void {
 		this.keybindingsService.uninstall();
-		cleanupPluginListeners();
 		this.state.initializationInProgress = false;
 		this.state.initializationComplete = false;
 	}

@@ -4,7 +4,7 @@ import type { FileDiffMetadata, Hunk } from "@pierre/diffs";
 import { adjustHunkOffsets } from "../adjust-hunk-offsets.js";
 
 function createMinimalHunk(overrides: Partial<Hunk> = {}): Hunk {
-	return {
+	const baseHunk: Hunk = {
 		collapsedBefore: 0,
 		splitLineStart: 1,
 		splitLineCount: 1,
@@ -13,26 +13,35 @@ function createMinimalHunk(overrides: Partial<Hunk> = {}): Hunk {
 		additionCount: 1,
 		additionStart: 1,
 		additionLines: 1,
+		additionLineIndex: 0,
 		deletionCount: 1,
 		deletionStart: 1,
 		deletionLines: 1,
+		deletionLineIndex: 0,
 		hunkContent: [],
 		hunkContext: undefined,
 		hunkSpecs: undefined,
-		...overrides,
+		noEOFCRDeletions: false,
+		noEOFCRAdditions: false,
 	};
+
+	return Object.assign(baseHunk, overrides);
 }
 
 function createMinimalFileDiff(overrides: Partial<FileDiffMetadata> = {}): FileDiffMetadata {
-	return {
+	const baseFileDiff: FileDiffMetadata = {
 		name: "test.ts",
 		prevName: undefined,
 		type: "change",
 		hunks: [],
 		splitLineCount: 0,
 		unifiedLineCount: 0,
-		...overrides,
+		isPartial: false,
+		deletionLines: [],
+		additionLines: [],
 	};
+
+	return Object.assign(baseFileDiff, overrides);
 }
 
 describe("adjustHunkOffsets", () => {

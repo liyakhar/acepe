@@ -9,14 +9,13 @@
 -->
 <script lang="ts">
 import { listen } from "@tauri-apps/api/event";
-import { type Snippet } from "svelte";
 import { toast } from "svelte-sonner";
 import { cn } from "$lib/utils.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
 import type { AppError } from "../../errors/app-error.js";
 import type { WorktreeInfo } from "../../types/worktree-info.js";
 import BranchPicker from "./branch-picker.svelte";
-import type { OnWorktreeCreatedCallback } from "./types.js";
+import type { OnWorktreeCreatedCallback, OnWorktreeRenamedCallback } from "./types.js";
 import WorktreeToggleButton from "./worktree-toggle-button.svelte";
 import {
 	computeIsDisabled,
@@ -33,12 +32,12 @@ interface Props {
 	hasMessages: boolean;
 	globalWorktreeDefault?: boolean;
 	worktreeDeleted?: boolean;
-	hideWorktreeButton?: boolean;
 	onWorktreeCreated?: OnWorktreeCreatedCallback;
+	onWorktreeRenamed?: OnWorktreeRenamedCallback;
+	onOpenSettings?: () => void;
 	onPendingChange?: (pending: boolean) => void;
 	/** Visual variant: "minimal" = no dividers, pill triggers; "default" = standard footer look. */
 	variant?: "default" | "minimal";
-	children?: Snippet;
 }
 
 const props: Props = $props();
@@ -47,11 +46,11 @@ const props: Props = $props();
 const toggleState = new WorktreeToggleState({
 	panelId: props.panelId,
 	projectPath: props.projectPath,
-	globalDefault: props.globalWorktreeDefault ?? false,
+	globalDefault: props.globalWorktreeDefault ? props.globalWorktreeDefault : false,
 });
 
 let initializingGit = $state(false);
-let previousProjectPath = $state<string | null>(props.projectPath ?? null);
+let previousProjectPath = $state<string | null>(props.projectPath ? props.projectPath : null);
 
 // isPending, isDisabled, tooltipText derived after effectiveWorktreeName (below)
 
@@ -59,11 +58,11 @@ let previousProjectPath = $state<string | null>(props.projectPath ?? null);
 // Note: Only depends on projectPath, not hasEdits
 $effect(() => {
 	const currentPath = props.projectPath;
-	if ((currentPath ?? null) !== previousProjectPath) {
+	if ((currentPath ? currentPath : null) !== previousProjectPath) {
 		// Prevent stale worktree/branch context from leaking across project switches.
 		toggleState.worktreeInfo = null;
 		toggleState.detectedBranch = null;
-		previousProjectPath = currentPath ?? null;
+		previousProjectPath = currentPath ? currentPath : null;
 	}
 	if (currentPath) {
 		const controller = new AbortController();
@@ -90,7 +89,7 @@ $effect(() => {
 		"git:head-changed",
 		(event) => {
 			if (disposed || event.payload.projectPath !== targetPath) return;
-			toggleState.setCurrentBranch(event.payload.branch ?? "");
+			toggleState.setCurrentBranch(event.payload.branch ? event.payload.branch : "");
 			// Re-fetch diff stats
 			void tauriClient.git.diffStats(targetPath).match(
 				(stats) => {
@@ -133,29 +132,54 @@ function handleInitGitRepo(): void {
 		},
 		(error) => {
 			initializingGit = false;
-			const message =
-				error.cause?.message ?? error.message ?? "Failed to initialize git repository";
+			const message = error.cause?.message
+				? error.cause.message
+				: error.message
+					? error.message
+					: "Failed to initialize git repository";
+			toast.error(message);
+		}
+	);
+}
+
+function handleRename(nextName: string): void {
+	const currentPath = effectiveWorktreePath;
+	if (!currentPath) return;
+
+	void tauriClient.git.worktreeRename(currentPath, nextName).match(
+		(info) => {
+			toggleState.worktreeInfo = info;
+			toggleState.setCurrentBranch(info.branch);
+			props.onWorktreeRenamed?.(info);
+			toast.success(`Renamed worktree to ${info.name}`);
+		},
+		(error) => {
+			const message = error.cause?.message ? error.cause.message : error.message;
 			toast.error(message);
 		}
 	);
 }
 
 const effectiveWorktreePath = $derived(
-	toggleState.worktreeDirectory ?? props.activeWorktreePath ?? null
+	toggleState.worktreeDirectory
+		? toggleState.worktreeDirectory
+		: props.activeWorktreePath
+			? props.activeWorktreePath
+			: null
 );
 const effectiveWorktreeName = $derived.by(() => {
 	if (toggleState.worktreeName) return toggleState.worktreeName;
-	const activePath = props.activeWorktreePath ?? null;
+	const activePath = props.activeWorktreePath ? props.activeWorktreePath : null;
 	if (!activePath) return null;
 	const parts = activePath.split("/").filter((segment) => segment.length > 0);
-	return parts.length > 0 ? (parts[parts.length - 1] ?? null) : null;
+	return parts.length > 0 ? (parts[parts.length - 1] ? parts[parts.length - 1] : null) : null;
 });
-const branchTargetPath = $derived(effectiveWorktreePath ?? props.projectPath);
+const branchTargetPath = $derived(effectiveWorktreePath ? effectiveWorktreePath : props.projectPath);
 
 // Pending/disabled/tooltip derivations (depend on effectiveWorktreeName)
 const isPending = $derived(
 	// Pending when toggle is enabled but no worktree exists yet (manual toggle or global default)
-	(toggleState.enabled || (props.globalWorktreeDefault ?? false)) &&
+	(toggleState.enabled || (props.globalWorktreeDefault ? props.globalWorktreeDefault : false)) &&
 		effectiveWorktreeName === null &&
 		!props.hasMessages &&
 		toggleState.isGitRepo === true
@@ -185,23 +209,20 @@ const showDividers = $derived(props.variant !== "minimal");
 
 <div class="flex items-center justify-between w-full h-full">
 	<!-- Left: Worktree picker -->
-	{#if !(props.hideWorktreeButton ?? false)}
-		<div class={cn("flex items-center h-full", showDividers && "border-r border-border/50")}>
-			<WorktreeToggleButton
-				disabled={isDisabled}
-				loading={toggleState.loading || toggleState.isCreatingWorktree}
-				{tooltipText}
-				worktreeName={effectiveWorktreeName}
-				pending={isPending}
-				deleted={props.worktreeDeleted ?? false}
-				onCreate={handleCreate}
-				variant={props.variant}
-			/>
-		</div>
-	{/if}
-	{#if props.children}
-		{@render props.children()}
-	{/if}
+	<div class={cn("flex items-center h-full", showDividers && "border-r border-border/50")}>
+		<WorktreeToggleButton
+			disabled={isDisabled}
+			loading={toggleState.loading || toggleState.isCreatingWorktree}
+			{tooltipText}
+			worktreeName={effectiveWorktreeName}
+			pending={isPending}
+			deleted={props.worktreeDeleted ? props.worktreeDeleted : false}
+			onCreate={handleCreate}
+			onRename={handleRename}
+			onOpenSettings={props.onOpenSettings}
+			variant={props.variant}
+		/>
+	</div>
 	<!-- Right: Branch picker -->
 	<div class={cn("ml-auto flex items-center h-full", showDividers && "border-l border-border/50")}>
 		<BranchPicker

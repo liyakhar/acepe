@@ -8,6 +8,19 @@ import type { FilePanel } from "$lib/acp/store/file-panel-type.js";
 import type { GitPanel } from "$lib/acp/store/git-panel-type.js";
 import type { ReviewPanel } from "$lib/acp/store/review-panel-type.js";
 import type { TerminalPanel } from "$lib/acp/store/terminal-panel-type.js";
+import type { WorkspacePanel } from "$lib/acp/store/types.js";
+
+export interface UnifiedWorkspacePanelGroup<TAgent extends { id: string; projectPath: string | null }> {
+	readonly projectPath: string;
+	readonly projectName: string;
+	readonly projectColor: string;
+	readonly agentPanels: readonly TAgent[];
+	readonly filePanels: readonly FilePanel[];
+	readonly reviewPanels: readonly ReviewPanel[];
+	readonly terminalPanels: readonly TerminalPanel[];
+	readonly browserPanels: readonly BrowserPanel[];
+	readonly gitPanels: readonly GitPanel[];
+}
 
 /**
  * A group of agent panels belonging to the same project.
@@ -159,6 +172,128 @@ export function groupAllPanelsByProject<TAgent extends { sessionProjectPath: str
 		const key = panel.projectPath ?? "";
 		const group = ensureGroup(key, groupMap, groupOrder, projects);
 		(group.gitPanels as GitPanel[]).push(panel);
+	}
+
+	return groupOrder.map((key) => groupMap.get(key)!);
+}
+
+export function groupWorkspacePanelsByProject<TAgent extends { id: string; projectPath: string | null }>(
+	agentPanels: readonly TAgent[],
+	workspacePanels: readonly WorkspacePanel[],
+	reviewPanels: readonly ReviewPanel[],
+	gitPanels: readonly GitPanel[],
+	projects: readonly Project[]
+): UnifiedWorkspacePanelGroup<TAgent>[] {
+	const groupMap = new Map<
+		string,
+		UnifiedWorkspacePanelGroup<TAgent> & {
+			agentPanels: TAgent[];
+			filePanels: FilePanel[];
+			reviewPanels: ReviewPanel[];
+			terminalPanels: TerminalPanel[];
+			browserPanels: BrowserPanel[];
+			gitPanels: GitPanel[];
+		}
+	>();
+	const groupOrder: string[] = [];
+
+	for (const panel of agentPanels) {
+		const key = panel.projectPath ?? "";
+		let group = groupMap.get(key);
+		if (!group) {
+			const { name, color } = resolveProject(key, projects);
+			group = {
+				projectPath: key,
+				projectName: name,
+				projectColor: color,
+				agentPanels: [],
+				filePanels: [],
+				reviewPanels: [],
+				terminalPanels: [],
+				browserPanels: [],
+				gitPanels: [],
+			};
+			groupMap.set(key, group);
+			groupOrder.push(key);
+		}
+		group.agentPanels.push(panel);
+	}
+
+	for (const panel of workspacePanels) {
+		if (panel.kind === "agent") continue;
+		if (panel.kind === "file" && panel.ownerPanelId !== null) continue;
+		const key = panel.projectPath;
+		let group = groupMap.get(key);
+		if (!group) {
+			const { name, color } = resolveProject(key, projects);
+			group = {
+				projectPath: key,
+				projectName: name,
+				projectColor: color,
+				agentPanels: [],
+				filePanels: [],
+				reviewPanels: [],
+				terminalPanels: [],
+				browserPanels: [],
+				gitPanels: [],
+			};
+			groupMap.set(key, group);
+			groupOrder.push(key);
+		}
+
+		if (panel.kind === "file") {
+			group.filePanels.push(panel);
+			continue;
+		}
+		if (panel.kind === "terminal") {
+			group.terminalPanels.push(panel);
+			continue;
+		}
+		group.browserPanels.push(panel);
+	}
+
+	for (const panel of reviewPanels) {
+		const key = panel.projectPath;
+		let group = groupMap.get(key);
+		if (!group) {
+			const { name, color } = resolveProject(key, projects);
+			group = {
+				projectPath: key,
+				projectName: name,
+				projectColor: color,
+				agentPanels: [],
+				filePanels: [],
+				reviewPanels: [],
+				terminalPanels: [],
+				browserPanels: [],
+				gitPanels: [],
+			};
+			groupMap.set(key, group);
+			groupOrder.push(key);
+		}
+		group.reviewPanels.push(panel);
+	}
+
+	for (const panel of gitPanels) {
+		const key = panel.projectPath;
+		let group = groupMap.get(key);
+		if (!group) {
+			const { name, color } = resolveProject(key, projects);
+			group = {
+				projectPath: key,
+				projectName: name,
+				projectColor: color,
+				agentPanels: [],
+				filePanels: [],
+				reviewPanels: [],
+				terminalPanels: [],
+				browserPanels: [],
+				gitPanels: [],
+			};
+			groupMap.set(key, group);
+			groupOrder.push(key);
+		}
+		group.gitPanels.push(panel);
 	}
 
 	return groupOrder.map((key) => groupMap.get(key)!);

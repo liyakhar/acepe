@@ -40,6 +40,14 @@ type AnnotationMetadata = {
 	hunkIndex: number;
 };
 
+function getLinesForRange(lines: string[], startIndex: number, count: number): string[] {
+	return lines.slice(startIndex, startIndex + count);
+}
+
+function joinAdditionLines(fileDiffMetadata: FileDiffMetadata): string {
+	return fileDiffMetadata.additionLines.join("");
+}
+
 /**
  * Data structure for diff rendering with pre-parsed metadata.
  */
@@ -251,10 +259,11 @@ export class ReviewDiffViewState {
 
 		this.diffStyle = style;
 
-		this.fileDiffInstance.setOptions({
-			...this.fileDiffInstance.options,
-			diffStyle: style,
-		});
+		this.fileDiffInstance.setOptions(
+			Object.assign({}, this.fileDiffInstance.options, {
+				diffStyle: style,
+			})
+		);
 		this.fileDiffInstance.rerender();
 	}
 
@@ -294,12 +303,12 @@ export class ReviewDiffViewState {
 
 			for (const content of hunk.hunkContent) {
 				if (content.type === "context") {
-					additionLineOffset += content.lines.length;
-					deletionLineOffset += content.lines.length;
+					additionLineOffset += content.lines;
+					deletionLineOffset += content.lines;
 				} else if (content.type === "change") {
-					if (content.additions.length > 0) {
+					if (content.additions > 0) {
 						const lastAdditionLineNumber =
-							hunk.additionStart + additionLineOffset + content.additions.length - 1;
+							hunk.additionStart + additionLineOffset + content.additions - 1;
 						annotations.push({
 							side: "additions",
 							lineNumber: lastAdditionLineNumber,
@@ -308,7 +317,7 @@ export class ReviewDiffViewState {
 						annotationPlaced = true;
 						break;
 					}
-					deletionLineOffset += content.deletions.length;
+					deletionLineOffset += content.deletions;
 				}
 			}
 
@@ -380,7 +389,12 @@ export class ReviewDiffViewState {
 		const deletions: string[] = [];
 		for (const content of hunk.hunkContent) {
 			if (content.type === "change") {
-				deletions.push(...content.deletions);
+				const hunkDeletions = getLinesForRange(
+					this.currentDiffData.fileDiffMetadata.deletionLines,
+					content.deletionLineIndex,
+					content.deletions
+				);
+				deletions.push(...hunkDeletions);
 			}
 		}
 
@@ -498,20 +512,16 @@ export class ReviewDiffViewState {
 			this.rejectedCount++;
 		}
 
-		// Sync newFile.contents from the library's updated newLines to prevent
+		// Sync newFile.contents from the library's updated additionLines to prevent
 		// stale content in subsequent computeRevertedFileContent calls.
-		// Note: newLines entries retain trailing \n (split via /(?<=\n)/), so join with ""
-		const updatedNewContents =
-			updatedMetadata.newLines?.join("") ?? this.currentDiffData.newFile.contents;
+		const updatedNewContents = joinAdditionLines(updatedMetadata);
 
-		this.currentDiffData = {
-			...this.currentDiffData,
+		this.currentDiffData = Object.assign({}, this.currentDiffData, {
 			fileDiffMetadata: updatedMetadata,
-			newFile: {
-				...this.currentDiffData.newFile,
+			newFile: Object.assign({}, this.currentDiffData.newFile, {
 				contents: updatedNewContents,
-			},
-		};
+			}),
+		});
 
 		// Clean up existing annotation components before re-rendering
 		this.cleanupAnnotationComponents();

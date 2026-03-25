@@ -2,6 +2,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "svelte-sonner";
 
 import * as m from "$lib/paraglide/messages.js";
+import { SoundEffect } from "$lib/acp/types/sounds.js";
+import { playSound } from "$lib/acp/utils/sound.js";
 import type {
 	AmplitudePayload,
 	RecordingErrorPayload,
@@ -25,6 +27,14 @@ function log(msg: string, data?: Record<string, unknown>): void {
 	} else {
 		console.log(`[voice] ${msg}`);
 	}
+}
+
+function previewText(text: string): string {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	if (normalized.length <= 80) {
+		return normalized;
+	}
+	return `${normalized.slice(0, 80)}...`;
 }
 
 export class VoiceInputState {
@@ -54,11 +64,12 @@ export class VoiceInputState {
 	/** Derived: show waveform overlay (recording or transcribing) */
 	readonly showOverlay = $derived(shouldShowVoiceOverlay(this.phase));
 
-	/** Derived: mic button should show spinner (downloading or loading model) */
+	/** Derived: mic button is in a non-idle voice workflow state. */
 	readonly isBusy = $derived(
 		this.phase === "checking_permission" ||
 		this.phase === "downloading_model" ||
-		this.phase === "loading_model"
+		this.phase === "loading_model" ||
+		this.phase === "transcribing"
 	);
 
 	private readonly unlisteners: UnlistenFn[] = [];
@@ -71,8 +82,6 @@ export class VoiceInputState {
 	private readonly getSelectedLanguage: () => string;
 	private readonly getSelectedModelId: () => string;
 	private isDisposed = false;
-	/** Track which model ID is already loaded in memory to skip re-loading */
-	private loadedModelId: string | null = null;
 
 	constructor(options: {
 		sessionId: string;
@@ -116,14 +125,16 @@ export class VoiceInputState {
 			listen<TranscriptionCompletePayload>("voice://transcription_complete", (event) => {
 				if (this.isDisposed) return;
 				if (event.payload.session_id !== this.sessionId) return;
+				const text = event.payload.text.trim();
 				log("transcription_complete event", {
 					textLength: event.payload.text.length,
+					trimmedTextLength: text.length,
+					textPreview: previewText(event.payload.text),
 					language: event.payload.language,
 					duration_ms: event.payload.duration_ms,
 					phase: this.phase,
 				});
 				this.clearWatchdog();
-				const text = event.payload.text.trim();
 				if (text) {
 					this.onTranscriptionReady?.(text);
 				} else {
@@ -194,6 +205,43 @@ export class VoiceInputState {
 			return;
 		}
 		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+		this.startPressAndHoldTimer();
+	}
+
+	/** Called on keydown for keyboard press-and-hold interactions. */
+	onKeyboardHoldStart(): void {
+		log("onKeyboardHoldStart", { phase: this.phase });
+		if (this.phase !== "idle") {
+			log("onKeyboardHoldStart: ignored (not idle)");
+			return;
+		}
+		this.clearPressTimer();
+		this.isPressAndHold = true;
+		playSound(SoundEffect.SoundUp);
+		log("keyboard press-and-hold: starting recording immediately");
+		this.startRecording();
+	}
+
+	/** Called on keyup for keyboard press-and-hold interactions. */
+	onKeyboardHoldEnd(): void {
+		log("onKeyboardHoldEnd", {
+			phase: this.phase,
+			pressTimerActive: this.pressTimer !== null,
+			isPressAndHold: this.isPressAndHold,
+		});
+		if (this.pressTimer !== null) {
+			this.clearPressTimer();
+			this.isPressAndHold = false;
+			return;
+		}
+		if (this.isPressAndHold && this.phase === "recording") {
+			log("keyboard press-and-hold release: stopping recording");
+			playSound(SoundEffect.SoundDown);
+			this.stopRecording();
+		}
+	}
+
+	private startPressAndHoldTimer(): void {
 		this.clearPressTimer();
 		this.pressTimer = setTimeout(() => {
 			if (this.isDisposed) return;
@@ -213,14 +261,22 @@ export class VoiceInputState {
 			if (this.phase === "idle") {
 				this.isPressAndHold = false;
 				log("click-to-toggle: starting recording");
+				playSound(SoundEffect.SoundUp);
 				this.startRecording();
 			} else if (this.phase === "recording") {
 				log("click-to-toggle: stopping recording");
+				playSound(SoundEffect.SoundDown);
 				this.stopRecording();
 			}
 		} else if (this.isPressAndHold && this.phase === "recording") {
 			// Released after threshold → end hold
 			log("press-and-hold release: stopping recording");
+			playSound(SoundEffect.SoundDown);
+			this.stopRecording();
+		} else if (this.phase === "recording") {
+			// Click-to-toggle stop: pointerdown was ignored while recording, so stop on release.
+			log("click-to-toggle: stopping recording");
+			playSound(SoundEffect.SoundDown);
 			this.stopRecording();
 		}
 	}
@@ -239,24 +295,28 @@ export class VoiceInputState {
 
 	/** Manual stop (called from overlay Stop button or keyboard). */
 	stopRecording(): void {
-		log("stopRecording()", { phase: this.phase });
+		log("stopRecording()", {
+			phase: this.phase,
+			currentLevel: this.waveform.currentLevel,
+			meterLevels: this.waveform.meterLevels,
+		});
 		if (this.phase !== "recording") {
 			log("stopRecording: ignored (not recording)");
 			return;
 		}
 		this.waveform.reset();
+		this.transitionTo("transcribing");
+		this.startWatchdog();
 		const selectedLanguage = this.getSelectedLanguage();
 		const language = selectedLanguage === "auto" ? null : selectedLanguage;
 		log("calling tauriClient.voice.stopRecording", { sessionId: this.sessionId, language });
 		tauriClient.voice.stopRecording(this.sessionId, language).match(
 			() => {
 				log("stopRecording: success, waiting for transcription event");
-				// Transcription result will arrive via event
-				this.transitionTo("transcribing");
-				this.startWatchdog();
 			},
 			(err: AppError) => {
 				log("stopRecording: FAILED", { error: err.message });
+				this.clearWatchdog();
 				this.setError(err.message ?? m.voice_error_stop_failed());
 			},
 		);
@@ -297,10 +357,12 @@ export class VoiceInputState {
 
 		log("calling tauriClient.voice.getModelStatus", { modelId: selectedModelId });
 		tauriClient.voice.getModelStatus(selectedModelId).match(
-			(modelInfo: { is_downloaded: boolean }) => {
-				log("getModelStatus: result", { is_downloaded: modelInfo.is_downloaded });
-				if (this.isDisposed) {
-					log("getModelStatus: disposed, aborting");
+			(modelInfo) => {
+				log("getModelStatus: result", {
+					is_downloaded: modelInfo.is_downloaded,
+					is_loaded: modelInfo.is_loaded,
+				});
+				if (!this.shouldContinueFromPhase("checking_permission", "getModelStatus")) {
 					return;
 				}
 				if (!modelInfo.is_downloaded) {
@@ -310,8 +372,7 @@ export class VoiceInputState {
 					tauriClient.voice.downloadModel(selectedModelId).match(
 						() => {
 							log("downloadModel: success");
-							if (this.isDisposed) {
-								log("downloadModel: disposed after download, aborting");
+							if (!this.shouldContinueFromPhase("downloading_model", "downloadModel")) {
 								return;
 							}
 							this.loadModelAndRecord(selectedModelId);
@@ -321,6 +382,12 @@ export class VoiceInputState {
 						this.setError(err.message ?? m.voice_error_download_failed());
 					},
 					);
+				} else if (modelInfo.is_loaded) {
+					log("getModelStatus: model already loaded, starting recording immediately");
+					if (!this.shouldContinueFromPhase("checking_permission", "getModelStatus.is_loaded")) {
+						return;
+					}
+					this.beginRecording();
 				} else {
 					this.loadModelAndRecord(selectedModelId);
 				}
@@ -335,13 +402,6 @@ export class VoiceInputState {
 	private loadModelAndRecord(modelId: string): void {
 		log("loadModelAndRecord()", { modelId, phase: this.phase });
 
-		// Skip loading if this model is already in memory
-		if (this.loadedModelId === modelId) {
-			log("loadModelAndRecord: model already loaded, skipping to startRecording");
-			this.beginRecording();
-			return;
-		}
-
 		this.transitionTo("loading_model");
 		this.isLoadingModel = true;
 
@@ -352,7 +412,6 @@ export class VoiceInputState {
 				const elapsed = Math.round(performance.now() - t0);
 				log("loadModel: success", { elapsed_ms: elapsed });
 				this.isLoadingModel = false;
-				this.loadedModelId = modelId;
 				if (this.isDisposed) {
 					log("loadModel: disposed after load, aborting");
 					return;
@@ -434,5 +493,19 @@ export class VoiceInputState {
 			clearTimeout(this.transcribingWatchdogTimer);
 			this.transcribingWatchdogTimer = null;
 		}
+	}
+
+	private shouldContinueFromPhase(expectedPhase: VoiceInputPhase, operation: string): boolean {
+		if (this.isDisposed) {
+			log(`${operation}: disposed, aborting`);
+			return false;
+		}
+
+		if (this.phase !== expectedPhase) {
+			log(`${operation}: phase changed, aborting`, { expectedPhase, phase: this.phase });
+			return false;
+		}
+
+		return true;
 	}
 }

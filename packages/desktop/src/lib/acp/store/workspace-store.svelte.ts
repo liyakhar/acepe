@@ -18,13 +18,25 @@ import type { FilePanel } from "./file-panel-type.js";
 import type { PanelStore } from "./panel-store.svelte.js";
 import type { SessionStore } from "./session-store.svelte.js";
 import type { TerminalPanel } from "./terminal-panel-type.js";
-import type {
-	PersistedBrowserPanelState,
-	PersistedFilePanelState,
-	PersistedReviewFullscreenState,
-	PersistedSqlStudioState,
-	PersistedTerminalPanelState,
-	PersistedWorkspaceState,
+import {
+	MIN_PANEL_WIDTH,
+	type AgentWorkspacePanel,
+	type BrowserWorkspacePanel,
+	type FileWorkspacePanel,
+	type Panel,
+	type PersistedBrowserPanelState,
+	type PersistedBrowserWorkspacePanelState,
+	type PersistedFilePanelState,
+	type PersistedFileWorkspacePanelState,
+	type PersistedAgentWorkspacePanelState,
+	type PersistedReviewFullscreenState,
+	type PersistedSqlStudioState,
+	type PersistedTerminalPanelState,
+	type PersistedTerminalWorkspacePanelState,
+	type PersistedWorkspacePanelState,
+	type PersistedWorkspaceState,
+	type TerminalWorkspacePanel,
+	type WorkspacePanel,
 } from "./types.js";
 
 const WORKSPACE_STORE_KEY = Symbol("workspace-store");
@@ -56,6 +68,7 @@ export function hydratePersistedFilePanels(
 ): FilePanel[] {
 	return persistedFilePanels.map((panel) => ({
 		id: panel.id ?? createId(),
+		kind: "file",
 		filePath: panel.filePath,
 		projectPath: panel.projectPath,
 		ownerPanelId: panel.ownerPanelId ?? null,
@@ -87,8 +100,10 @@ export function hydratePersistedTerminalPanels(
 ): TerminalPanel[] {
 	return persisted.map((panel) => ({
 		id: panel.id ?? crypto.randomUUID(),
+		kind: "terminal",
 		projectPath: panel.projectPath,
 		width: panel.width,
+		ownerPanelId: null,
 		ptyId: null,
 		shell: null,
 	}));
@@ -116,12 +131,133 @@ export function hydratePersistedBrowserPanels(
 ): BrowserPanel[] {
 	return persisted.map((panel) => ({
 		id: crypto.randomUUID(),
+		kind: "browser",
 		// Backward compat: panels persisted before projectPath field was added
 		projectPath: "projectPath" in panel ? panel.projectPath : "",
 		url: panel.url,
 		title: panel.title,
 		width: panel.width,
+		ownerPanelId: null,
 	}));
+}
+
+export function serializeWorkspacePanels(
+	workspacePanels: ReadonlyArray<WorkspacePanel>
+): PersistedWorkspacePanelState[] {
+	return workspacePanels.map((panel) => {
+		if (panel.kind === "agent") {
+			const persisted: PersistedAgentWorkspacePanelState = {
+				id: panel.id,
+				kind: "agent",
+				projectPath: panel.projectPath,
+				width: panel.width,
+				ownerPanelId: panel.ownerPanelId,
+				sessionId: panel.sessionId,
+				pendingProjectSelection: panel.pendingProjectSelection,
+				selectedAgentId: panel.selectedAgentId,
+				agentId: panel.agentId,
+				sessionTitle: panel.sessionTitle ?? undefined,
+			};
+			return persisted;
+		}
+
+		if (panel.kind === "file") {
+			const persisted: PersistedFileWorkspacePanelState = {
+				id: panel.id,
+				kind: "file",
+				projectPath: panel.projectPath,
+				width: panel.width,
+				ownerPanelId: panel.ownerPanelId,
+				filePath: panel.filePath,
+				targetLine: panel.targetLine,
+				targetColumn: panel.targetColumn,
+			};
+			return persisted;
+		}
+
+		if (panel.kind === "terminal") {
+			const persisted: PersistedTerminalWorkspacePanelState = {
+				id: panel.id,
+				kind: "terminal",
+				projectPath: panel.projectPath,
+				width: panel.width,
+				ownerPanelId: panel.ownerPanelId,
+			};
+			return persisted;
+		}
+
+		const persisted: PersistedBrowserWorkspacePanelState = {
+			id: panel.id,
+			kind: "browser",
+			projectPath: panel.projectPath,
+			width: panel.width,
+			ownerPanelId: panel.ownerPanelId,
+			url: panel.url,
+			title: panel.title,
+		};
+		return persisted;
+	});
+}
+
+export function hydratePersistedWorkspacePanels(
+	persistedPanels: ReadonlyArray<PersistedWorkspacePanelState>
+): WorkspacePanel[] {
+	return persistedPanels.map((panel) => {
+		const clampedWidth = Math.max(panel.width, MIN_PANEL_WIDTH);
+		if (panel.kind === "agent") {
+			const hydrated: AgentWorkspacePanel = {
+				id: panel.id ? panel.id : crypto.randomUUID(),
+				kind: "agent",
+				projectPath: panel.projectPath,
+				width: clampedWidth,
+				ownerPanelId: panel.ownerPanelId,
+				sessionId: panel.sessionId,
+				pendingProjectSelection: panel.pendingProjectSelection,
+				selectedAgentId: panel.selectedAgentId,
+				agentId: panel.agentId,
+				sessionTitle: panel.sessionTitle ? panel.sessionTitle : null,
+			};
+			return hydrated;
+		}
+
+		if (panel.kind === "file") {
+			const hydrated: FileWorkspacePanel = {
+				id: panel.id ? panel.id : crypto.randomUUID(),
+				kind: "file",
+				projectPath: panel.projectPath,
+				width: clampedWidth,
+				ownerPanelId: panel.ownerPanelId,
+				filePath: panel.filePath,
+				targetLine: panel.targetLine,
+				targetColumn: panel.targetColumn,
+			};
+			return hydrated;
+		}
+
+		if (panel.kind === "terminal") {
+			const hydrated: TerminalWorkspacePanel = {
+				id: panel.id ? panel.id : crypto.randomUUID(),
+				kind: "terminal",
+				projectPath: panel.projectPath,
+				width: clampedWidth,
+				ownerPanelId: panel.ownerPanelId,
+				ptyId: null,
+				shell: null,
+			};
+			return hydrated;
+		}
+
+		const hydrated: BrowserWorkspacePanel = {
+			id: panel.id ? panel.id : crypto.randomUUID(),
+			kind: "browser",
+			projectPath: panel.projectPath,
+			width: clampedWidth,
+			ownerPanelId: panel.ownerPanelId,
+			url: panel.url,
+			title: panel.title,
+		};
+		return hydrated;
+	});
 }
 
 /**
@@ -191,8 +327,12 @@ export class WorkspaceStore {
 	persist(immediate = false): void {
 		const saveState = () => {
 			this.persistDebounce = null;
+			const topLevelWorkspacePanels = this.panelStore.workspacePanels.filter(
+				(panel) => panel.kind === "agent" || panel.ownerPanelId === null
+			);
 			const state: PersistedWorkspaceState = {
-				version: 9,
+				version: 10,
+				workspacePanels: serializeWorkspacePanels(this.panelStore.workspacePanels),
 				panels: this.panelStore.panels.map((p) => {
 					// Use immutable session identity when possible to avoid reconstructing full session objects.
 					const sessionIdentity = p.sessionId
@@ -229,7 +369,7 @@ export class WorkspaceStore {
 				filePanels: serializeFilePanels(this.panelStore.filePanels),
 				activeFilePanelIdByOwnerPanelId: this.panelStore.getActiveFilePanelIdByOwnerPanelIdRecord(),
 				focusedPanelIndex: this.panelStore.focusedPanelId
-					? this.panelStore.panels.findIndex((p) => p.id === this.panelStore.focusedPanelId)
+					? topLevelWorkspacePanels.findIndex((p) => p.id === this.panelStore.focusedPanelId)
 					: null,
 				panelContainerScrollX: this.panelStore.scrollX,
 				savedAt: new Date().toISOString(),
@@ -240,7 +380,7 @@ export class WorkspaceStore {
 				projectFileViewModes: this.providers.getProjectFileViewModes?.() ?? {},
 				// Fullscreen state
 				fullscreenPanelIndex: this.panelStore.fullscreenPanelId
-					? this.panelStore.panels.findIndex((p) => p.id === this.panelStore.fullscreenPanelId)
+					? topLevelWorkspacePanels.findIndex((p) => p.id === this.panelStore.fullscreenPanelId)
 					: null,
 				// SQL Studio state
 				sqlStudio: this.providers.getSqlStudioState?.(),
@@ -249,7 +389,6 @@ export class WorkspaceStore {
 				// Terminal + browser panels (version 7+)
 				terminalPanels: serializeTerminalPanels(this.panelStore.terminalPanels),
 				browserPanels: serializeBrowserPanels(this.panelStore.browserPanels),
-				fullscreenAuxPanel: this.panelStore.fullscreenAuxPanel ?? undefined,
 				// Embedded terminal tabs per panel (version 9+)
 				embeddedTerminalTabs: this.panelStore.embeddedTerminals.serialize(),
 				// View mode state (version 8+)
@@ -281,18 +420,37 @@ export class WorkspaceStore {
 	 * Restore workspace state from persisted data.
 	 * Returns list of session IDs that need to be loaded.
 	 */
-	restore(state: PersistedWorkspaceState): string[] {
-		logger.debug("Restoring workspace", {
-			panelCount: state.panels.length,
-			version: state.version,
-		});
+		restore(state: PersistedWorkspaceState): string[] {
+			logger.debug("Restoring workspace", {
+				panelCount: state.workspacePanels ? state.workspacePanels.length : state.panels.length,
+				version: state.version,
+			});
 
-		// Restore panels with new IDs, preserving hot state for later
+			if (state.workspacePanels && state.workspacePanels.length > 0) {
+				const restoredWorkspacePanels = hydratePersistedWorkspacePanels(state.workspacePanels);
+				this.panelStore.workspacePanels = restoredWorkspacePanels;
+
+				const restoredAgentPanels = restoredWorkspacePanels.filter(
+					(panel): panel is AgentWorkspacePanel => panel.kind === "agent"
+				);
+
+				if (restoredAgentPanels.length > 0) {
+					this.panelStore.focusedPanelId = restoredAgentPanels[0].id;
+				}
+
+				const sessionIds = restoredAgentPanels
+					.map((panel) => panel.sessionId)
+					.filter((id): id is string => id !== null);
+
+				return sessionIds;
+			}
+
+			// Restore panels with new IDs, preserving hot state for later
 		const panelScrollPositions: Array<{ id: string; scrollTop: number }> = [];
 		const panelPlanSidebarStates: Array<{ id: string; expanded: boolean }> = [];
 		const panelMessageDrafts: Array<{ id: string; draft: string }> = [];
 		const restoredPanelIdByPersistedPanelId = new SvelteMap<string, string>();
-		const restoredPanels = state.panels.map((p, index) => {
+		const restoredPanels: Panel[] = state.panels.map((p, index) => {
 			const id = crypto.randomUUID();
 			if (p.id) {
 				restoredPanelIdByPersistedPanelId.set(p.id, id);
@@ -310,6 +468,8 @@ export class WorkspaceStore {
 			}
 			return {
 				id,
+				kind: "agent",
+				ownerPanelId: null,
 				sessionId: p.sessionId,
 				width: p.width,
 				pendingProjectSelection: p.pendingProjectSelection || false,
@@ -467,12 +627,6 @@ export class WorkspaceStore {
 				restoredPanelIdByPersistedPanelId,
 				selectedTabByPanelId
 			);
-		}
-
-		// Restore fullscreen aux panel selection (version 7+)
-		if (state.fullscreenAuxPanel) {
-			this.panelStore.fullscreenAuxPanel =
-				state.fullscreenAuxPanel as typeof this.panelStore.fullscreenAuxPanel;
 		}
 
 		// Restore sidebar card collapse state

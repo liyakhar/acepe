@@ -6,4 +6,6 @@ export type ProjectCardData = {
 	project: Project;
 	branch: string | null;
 	gitStatus: ReadonlyArray<FileGitStatus> | null;
+	ahead: number | null;
+	behind: number | null;
 };

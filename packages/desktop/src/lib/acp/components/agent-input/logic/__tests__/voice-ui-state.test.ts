@@ -13,7 +13,7 @@ describe("voice-ui-state", () => {
 	];
 
 	const OVERLAY_PHASES: VoiceInputPhase[] = [
-		"transcribing", "error",
+		"error",
 	];
 
 	describe("canCancelVoiceInteraction", () => {

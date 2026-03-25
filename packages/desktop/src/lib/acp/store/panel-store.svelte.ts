@@ -36,29 +36,30 @@ import { DEFAULT_REVIEW_PANEL_WIDTH, MIN_REVIEW_PANEL_WIDTH } from "./review-pan
 import type { SessionStore } from "./session-store.svelte.js";
 import type { TerminalPanel } from "./terminal-panel-type.js";
 import { DEFAULT_TERMINAL_PANEL_WIDTH, MIN_TERMINAL_PANEL_WIDTH } from "./terminal-panel-type.js";
-import type { Panel, PanelHotState, SessionEntry, ViewMode } from "./types.js";
+import type {
+	AgentWorkspacePanel,
+	BrowserWorkspacePanel,
+	FileWorkspacePanel,
+	Panel,
+	PanelHotState,
+	SessionEntry,
+	TerminalWorkspacePanel,
+	ViewMode,
+	WorkspacePanel,
+	WorkspacePanelKind,
+} from "./types.js";
 import { DEFAULT_PANEL_HOT_STATE, DEFAULT_PANEL_WIDTH, MIN_PANEL_WIDTH } from "./types.js";
 
 const PANEL_STORE_KEY = Symbol("panel-store");
 const logger = createLogger({ id: "panel-store", name: "PanelStore" });
 const DEFAULT_ATTACHED_FILE_PANEL_WIDTH = DEFAULT_FILE_PANEL_WIDTH;
 
-type FullscreenAuxPanelRef = {
-	kind: "file" | "review" | "terminal" | "git" | "browser";
-	id: string;
-};
-
 export class PanelStore {
-	panels = $state<Panel[]>([]);
-	filePanels = $state<FilePanel[]>([]);
+	workspacePanels = $state<WorkspacePanel[]>([]);
 	reviewPanels = $state<ReviewPanel[]>([]);
-	terminalPanels = $state<TerminalPanel[]>([]);
 	gitPanels = $state<GitPanel[]>([]);
-	browserPanels = $state<BrowserPanel[]>([]);
 	focusedPanelId = $state<string | null>(null);
 	fullscreenPanelId = $state<string | null>(null);
-	fullscreenAuxPanel = $state<FullscreenAuxPanelRef | null>(null);
-	fullscreenAuxOnly = $state(false);
 	scrollX = $state<number>(0);
 
 	// View mode: "single" (one session), "project" (one project), "multi" (all projects)
@@ -106,6 +107,83 @@ export class PanelStore {
 		private onPersist: () => void
 	) {
 		this.embeddedTerminals = new EmbeddedTerminalStore(onPersist);
+	}
+
+	get panels(): Panel[] {
+		return this.workspacePanels.filter(
+			(panel): panel is Panel => panel.kind === "agent" && panel.ownerPanelId === null
+		);
+	}
+
+	set panels(nextPanels: Panel[]) {
+		this.replaceWorkspacePanels("agent", nextPanels);
+	}
+
+	get filePanels(): FilePanel[] {
+		return this.workspacePanels.filter((panel): panel is FileWorkspacePanel => panel.kind === "file");
+	}
+
+	set filePanels(nextPanels: FilePanel[]) {
+		this.replaceWorkspacePanels("file", nextPanels);
+	}
+
+	get terminalPanels(): TerminalPanel[] {
+		return this.workspacePanels.filter(
+			(panel): panel is TerminalWorkspacePanel => panel.kind === "terminal"
+		);
+	}
+
+	set terminalPanels(nextPanels: TerminalPanel[]) {
+		this.replaceWorkspacePanels("terminal", nextPanels);
+	}
+
+	get browserPanels(): BrowserPanel[] {
+		return this.workspacePanels.filter(
+			(panel): panel is BrowserWorkspacePanel => panel.kind === "browser"
+		);
+	}
+
+	set browserPanels(nextPanels: BrowserPanel[]) {
+		this.replaceWorkspacePanels("browser", nextPanels);
+	}
+
+	private replaceWorkspacePanels(kind: WorkspacePanelKind, nextPanels: readonly WorkspacePanel[]): void {
+		const remainingPanels = this.workspacePanels.filter((panel) => panel.kind !== kind);
+		this.workspacePanels = Array.from(nextPanels).concat(remainingPanels);
+	}
+
+	private isTopLevelWorkspacePanel(panel: WorkspacePanel): boolean {
+		if (panel.kind === "agent") {
+			return true;
+		}
+		return panel.ownerPanelId === null;
+	}
+
+	private findTopLevelWorkspacePanel(panelId: string): WorkspacePanel | undefined {
+		return this.workspacePanels.find(
+			(panel) => panel.id === panelId && this.isTopLevelWorkspacePanel(panel)
+		);
+	}
+
+	private getTopLevelWorkspacePanels(): WorkspacePanel[] {
+		return this.workspacePanels.filter((panel) => this.isTopLevelWorkspacePanel(panel));
+	}
+
+	private getNextTopLevelPanelId(closedPanelId: string): string | null {
+		const topLevelPanels = this.getTopLevelWorkspacePanels();
+		const closedIndex = topLevelPanels.findIndex((panel) => panel.id === closedPanelId);
+		if (closedIndex === -1) {
+			return this.focusedPanelId;
+		}
+
+		const remainingPanels = topLevelPanels.filter((panel) => panel.id !== closedPanelId);
+		if (remainingPanels.length === 0) {
+			return null;
+		}
+
+		const nextIndex = Math.min(closedIndex, remainingPanels.length - 1);
+		const nextPanel = remainingPanels[nextIndex];
+		return nextPanel ? nextPanel.id : null;
 	}
 
 	// Derived lookups
@@ -210,6 +288,8 @@ export class PanelStore {
 
 		const panel: Panel = {
 			id: crypto.randomUUID(),
+			kind: "agent",
+			ownerPanelId: null,
 			sessionId,
 			width,
 			pendingProjectSelection: false,
@@ -254,6 +334,8 @@ export class PanelStore {
 	): Panel {
 		const panel: Panel = {
 			id: options.id ?? crypto.randomUUID(),
+			kind: "agent",
+			ownerPanelId: null,
 			sessionId: null,
 			width: DEFAULT_PANEL_WIDTH,
 			pendingProjectSelection: options.requireProjectSelection ?? false,
@@ -292,6 +374,24 @@ export class PanelStore {
 	 * - Focus/fullscreen state
 	 */
 	closePanel(panelId: string): void {
+		const panel = this.findTopLevelWorkspacePanel(panelId);
+		if (!panel) return;
+
+		if (panel.kind === "file") {
+			this.closeFilePanel(panelId);
+			return;
+		}
+
+		if (panel.kind === "terminal") {
+			this.closeTerminalPanel(panelId);
+			return;
+		}
+
+		if (panel.kind === "browser") {
+			this.closeBrowserPanel(panelId);
+			return;
+		}
+
 		const index = this.panels.findIndex((p) => p.id === panelId);
 		if (index === -1) return;
 
@@ -323,8 +423,6 @@ export class PanelStore {
 			}
 		}
 
-		this.reconcileFullscreenAuxPanel();
-
 		this.onPersist();
 		logger.debug("Closed panel", { panelId });
 	}
@@ -343,7 +441,7 @@ export class PanelStore {
 	 * Focus a panel.
 	 */
 	focusPanel(panelId: string): void {
-		if (this.panels.some((p) => p.id === panelId)) {
+		if (this.findTopLevelWorkspacePanel(panelId)) {
 			this.focusedPanelId = panelId;
 			this.onPanelFocused?.(panelId);
 			this.onPersist();
@@ -360,7 +458,7 @@ export class PanelStore {
 		}
 		// In focused view, switch to the panel's project so it becomes visible
 		if (this.viewMode !== "multi") {
-			const panel = this.panels.find((p) => p.id === panelId);
+			const panel = this.findTopLevelWorkspacePanel(panelId);
 			if (panel?.projectPath) {
 				this.focusedViewProjectPath = panel.projectPath;
 			}
@@ -383,7 +481,6 @@ export class PanelStore {
 	 * Toggle fullscreen for a panel.
 	 */
 	toggleFullscreen(panelId: string): void {
-		this.fullscreenAuxOnly = false;
 		this.fullscreenPanelId = this.fullscreenPanelId === panelId ? null : panelId;
 	}
 
@@ -391,7 +488,6 @@ export class PanelStore {
 	 * Exit fullscreen (clear main fullscreen panel). Aux panel selection is left as-is.
 	 */
 	exitFullscreen(): void {
-		this.fullscreenAuxOnly = false;
 		this.fullscreenPanelId = null;
 	}
 
@@ -401,25 +497,13 @@ export class PanelStore {
 	 * When there are no agent panels, enters aux-only fullscreen mode.
 	 */
 	enterTerminalFullscreen(terminalPanelId: string): void {
-		this.fullscreenAuxPanel = { kind: "terminal", id: terminalPanelId };
-		if (this.fullscreenPanelId === null) {
-			const fallbackPanelId = this.focusedPanelId ?? this.panels[0]?.id ?? null;
-			if (fallbackPanelId !== null) {
-				this.fullscreenAuxOnly = false;
-				this.fullscreenPanelId = fallbackPanelId;
-				return;
-			}
-			this.fullscreenAuxOnly = true;
-			return;
-		}
-		this.fullscreenAuxOnly = false;
+		this.fullscreenPanelId = terminalPanelId;
 	}
 
 	/**
 	 * Switch to a different fullscreen panel.
 	 */
 	switchFullscreen(panelId: string): void {
-		this.fullscreenAuxOnly = false;
 		this.fullscreenPanelId = panelId;
 	}
 
@@ -429,8 +513,18 @@ export class PanelStore {
 	 */
 	updatePanelSession(panelId: string, sessionId: string | null): void {
 		logger.info("[worktree-flow] updatePanelSession", { panelId, sessionId });
+		const session = sessionId ? this.sessionStore.getSessionCold(sessionId) : null;
 		this.panels = this.panels.map((p) =>
-			p.id === panelId ? { ...p, sessionId, pendingProjectSelection: false } : p
+			p.id === panelId
+				? {
+					...p,
+					sessionId,
+					pendingProjectSelection: false,
+					projectPath: session?.projectPath ?? p.projectPath,
+					agentId: session?.agentId ?? p.agentId,
+					sessionTitle: session?.title ?? p.sessionTitle,
+				}
+				: p
 		);
 		this.onPersist();
 	}
@@ -480,8 +574,6 @@ export class PanelStore {
 		this.browserPanels = [];
 		this.focusedPanelId = null;
 		this.fullscreenPanelId = null;
-		this.fullscreenAuxPanel = null;
-		this.fullscreenAuxOnly = false;
 		this.onPersist();
 	}
 
@@ -489,8 +581,6 @@ export class PanelStore {
 		this.viewMode = mode;
 		// Reset fullscreen state — each view mode manages its own layout.
 		this.fullscreenPanelId = null;
-		this.fullscreenAuxPanel = null;
-		this.fullscreenAuxOnly = false;
 		this.onPersist();
 	}
 
@@ -664,6 +754,37 @@ export class PanelStore {
 	}
 
 	// ============================================
+	// BROWSER SIDEBAR MANAGEMENT
+	// ============================================
+
+	/**
+	 * Set the browser sidebar expanded state for a panel.
+	 */
+	setBrowserSidebarExpanded(panelId: string, expanded: boolean, url?: string): void {
+		this.updateHotState(panelId, {
+			browserSidebarExpanded: expanded,
+			...(url != null ? { browserSidebarUrl: url } : {}),
+		});
+		this.onPersist();
+		logger.debug("Browser sidebar state updated", { panelId, expanded, url });
+	}
+
+	/**
+	 * Toggle the browser sidebar expanded state for a panel.
+	 */
+	toggleBrowserSidebar(panelId: string): void {
+		const current = this.getHotState(panelId).browserSidebarExpanded;
+		this.setBrowserSidebarExpanded(panelId, !current);
+	}
+
+	/**
+	 * Check if the browser sidebar is expanded for a panel.
+	 */
+	isBrowserSidebarExpanded(panelId: string): boolean {
+		return this.getHotState(panelId).browserSidebarExpanded;
+	}
+
+	// ============================================
 	// MESSAGE DRAFT MANAGEMENT
 	// ============================================
 
@@ -773,7 +894,8 @@ export class PanelStore {
 				this.ensureOwnerPanelWidth(ownerPanelId, existing.width);
 				this.activeFilePanelIdByOwnerPanelId.set(ownerPanelId, existing.id);
 			} else {
-				this.fullscreenAuxPanel = { kind: "file", id: existing.id };
+				this.focusedPanelId = existing.id;
+				this.fullscreenPanelId = existing.id;
 			}
 			logger.debug("File already open, focusing existing panel", { filePath, projectPath });
 			return existing;
@@ -781,6 +903,7 @@ export class PanelStore {
 
 		const panel: FilePanel = {
 			id: crypto.randomUUID(),
+			kind: "file",
 			filePath,
 			projectPath,
 			ownerPanelId,
@@ -794,7 +917,8 @@ export class PanelStore {
 			this.ensureOwnerPanelWidth(ownerPanelId, panel.width);
 			this.activeFilePanelIdByOwnerPanelId.set(ownerPanelId, panel.id);
 		} else {
-			this.fullscreenAuxPanel = { kind: "file", id: panel.id };
+			this.focusedPanelId = panel.id;
+			this.fullscreenPanelId = panel.id;
 		}
 		this.onPersist();
 
@@ -807,6 +931,7 @@ export class PanelStore {
 	 */
 	closeFilePanel(panelId: string): void {
 		const panelToClose = this.filePanels.find((p) => p.id === panelId);
+		const nextTopLevelPanelId = panelToClose?.ownerPanelId === null ? this.getNextTopLevelPanelId(panelId) : null;
 		this.filePanels = this.filePanels.filter((p) => p.id !== panelId);
 		if (panelToClose?.ownerPanelId) {
 			const ownerPanelId = panelToClose.ownerPanelId;
@@ -824,7 +949,14 @@ export class PanelStore {
 			}
 			this.resetOwnerPanelWidthIfNoAttached(ownerPanelId);
 		}
-		this.reconcileFullscreenAuxPanel();
+		if (panelToClose?.ownerPanelId === null) {
+			if (this.focusedPanelId === panelId) {
+				this.focusedPanelId = nextTopLevelPanelId;
+			}
+			if (this.fullscreenPanelId === panelId) {
+				this.fullscreenPanelId = nextTopLevelPanelId;
+			}
+		}
 		this.onPersist();
 		logger.debug("Closed file panel", { panelId });
 	}
@@ -926,7 +1058,6 @@ export class PanelStore {
 		// Check if a review panel for this project already exists
 		const existing = this.reviewPanels.find((p) => p.projectPath === projectPath);
 		if (existing) {
-			this.fullscreenAuxPanel = { kind: "review", id: existing.id };
 			logger.debug("Review panel already open, returning existing", { projectPath });
 			return existing;
 		}
@@ -940,7 +1071,6 @@ export class PanelStore {
 		};
 
 		this.reviewPanels = [panel, ...this.reviewPanels];
-		this.fullscreenAuxPanel = { kind: "review", id: panel.id };
 		this.onPersist();
 
 		logger.debug("Opened review panel", { projectPath, panelId: panel.id });
@@ -952,7 +1082,6 @@ export class PanelStore {
 	 */
 	closeReviewPanel(panelId: string): void {
 		this.reviewPanels = this.reviewPanels.filter((p) => p.id !== panelId);
-		this.reconcileFullscreenAuxPanel();
 		this.onPersist();
 		logger.debug("Closed review panel", { panelId });
 	}
@@ -1021,12 +1150,8 @@ export class PanelStore {
 			...this.selectedTerminalPanelIdByProject,
 			[projectPath]: panelId,
 		};
-		if (
-			this.fullscreenPanelId !== null &&
-			this.fullscreenAuxPanel?.kind === "terminal" &&
-			this.getTerminalPanelsForProject(projectPath).some((p) => p.id === panelId)
-		) {
-			this.fullscreenAuxPanel = { kind: "terminal", id: panelId };
+		if (this.fullscreenPanelId !== null && this.getTerminalPanelsForProject(projectPath).some((p) => p.id === panelId)) {
+			this.fullscreenPanelId = panelId;
 		}
 	}
 
@@ -1036,14 +1161,17 @@ export class PanelStore {
 	openTerminalPanel(projectPath: string, width?: number): TerminalPanel {
 		const panel: TerminalPanel = {
 			id: crypto.randomUUID(),
+			kind: "terminal",
 			projectPath,
 			width: width ?? DEFAULT_TERMINAL_PANEL_WIDTH,
+			ownerPanelId: null,
 			ptyId: null,
 			shell: null,
 		};
 
 		this.terminalPanels = [panel, ...this.terminalPanels];
-		this.fullscreenAuxPanel = { kind: "terminal", id: panel.id };
+		this.focusedPanelId = panel.id;
+		this.fullscreenPanelId = panel.id;
 		this.selectedTerminalPanelIdByProject = {
 			...this.selectedTerminalPanelIdByProject,
 			[projectPath]: panel.id,
@@ -1059,6 +1187,7 @@ export class PanelStore {
 	 */
 	closeTerminalPanel(panelId: string): void {
 		const closed = this.terminalPanels.find((p) => p.id === panelId);
+		const nextTopLevelPanelId = closed ? this.getNextTopLevelPanelId(panelId) : null;
 		this.terminalPanels = this.terminalPanels.filter((p) => p.id !== panelId);
 		if (closed) {
 			const forProject = this.terminalPanels.filter((p) => p.projectPath === closed.projectPath);
@@ -1075,17 +1204,20 @@ export class PanelStore {
 					this.selectedTerminalPanelIdByProject = rest;
 				}
 			}
-			// Keep fullscreen aux on same project's next terminal when closing the current aux
-			if (this.fullscreenAuxPanel?.kind === "terminal" && this.fullscreenAuxPanel.id === panelId) {
+			if (this.fullscreenPanelId === panelId) {
 				const nextForProject = this.selectedTerminalPanelIdByProject[closed.projectPath];
 				const nextPanel =
 					nextForProject && this.terminalPanels.find((p) => p.id === nextForProject);
 				if (nextPanel) {
-					this.fullscreenAuxPanel = { kind: "terminal", id: nextPanel.id };
+					this.fullscreenPanelId = nextPanel.id;
+				} else {
+					this.fullscreenPanelId = nextTopLevelPanelId;
 				}
 			}
 		}
-		this.reconcileFullscreenAuxPanel();
+		if (this.focusedPanelId === panelId) {
+			this.focusedPanelId = nextTopLevelPanelId;
+		}
 		this.onPersist();
 		logger.debug("Closed terminal panel", { panelId });
 	}
@@ -1124,10 +1256,8 @@ export class PanelStore {
 		const forProject = this.getTerminalPanelsForProject(projectPath);
 		if (forProject.length > 0) {
 			const first = forProject[0];
-			this.fullscreenAuxPanel = { kind: "terminal", id: first.id };
-			if (this.fullscreenPanelId === null) {
-				this.fullscreenPanelId = this.focusedPanelId ?? this.panels[0]?.id ?? null;
-			}
+			this.focusedPanelId = first.id;
+			this.fullscreenPanelId = first.id;
 			this.selectedTerminalPanelIdByProject = {
 				...this.selectedTerminalPanelIdByProject,
 				[projectPath]: first.id,
@@ -1172,7 +1302,6 @@ export class PanelStore {
 		this.gitPanels = result.panels.map((panel) =>
 			panel.id === activePanelId ? activePanel : panel
 		);
-		this.fullscreenAuxPanel = { kind: "git", id: activePanel.id };
 		this.onPersist();
 
 		logger.debug("Opened git panel", { projectPath, panelId: activePanel.id });
@@ -1184,7 +1313,6 @@ export class PanelStore {
 	 */
 	closeGitPanel(panelId: string): void {
 		this.gitPanels = this.gitPanels.filter((p) => p.id !== panelId);
-		this.reconcileFullscreenAuxPanel();
 		this.onPersist();
 		logger.debug("Closed git panel", { panelId });
 	}
@@ -1227,21 +1355,25 @@ export class PanelStore {
 		}
 		const existing = this.browserPanels.find((p) => p.projectPath === projectPath && p.url === url);
 		if (existing) {
-			this.fullscreenAuxPanel = { kind: "browser", id: existing.id };
+			this.focusedPanelId = existing.id;
+			this.fullscreenPanelId = existing.id;
 			logger.debug("Browser panel already open for URL, focusing", { url, projectPath });
 			return existing;
 		}
 
 		const panel: BrowserPanel = {
 			id: crypto.randomUUID(),
+			kind: "browser",
 			projectPath,
 			url,
 			title: title ?? url,
 			width: DEFAULT_BROWSER_PANEL_WIDTH,
+			ownerPanelId: null,
 		};
 
 		this.browserPanels = [panel, ...this.browserPanels];
-		this.fullscreenAuxPanel = { kind: "browser", id: panel.id };
+		this.focusedPanelId = panel.id;
+		this.fullscreenPanelId = panel.id;
 		this.onPersist();
 
 		logger.debug("Opened browser panel", { url, panelId: panel.id });
@@ -1252,13 +1384,19 @@ export class PanelStore {
 	 * Close a browser panel by ID.
 	 */
 	closeBrowserPanel(panelId: string): void {
+		const nextTopLevelPanelId = this.getNextTopLevelPanelId(panelId);
 		// Close the native webview before removing panel from state.
 		// This ensures cleanup even if the component's onDestroy doesn't fire in time.
 		const label = `browser-${panelId}`;
 		browserWebview.close(label);
 
 		this.browserPanels = this.browserPanels.filter((p) => p.id !== panelId);
-		this.reconcileFullscreenAuxPanel();
+		if (this.focusedPanelId === panelId) {
+			this.focusedPanelId = nextTopLevelPanelId;
+		}
+		if (this.fullscreenPanelId === panelId) {
+			this.fullscreenPanelId = nextTopLevelPanelId;
+		}
 		this.onPersist();
 		logger.debug("Closed browser panel", { panelId });
 	}
@@ -1280,42 +1418,6 @@ export class PanelStore {
 		return this.browserPanels.find((p) => p.id === panelId);
 	}
 
-	private reconcileFullscreenAuxPanel(): void {
-		const current = this.fullscreenAuxPanel;
-		if (
-			current &&
-			((current.kind === "file" && this.filePanels.some((p) => p.id === current.id)) ||
-				(current.kind === "review" && this.reviewPanels.some((p) => p.id === current.id)) ||
-				(current.kind === "terminal" && this.terminalPanels.some((p) => p.id === current.id)) ||
-				(current.kind === "git" && this.gitPanels.some((p) => p.id === current.id)) ||
-				(current.kind === "browser" && this.browserPanels.some((p) => p.id === current.id)))
-		) {
-			return;
-		}
-
-		if (this.filePanels.length > 0) {
-			this.fullscreenAuxPanel = { kind: "file", id: this.filePanels[0].id };
-			return;
-		}
-		if (this.reviewPanels.length > 0) {
-			this.fullscreenAuxPanel = { kind: "review", id: this.reviewPanels[0].id };
-			return;
-		}
-		if (this.terminalPanels.length > 0) {
-			this.fullscreenAuxPanel = { kind: "terminal", id: this.terminalPanels[0].id };
-			return;
-		}
-		if (this.gitPanels.length > 0) {
-			this.fullscreenAuxPanel = { kind: "git", id: this.gitPanels[0].id };
-			return;
-		}
-		if (this.browserPanels.length > 0) {
-			this.fullscreenAuxPanel = { kind: "browser", id: this.browserPanels[0].id };
-			return;
-		}
-
-		this.fullscreenAuxPanel = null;
-	}
 }
 
 /**

@@ -1,8 +1,11 @@
 <script lang="ts">
+import { onMount } from "svelte";
+import { SvelteSet } from "svelte/reactivity";
 import { ProjectLetterBadge, Selector } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { useTheme } from "$lib/components/theme/context.svelte.js";
 import { Skeleton } from "$lib/components/ui/skeleton/index.js";
+import { tauriClient } from "$lib/utils/tauri-client.js";
 import { LOGGER_IDS } from "../constants/logger-ids.js";
 
 import { getAgentIcon } from "../constants/thread-list-constants.js";
@@ -15,6 +18,7 @@ import SelectorCheck from "./selector-check.svelte";
 interface ProjectSelectorProps {
 	selectedProject: Project | null;
 	recentProjects: Project[];
+	missingProjectPaths?: ReadonlySet<string>;
 	onProjectChange: (project: Project) => void;
 	onBrowse: () => void;
 	onImport?: () => void | Promise<void>;
@@ -26,6 +30,7 @@ interface ProjectSelectorProps {
 let {
 	selectedProject,
 	recentProjects,
+	missingProjectPaths,
 	onProjectChange,
 	onBrowse,
 	onImport,
@@ -36,10 +41,24 @@ let {
 
 let selectorRef: { toggle: () => void } | undefined = $state();
 let isOpen = $state(false);
+const localMissingPaths = new SvelteSet<string>();
+const effectiveMissingPaths = $derived(missingProjectPaths ?? localMissingPaths);
 
 const _logger = createLogger({
 	id: LOGGER_IDS.PROJECT_SELECTOR,
 	name: "Project Selector",
+});
+
+onMount(() => {
+	if (missingProjectPaths) return;
+	const paths = recentProjects.map((p) => p.path);
+	if (paths.length === 0) return;
+	void tauriClient.projects.getMissingProjectPaths(paths).match(
+		(missing) => {
+			for (const p of missing) localMissingPaths.add(p);
+		},
+		() => {}
+	);
 });
 
 const themeState = useTheme();
@@ -90,16 +109,27 @@ function handleOpenChange(open: boolean) {
 		{#each recentProjects as project (project.path)}
 			{@const color = getProjectColor(project)}
 			{@const isSelected = project.path === selectedProject?.path}
-			<DropdownMenu.Item
-				onSelect={() => handleProjectSelect(project)}
-				class="group/item py-1 {isSelected ? 'bg-accent' : ''}"
-			>
-				<div class="flex items-center gap-2 w-full min-w-0">
-					<ProjectLetterBadge name={project.name} {color} size={16} />
-					<span class="flex-1 text-sm truncate">{capitalizeName(project.name)}</span>
-					<SelectorCheck visible={isSelected} />
-				</div>
-			</DropdownMenu.Item>
+			{@const isMissing = effectiveMissingPaths.has(project.path)}
+			{#if isMissing}
+				<DropdownMenu.Item disabled class="group/item py-1 opacity-50">
+					<div class="flex items-center gap-2 w-full min-w-0">
+						<ProjectLetterBadge name={project.name} {color} size={16} />
+						<span class="flex-1 text-sm truncate line-through">{capitalizeName(project.name)}</span>
+						<span class="text-[10px] text-destructive/70 shrink-0">Missing</span>
+					</div>
+				</DropdownMenu.Item>
+			{:else}
+				<DropdownMenu.Item
+					onSelect={() => handleProjectSelect(project)}
+					class="group/item py-1 {isSelected ? 'bg-accent' : ''}"
+				>
+					<div class="flex items-center gap-2 w-full min-w-0">
+						<ProjectLetterBadge name={project.name} {color} size={16} />
+						<span class="flex-1 text-sm truncate">{capitalizeName(project.name)}</span>
+						<SelectorCheck visible={isSelected} />
+					</div>
+				</DropdownMenu.Item>
+			{/if}
 		{/each}
 	{/if}
 

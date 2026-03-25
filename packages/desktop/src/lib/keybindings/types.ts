@@ -42,7 +42,7 @@ export type ActionCategory =
  * Represents a keyboard shortcut binding to an action.
  */
 export type Keybinding = {
-	/** Key combination (e.g., "$mod+p", "g c" for sequence) */
+	/** Key combination (e.g., "$mod+p") */
 	key: string;
 	/** Action ID to execute */
 	command: string;
@@ -88,6 +88,7 @@ export type KeybindingErrorCode =
 	| "ACTION_ALREADY_EXISTS"
 	| "CONTEXT_CHECK_FAILED"
 	| "EXECUTION_FAILED"
+	| "INVALID_KEYBINDING"
 	| "INVALID_EXPRESSION"
 	| "BINDING_CONFLICT"
 	| "INSTALL_FAILED";

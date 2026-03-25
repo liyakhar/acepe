@@ -219,7 +219,6 @@ export interface AgentInfo {
 	name: string;
 	description?: string;
 	icon?: string;
-	available?: boolean;
 	availability_kind?: AgentAvailabilityKind;
 }
 

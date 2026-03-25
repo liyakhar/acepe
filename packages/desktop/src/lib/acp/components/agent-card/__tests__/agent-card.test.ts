@@ -29,20 +29,6 @@ describe.skip("AgentCard", () => {
 		expect(button?.className).toContain("border-primary");
 	});
 
-	it("applies disabled styles when isAvailable is false", () => {
-		const { container } = render(AgentCard, {
-			agentId: "test-agent",
-			agentName: "Test Agent",
-			iconSrc: "/test.svg",
-			isAvailable: false,
-		});
-
-		const button = container.querySelector("button");
-		expect(button?.hasAttribute("disabled")).toBe(true);
-		expect(button?.className).toContain("opacity-50");
-		expect(button?.className).toContain("grayscale");
-	});
-
 	it("calls onclick handler when clicked", async () => {
 		let clicked = false;
 		const { getByRole } = render(AgentCard, {

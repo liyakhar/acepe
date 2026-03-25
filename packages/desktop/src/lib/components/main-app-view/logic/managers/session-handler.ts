@@ -165,8 +165,16 @@ export class SessionHandler {
 		panelId: string,
 		project: Pick<Project, "path" | "name">
 	): ResultAsync<void, MainAppViewError> {
-		const panel = this.panelStore.panels.find((p) => p.id === panelId);
-		const selectedAgentId = panel?.selectedAgentId;
+		const panel = this.panelStore.panels.find((p) => p.id === panelId && p.kind === "agent");
+		if (!panel) {
+			console.error("[session-handler] createSessionForProject ABORT — panel not found", {
+				panelId,
+			});
+			return errAsync(
+				new SessionCreationError("", project.path, new Error("Panel not found for project selection"))
+			);
+		}
+		const selectedAgentId = panel.selectedAgentId;
 		if (!selectedAgentId) {
 			console.error("[session-handler] createSessionForProject ABORT — no agent selected", {
 				panelId,

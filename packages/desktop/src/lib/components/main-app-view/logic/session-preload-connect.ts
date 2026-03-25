@@ -50,11 +50,18 @@ export function preloadAndConnectSession(options: SessionPreloadConnectOptions):
 		.preloadSessions([sessionId])
 		.andThen((result) => {
 			if (result.missing.includes(sessionId)) {
-				logger.warn("Session preload returned missing, marking as loaded (empty)", {
+				logger.warn("Session preload returned missing, marking as loaded and connecting empty session", {
 					source,
 					sessionId,
 				});
 				sessionStore.setSessionLoaded(sessionId);
+				sessionStore.connectSession(sessionId).mapErr((error: AppError) => {
+					logger.warn("Failed to connect session after missing preload", {
+						source,
+						sessionId,
+						error,
+					});
+				});
 				return okAsync(undefined);
 			}
 

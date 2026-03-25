@@ -1,9 +1,11 @@
 import {
-	BAR_COUNT,
-	MIN_HEIGHT,
-	MAX_HEIGHT,
+	DEFAULT_METER_BAR_COUNT,
+	MIN_LEVEL,
+	MAX_LEVEL,
+	RESTING_FILL,
 	smooth,
-	buildDisplayHeights,
+	toMeterLevel,
+	buildMeterLevels,
 } from "./waveform-math.js";
 
 /**
@@ -16,36 +18,36 @@ import {
  * - Business logic delegated to waveform-math.ts for pure unit testing.
  */
 export class WaveformState {
-	static readonly BAR_COUNT = BAR_COUNT;
-	static readonly MIN_HEIGHT = MIN_HEIGHT;
-	static readonly MAX_HEIGHT = MAX_HEIGHT;
+	static readonly METER_BAR_COUNT = DEFAULT_METER_BAR_COUNT;
+	static readonly MIN_LEVEL = MIN_LEVEL;
+	static readonly MAX_LEVEL = MAX_LEVEL;
 
-	/** Display-ready bar heights (reactive via $state.raw — single-write per batch). */
-	barHeights = $state.raw<number[]>(new Array(BAR_COUNT).fill(MIN_HEIGHT));
+	readonly barCount: number;
 
-	// --- Non-reactive internals (performance) ---
-	private readonly smoothed = new Float32Array(BAR_COUNT);
-	private writeIndex = 0;
+	/** Display-ready meter fill values (RESTING_FILL..1 for configurable centered bars). */
+	meterLevels = $state.raw<number[]>([]);
+	currentLevel = $state(0);
+
+	private smoothedLevel = 0;
+
+	constructor(barCount: number = DEFAULT_METER_BAR_COUNT) {
+		this.barCount = barCount < 1 ? 1 : Math.floor(barCount);
+		this.meterLevels = new Array(this.barCount).fill(RESTING_FILL);
+	}
 
 	/**
-	 * Push a batch of 3 amplitude values (from batched `voice://amplitude` event).
-	 * Applies asymmetric exponential smoothing and updates `barHeights` with a
-	 * single reactive write.
+	 * Push a batch of 3 amplitude values and derive a single current level meter.
 	 */
 	pushBatch(values: [number, number, number]): void {
-		for (const raw of values) {
-			const idx = this.writeIndex % BAR_COUNT;
-			this.smoothed[idx] = smooth(this.smoothed[idx], raw);
-			this.writeIndex++;
-		}
-		this.barHeights = buildDisplayHeights(this.smoothed, this.writeIndex);
+		this.smoothedLevel = smooth(this.smoothedLevel, toMeterLevel(values));
+		this.currentLevel = this.smoothedLevel;
+		this.meterLevels = buildMeterLevels(this.smoothedLevel, this.barCount);
 	}
 
-	/** Reset all bars to minimum height. */
+	/** Reset the live meter to silence. */
 	reset(): void {
-		this.smoothed.fill(0);
-		this.writeIndex = 0;
-		this.barHeights = new Array(BAR_COUNT).fill(MIN_HEIGHT);
+		this.smoothedLevel = 0;
+		this.currentLevel = 0;
+		this.meterLevels = new Array(this.barCount).fill(RESTING_FILL);
 	}
 }
-

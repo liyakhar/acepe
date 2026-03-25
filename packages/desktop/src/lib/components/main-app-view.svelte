@@ -46,37 +46,43 @@ import { createLogger } from "$lib/acp/utils/logger.js";
 import { ThemeProvider } from "$lib/components/theme/index.js";
 import { KEYBINDING_ACTIONS } from "$lib/keybindings/constants.js";
 import { getKeybindingsService } from "$lib/keybindings/index.js";
-import NotificationCard from "$lib/notifications/notification-card.svelte";
-import type { PopupActionId } from "$lib/notifications/notification-service.svelte.js";
 import {
 	COMPLETION_ACTIONS,
-	dismissNotification,
 	dismissWhere,
-	getNotificationStore,
-	handleNotificationAction,
 	PERMISSION_ACTIONS,
 	QUESTION_ACTIONS,
 	showNotification,
-} from "$lib/notifications/notification-service.svelte.js";
+} from "$lib/notifications/notification-state.js";
 import * as m from "$lib/paraglide/messages.js";
 import type { PlanData } from "$lib/services/converted-session-types.js";
 import { createNotificationPreferencesStore } from "$lib/stores/notification-preferences-store.svelte.js";
 import { createVoiceSettingsStore } from "$lib/stores/voice-settings-store.svelte.js";
 import { createWindowFocusStore } from "$lib/stores/window-focus-store.svelte.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
+import { playSound, preloadSound } from "$lib/acp/utils/sound.js";
+import { SoundEffect } from "$lib/acp/types/sounds.js";
 import { ChangelogModal } from "./changelog-modal/index.js";
+import { FileExplorerModal } from "$lib/acp/components/file-explorer-modal/index.js";
 import EmptyStates from "./main-app-view/components/content/empty-states.svelte";
 import PanelsContainer from "./main-app-view/components/content/panels-container.svelte";
 import AppOverlays from "./main-app-view/components/overlays/app-overlays.svelte";
 import AppSidebar from "./main-app-view/components/sidebar/app-sidebar.svelte";
 import { MainAppViewState } from "./main-app-view/logic/main-app-view-state.svelte.js";
 import { applyDownloadEventToProgress } from "./main-app-view/logic/update-download-progress.js";
+import {
+	applyUpdaterDownloadEvent,
+	createAvailableUpdaterState,
+	createCheckingUpdaterState,
+	createErrorUpdaterState,
+	createIdleUpdaterState,
+	createDownloadingUpdaterState,
+	type UpdaterBannerState,
+} from "./main-app-view/logic/updater-state.js";
 import { getQuestionToolCallBackfill } from "./main-app-view/question-tool-sync.js";
 import { ReviewFullscreenPage } from "./review-fullscreen/index.js";
 import { SettingsPage } from "./settings-page/index.js";
 import SqlStudioPage from "./sql-studio/sql-studio-page.svelte";
 import { TopBar } from "./top-bar/index.js";
-import { UpdatePage, type UpdateState } from "./update-modal/index.js";
 
 function focusOnMount(node: HTMLElement) {
 	node.focus();
@@ -126,7 +132,6 @@ const chatPreferencesStore = createChatPreferencesStore();
 // Notification popup stores
 const windowFocusStore = createWindowFocusStore();
 const notificationPrefsStore = createNotificationPreferencesStore();
-const notificationStore = getNotificationStore();
 
 // Create workspace store first (for persist callback)
 let workspaceStore: ReturnType<typeof createWorkspaceStore>;
@@ -185,7 +190,7 @@ sessionStore.setCallbacks({
 				sessionId: permission.sessionId,
 				sourceId: permission.id,
 			},
-			(actionId: PopupActionId) => {
+			(actionId) => {
 				if (!permissionStore.pending.has(permission.id)) return; // stale
 				if (actionId === "allow") {
 					permissionStore.reply(permission.id, "once");
@@ -220,7 +225,7 @@ sessionStore.setCallbacks({
 				sessionId: question.sessionId,
 				sourceId: question.id,
 			},
-			(actionId: PopupActionId) => {
+			(actionId) => {
 				if (!questionStore.pending.has(question.id)) return; // stale
 				if (actionId === "view") {
 					const panel = panelStore.getPanelBySessionId(question.sessionId);
@@ -284,7 +289,7 @@ sessionStore.setCallbacks({
 				autoDismissMs: 5000,
 				sessionId,
 			},
-			(actionId: PopupActionId) => {
+			(actionId) => {
 				if (actionId === "view") {
 					panelStore.focusPanel(panel.id);
 				}
@@ -424,10 +429,10 @@ async function handleOpenFolder() {
 
 // Update state (for forced auto-updates) - now safe to use $state since we renamed 'state' to 'viewState'
 // Start with null - will be set to "checking" when update check runs (only in production)
-let appUpdateCurrent = $state<UpdateState | null>(null);
-let appUpdateProgress = $state(0);
-let appUpdateTotal = $state<number | undefined>(undefined);
-let appUpdateErrorMessage = $state<string | null>(null);
+let appVersion = $state<string | null>(null);
+let updaterState = $state<UpdaterBannerState>(createIdleUpdaterState());
+let availableUpdate = $state<Awaited<ReturnType<typeof check>> | null>(null);
+let updatePollTimer = $state<ReturnType<typeof setInterval> | null>(null);
 
 // Register urgency jump handler (Cmd+J)
 kb.upsertAction({
@@ -485,67 +490,82 @@ const commandPalette = useAdvancedCommandPalette({
 	},
 });
 
-// Check for updates and force install if available
-function checkAndInstallUpdate(): void {
-	appUpdateCurrent = "checking";
-	appUpdateProgress = 0;
-	appUpdateTotal = undefined;
-	appUpdateErrorMessage = null;
+async function checkForAppUpdate(): Promise<void> {
+	updaterState = createCheckingUpdaterState();
+	const result = await ResultAsync.fromPromise(check(), (e) => e as Error).match(
+		(update) => update,
+		(error) => {
+			logger.error("Update check failed", { error: error.message });
+			updaterState = createErrorUpdaterState(error.message);
+			return null;
+		}
+	);
 
-	ResultAsync.fromPromise(check(), (e) => e as Error)
-		.andThen((update) => {
-			if (!update) {
-				appUpdateCurrent = null; // No update, hide modal
-				logger.info("App is up to date");
-				return okAsync(undefined);
+	if (!result) {
+		availableUpdate = null;
+		if (updaterState.kind !== "error") {
+			updaterState = createIdleUpdaterState();
+		}
+		playSound(SoundEffect.AppStartFinish);
+		return;
+	}
+
+	availableUpdate = result;
+	logger.info("Update available", { version: result.version });
+	updaterState = createAvailableUpdaterState(result.version);
+	playSound(SoundEffect.AppStartFinish);
+}
+
+async function installAvailableUpdate(): Promise<void> {
+	if (!availableUpdate) {
+		return;
+	}
+
+	updaterState = createDownloadingUpdaterState(availableUpdate.version);
+	await ResultAsync.fromPromise(
+		availableUpdate.downloadAndInstall((event: DownloadEvent) => {
+			updaterState = applyUpdaterDownloadEvent(updaterState, event);
+			if (event.event === "Finished") {
+				logger.info("Download finished, relaunching...");
 			}
-
-			logger.info("Update available", { version: update.version });
-			appUpdateCurrent = "downloading";
-
-			return ResultAsync.fromPromise(
-				update.downloadAndInstall((event: DownloadEvent) => {
-					const nextProgress = applyDownloadEventToProgress(
-						{
-							downloadedBytes: appUpdateProgress,
-							totalBytes: appUpdateTotal,
-						},
-						event
-					);
-					appUpdateProgress = nextProgress.downloadedBytes;
-					appUpdateTotal = nextProgress.totalBytes;
-
-					if (event.event === "Started") {
-						logger.debug("Download started", { total: appUpdateTotal });
-					}
-
-					if (event.event === "Finished") {
-						logger.info("Download finished, relaunching...");
-					}
-				}),
-				(e) => e as Error
-			).andThen(() => ResultAsync.fromPromise(relaunch(), (e) => e as Error));
-		})
-		.mapErr((error) => {
-			appUpdateCurrent = "error";
-			// Log the full error for debugging
-			console.error("Update check raw error:", error);
-			console.error("Error type:", typeof error);
-			if (error instanceof Error) {
-				appUpdateErrorMessage = error.message;
-				logger.error("Update failed", { error: error.message, stack: error.stack });
-			} else {
-				appUpdateErrorMessage = String(error);
-				logger.error("Update failed", { error: String(error), rawError: error });
+		}),
+		(e) => e as Error
+	)
+		.andThen(() => ResultAsync.fromPromise(relaunch(), (e) => e as Error))
+		.match(
+			() => undefined,
+			(error) => {
+				availableUpdate = null;
+				updaterState = createErrorUpdaterState(error.message);
+				logger.error("Update install failed", { error: error.message });
 			}
-		});
+		);
 }
 
 // Initialize on mount
 onMount(async () => {
-	// Check for updates in production builds only (dev mode has no update server)
-	if (!import.meta.env.DEV) {
-		checkAndInstallUpdate();
+	playSound(SoundEffect.AppStart);
+
+	// Preload latency-critical voice sounds so spacebar-triggered
+	// recording feedback is instant (Web Audio API buffer cache).
+	preloadSound(SoundEffect.SoundUp);
+	preloadSound(SoundEffect.SoundDown);
+	void import("@tauri-apps/api/app")
+		.then((mod) => mod.getVersion())
+		.then((version) => {
+			appVersion = version;
+		});
+
+	if (import.meta.env.DEV) {
+		updaterState = createAvailableUpdaterState("0.0.0-dev");
+	} else {
+		await checkForAppUpdate();
+		updatePollTimer = setInterval(() => {
+			if (updaterState.kind === "downloading") {
+				return;
+			}
+			void checkForAppUpdate();
+		}, 10 * 60 * 1000);
 	}
 
 	logger.info("main-app-view onMount: Starting InboundRequestHandler");
@@ -607,6 +627,17 @@ $effect(() => {
 	kb.setContext("sqlStudioOpen", viewState.sqlStudioModalOpen);
 });
 
+// Track modalOpen context so overlay UIs suppress app-level keybindings
+$effect(() => {
+	kb.setContext(
+		"modalOpen",
+		viewState.settingsModalOpen ||
+			viewState.sqlStudioModalOpen ||
+			viewState.reviewFullscreenOpen ||
+			viewState.fileExplorerVisible
+	);
+});
+
 // Load worktree default store once so panels/empty-states/settings and handleNewThreadForProject see current value
 $effect(() => {
 	void worktreeDefaultStore.load().mapErr((error) => {
@@ -646,6 +677,35 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 	}
 }
 
+const fileExplorerProjectPaths = $derived.by(() => {
+	const focusedProjectPath = panelStore.focusedPanel && panelStore.focusedPanel.projectPath
+		? panelStore.focusedPanel.projectPath
+		: panelStore.focusedViewProjectPath
+			? panelStore.focusedViewProjectPath
+			: null;
+
+	const remainingProjects = projectManager.projects
+		.map((project) => project.path)
+		.filter((projectPath) => (focusedProjectPath ? projectPath !== focusedProjectPath : true));
+
+	if (focusedProjectPath) {
+		return [focusedProjectPath, ...remainingProjects];
+	}
+
+	return remainingProjects;
+});
+
+const fileExplorerProjectInfoByPath = $derived.by(() => {
+	const info: Record<string, { name: string; color: string }> = {};
+	for (const project of projectManager.projects) {
+		info[project.path] = {
+			name: project.name,
+			color: project.color,
+		};
+	}
+	return info;
+});
+
 // Derived: check if any panel is open
 const hasAnyPanel = $derived(
 	panelStore.panels.length > 0 ||
@@ -663,7 +723,7 @@ const showSidebar = $derived(projectManager.projectCount !== null && projectMana
 /** Tab bar above main/panel column (hidden when only one tab — nothing to switch) */
 const showTabBarStrip = $derived(
 	!viewState.reviewFullscreenOpen &&
-		panelStore.panels.length > 1 &&
+		tabBarStore.tabs.length > 1 &&
 		viewState.topBarVisible
 );
 
@@ -684,6 +744,9 @@ onDestroy(() => {
 	windowFocusStore.cleanup();
 	// Cleanup voice settings (removes Tauri event listener for download progress)
 	voiceSettingsStore.dispose();
+	if (updatePollTimer) {
+		clearInterval(updatePollTimer);
+	}
 });
 </script>
 
@@ -691,7 +754,16 @@ onDestroy(() => {
 	<div class="flex flex-col h-full min-h-0 gap-0.5 bg-background rounded-xl p-0.5">
 		<!-- Top bar -->
 		<div class="shrink-0 bg-card/50 border border-border rounded-lg overflow-hidden">
-			<TopBar {viewState}>
+			<TopBar
+				{viewState}
+				updaterState={updaterState}
+				onUpdateClick={() => {
+					void installAvailableUpdate();
+				}}
+				onRetryUpdateClick={() => {
+					void checkForAppUpdate();
+				}}
+			>
 				{#snippet addProjectButton()}
 					<EmbeddedIconButton
 						title={m.add_repository_button()}
@@ -843,6 +915,19 @@ onDestroy(() => {
 		</div>
 	{/if}
 
+	<!-- File Explorer Modal (Cmd+I) -->
+	{#if viewState.fileExplorerVisible && fileExplorerProjectPaths.length > 0}
+		<FileExplorerModal
+			projectPaths={fileExplorerProjectPaths}
+			projectInfoByPath={fileExplorerProjectInfoByPath}
+			onClose={() => viewState.closeFileExplorer()}
+			onInsert={(projectPath, filePath) => {
+				panelStore.openFilePanel(filePath, projectPath);
+				viewState.closeFileExplorer();
+			}}
+		/>
+	{/if}
+
 	<!-- Onboarding Overlay (shows on first launch: splash → agents → projects → done) -->
 	{#if viewState.showSplash === true}
 		<div
@@ -868,34 +953,4 @@ onDestroy(() => {
 		/>
 	{/if}
 
-	<!-- Update Modal (shows when update is available - blocks app until update completes) -->
-	{#if appUpdateCurrent}
-		<UpdatePage
-			updateState={appUpdateCurrent}
-			progress={appUpdateProgress}
-			total={appUpdateTotal}
-			errorMessage={appUpdateErrorMessage}
-			onRetry={checkAndInstallUpdate}
-		/>
-	{/if}
-
-	<!-- Notification overlay (fixed position, top-right) -->
-	{#if notificationStore.hasNotifications}
-		<div
-			class="fixed top-2 right-2 z-[9999] pointer-events-none flex flex-col gap-2 w-[380px]"
-			role="log"
-			aria-label="Agent notifications"
-			aria-live="polite"
-		>
-			{#each notificationStore.notifications as notif (notif.id)}
-				<div class="pointer-events-auto">
-					<NotificationCard
-						data={notif.payload}
-						onAction={(actionId) => handleNotificationAction(notif.id, actionId)}
-						onDismiss={() => dismissNotification(notif.id)}
-					/>
-				</div>
-			{/each}
-		</div>
-	{/if}
 </ThemeProvider>

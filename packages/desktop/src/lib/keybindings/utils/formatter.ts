@@ -138,17 +138,8 @@ export function formatKey(key: string): string {
  * Examples:
  * - "$mod+s" -> { modifiers: ["$mod"], key: "s" }
  * - "Shift+Alt+Delete" -> { modifiers: ["Shift", "Alt"], key: "Delete" }
- * - "g c" -> { modifiers: [], key: "g c" } (sequence)
  */
 export function parseKeyString(keyString: string): ParsedKey {
-	// Handle sequences (space-separated)
-	if (keyString.includes(" ") && !keyString.includes("+")) {
-		return {
-			modifiers: [],
-			key: keyString,
-		};
-	}
-
 	const parts = keyString.split("+");
 	const modifiers: string[] = [];
 	let key = "";
@@ -180,12 +171,6 @@ export function parseKeyString(keyString: string): ParsedKey {
 export function formatKeyString(keyString: string): string {
 	const parsed = parseKeyString(keyString);
 
-	// Handle sequences
-	if (parsed.modifiers.length === 0 && parsed.key.includes(" ")) {
-		const parts = parsed.key.split(" ");
-		return parts.map((p) => formatKey(p)).join(" ");
-	}
-
 	const formattedModifiers = parsed.modifiers.map(formatKey);
 	const formattedKey = formatKey(parsed.key);
 
@@ -208,12 +193,6 @@ export function formatKeyString(keyString: string): string {
  */
 export function formatKeyStringToArray(keyString: string): string[] {
 	const parsed = parseKeyString(keyString);
-
-	// Handle sequences
-	if (parsed.modifiers.length === 0 && parsed.key.includes(" ")) {
-		const parts = parsed.key.split(" ");
-		return parts.map((p) => formatKey(p));
-	}
 
 	const formattedModifiers = parsed.modifiers.map(formatKey);
 	const formattedKey = formatKey(parsed.key);

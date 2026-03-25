@@ -88,6 +88,7 @@ function handleRemoveProject(projectPath: string) {
 	for (const bp of panelStore.browserPanels.filter((p) => p.projectPath === projectPath)) {
 		panelStore.closeBrowserPanel(bp.id);
 	}
+	panelStore.workspacePanels = panelStore.workspacePanels.filter((panel) => panel.projectPath !== projectPath);
 
 	projectManager.removeProject(projectPath).mapErr((error) => {
 		toast.error(`Failed to remove project: ${error.message}`);
@@ -194,7 +195,6 @@ const availableAgents = $derived(
 		id: a.id,
 		name: a.name,
 		icon: a.icon,
-		available: a.available,
 		availability_kind: a.availability_kind,
 	}))
 );

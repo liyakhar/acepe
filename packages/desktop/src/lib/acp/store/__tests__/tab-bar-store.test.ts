@@ -7,6 +7,8 @@ import type { Panel, SessionHotState } from "../types.js";
 function makePanel(overrides: Partial<Panel> = {}): Panel {
 	return {
 		id: "panel-1",
+		kind: "agent",
+		ownerPanelId: null,
 		sessionId: "session-1",
 		width: 400,
 		pendingProjectSelection: false,

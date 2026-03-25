@@ -276,6 +276,79 @@ describe("SessionMessagingService.handleStreamError", () => {
 	});
 });
 
+describe("SessionMessagingService.handleTurnError", () => {
+	const sessionId = "session-1";
+	let service: InstanceType<typeof SessionMessagingService>;
+	let deps: ReturnType<typeof createMockDeps>;
+
+	beforeAll(async () => {
+		const module = await import("../session-messaging-service.js");
+		SessionMessagingService = module.SessionMessagingService;
+	});
+
+	beforeEach(() => {
+		deps = createMockDeps();
+		service = new SessionMessagingService(
+			deps.stateReader,
+			deps.hotStateManager,
+			deps.entryManager,
+			deps.connectionManager
+		);
+	});
+
+	it("adds an inline error entry for recoverable turn errors", () => {
+		service.handleTurnError(sessionId, {
+			message: "You're out of extra usage",
+			kind: "recoverable",
+			source: "unknown",
+		});
+
+		expect(deps.entryManager.addEntry).toHaveBeenCalledWith(
+			sessionId,
+			expect.objectContaining({
+				type: "error",
+				message: {
+					content: "You're out of extra usage",
+				},
+			})
+		);
+	});
+
+	it("stringifies numeric turn error codes for inline error entries", () => {
+		service.handleTurnError(sessionId, {
+			message: "Rate limit reached",
+			kind: "recoverable",
+			source: "unknown",
+			code: 429,
+		});
+
+		expect(deps.entryManager.addEntry).toHaveBeenCalledWith(
+			sessionId,
+			expect.objectContaining({
+				type: "error",
+				message: expect.objectContaining({
+					content: "Rate limit reached",
+					code: "429",
+				}),
+			})
+		);
+	});
+
+	it("does not populate header-level connectionError for recoverable turn errors", () => {
+		service.handleTurnError(sessionId, {
+			message: "You're out of extra usage",
+			kind: "recoverable",
+			source: "unknown",
+		});
+
+		expect(deps.hotStateManager.updateHotState).toHaveBeenCalledWith(sessionId, {
+			status: "ready",
+			turnState: "error",
+			connectionError: null,
+		});
+	});
+});
+
 describe("SessionMessagingService replay regression", () => {
 	const sessionId = "session-replay";
 	let service: InstanceType<typeof SessionMessagingService>;

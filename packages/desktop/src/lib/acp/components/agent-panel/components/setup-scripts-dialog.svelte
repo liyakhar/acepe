@@ -6,12 +6,8 @@ import {
 	HeaderTitleCell,
 } from "@acepe/ui/panel-header";
 import { Dialog } from "bits-ui";
-import { Switch } from "$lib/components/ui/switch/index.js";
 import * as m from "$lib/paraglide/messages.js";
-import SettingRow from "$lib/components/settings-page/setting-row.svelte";
 import SetupCommandsEditor from "$lib/components/settings-page/sections/worktrees/setup-commands-editor.svelte";
-import { getWorktreeDefaultStore } from "../../worktree-toggle/worktree-default-store.svelte.js";
-import { toast } from "svelte-sonner";
 
 interface Props {
 	open: boolean;
@@ -21,18 +17,6 @@ interface Props {
 }
 
 let { open, onOpenChange, projectPath, projectName }: Props = $props();
-const worktreeDefaultStore = getWorktreeDefaultStore();
-
-function handleAutoWorktreeChange(checked: boolean): void {
-	void worktreeDefaultStore.set(checked).match(
-		() => {},
-		(error) => {
-			const message =
-				error.cause?.message ?? error.message ?? "Failed to save worktree setting";
-			toast.error(message);
-		}
-	);
-}
 </script>
 
 <Dialog.Root {open} {onOpenChange}>
@@ -55,18 +39,6 @@ function handleAutoWorktreeChange(checked: boolean): void {
 			</EmbeddedPanelHeader>
 
 			<div class="flex flex-col gap-3 p-3">
-				<div class="rounded-lg border border-border/40 overflow-hidden">
-					<SettingRow
-						label={m.settings_worktree_default_label()}
-						description={m.settings_worktree_default_description()}
-					>
-						<Switch
-							checked={worktreeDefaultStore.globalDefault}
-							onCheckedChange={handleAutoWorktreeChange}
-						/>
-					</SettingRow>
-				</div>
-
 				<div class="space-y-2">
 					<div class="px-1">
 						<div class="text-sm font-medium text-foreground">{m.setup_scripts_dialog_title()}</div>

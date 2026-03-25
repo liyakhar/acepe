@@ -20,12 +20,44 @@ describe("voice-transitions", () => {
 			expect(transition("checking_permission", "downloading_model")).toBe("downloading_model");
 		});
 
+		it("allows checking_permission → loading_model", () => {
+			expect(transition("checking_permission", "loading_model")).toBe("loading_model");
+		});
+
 		it("allows checking_permission → error", () => {
 			expect(transition("checking_permission", "error")).toBe("error");
 		});
 
 		it("allows checking_permission → cancelled", () => {
 			expect(transition("checking_permission", "cancelled")).toBe("cancelled");
+		});
+
+		it("allows downloading_model → loading_model", () => {
+			expect(transition("downloading_model", "loading_model")).toBe("loading_model");
+		});
+
+		it("allows downloading_model → error", () => {
+			expect(transition("downloading_model", "error")).toBe("error");
+		});
+
+		it("allows downloading_model → cancelled", () => {
+			expect(transition("downloading_model", "cancelled")).toBe("cancelled");
+		});
+
+		it("rejects downloading_model → recording (must go through loading_model)", () => {
+			expect(transition("downloading_model", "recording")).toBeNull();
+		});
+
+		it("allows loading_model → recording", () => {
+			expect(transition("loading_model", "recording")).toBe("recording");
+		});
+
+		it("allows loading_model → error", () => {
+			expect(transition("loading_model", "error")).toBe("error");
+		});
+
+		it("allows loading_model → cancelled", () => {
+			expect(transition("loading_model", "cancelled")).toBe("cancelled");
 		});
 
 		it("allows recording → transcribing", () => {
@@ -91,23 +123,11 @@ describe("voice-transitions", () => {
 		it("rejects idle → transcribing", () => {
 			expect(transition("idle", "transcribing")).toBeNull();
 		});
-
-		it("allows downloading_model → recording", () => {
-			expect(transition("downloading_model", "recording")).toBe("recording");
-		});
-
-		it("allows downloading_model → error", () => {
-			expect(transition("downloading_model", "error")).toBe("error");
-		});
-
-		it("allows downloading_model → cancelled", () => {
-			expect(transition("downloading_model", "cancelled")).toBe("cancelled");
-		});
 	});
 
 	describe("VALID_TRANSITIONS completeness", () => {
 		const ALL_PHASES: VoiceInputPhase[] = [
-			"idle", "checking_permission", "downloading_model",
+			"idle", "checking_permission", "downloading_model", "loading_model",
 			"recording", "transcribing", "complete", "cancelled", "error",
 		];
 

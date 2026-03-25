@@ -11,14 +11,13 @@
 	let { class: className = "", role, "aria-label": ariaLabel, style = "" }: Props = $props();
 </script>
 
-<span {role} aria-label={ariaLabel} {style}>
+<span {role} aria-label={ariaLabel}>
 	<svg
 		aria-hidden="true"
-		width="16px"
-		height="16px"
 		fill="none"
 		viewBox="0 0 16 16"
-		class={cn("size-4 shrink-0 animate-spin", className)}
+		class={cn("shrink-0 animate-spin", className)}
+		{style}
 		xmlns="http://www.w3.org/2000/svg"
 	>
 		<path

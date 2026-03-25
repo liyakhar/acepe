@@ -2,18 +2,35 @@
 import { DiffPill } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import ArrowsOut from "phosphor-svelte/lib/ArrowsOut";
+import Check from "phosphor-svelte/lib/Check";
+import Cpu from "phosphor-svelte/lib/Cpu";
 import FileCode from "phosphor-svelte/lib/FileCode";
 import GitPullRequest from "phosphor-svelte/lib/GitPullRequest";
+import Robot from "phosphor-svelte/lib/Robot";
 import SidebarSimple from "phosphor-svelte/lib/SidebarSimple";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import * as m from "$lib/paraglide/messages.js";
+import type { Model } from "../../application/dto/model.js";
+import { getAgentIcon } from "../../constants/thread-list-constants.js";
+import type { AgentInfo } from "../../logic/agent-manager.js";
+import * as agentModelPrefs from "../../store/agent-model-preferences-store.svelte.js";
 import { getReviewPreferenceStore } from "../../store/review-preference-store.svelte.js";
 import { sessionReviewStateStore } from "../../store/session-review-state-store.svelte.js";
+import { capitalizeName } from "../../utils/string-formatting.js";
+import { getModelDisplayName } from "../model-selector-logic.js";
 import AnimatedChevron from "../animated-chevron.svelte";
 import type { FileReviewStatus } from "../review-panel/review-session-state.js";
 import InlineModifiedFileRow from "./components/inline-modified-file-row.svelte";
 import { getReviewStatusByFilePath } from "./logic/review-progress.js";
 import type { ModifiedFilesState } from "./types/modified-files-state.js";
+
+/**
+ * Configuration for the agent and model to use when generating PR content.
+ */
+export interface PrGenerationConfig {
+	agentId?: string;
+	modelId?: string;
+}
 
 /**
  * Props for ModifiedFilesHeader.
@@ -29,11 +46,21 @@ interface Props {
 	/** Optional: when provided, shows expand icon to open full-screen review overlay */
 	onOpenFullscreenReview?: (modifiedFilesState: ModifiedFilesState, fileIndex: number) => void;
 	/** Optional: when provided, shows Create PR pill button */
-	onCreatePr?: () => void;
+	onCreatePr?: (config?: PrGenerationConfig) => void;
 	/** Disables the Create PR button when true (e.g. while request in flight) */
 	createPrLoading?: boolean;
 	/** Label to display on the Create PR button during loading (e.g. "Staging...", "Pushing...") */
 	createPrLabel?: string | null;
+	/** Available agents for PR generation selection */
+	availableAgents?: AgentInfo[];
+	/** Current/default agent ID for PR generation */
+	currentAgentId?: string | null;
+	/** Available models for PR generation selection */
+	availableModels?: readonly Model[];
+	/** Current/default model ID for PR generation */
+	currentModelId?: string | null;
+	/** Current effective theme */
+	effectiveTheme?: "light" | "dark";
 }
 
 let {
@@ -44,12 +71,38 @@ let {
 	onCreatePr,
 	createPrLoading = false,
 	createPrLabel = null,
+	availableAgents = [],
+	currentAgentId = null,
+	availableModels = [],
+	currentModelId = null,
+	effectiveTheme = "dark",
 }: Props = $props();
 
 // Get review preference store at component initialization (not in handlers)
 const reviewPreferenceStore = getReviewPreferenceStore();
 
 let isExpanded = $state(false);
+
+// PR generation preferences — persisted globally via SQLite
+const prPrefs = $derived(agentModelPrefs.getPrGenerationPrefs());
+
+// Derived effective values (persisted override > current default)
+const effectiveAgentId = $derived(prPrefs.agentId ?? currentAgentId);
+const effectiveModelId = $derived(prPrefs.modelId ?? currentModelId);
+
+const effectiveAgent = $derived(
+	effectiveAgentId ? (availableAgents.find((a) => a.id === effectiveAgentId) ?? null) : null
+);
+const effectiveModel = $derived(
+	effectiveModelId
+		? (availableModels.find((m) => m.id === effectiveModelId) ?? null)
+		: null
+);
+
+const effectiveModelDisplayName = $derived.by(() => {
+	if (!effectiveModel) return "Default";
+	return getModelDisplayName(effectiveModel, effectiveAgentId);
+});
 
 const totalAdded = $derived(
 	modifiedFilesState?.files.reduce((sum, f) => sum + f.totalAdded, 0) ?? 0
@@ -98,6 +151,14 @@ function handleReviewButtonClick(fileIndex: number): void {
 		onEnterReviewMode?.(modifiedFilesState, fileIndex);
 	}
 }
+
+function handleCreatePrClick(): void {
+	if (!onCreatePr) return;
+	const config: PrGenerationConfig = {};
+	if (prPrefs.agentId) config.agentId = prPrefs.agentId;
+	if (prPrefs.modelId) config.modelId = prPrefs.modelId;
+	onCreatePr(Object.keys(config).length > 0 ? config : undefined);
+}
 </script>
 
 {#if modifiedFilesState}
@@ -139,25 +200,144 @@ function handleReviewButtonClick(fileIndex: number): void {
 			</div>
 
 			<div class="flex items-center gap-3 shrink-0">
-				<!-- PR button: "Open PR" trigger (PrStatusCard above shows created PR details) -->
+				<!-- PR split button: main action + dropdown for agent/model config -->
 				{#if onCreatePr}
-					<button
-						type="button"
-						disabled={createPrLoading}
-						onclick={(e: MouseEvent) => {
-							e.stopPropagation();
-							onCreatePr();
-						}}
-						class="flex items-center gap-1 px-2 py-0.5 rounded border border-border/50 bg-muted text-[0.6875rem] font-medium text-foreground/80 hover:text-foreground hover:bg-muted/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-					>
-						{#if createPrLoading}
-							<Spinner class="size-3 shrink-0" />
-							{createPrLabel ?? m.agent_panel_open_pr()}
-						{:else}
-							<GitPullRequest size={11} weight="bold" class="shrink-0" style="color: var(--success)" />
-							{m.agent_panel_open_pr()}
-						{/if}
-					</button>
+					<DropdownMenu.Root>
+						<div
+							class="flex items-center rounded border border-border/50 bg-muted overflow-hidden text-[0.6875rem] shrink-0"
+							onclick={(e: MouseEvent) => e.stopPropagation()}
+							role="none"
+						>
+							<button
+								type="button"
+								disabled={createPrLoading}
+								onclick={handleCreatePrClick}
+								class="flex items-center gap-1 px-2 py-0.5 font-medium text-foreground/80 hover:text-foreground hover:bg-muted/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{#if createPrLoading}
+									<Spinner class="size-3 shrink-0" />
+									{createPrLabel ?? m.agent_panel_open_pr()}
+								{:else}
+									<GitPullRequest size={11} weight="bold" class="shrink-0" style="color: var(--success)" />
+									{m.agent_panel_open_pr()}
+								{/if}
+							</button>
+							<DropdownMenu.Trigger
+								disabled={createPrLoading}
+								class="self-stretch flex items-center px-1 border-l border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+								onclick={(e: MouseEvent) => e.stopPropagation()}
+							>
+								<svg class="size-2.5" viewBox="0 0 10 10" fill="none">
+									<path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+								</svg>
+							</DropdownMenu.Trigger>
+						</div>
+						<DropdownMenu.Content align="end" class="w-[240px] p-0" sideOffset={4}>
+							<!-- Agent Selection -->
+							{#if availableAgents.length > 0}
+								<div class="px-2.5 pt-2.5 pb-1">
+									<div class="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
+										<Robot size={10} weight="bold" class="shrink-0" />
+										Agent
+									</div>
+								</div>
+								<div class="px-1 pb-1">
+									{#each availableAgents as agent (agent.id)}
+										{@const icon = getAgentIcon(agent.id, effectiveTheme)}
+										{@const isSelected = agent.id === effectiveAgentId}
+										<DropdownMenu.Item
+											onSelect={(e) => {
+												e.preventDefault();
+												agentModelPrefs.setPrGenerationPrefs({
+													...prPrefs,
+													agentId: isSelected ? undefined : agent.id,
+												});
+											}}
+											class="cursor-pointer text-[0.6875rem] py-1.5"
+										>
+											<div class="flex items-center gap-2 w-full">
+												{#if icon}
+													<img src={icon} alt={agent.name} class="h-3.5 w-3.5 shrink-0" />
+												{/if}
+												<span class="flex-1 truncate">{capitalizeName(agent.name)}</span>
+												{#if isSelected}
+													<Check size={12} weight="bold" class="shrink-0 text-primary" />
+												{/if}
+											</div>
+										</DropdownMenu.Item>
+									{/each}
+								</div>
+							{/if}
+
+							<!-- Separator -->
+							{#if availableAgents.length > 0 && availableModels.length > 0}
+								<DropdownMenu.Separator />
+							{/if}
+
+							<!-- Model Selection -->
+							{#if availableModels.length > 0}
+								<div class="px-2.5 pt-1.5 pb-1">
+									<div class="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
+										<Cpu size={10} weight="bold" class="shrink-0" />
+										Model
+									</div>
+								</div>
+								<div class="px-1 pb-1.5 max-h-[180px] overflow-y-auto scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+									{#each availableModels as model (model.id)}
+										{@const isSelected = model.id === effectiveModelId}
+										{@const displayName = getModelDisplayName(model, effectiveAgentId)}
+										<DropdownMenu.Item
+											onSelect={(e) => {
+												e.preventDefault();
+												agentModelPrefs.setPrGenerationPrefs({
+													...prPrefs,
+													modelId: isSelected ? undefined : model.id,
+												});
+											}}
+											class="cursor-pointer text-[0.6875rem] py-1.5"
+										>
+											<div class="flex items-center gap-2 w-full">
+												<span class="flex-1 truncate">{displayName}</span>
+												{#if isSelected}
+													<Check size={12} weight="bold" class="shrink-0 text-primary" />
+												{/if}
+											</div>
+										</DropdownMenu.Item>
+									{/each}
+								</div>
+							{/if}
+
+							<!-- Footer: current selection summary + create action -->
+							<div class="border-t border-border/50 px-2.5 py-2">
+								<div class="flex items-center gap-2 text-[0.625rem] text-muted-foreground mb-2">
+									{#if effectiveAgent}
+										{@const agentIcon = getAgentIcon(effectiveAgent.id, effectiveTheme)}
+										{#if agentIcon}
+											<img src={agentIcon} alt={effectiveAgent.name} class="h-3 w-3 shrink-0" />
+										{/if}
+										<span class="truncate">{capitalizeName(effectiveAgent.name)}</span>
+										<span class="text-border">·</span>
+									{/if}
+									<Cpu size={10} weight="fill" class="shrink-0" />
+									<span class="truncate">{effectiveModelDisplayName}</span>
+								</div>
+								<button
+									type="button"
+									disabled={createPrLoading}
+									onclick={handleCreatePrClick}
+									class="w-full flex items-center justify-center gap-1.5 px-2 py-1 rounded-md bg-primary text-primary-foreground text-[0.6875rem] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{#if createPrLoading}
+										<Spinner class="size-3 shrink-0" />
+										{createPrLabel ?? m.agent_panel_open_pr()}
+									{:else}
+										<GitPullRequest size={11} weight="bold" class="shrink-0" />
+										Create PR
+									{/if}
+								</button>
+							</div>
+						</DropdownMenu.Content>
+					</DropdownMenu.Root>
 				{/if}
 
 				<!-- Review split button -->

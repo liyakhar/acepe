@@ -2,10 +2,8 @@
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { mergeProps } from "bits-ui";
 import DotsThreeVertical from "phosphor-svelte/lib/DotsThreeVertical";
-import Globe from "phosphor-svelte/lib/Globe";
 import Palette from "phosphor-svelte/lib/Palette";
 import Rows from "phosphor-svelte/lib/Rows";
-import Terminal from "phosphor-svelte/lib/Terminal";
 import Trash from "phosphor-svelte/lib/Trash";
 import TreeView from "phosphor-svelte/lib/TreeView";
 import * as Popover from "$lib/components/ui/popover/index.js";
@@ -21,8 +19,6 @@ interface Props {
 	currentColor?: string;
 	viewMode: ProjectViewMode;
 	onViewModeChange: (mode: ProjectViewMode) => void;
-	onOpenTerminal?: () => void;
-	onOpenBrowser?: () => void;
 	onColorChange?: (color: string) => void;
 	onRemoveProject?: () => void;
 }
@@ -32,8 +28,6 @@ let {
 	currentColor,
 	viewMode,
 	onViewModeChange,
-	onOpenTerminal,
-	onOpenBrowser,
 	onColorChange,
 	onRemoveProject,
 }: Props = $props();
@@ -79,18 +73,7 @@ const selectedColorHex = $derived.by(() => {
 	return selectedOption?.hex ?? colorOptions[0]?.hex ?? Colors[COLOR_NAMES.RED];
 });
 
-const showPanelsSection = $derived(Boolean(onOpenTerminal || onOpenBrowser));
 const showSettingsSection = $derived(Boolean(onColorChange || onRemoveProject));
-
-function handleOpenTerminalClick() {
-	menuOpen = false;
-	onOpenTerminal?.();
-}
-
-function handleOpenBrowserClick() {
-	menuOpen = false;
-	onOpenBrowser?.();
-}
 
 function handleRemoveClick() {
 	menuOpen = false;
@@ -154,36 +137,6 @@ function handleRemoveClick() {
 				</div>
 			</div>
 		</DropdownMenu.Group>
-
-		{#if showPanelsSection}
-			<DropdownMenu.Group>
-				<DropdownMenu.GroupHeading
-					class="px-2 py-1 text-[11px] font-semibold text-muted-foreground border-b border-border/20"
-				>
-					Panels
-				</DropdownMenu.GroupHeading>
-				{#if onOpenTerminal}
-					<DropdownMenu.Item
-						class="cursor-pointer rounded-none border-b border-border/20 px-2 py-1.5 text-[11px]"
-						onclick={handleOpenTerminalClick}
-					>
-						<Terminal class="size-4 shrink-0" weight="fill" />
-						<span class="flex-1">Terminal</span>
-					</DropdownMenu.Item>
-				{/if}
-				{#if onOpenBrowser}
-					<DropdownMenu.Item
-						class="cursor-pointer rounded-none px-2 py-1.5 text-[11px] {onOpenTerminal
-							? ''
-							: 'border-b border-border/20'}"
-						onclick={handleOpenBrowserClick}
-					>
-						<Globe class="size-4 shrink-0" weight="fill" />
-						<span class="flex-1">Web</span>
-					</DropdownMenu.Item>
-				{/if}
-			</DropdownMenu.Group>
-		{/if}
 
 		{#if showSettingsSection}
 			<DropdownMenu.Group>

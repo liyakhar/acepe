@@ -18,16 +18,11 @@ describe("PanelStore terminal fullscreen", () => {
 		const terminalPanel = store.openTerminalPanel("/tmp/project");
 
 		expect(store.panels).toHaveLength(0);
-		expect(store.fullscreenPanelId).toBeNull();
+		expect(store.fullscreenPanelId).toBe(terminalPanel.id);
 
 		store.enterTerminalFullscreen(terminalPanel.id);
 
 		expect(store.panels).toHaveLength(0);
-		expect(store.fullscreenAuxPanel).toEqual({
-			kind: "terminal",
-			id: terminalPanel.id,
-		});
-		expect(store.fullscreenPanelId).toBeNull();
-		expect(store.fullscreenAuxOnly).toBe(true);
+		expect(store.fullscreenPanelId).toBe(terminalPanel.id);
 	});
 });

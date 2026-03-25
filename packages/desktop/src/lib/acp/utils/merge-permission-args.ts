@@ -43,7 +43,31 @@ function mergeTypedArgs(base: ToolArguments, parsed: ToolArguments): ToolArgumen
 
 	const result = { ...parsed };
 	for (const [key, value] of Object.entries(base)) {
-		if (value != null) {
+		if (value == null) continue;
+		// For arrays (e.g. edits), merge element-by-element so that non-null
+		// fields from parsed entries are preserved when base entries are null.
+		if (Array.isArray(value) && Array.isArray((parsed as Record<string, unknown>)[key])) {
+			const parsedArr = (parsed as Record<string, unknown>)[key] as unknown[];
+			const merged = parsedArr.map((parsedEl, i) => {
+				const baseEl = value[i];
+				if (!baseEl || typeof baseEl !== "object" || typeof parsedEl !== "object" || parsedEl === null) {
+					return baseEl ?? parsedEl;
+				}
+				// Shallow merge: parsed as base, overlay non-null from base element
+				const mergedEl = { ...parsedEl } as Record<string, unknown>;
+				for (const [k, v] of Object.entries(baseEl as Record<string, unknown>)) {
+					if (v != null) {
+						mergedEl[k] = v;
+					}
+				}
+				return mergedEl;
+			});
+			// Append any extra base elements beyond parsed length
+			for (let i = parsedArr.length; i < value.length; i++) {
+				merged.push(value[i]);
+			}
+			(result as Record<string, unknown>)[key] = merged;
+		} else {
 			(result as Record<string, unknown>)[key] = value;
 		}
 	}

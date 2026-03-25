@@ -19,8 +19,13 @@ import type { PermissionStore } from "./permission-store.svelte.js";
 import type { QuestionStore } from "./question-store.svelte.js";
 import type { SessionStore } from "./session-store.svelte.js";
 
-import { groupTabsByProject, panelToTab, type TabBarTab } from "./tab-bar-utils.js";
-import type { Panel } from "./types.js";
+import {
+	groupTabsByProject,
+	nonAgentPanelToTab,
+	panelToTab,
+	type TabBarTab,
+} from "./tab-bar-utils.js";
+import type { Panel, WorkspacePanel } from "./types.js";
 import type { UnseenStore } from "./unseen-store.svelte.js";
 
 export type { TabBarTab, TabBarTabGroup } from "./tab-bar-utils.js";
@@ -65,14 +70,31 @@ export class TabBarStore {
 	 * Project group ordering is handled by groupTabsByProject.
 	 */
 	private computeTabs(): TabBarTab[] {
-		const { panels, focusedPanelId } = this.panelStore;
-		return panels.map((panel) => this.buildTab(panel, focusedPanelId));
+		const { workspacePanels, focusedPanelId } = this.panelStore;
+		return workspacePanels
+			.filter((panel) => panel.kind === "agent" || panel.ownerPanelId === null)
+			.map((panel) => this.buildTab(panel, focusedPanelId));
 	}
 
 	/**
 	 * Gather state for a panel and delegate to pure panelToTab().
 	 */
-	private buildTab(panel: Panel, focusedPanelId: string | null): TabBarTab {
+	private buildTab(panel: WorkspacePanel, focusedPanelId: string | null): TabBarTab {
+		if (panel.kind !== "agent") {
+			const projectPath = panel.projectPath;
+			const projectName = projectPath ? extractProjectName(projectPath) : null;
+			const projectColor = projectPath
+				? (this.getProjectColor?.(projectPath) ?? generateFallbackProjectColor(projectPath))
+				: null;
+
+			return nonAgentPanelToTab({
+				panel,
+				focusedPanelId,
+				projectName,
+				projectColor,
+			});
+		}
+
 		const { sessionId } = panel;
 
 		const sessionIdentity = sessionId ? this.sessionStore.getSessionIdentity(sessionId) : null;

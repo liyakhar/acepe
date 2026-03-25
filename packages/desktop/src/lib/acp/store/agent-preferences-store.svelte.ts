@@ -21,7 +21,6 @@ export interface AgentPreferencesInitializationInput {
 	readonly persistedSelectedAgentIds: readonly string[] | null;
 	readonly projectCount: number | null;
 	readonly availableAgentIds: readonly string[];
-	readonly installedAgentIds: readonly string[];
 }
 
 export interface AgentPreferencesInitializationState {
@@ -161,7 +160,6 @@ export function deriveAgentPreferencesInitializationState(
 	input: AgentPreferencesInitializationInput
 ): AgentPreferencesInitializationState {
 	const availableAgentIds = Array.from(new SvelteSet(input.availableAgentIds));
-	const installedAgentIds = input.installedAgentIds.filter((id) => availableAgentIds.includes(id));
 
 	const onboardingCompleted =
 		input.persistedOnboardingCompleted !== null
@@ -195,7 +193,7 @@ export function deriveAgentPreferencesInitializationState(
 
 	return {
 		onboardingCompleted,
-		selectedAgentIds: installedAgentIds,
+		selectedAgentIds: availableAgentIds,
 		shouldPersistOnboardingCompleted,
 		shouldPersistSelectedAgentIds: false,
 	};
@@ -214,7 +212,6 @@ export class AgentPreferencesStore {
 
 	initialize(agents: readonly Agent[], projectCount: number | null): ResultAsync<void, Error> {
 		const availableAgentIds = agents.map((agent) => agent.id);
-		const installedAgentIds = agents.filter((agent) => agent.available).map((agent) => agent.id);
 
 		return ResultAsync.combine([
 			tauriClient.settings.get<boolean>(HAS_COMPLETED_ONBOARDING_KEY),
@@ -234,7 +231,6 @@ export class AgentPreferencesStore {
 					persistedSelectedAgentIds,
 					projectCount,
 					availableAgentIds,
-					installedAgentIds,
 				});
 
 				this.onboardingCompleted = initState.onboardingCompleted;
@@ -322,7 +318,7 @@ export class AgentPreferencesStore {
 
 	getPanelSelectableAgents(agents: readonly Agent[]): Agent[] {
 		const selectedIds = this.getSelectedAgentIdsForCandidates(agents.map((agent) => agent.id));
-		return agents.filter((agent) => selectedIds.includes(agent.id) && agent.available);
+		return agents.filter((agent) => selectedIds.includes(agent.id));
 	}
 }
 

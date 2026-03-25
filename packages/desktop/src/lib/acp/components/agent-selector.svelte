@@ -6,7 +6,6 @@ import { Skeleton } from "$lib/components/ui/skeleton/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { getAgentIcon } from "../constants/thread-list-constants.js";
 import type { AgentInfo } from "../logic/agent-manager.js";
-import { getAgentStore } from "../store/index.js";
 import { capitalizeName } from "../utils/index.js";
 import { createLogger } from "../utils/logger.js";
 import SelectorCheck from "./selector-check.svelte";
@@ -26,8 +25,6 @@ let {
 	isLoading = false,
 	ontoggle,
 }: AgentSelectorProps = $props();
-
-const agentStore = getAgentStore();
 
 let selectorRef: { toggle: () => void } | undefined = $state();
 let isDropdownOpen = $state(false);
@@ -83,7 +80,7 @@ const currentAgent = $derived(
 				<img
 					src={icon}
 					alt={currentAgent.name}
-					class="h-4 w-4 shrink-0 {currentAgent.available ? '' : 'opacity-50'}"
+					class="h-4 w-4 shrink-0"
 				/>
 			{/if}
 		{/if}
@@ -97,49 +94,18 @@ const currentAgent = $derived(
 		{#each availableAgents as agent (agent.id)}
 			{@const icon = getAgentIcon(agent.id, themeState.effectiveTheme)}
 			{@const isSelected = agent.id === currentAgentId}
-			{@const isInstallable = agent.availability_kind?.kind === "installable"}
-			{@const isInstallingNow = agentStore.isInstalling(agent.id)}
-			{#if isInstallable && !agent.available && !isInstallingNow}
-				<!-- Installable but not yet installed — show Install action -->
-				<DropdownMenu.Item
-					onSelect={(e) => {
-						e.preventDefault();
-						agentStore.installAgent(agent.id);
-					}}
-					class="group/item py-1"
-				>
-					<div class="flex items-center gap-2 w-full opacity-70">
-						{#if icon}
-							<img src={icon} alt={agent.name} class="h-4 w-4 shrink-0 opacity-50" />
-						{/if}
-						<span class="flex-1 text-sm truncate">{capitalizeName(agent.name)}</span>
-						<span class="text-xs text-primary font-medium">Install</span>
-					</div>
-				</DropdownMenu.Item>
-			{:else if isInstallingNow}
-				<!-- Currently installing — show spinner -->
-				<div class="flex items-center gap-2 w-full px-2 py-1 opacity-60">
+			<DropdownMenu.Item
+				onSelect={() => handleAgentSelect(agent.id)}
+				class="group/item py-1 {isSelected ? 'bg-accent' : ''}"
+			>
+				<div class="flex items-center gap-2 w-full">
 					{#if icon}
-						<img src={icon} alt={agent.name} class="h-4 w-4 shrink-0 opacity-50" />
+						<img src={icon} alt={agent.name} class="h-4 w-4 shrink-0" />
 					{/if}
 					<span class="flex-1 text-sm truncate">{capitalizeName(agent.name)}</span>
-					<span class="text-xs text-muted-foreground animate-pulse">Installing...</span>
+					<SelectorCheck visible={isSelected} />
 				</div>
-			{:else}
-				<!-- Available agent — normal select -->
-				<DropdownMenu.Item
-					onSelect={() => handleAgentSelect(agent.id)}
-					class="group/item py-1 {isSelected ? 'bg-accent' : ''}"
-				>
-					<div class="flex items-center gap-2 w-full">
-						{#if icon}
-							<img src={icon} alt={agent.name} class="h-4 w-4 shrink-0" />
-						{/if}
-						<span class="flex-1 text-sm truncate">{capitalizeName(agent.name)}</span>
-						<SelectorCheck visible={isSelected} />
-					</div>
-				</DropdownMenu.Item>
-			{/if}
+			</DropdownMenu.Item>
 		{/each}
 	{/if}
 </Selector>

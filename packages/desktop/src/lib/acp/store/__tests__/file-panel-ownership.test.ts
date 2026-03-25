@@ -34,6 +34,7 @@ describe("file panel ownership helpers", () => {
 				[
 					{
 						id: "file-1",
+						kind: "file",
 						filePath: "src/one.ts",
 						projectPath: "/workspace/app",
 						ownerPanelId: "panel-1",
@@ -41,6 +42,7 @@ describe("file panel ownership helpers", () => {
 					},
 					{
 						id: "file-2",
+						kind: "file",
 						filePath: "src/two.ts",
 						projectPath: "/workspace/app",
 						ownerPanelId: "panel-2",

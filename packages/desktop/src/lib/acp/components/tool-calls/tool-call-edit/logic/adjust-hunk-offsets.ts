@@ -13,12 +13,14 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 export function adjustHunkOffsets(fileDiff: FileDiffMetadata, startLine: number): FileDiffMetadata {
 	const offset = startLine - 1;
 
-	return {
-		...fileDiff,
-		hunks: fileDiff.hunks.map((hunk) => ({
-			...hunk,
+	const nextHunks = fileDiff.hunks.map((hunk) =>
+		Object.assign({}, hunk, {
 			additionStart: hunk.additionStart + offset,
 			deletionStart: hunk.deletionStart + offset,
-		})),
-	};
+		})
+	);
+
+	return Object.assign({}, fileDiff, {
+		hunks: nextHunks,
+	});
 }

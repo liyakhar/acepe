@@ -9,7 +9,13 @@ import type { ToolKind } from "../types/tool-kind.js";
 import type { SessionState } from "./session-state.js";
 import { deriveSessionState, statusToConnectionState } from "./session-state.js";
 import { stripArtifactsFromTitle } from "./session-title-policy.js";
-import type { Panel, SessionHotState } from "./types.js";
+import type {
+	BrowserWorkspacePanel,
+	FileWorkspacePanel,
+	Panel,
+	SessionHotState,
+	TerminalWorkspacePanel,
+} from "./types.js";
 
 const MAX_PREVIEW_CHARS = 120;
 
@@ -38,6 +44,18 @@ export interface PanelToTabInput {
 	readonly projectColor: string | null;
 	/** Project path for grouping */
 	readonly projectPath: string | null;
+}
+
+export type NonAgentWorkspacePanel =
+	| FileWorkspacePanel
+	| TerminalWorkspacePanel
+	| BrowserWorkspacePanel;
+
+export interface NonAgentPanelToTabInput {
+	readonly panel: NonAgentWorkspacePanel;
+	readonly focusedPanelId: string | null;
+	readonly projectName: string | null;
+	readonly projectColor: string | null;
 }
 
 /**
@@ -228,5 +246,48 @@ export function panelToTab(input: PanelToTabInput): TabBarTab {
 		projectPath,
 		conversationPreview: extractConversationPreview(entries),
 		state,
+	};
+}
+
+function filePathToTitle(filePath: string): string {
+	const segments = filePath.split("/");
+	const lastSegment = segments[segments.length - 1];
+	return lastSegment ? lastSegment : filePath;
+}
+
+function getNonAgentPanelTitle(panel: NonAgentWorkspacePanel): string {
+	if (panel.kind === "file") {
+		return filePathToTitle(panel.filePath);
+	}
+	if (panel.kind === "terminal") {
+		return "Terminal";
+	}
+	return panel.title;
+}
+
+export function nonAgentPanelToTab(input: NonAgentPanelToTabInput): TabBarTab {
+	const { panel, focusedPanelId, projectName, projectColor } = input;
+
+	return {
+		panelId: panel.id,
+		sessionId: null,
+		agentId: null,
+		title: getNonAgentPanelTitle(panel),
+		isFocused: panel.id === focusedPanelId,
+		currentModeId: null,
+		isUnseen: false,
+		currentToolKind: null,
+		projectName,
+		projectColor,
+		projectPath: panel.projectPath,
+		conversationPreview: [],
+		state: deriveSessionState({
+			connectionState: "disconnected",
+			modeId: null,
+			tool: null,
+			pendingQuestion: null,
+			pendingPermission: null,
+			hasUnseenCompletion: false,
+		}),
 	};
 }

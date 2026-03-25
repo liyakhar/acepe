@@ -1,10 +1,11 @@
 <script lang="ts">
-import * as m from "$lib/paraglide/messages.js";
-import { portal } from "../../actions/portal.js";
-import type { FilePickerEntry } from "../../types/file-picker-entry.js";
-import { fuzzyMatchFiles } from "../../utils/fuzzy-match.js";
-import FilePickerItem from "./file-picker-item.svelte";
-import FilePreview from "./file-preview.svelte";
+	import * as m from "$lib/paraglide/messages.js";
+	import { portal } from "../../actions/portal.js";
+	import type { FilePickerEntry } from "../../types/file-picker-entry.js";
+	import { fuzzyMatchFiles } from "../../utils/fuzzy-match.js";
+	import { getPreviewFile, shouldDeferFilePreview } from "./file-picker-preview-state.js";
+	import FilePickerItem from "./file-picker-item.svelte";
+	import FilePreview from "./file-preview.svelte";
 
 interface Props {
 	files: FilePickerEntry[];
@@ -57,6 +58,8 @@ let selectedIndex = $state(0);
 
 // Store references to items for scrolling
 let itemRefs: Record<number, HTMLDivElement> = {};
+	const deferPreview = $derived(shouldDeferFilePreview(query));
+	const previewFile = $derived(getPreviewFile(filteredFiles, selectedIndex, deferPreview));
 
 // Reset selection when filtered files change
 $effect(() => {
@@ -175,10 +178,15 @@ function handleItemHover(index: number) {
 
 		<!-- Right: File preview -->
 		<div class="flex-1 min-w-0">
-			<FilePreview
-				file={filteredFiles.length > 0 ? filteredFiles[selectedIndex] : null}
-				{projectPath}
-			/>
+			{#if previewFile}
+				<FilePreview file={previewFile} {projectPath} />
+			{:else if deferPreview}
+				<div class="h-full flex items-center justify-center text-muted-foreground text-sm">
+					Searching files...
+				</div>
+			{:else}
+				<FilePreview file={null} {projectPath} />
+			{/if}
 		</div>
 	</div>
 {/if}

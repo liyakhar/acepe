@@ -1,150 +1,124 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
-	BAR_COUNT,
-	MIN_HEIGHT,
-	MAX_HEIGHT,
+	DEFAULT_METER_BAR_COUNT,
+	MIN_LEVEL,
+	MAX_LEVEL,
+	RESTING_FILL,
 	smooth,
-	toDisplayHeight,
-	buildDisplayHeights,
+	clampLevel,
+	batchPeak,
+	toMeterLevel,
+	buildMeterLevels,
 } from "../waveform-math.js";
 
-/**
- * Test waveform-math.ts (pure TS — no Svelte runes).
- * Tests WaveformState integrated behaviour via the underlying math helpers.
- */
-
-/** Simulate the full state used by WaveformState for integration-style tests. */
 function makeState() {
-	const smoothed = new Float32Array(BAR_COUNT);
-	let writeIndex = 0;
+	let currentLevel = 0;
 	return {
 		pushBatch(values: [number, number, number]) {
-			for (const raw of values) {
-				const idx = writeIndex % BAR_COUNT;
-				smoothed[idx] = smooth(smoothed[idx], raw);
-				writeIndex++;
-			}
-			return buildDisplayHeights(smoothed, writeIndex);
+			currentLevel = smooth(currentLevel, batchPeak(values));
+			return {
+				currentLevel,
+				meterLevels: buildMeterLevels(currentLevel),
+			};
 		},
 		reset() {
-			smoothed.fill(0);
-			writeIndex = 0;
-			return buildDisplayHeights(smoothed, writeIndex);
+			currentLevel = 0;
+			return {
+				currentLevel,
+				meterLevels: new Array(DEFAULT_METER_BAR_COUNT).fill(RESTING_FILL),
+			};
 		},
-		getHeights() {
-			return buildDisplayHeights(smoothed, writeIndex);
-		},
-		getSmoothed() {
-			return smoothed;
+		getCurrentLevel() {
+			return currentLevel;
 		},
 	};
 }
 
 describe("waveform-math smooth()", () => {
-	it("returns value between prev and raw (interpolation)", () => {
+	it("returns value between prev and raw", () => {
 		const result = smooth(0, 1);
 		expect(result).toBeGreaterThan(0);
 		expect(result).toBeLessThanOrEqual(1);
 	});
 
-	it("attack (rising) is larger step than decay (falling)", () => {
-		const riseResult = smooth(0, 1); // attack: 0 + 0.6*(1-0) = 0.6
-		const fallResult = smooth(1, 0); // decay:  1 + 0.15*(0-1) = 0.85
-		// Compare the MAGNITUDE of change, not the result value
-		const riseDelta = Math.abs(riseResult - 0); // = 0.6
-		const fallDelta = Math.abs(fallResult - 1); // = 0.15
+	it("attack rises faster than decay falls", () => {
+		const riseDelta = Math.abs(smooth(0, 1) - 0);
+		const fallDelta = Math.abs(smooth(1, 0) - 1);
 		expect(riseDelta).toBeGreaterThan(fallDelta);
 	});
+});
 
-	it("smooth(x, x) returns x (stable)", () => {
-		expect(smooth(0.5, 0.5)).toBeCloseTo(0.5);
+describe("waveform-math helpers", () => {
+	it("clamps below minimum", () => {
+		expect(clampLevel(-1)).toBe(MIN_LEVEL);
+	});
+
+	it("clamps above maximum", () => {
+		expect(clampLevel(2)).toBe(MAX_LEVEL);
+	});
+
+	it("uses the highest value in the batch", () => {
+		expect(batchPeak([0.1, 0.7, 0.3])).toBe(0.7);
+	});
+
+	it("boosts quiet mic values into visible meter levels", () => {
+		// sqrt(0.12 * 10) ≈ 1.095, clamped to 1.0 — but even 0.05 peak should
+		// produce visible output: sqrt(0.05 * 10) ≈ 0.707
+		expect(toMeterLevel([0.05, 0.12, 0.08])).toBeGreaterThan(0.5);
+	});
+
+	it("builds the default number of meter levels", () => {
+		expect(buildMeterLevels(0.5)).toHaveLength(DEFAULT_METER_BAR_COUNT);
+	});
+
+	it("supports configurable bar counts", () => {
+		expect(buildMeterLevels(0.5, 7)).toHaveLength(7);
+	});
+
+	it("fills more bars as level increases", () => {
+		const low = buildMeterLevels(0.15);
+		const high = buildMeterLevels(0.85);
+		// All bars should be higher at higher level
+		const lowSum = low.reduce((a, b) => a + b, 0);
+		const highSum = high.reduce((a, b) => a + b, 0);
+		expect(highSum).toBeGreaterThan(lowSum);
+	});
+
+	it("keeps edge bars moving at conversational levels", () => {
+		const levels = buildMeterLevels(0.5);
+		expect(levels[0]).toBeGreaterThan(0);
+		expect(levels[levels.length - 1]).toBeGreaterThan(0);
 	});
 });
 
-describe("waveform-math toDisplayHeight()", () => {
-	it("maps 0 to MIN_HEIGHT", () => {
-		expect(toDisplayHeight(0)).toBe(MIN_HEIGHT);
-	});
-
-	it("maps 1 to MAX_HEIGHT", () => {
-		expect(toDisplayHeight(1)).toBe(MAX_HEIGHT);
-	});
-
-	it("maps intermediate value between MIN and MAX", () => {
-		const h = toDisplayHeight(0.5);
-		expect(h).toBeGreaterThan(MIN_HEIGHT);
-		expect(h).toBeLessThan(MAX_HEIGHT);
-	});
-});
-
-describe("WaveformState integration (via waveform-math)", () => {
+describe("WaveformState live meter math", () => {
 	let waveform: ReturnType<typeof makeState>;
 
 	beforeEach(() => {
 		waveform = makeState();
 	});
 
-	it("initialises all bars at MIN_HEIGHT", () => {
-		const heights = waveform.getHeights();
-		expect(heights).toHaveLength(BAR_COUNT);
-		for (const h of heights) {
-			expect(h).toBe(MIN_HEIGHT);
-		}
+	it("starts silent", () => {
+		expect(waveform.getCurrentLevel()).toBe(0);
 	});
 
-	it("reset returns all bars to MIN_HEIGHT", () => {
+	it("tracks current loudness instead of accumulating a timeline", () => {
+		for (let i = 0; i < 8; i++) {
+			waveform.pushBatch([1, 0.8, 0.7]);
+		}
+		expect(waveform.getCurrentLevel()).toBeGreaterThan(0.8);
+
+		// DECAY=0.25 → 0.75^12 ≈ 0.032, well under 0.1
+		for (let i = 0; i < 12; i++) {
+			waveform.pushBatch([0, 0, 0]);
+		}
+		expect(waveform.getCurrentLevel()).toBeLessThan(0.1);
+	});
+
+	it("reset returns the meter to silence", () => {
 		waveform.pushBatch([1, 1, 1]);
-		const heights = waveform.reset();
-		for (const h of heights) {
-			expect(h).toBe(MIN_HEIGHT);
-		}
-	});
-
-	it("pushBatch with zeros keeps bars at MIN_HEIGHT", () => {
-		const heights = waveform.pushBatch([0, 0, 0]);
-		for (const h of heights) {
-			expect(h).toBeCloseTo(MIN_HEIGHT, 1);
-		}
-	});
-
-	it("pushBatch with amplitude 1.0 raises affected bars above MIN_HEIGHT", () => {
-		// Push many full-amplitude batches to saturate smoothed values
-		let heights: number[] = [];
-		for (let i = 0; i < 20; i++) {
-			heights = waveform.pushBatch([1, 1, 1]);
-		}
-		const max = Math.max(...heights);
-		expect(max).toBeGreaterThan(MIN_HEIGHT + 10);
-	});
-
-	it("bars never exceed MAX_HEIGHT", () => {
-		let heights: number[] = [];
-		for (let i = 0; i < 40; i++) {
-			heights = waveform.pushBatch([1, 1, 1]);
-		}
-		for (const h of heights) {
-			expect(h).toBeLessThanOrEqual(MAX_HEIGHT);
-		}
-	});
-
-	it("bars are always at least MIN_HEIGHT", () => {
-		for (let i = 0; i < 40; i++) {
-			waveform.pushBatch([1, 1, 1]);
-		}
-		let heights: number[] = [];
-		for (let i = 0; i < 40; i++) {
-			heights = waveform.pushBatch([0, 0, 0]);
-		}
-		for (const h of heights) {
-			expect(h).toBeGreaterThanOrEqual(MIN_HEIGHT);
-		}
-	});
-
-	it("buildDisplayHeights returns exactly BAR_COUNT elements", () => {
-		for (let i = 0; i < 100; i++) {
-			waveform.pushBatch([Math.random(), Math.random(), Math.random()]);
-		}
-		expect(waveform.getHeights()).toHaveLength(BAR_COUNT);
+		const state = waveform.reset();
+		expect(state.currentLevel).toBe(0);
+		expect(state.meterLevels).toEqual(new Array(DEFAULT_METER_BAR_COUNT).fill(RESTING_FILL));
 	});
 });
-

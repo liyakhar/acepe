@@ -62,9 +62,7 @@ describe("createDisplayItems", () => {
 				parentId: null,
 				entries: [
 					createToolCallEntry("Edit", "edit", {
-						file_path: "/repo/src/file.ts",
-						old_string: "const a = 1;",
-						new_string: "const a = 2;\nconst b = 3;",
+						edits: [{ filePath: "/repo/src/file.ts", oldString: "const a = 1;", newString: "const a = 2;\nconst b = 3;" }],
 					}),
 				],
 			},
@@ -101,9 +99,7 @@ describe("createDisplayItems", () => {
 				parentId: null,
 				entries: [
 					createToolCallEntry("Edit", "edit", {
-						file_path: "/repo/src/file.ts",
-						old_string: "const a = 1;",
-						new_string: "const a = 2;",
+						edits: [{ filePath: "/repo/src/file.ts", oldString: "const a = 1;", newString: "const a = 2;" }],
 					}),
 				],
 			},
@@ -291,7 +287,7 @@ describe("extractCurrentToolInfo", () => {
 			{ ...createToolCallEntry("Read", "read", { file_path: "/first.ts" }), isStreaming: false },
 			createUserEntry("Working..."),
 			{
-				...createToolCallEntry("Edit", "edit", { file_path: "/second.ts" }),
+				...createToolCallEntry("Edit", "edit", { edits: [{ filePath: "/second.ts" }] }),
 				isStreaming: true,
 			},
 		];
@@ -307,7 +303,7 @@ describe("extractCurrentToolInfo", () => {
 			},
 			createUserEntry("Done"),
 			{
-				...createToolCallEntry("Edit", "edit", { file_path: "/file2.ts" }),
+				...createToolCallEntry("Edit", "edit", { edits: [{ filePath: "/file2.ts" }] }),
 				isStreaming: false,
 			},
 		];
@@ -338,7 +334,7 @@ describe("extractLastToolInfo", () => {
 
 	it("should extract Edit tool with file basename", () => {
 		const entries: SessionEntry[] = [
-			createToolCallEntry("Edit", "edit", { file_path: "/src/components/Button.svelte" }),
+			createToolCallEntry("Edit", "edit", { edits: [{ filePath: "/src/components/Button.svelte" }] }),
 		];
 		const result = extractLastToolInfo(entries);
 		expect(result).toEqual({ name: "Edit", target: "Button.svelte", kind: "edit" });
@@ -363,7 +359,7 @@ describe("extractLastToolInfo", () => {
 		const entries: SessionEntry[] = [
 			createToolCallEntry("Read", "read", { file_path: "/first.ts" }),
 			createUserEntry("Thanks"),
-			createToolCallEntry("Edit", "edit", { file_path: "/second.ts" }),
+			createToolCallEntry("Edit", "edit", { edits: [{ filePath: "/second.ts" }] }),
 		];
 		const result = extractLastToolInfo(entries);
 		expect(result).toEqual({ name: "Edit", target: "second.ts", kind: "edit" });

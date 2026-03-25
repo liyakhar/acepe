@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+	canSendWithoutSession,
 	EMPTY_STATE_PANEL_ID,
+	resolveEmptyStateAgentId,
 	resolveEmptyStateWorktreePending,
 	resolveEmptyStateWorktreePendingForProjectChange,
 	shouldClearPersistedDraftBeforeAsyncSend,
@@ -118,6 +120,60 @@ describe("empty-state send state", () => {
 				panelId: EMPTY_STATE_PANEL_ID,
 				sessionId: null,
 				draft: "hello",
+			})
+		).toBe(true);
+	});
+
+	it("selects the first available agent by default in empty state", () => {
+		expect(
+			resolveEmptyStateAgentId({
+				selectedAgentId: null,
+				availableAgentIds: ["cursor", "claude-code"],
+			})
+		).toBe("cursor");
+	});
+
+	it("keeps the explicit empty-state agent when it is still available", () => {
+		expect(
+			resolveEmptyStateAgentId({
+				selectedAgentId: "claude-code",
+				availableAgentIds: ["cursor", "claude-code"],
+			})
+		).toBe("claude-code");
+	});
+
+	it("falls back to the first available agent when the selected one disappears", () => {
+		expect(
+			resolveEmptyStateAgentId({
+				selectedAgentId: "claude-code",
+				availableAgentIds: ["cursor"],
+			})
+		).toBe("cursor");
+	});
+
+	it("blocks first send when no agent is selected", () => {
+		expect(
+			canSendWithoutSession({
+				projectPath: "/repo",
+				selectedAgentId: null,
+			})
+		).toBe(false);
+	});
+
+	it("blocks first send when no project is selected", () => {
+		expect(
+			canSendWithoutSession({
+				projectPath: null,
+				selectedAgentId: "claude-code",
+			})
+		).toBe(false);
+	});
+
+	it("allows first send when both project and agent are selected", () => {
+		expect(
+			canSendWithoutSession({
+				projectPath: "/repo",
+				selectedAgentId: "claude-code",
 			})
 		).toBe(true);
 	});

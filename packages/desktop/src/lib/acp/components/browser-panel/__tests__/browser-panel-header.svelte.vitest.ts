@@ -3,6 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as m from "$lib/paraglide/messages.js";
 
+const openUrlMock = vi.fn();
+
+vi.mock("@tauri-apps/plugin-opener", () => ({
+	openUrl: openUrlMock,
+}));
+
 import BrowserPanelHeader from "../browser-panel-header.svelte";
 
 vi.mock(
@@ -18,10 +24,15 @@ afterEach(() => {
 
 describe("BrowserPanelHeader", () => {
 	it("fires navigation and action callbacks", async () => {
+		openUrlMock.mockReset();
+		openUrlMock.mockResolvedValue(undefined);
 		const onBack = vi.fn();
 		const onForward = vi.fn();
 		const onReload = vi.fn();
-		const onOpenExternal = vi.fn();
+		const onNavigate = vi.fn();
+		const onOpenExternal = vi.fn(async () => {
+			await openUrlMock("https://example.com/path");
+		});
 		const onClose = vi.fn();
 
 		const { container } = render(BrowserPanelHeader, {
@@ -29,9 +40,12 @@ describe("BrowserPanelHeader", () => {
 			onBack,
 			onForward,
 			onReload,
+			onNavigate,
 			onOpenExternal,
 			onClose,
 		});
+
+		const urlInput = container.querySelector("input[name='browser-url']");
 
 		const back = container.querySelector(`button[title='${m.link_preview_back()}']`);
 		const forward = container.querySelector(`button[title='${m.link_preview_forward()}']`);
@@ -41,22 +55,32 @@ describe("BrowserPanelHeader", () => {
 		);
 		const close = container.querySelector(`button[title='${m.common_close()}']`);
 
+		expect(urlInput).not.toBeNull();
 		expect(back).not.toBeNull();
 		expect(forward).not.toBeNull();
 		expect(reload).not.toBeNull();
 		expect(openExternal).not.toBeNull();
 		expect(close).not.toBeNull();
 
+		if (urlInput) {
+			await fireEvent.input(urlInput, { target: { value: "https://news.ycombinator.com" } });
+			const form = urlInput.closest("form");
+			if (form) {
+				await fireEvent.submit(form);
+			}
+		}
 		if (back) await fireEvent.click(back);
 		if (forward) await fireEvent.click(forward);
 		if (reload) await fireEvent.click(reload);
 		if (openExternal) await fireEvent.click(openExternal);
 		if (close) await fireEvent.click(close);
 
+		expect(onNavigate).toHaveBeenCalledWith("https://news.ycombinator.com");
 		expect(onBack).toHaveBeenCalledTimes(1);
 		expect(onForward).toHaveBeenCalledTimes(1);
 		expect(onReload).toHaveBeenCalledTimes(1);
 		expect(onOpenExternal).toHaveBeenCalledTimes(1);
+		expect(openUrlMock).toHaveBeenCalledWith("https://example.com/path");
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 });

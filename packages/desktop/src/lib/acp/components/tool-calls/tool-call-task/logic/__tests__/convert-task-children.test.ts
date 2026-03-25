@@ -70,6 +70,7 @@ describe("convertTaskChildren", () => {
 			["web_search", "web_search"],
 			["think", "think"],
 			["task", "task"],
+			["task_output", "task_output"],
 		] as const)("maps '%s' to '%s'", (input, expected) => {
 			const children = [createChild({ id: "t1", kind: input, status: "completed" })];
 			const result = convertTaskChildren(children);

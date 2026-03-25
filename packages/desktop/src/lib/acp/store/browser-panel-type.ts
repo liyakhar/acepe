@@ -6,6 +6,9 @@ export interface BrowserPanel {
 	/** Unique panel identifier */
 	id: string;
 
+	/** Panel kind for unified workspace panel state. */
+	readonly kind: "browser";
+
 	/** Absolute path to the project root this panel belongs to */
 	projectPath: string;
 
@@ -17,6 +20,9 @@ export interface BrowserPanel {
 
 	/** Panel width in pixels */
 	width: number;
+
+	/** Owning workspace panel for attached use; null for top-level browser panels. */
+	ownerPanelId: null;
 }
 
 export const DEFAULT_BROWSER_PANEL_WIDTH = 500;

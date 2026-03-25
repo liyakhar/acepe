@@ -22,7 +22,6 @@ describe("deriveAgentPreferencesInitializationState", () => {
 			persistedSelectedAgentIds: null,
 			projectCount: 2,
 			availableAgentIds: ["claude-code", "cursor", "opencode"],
-			installedAgentIds: ["claude-code", "cursor"],
 		});
 
 		expect(result.onboardingCompleted).toBe(true);
@@ -31,17 +30,16 @@ describe("deriveAgentPreferencesInitializationState", () => {
 		expect(result.shouldPersistSelectedAgentIds).toBe(true);
 	});
 
-	it("keeps new users in onboarding and preselects installed agents without persisting selection", () => {
+	it("keeps new users in onboarding and preselects all agents without persisting selection", () => {
 		const result = deriveAgentPreferencesInitializationState({
 			persistedOnboardingCompleted: null,
 			persistedSelectedAgentIds: null,
 			projectCount: 0,
 			availableAgentIds: ["claude-code", "cursor", "opencode"],
-			installedAgentIds: ["claude-code", "cursor"],
 		});
 
 		expect(result.onboardingCompleted).toBe(false);
-		expect(result.selectedAgentIds).toEqual(["claude-code", "cursor"]);
+		expect(result.selectedAgentIds).toEqual(["claude-code", "cursor", "opencode"]);
 		expect(result.shouldPersistOnboardingCompleted).toBe(false);
 		expect(result.shouldPersistSelectedAgentIds).toBe(false);
 	});
@@ -52,7 +50,6 @@ describe("deriveAgentPreferencesInitializationState", () => {
 			persistedSelectedAgentIds: ["cursor", "claude-code"],
 			projectCount: 1,
 			availableAgentIds: ["claude-code", "cursor", "opencode"],
-			installedAgentIds: ["claude-code", "cursor"],
 		});
 
 		expect(result.onboardingCompleted).toBe(true);
@@ -67,7 +64,6 @@ describe("deriveAgentPreferencesInitializationState", () => {
 			persistedSelectedAgentIds: ["cursor"],
 			projectCount: 2,
 			availableAgentIds: ["claude-code", "cursor", "opencode"],
-			installedAgentIds: ["claude-code", "cursor", "opencode"],
 		});
 
 		expect(result.onboardingCompleted).toBe(true);
@@ -82,7 +78,6 @@ describe("deriveAgentPreferencesInitializationState", () => {
 			persistedSelectedAgentIds: ["missing-agent"],
 			projectCount: 3,
 			availableAgentIds: ["claude-code", "cursor"],
-			installedAgentIds: ["claude-code", "cursor"],
 		});
 
 		expect(result.onboardingCompleted).toBe(true);

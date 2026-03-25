@@ -119,3 +119,29 @@ describe("AgentInputState - insertInlineTokenAtOffsets", () => {
 		expect(state.message).toBe("hello@[file:a.ts]");
 	});
 });
+
+describe("AgentInputState - removeInlineTokenRange", () => {
+	let mockStore: SessionStore;
+	let state: AgentInputState;
+
+	beforeEach(() => {
+		mockStore = {
+			activeAgentId: "claude-code",
+		} as unknown as SessionStore;
+
+		const mockPanelStore = {} as unknown as PanelStore;
+		state = new AgentInputState(mockStore, mockPanelStore);
+	});
+
+	it("cleans up text refs inside a mixed removed range", () => {
+		state.updateInlineText("ref-1", "First");
+		state.updateInlineText("ref-2", "Second");
+		state.message = "A @[text_ref:ref-1] and @[text_ref:ref-2] Z";
+
+		state.removeInlineTokenRange(0, state.message.length);
+
+		expect(state.message).toBe("");
+		expect(state.getInlineTextReferenceContent("ref-1")).toBeUndefined();
+		expect(state.getInlineTextReferenceContent("ref-2")).toBeUndefined();
+	});
+});

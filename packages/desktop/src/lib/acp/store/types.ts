@@ -150,6 +150,10 @@ export interface PanelHotState {
 	readonly embeddedTerminalDrawerOpen: boolean;
 	/** Optimistic user entry displayed before session creation completes (transient, not persisted) */
 	readonly pendingUserEntry: _SessionEntry | null;
+	/** True when the browser sidebar is expanded for this panel */
+	readonly browserSidebarExpanded: boolean;
+	/** URL to display in the embedded browser sidebar */
+	readonly browserSidebarUrl: string | null;
 	/** Transient worktree setup indicator used during empty-state first-send handoff. */
 	readonly pendingWorktreeSetup: {
 		readonly projectPath: string;
@@ -166,6 +170,8 @@ export const DEFAULT_PANEL_HOT_STATE: PanelHotState = {
 	reviewFilesState: null,
 	reviewFileIndex: 0,
 	planSidebarExpanded: false,
+	browserSidebarExpanded: false,
+	browserSidebarUrl: null,
 	messageDraft: "",
 	embeddedTerminalDrawerOpen: false,
 	pendingUserEntry: null,
@@ -178,6 +184,8 @@ export const DEFAULT_PANEL_HOT_STATE: PanelHotState = {
  */
 export interface Panel {
 	readonly id: string;
+	readonly kind: "agent";
+	readonly ownerPanelId: null;
 	readonly sessionId: string | null;
 	readonly width: number;
 	readonly pendingProjectSelection: boolean;
@@ -188,6 +196,109 @@ export interface Panel {
 	/** Persisted session title for instant display before IPC load completes */
 	readonly sessionTitle: string | null;
 }
+
+export type WorkspacePanelKind = "agent" | "file" | "terminal" | "browser";
+
+export interface WorkspacePanelBase {
+	readonly id: string;
+	readonly kind: WorkspacePanelKind;
+	readonly projectPath: string | null;
+	readonly width: number;
+	readonly ownerPanelId: string | null;
+}
+
+export interface AgentWorkspacePanel extends WorkspacePanelBase {
+	readonly kind: "agent";
+	readonly ownerPanelId: null;
+	readonly sessionId: string | null;
+	readonly pendingProjectSelection: boolean;
+	readonly selectedAgentId: string | null;
+	readonly agentId: string | null;
+	readonly sessionTitle: string | null;
+}
+
+export interface FileWorkspacePanel extends WorkspacePanelBase {
+	readonly kind: "file";
+	readonly projectPath: string;
+	readonly filePath: string;
+	readonly targetLine?: number;
+	readonly targetColumn?: number;
+}
+
+export interface TerminalWorkspacePanel extends WorkspacePanelBase {
+	readonly kind: "terminal";
+	readonly projectPath: string;
+	readonly ownerPanelId: null;
+	readonly ptyId: number | null;
+	readonly shell: string | null;
+}
+
+export interface BrowserWorkspacePanel extends WorkspacePanelBase {
+	readonly kind: "browser";
+	readonly projectPath: string;
+	readonly ownerPanelId: null;
+	readonly url: string;
+	readonly title: string;
+}
+
+export type WorkspacePanel =
+	| AgentWorkspacePanel
+	| FileWorkspacePanel
+	| TerminalWorkspacePanel
+	| BrowserWorkspacePanel;
+
+export interface PersistedWorkspacePanelBase {
+	readonly id?: string;
+	readonly kind: WorkspacePanelKind;
+	readonly projectPath: string | null;
+	readonly width: number;
+	readonly ownerPanelId: string | null;
+}
+
+export interface PersistedAgentWorkspacePanelState extends PersistedWorkspacePanelBase {
+	readonly kind: "agent";
+	readonly ownerPanelId: null;
+	readonly sessionId: string | null;
+	readonly pendingProjectSelection: boolean;
+	readonly selectedAgentId: string | null;
+	readonly agentId: string | null;
+	readonly sessionTitle?: string;
+	readonly scrollTop?: number;
+	readonly planSidebarExpanded?: boolean;
+	readonly messageDraft?: string;
+	readonly reviewMode?: boolean;
+	readonly reviewFileIndex?: number;
+	readonly embeddedTerminalDrawerOpen?: boolean;
+	readonly selectedEmbeddedTerminalTabId?: string;
+}
+
+export interface PersistedFileWorkspacePanelState extends PersistedWorkspacePanelBase {
+	readonly kind: "file";
+	readonly projectPath: string;
+	readonly filePath: string;
+	readonly targetLine?: number;
+	readonly targetColumn?: number;
+}
+
+export interface PersistedTerminalWorkspacePanelState extends PersistedWorkspacePanelBase {
+	readonly kind: "terminal";
+	readonly projectPath: string;
+	readonly ownerPanelId: null;
+}
+
+export interface PersistedBrowserWorkspacePanelState extends PersistedWorkspacePanelBase {
+	readonly kind: "browser";
+	readonly projectPath: string;
+	readonly ownerPanelId: null;
+	readonly url: string;
+	readonly title: string;
+}
+
+export type PersistedWorkspacePanelState =
+	| PersistedAgentWorkspacePanelState
+	| PersistedFileWorkspacePanelState
+	| PersistedTerminalWorkspacePanelState
+	| PersistedBrowserWorkspacePanelState;
 
 /**
  * Panel layout state.
@@ -215,8 +326,6 @@ export interface Agent {
 	readonly description?: string;
 	/** Icon path for the agent */
 	readonly icon: string;
-	/** Whether the agent's command is available in PATH */
-	readonly available: boolean;
 	/** How this agent is provisioned (set by store when loading from API) */
 	readonly availability_kind?: AgentAvailabilityKind;
 }
@@ -255,6 +364,7 @@ export type ViewMode = "single" | "project" | "multi";
  */
 export interface PersistedWorkspaceState {
 	readonly version: number;
+	readonly workspacePanels?: ReadonlyArray<PersistedWorkspacePanelState>;
 	readonly panels: ReadonlyArray<PersistedPanelState>;
 	/** Open file panels persisted across app restarts (added in version 3) */
 	readonly filePanels?: ReadonlyArray<PersistedFilePanelState>;
@@ -281,8 +391,6 @@ export interface PersistedWorkspaceState {
 	readonly terminalPanels?: ReadonlyArray<PersistedTerminalPanelState>;
 	/** Open browser panels persisted across app restarts (added in version 7) */
 	readonly browserPanels?: ReadonlyArray<PersistedBrowserPanelState>;
-	/** Selected fullscreen aux panel (added in version 7) */
-	readonly fullscreenAuxPanel?: { readonly kind: string; readonly id: string } | null;
 	/** View mode: "single", "project", or "multi" (added in version 8) */
 	readonly viewMode?: ViewMode;
 	/** Embedded terminal tabs per agent panel (added in version 9) */

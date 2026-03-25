@@ -16,6 +16,10 @@ import type { Action, Keybinding, KeybindingConflict } from "./types.js";
 import { KeybindingError } from "./types.js";
 import { formatKeyString, formatKeyStringToArray } from "./utils/formatter.js";
 
+function isSupportedKeybindingKey(key: string): boolean {
+	return key.trim() !== "" && !(key.includes(" ") && !key.includes("+"));
+}
+
 /**
  * Keybindings Service - Unified interface for the keybinding system.
  */
@@ -58,7 +62,7 @@ export class KeybindingsService {
 				// Filter out any invalid entries (empty keys or values)
 				const validKeybindings: Record<string, string> = {};
 				for (const [command, key] of Object.entries(customKeybindings)) {
-					if (command && key && typeof key === "string" && key.trim() !== "") {
+					if (command && key && typeof key === "string" && isSupportedKeybindingKey(key)) {
 						validKeybindings[command] = key;
 					}
 				}
@@ -79,6 +83,15 @@ export class KeybindingsService {
 	 * Save a user keybinding to the database and update the registry.
 	 */
 	saveUserKeybinding(binding: Keybinding): ResultAsync<void, KeybindingError> {
+		if (!isSupportedKeybindingKey(binding.key)) {
+			return errAsync(
+				new KeybindingError(
+					"INVALID_KEYBINDING",
+					`Keybinding sequences are not supported: "${binding.key}"`
+				)
+			);
+		}
+
 		// Update registry immediately
 		this.bindings.upsert({ ...binding, source: "user" });
 

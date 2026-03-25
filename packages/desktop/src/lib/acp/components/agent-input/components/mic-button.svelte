@@ -1,20 +1,24 @@
 <!--
   MicButton - Mic toggle in the agent input footer.
+  Apple-like design: smooth morphing between states, red glow on recording.
   Supports both click-to-toggle and press-and-hold patterns.
   Uses pointer capture so drag-off cancels the recording.
 
   States:
-  - idle: gold mic icon
-  - downloading_model: circular progress ring (icon only, no label)
-  - loading_model: spinning circle (icon only, no label)
-  - checking_permission: spinning circle (icon only, no label)
-  - recording: red filled stop icon
+  - idle: subtle mic icon, scales up on hover
+  - downloading_model: circular progress ring
+  - loading_model / checking_permission / transcribing: Spinner (LoadingIcon)
+  - recording: red filled circle with rounded stop square, soft pulsing glow
 -->
 <script lang="ts">
 import Microphone from "phosphor-svelte/lib/Microphone";
-import StopCircle from "phosphor-svelte/lib/StopCircle";
+import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
 import * as m from "$lib/paraglide/messages.js";
+import { Spinner } from "$lib/components/ui/spinner/index.js";
+import { Kbd, KbdGroup } from "$lib/components/ui/kbd/index.js";
+import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import { canCancelVoiceInteraction } from "../logic/voice-ui-state.js";
+import { getMicButtonVisualState } from "./mic-button-state.js";
 import type { VoiceInputState } from "../state/voice-input-state.svelte.js";
 
 interface Props {
@@ -24,8 +28,10 @@ interface Props {
 
 const { voiceState, disabled = false }: Props = $props();
 
+let isHovered = $state(false);
+
 function handlePointerDown(event: PointerEvent) {
-	if (disabled || voiceState.isBusy) return;
+	if (disabled) return;
 	voiceState.onMicPointerDown(event);
 }
 
@@ -54,10 +60,11 @@ function handleKeyDown(event: KeyboardEvent) {
 }
 
 const isRecording = $derived(voiceState.phase === "recording");
+const isTranscribing = $derived(voiceState.phase === "transcribing");
 const isDownloading = $derived(voiceState.phase === "downloading_model");
 const isLoadingModel = $derived(voiceState.phase === "loading_model");
 const isCheckingPermission = $derived(voiceState.phase === "checking_permission");
-const isBusy = $derived(voiceState.isBusy);
+const visualState = $derived(getMicButtonVisualState(voiceState.phase));
 
 const title = $derived(
 	isDownloading
@@ -66,109 +73,175 @@ const title = $derived(
 			? "Loading model…"
 			: isCheckingPermission
 				? "Checking…"
+				: isTranscribing
+					? m.voice_transcribing()
 				: isRecording
 					? m.voice_stop_recording()
 					: m.voice_start_recording(),
 );
 
-/** SVG circle constants for the 14px progress ring */
-const RING_SIZE = 14;
-const RING_STROKE = 2;
-const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
-const dashOffset = $derived(
-	RING_CIRCUMFERENCE - (voiceState.downloadPercent / 100) * RING_CIRCUMFERENCE,
+const hoverTitle = $derived(
+	visualState === "mic" ? "Hold Space to talk" : title
 );
+
+/** Red color from design system */
+const STOP_RED = "#FF5D5A";
 </script>
 
-<button
-	class="group flex items-center justify-center h-7 w-7 text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-	class:text-destructive={isRecording}
-	class:opacity-40={disabled}
-	class:cursor-not-allowed={disabled || isBusy}
-	class:hover:text-foreground={!disabled && !isRecording && !isBusy}
-	{title}
-	aria-label={title}
-	aria-pressed={isRecording}
-	disabled={disabled}
-	onpointerdown={handlePointerDown}
-	onpointerup={handlePointerUp}
-	onpointercancel={handlePointerCancel}
-	onkeydown={handleKeyDown}
-	tabindex="0"
->
-	{#if isDownloading}
-		<!-- Circular progress ring that fills as download progresses -->
-		<svg
-			width={RING_SIZE}
-			height={RING_SIZE}
-			viewBox="0 0 {RING_SIZE} {RING_SIZE}"
-			class="shrink-0 -rotate-90"
-			role="progressbar"
-			aria-valuenow={Math.round(voiceState.downloadPercent)}
-			aria-valuemin={0}
-			aria-valuemax={100}
-		>
-			<!-- Background track -->
-			<circle
-				cx={RING_SIZE / 2}
-				cy={RING_SIZE / 2}
-				r={RING_RADIUS}
-				fill="none"
-				stroke="currentColor"
-				stroke-width={RING_STROKE}
-				class="opacity-20"
-			/>
-			<!-- Filled arc -->
-			<circle
-				cx={RING_SIZE / 2}
-				cy={RING_SIZE / 2}
-				r={RING_RADIUS}
-				fill="none"
-				stroke="currentColor"
-				stroke-width={RING_STROKE}
-				stroke-linecap="round"
-				stroke-dasharray={RING_CIRCUMFERENCE}
-				stroke-dashoffset={dashOffset}
-				class="text-primary transition-[stroke-dashoffset] duration-300"
-			/>
-		</svg>
-	{:else if isLoadingModel || isCheckingPermission}
-		<!-- Indeterminate spinning circle -->
-		<svg
-			width={RING_SIZE}
-			height={RING_SIZE}
-			viewBox="0 0 {RING_SIZE} {RING_SIZE}"
-			class="shrink-0 animate-spin"
-			role="status"
-			aria-label="Loading model…"
-		>
-			<circle
-				cx={RING_SIZE / 2}
-				cy={RING_SIZE / 2}
-				r={RING_RADIUS}
-				fill="none"
-				stroke="currentColor"
-				stroke-width={RING_STROKE}
-				class="opacity-20"
-			/>
-			<circle
-				cx={RING_SIZE / 2}
-				cy={RING_SIZE / 2}
-				r={RING_RADIUS}
-				fill="none"
-				stroke="currentColor"
-				stroke-width={RING_STROKE}
-				stroke-linecap="round"
-				stroke-dasharray={RING_CIRCUMFERENCE}
-				stroke-dashoffset={RING_CIRCUMFERENCE * 0.75}
-				class="text-primary"
-			/>
-		</svg>
-	{:else if isRecording}
-		<StopCircle class="h-3.5 w-3.5" weight="fill" />
-	{:else}
-		<Microphone class="h-3.5 w-3.5 hidden group-hover:block" weight="fill" />
-		<Microphone class="h-3.5 w-3.5 block group-hover:hidden" weight="regular" />
-	{/if}
-</button>
+<Tooltip.Root>
+	<Tooltip.Trigger>
+		{#snippet child({ props: triggerProps })}
+			<button
+				{...triggerProps}
+				class="mic-btn group relative flex items-center justify-center rounded-full
+					transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-1
+					focus-visible:ring-ring"
+				class:mic-idle={visualState === "mic"}
+				class:mic-recording={visualState === "stop"}
+				class:mic-busy={visualState === "spinner" || visualState === "download_progress"}
+				class:mic-downloading={visualState === "download_progress"}
+				class:opacity-40={disabled}
+				class:cursor-not-allowed={disabled}
+				aria-label={title}
+				aria-pressed={isRecording}
+				disabled={disabled}
+				onmouseenter={() => (isHovered = true)}
+				onmouseleave={() => (isHovered = false)}
+				onpointerdown={handlePointerDown}
+				onpointerup={handlePointerUp}
+				onpointercancel={handlePointerCancel}
+				onkeydown={handleKeyDown}
+				tabindex="0"
+			>
+				{#if visualState === "download_progress"}
+					<VoiceDownloadProgress
+						ariaLabel={title}
+						compact={true}
+						label=""
+						percent={voiceState.downloadPercent}
+						segmentCount={20}
+					/>
+				{:else if visualState === "spinner"}
+					<!-- Loading spinner (uses shared LoadingIcon) -->
+					<Spinner class="h-4 w-4" />
+				{:else if visualState === "stop"}
+					<!-- Red filled circle with stop square -->
+					<div class="mic-stop-container flex items-center justify-center">
+						<div class="mic-stop-circle" style:background-color={STOP_RED}>
+							<div class="mic-stop-square"></div>
+						</div>
+					</div>
+				{:else}
+					<!-- Idle mic icon with hover scale -->
+					<div class="mic-icon-wrap">
+						<Microphone
+							class="h-[15px] w-[15px] transition-all duration-150 ease-out"
+							weight={isHovered ? "fill" : "regular"}
+						/>
+					</div>
+				{/if}
+			</button>
+		{/snippet}
+	</Tooltip.Trigger>
+	<Tooltip.Content>
+		<div class="flex items-center gap-2">
+			<span>{hoverTitle}</span>
+			{#if visualState === "mic"}
+				<KbdGroup><Kbd>Space</Kbd></KbdGroup>
+			{/if}
+		</div>
+	</Tooltip.Content>
+</Tooltip.Root>
+
+<style>
+	.mic-btn {
+		width: 26px;
+		height: 26px;
+		color: var(--muted-foreground);
+	}
+
+	.mic-downloading {
+		width: auto;
+		min-width: 74px;
+		padding-inline: 6px;
+		justify-content: flex-end;
+	}
+
+	/* Idle state: subtle hover lift */
+	.mic-idle {
+		cursor: pointer;
+	}
+	.mic-idle:hover {
+		color: #f9c396;
+		transform: scale(1.08);
+	}
+	.mic-idle:active {
+		transform: scale(0.95);
+	}
+
+	.mic-idle :global(svg) {
+		transition: fill 150ms ease-out;
+	}
+
+	.mic-idle:hover :global(svg) {
+		fill: currentColor;
+	}
+
+	/* Recording state: red glow pulse */
+	.mic-recording {
+		cursor: pointer;
+	}
+
+	/* Busy states (spinner/download) */
+	.mic-busy {
+		cursor: default;
+	}
+
+	/* Stop button: red filled circle with white stop square */
+	.mic-stop-container {
+		width: 22px;
+		height: 22px;
+	}
+
+	.mic-stop-circle {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		animation: mic-glow-pulse 2s ease-in-out infinite;
+		transition: transform 150ms ease-out;
+	}
+
+	.mic-recording:hover .mic-stop-circle {
+		transform: scale(1.08);
+	}
+	.mic-recording:active .mic-stop-circle {
+		transform: scale(0.92);
+	}
+
+	.mic-stop-square {
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+		background-color: white;
+	}
+
+	/* Mic icon wrapper */
+	.mic-icon-wrap {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	/* Soft pulsing glow for recording */
+	@keyframes mic-glow-pulse {
+		0%, 100% {
+			box-shadow: 0 0 0 0 rgba(255, 93, 90, 0.0);
+		}
+		50% {
+			box-shadow: 0 0 8px 3px rgba(255, 93, 90, 0.25);
+		}
+	}
+</style>

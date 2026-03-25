@@ -7,8 +7,7 @@ declare module "tinykeys" {
 		 */
 		event?: "keydown" | "keyup";
 		/**
-		 * Keybinding sequences will wait this long between key presses before
-		 * cancelling (default: 1000).
+		 * Sequence timeout supported by tinykeys. Acepe does not use key sequences.
 		 */
 		timeout?: number;
 		/**

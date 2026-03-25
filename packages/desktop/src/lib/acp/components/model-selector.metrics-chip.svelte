@@ -92,7 +92,7 @@ const tooltipLines = $derived.by(() => {
 							fill="none"
 							stroke="currentColor"
 							stroke-width="1.2"
-							opacity="0.25"
+							opacity="0.18"
 						/>
 						<circle
 							cx="7"
@@ -104,6 +104,7 @@ const tooltipLines = $derived.by(() => {
 							stroke-dasharray={2 * Math.PI * 5.5}
 							stroke-dashoffset={2 * Math.PI * 5.5 * (1 - percent / 100)}
 							stroke-linecap="round"
+							class="text-primary"
 						/>
 					</svg>
 				{/if}

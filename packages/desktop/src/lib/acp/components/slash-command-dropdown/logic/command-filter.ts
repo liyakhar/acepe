@@ -1,5 +1,7 @@
 import type { AvailableCommand } from "../../../types/available-command.js";
 
+const MAX_SLASH_COMMAND_RESULTS = 20;
+
 /**
  * Filter commands based on query string.
  *
@@ -26,9 +28,11 @@ export function filterCommands(
 ): AvailableCommand[] {
 	// Treat empty or whitespace-only query as no filter
 	if (!query || !query.trim()) {
-		return [...commands];
+		return commands.slice(0, MAX_SLASH_COMMAND_RESULTS);
 	}
 
 	const lowerQuery = query.toLowerCase().trim();
-	return commands.filter((cmd) => cmd.name.toLowerCase().includes(lowerQuery));
+	return commands
+		.filter((cmd) => cmd.name.toLowerCase().includes(lowerQuery))
+		.slice(0, MAX_SLASH_COMMAND_RESULTS);
 }

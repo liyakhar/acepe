@@ -27,6 +27,7 @@ export type AgentToolKind =
 	| "web_search"
 	| "think"
 	| "task"
+	| "task_output"
 	| "other";
 
 export interface AgentUserEntry {

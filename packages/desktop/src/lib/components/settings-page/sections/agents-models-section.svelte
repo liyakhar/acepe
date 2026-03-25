@@ -16,7 +16,6 @@ import * as preferencesStore from "$lib/acp/store/agent-model-preferences-store.
 import { getAgentPreferencesStore, getAgentStore } from "$lib/acp/store/index.js";
 import type { ModeType } from "$lib/acp/types/agent-model-preferences.js";
 import { CanonicalModeId } from "$lib/acp/types/canonical-mode-id.js";
-import CircularProgress from "$lib/components/ui/circular-progress/circular-progress.svelte";
 import { Switch } from "$lib/components/ui/switch/index.js";
 import * as m from "$lib/paraglide/messages.js";
 
@@ -93,9 +92,6 @@ function handleClearDefault(agentId: string, mode: ModeType): void {
 		description="Choose which agents are enabled and set their default models."
 	/>
 	{#each agentStore.agents as agent (agent.id)}
-		{@const isInstallable = agent.availability_kind?.kind === "installable"}
-		{@const isInstallingNow = agentStore.isInstalling(agent.id)}
-		{@const installProgress = agentStore.installing[agent.id]}
 		{@const hasModelDefaults = AGENTS_WITH_MODEL_DEFAULTS.has(agent.id)}
 		{@const isCustomAgent = agentPreferencesStore.customAgentConfigs.some((config) => config.id === agent.id)}
 
@@ -108,11 +104,6 @@ function handleClearDefault(agentId: string, mode: ModeType): void {
 					<span class="truncate text-[13px] font-semibold text-foreground">
 						{agent.name}
 					</span>
-					{#if !agent.available && !isInstallable}
-						<span class="ml-1.5 shrink-0 text-[12px] text-muted-foreground/30">
-							{m.settings_agents_not_installed()}
-						</span>
-					{/if}
 				</HeaderTitleCell>
 				<HeaderActionCell withDivider>
 					{#if !isCustomAgent}
@@ -131,22 +122,6 @@ function handleClearDefault(agentId: string, mode: ModeType): void {
 								);
 							}}
 						/>
-					{/if}
-					{#if isInstallingNow && installProgress}
-						<div class="flex items-center gap-1.5 h-7 px-2">
-							<CircularProgress
-								current={installProgress.progress}
-								total={1}
-								size={12}
-								strokeWidth={1.5}
-								class="text-muted-foreground"
-							/>
-							<span class="text-[12px] text-muted-foreground/60">{installProgress.stage}</span>
-						</div>
-					{:else if isInstallable && !agent.available}
-						<span class="h-7 flex items-center px-2 text-[12px] text-muted-foreground/30">
-							{m.settings_agents_not_installed()}
-						</span>
 					{/if}
 					<div class="flex items-center h-7 px-1.5" data-header-control>
 						<Switch

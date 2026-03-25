@@ -157,6 +157,14 @@ const projectViewModes = new SvelteMap<string, ProjectViewMode>();
 // Which project (if any) is showing the agent strip (opened via plus icon)
 let projectPathShowingAgentStrip = $state<string | null>(null);
 
+function shouldShowProjectQuickActions(): boolean {
+	return availableAgents.length > 0 || Boolean(onOpenTerminal) || Boolean(onOpenBrowser);
+}
+
+function shouldShowProjectCreateButton(): boolean {
+	return shouldShowProjectQuickActions() || Boolean(onCreateSessionForProject);
+}
+
 let initialStateHydrated = false;
 $effect(() => {
 	if (initialStateHydrated) return;
@@ -733,6 +741,12 @@ function openCreateBranchDialog(projectPath: string): void {
 										projectName={group.projectName}
 										{availableAgents}
 										{effectiveTheme}
+										onOpenTerminal={onOpenTerminal
+											? (projectPath) => onOpenTerminal(projectPath)
+											: undefined}
+										onOpenBrowser={onOpenBrowser
+											? (projectPath) => onOpenBrowser(projectPath)
+											: undefined}
 										onCancel={() => {
 											projectPathShowingAgentStrip = null;
 										}}
@@ -762,12 +776,6 @@ function openCreateBranchDialog(projectPath: string): void {
 												currentColor={group.projectColor}
 												viewMode={viewMode}
 												onViewModeChange={(mode) => setProjectViewMode(group.projectPath, mode)}
-												onOpenTerminal={onOpenTerminal
-													? () => onOpenTerminal(group.projectPath)
-													: undefined}
-												onOpenBrowser={onOpenBrowser
-													? () => onOpenBrowser(group.projectPath)
-													: undefined}
 												onColorChange={onProjectColorChange
 													? (color) => onProjectColorChange(group.projectPath, color)
 													: undefined}
@@ -775,37 +783,41 @@ function openCreateBranchDialog(projectPath: string): void {
 													? () => onRemoveProject(group.projectPath)
 													: undefined}
 											/>
-											{#if availableAgents.length > 0}
-												<div
-													class="flex items-center border-l border-border/50"
-													role="presentation"
-													onclick={(e) => {
-														e.stopPropagation();
+										{#if shouldShowProjectCreateButton()}
+											<div
+												class="flex items-center border-l border-border/50"
+												role="presentation"
+												onclick={(e) => {
+													e.stopPropagation();
+													if (shouldShowProjectQuickActions()) {
 														projectPathShowingAgentStrip = group.projectPath;
-													}}
-													onkeydown={(e) => e.stopPropagation()}
-												>
-													<Tooltip.Root>
-														<Tooltip.Trigger>
-															<button
-																type="button"
-										class="inline-flex h-7 w-7 items-center justify-center cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-																aria-label={m.thread_list_new_session_in_project({
-																	projectName: group.projectName,
-																})}
-															>
-																<IconPlus class="h-3 w-3" />
-															</button>
-														</Tooltip.Trigger>
-														<Tooltip.Content>
-															{m.thread_list_new_session_in_project({
+													} else {
+														handleCreateClick(e, group.projectPath);
+													}
+												}}
+												onkeydown={(e) => e.stopPropagation()}
+											>
+												<Tooltip.Root>
+													<Tooltip.Trigger>
+														<button
+															type="button"
+															class="inline-flex h-7 w-7 items-center justify-center cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+															aria-label={m.thread_list_new_session_in_project({
 																projectName: group.projectName,
 															})}
-														</Tooltip.Content>
-													</Tooltip.Root>
-												</div>
-											{/if}
-										</div>
+														>
+															<IconPlus class="h-3 w-3" />
+														</button>
+													</Tooltip.Trigger>
+													<Tooltip.Content>
+														{m.thread_list_new_session_in_project({
+															projectName: group.projectName,
+														})}
+													</Tooltip.Content>
+												</Tooltip.Root>
+											</div>
+										{/if}
+									</div>
 									{/snippet}
 								</ProjectHeader>
 							{/if}
@@ -873,6 +885,12 @@ function openCreateBranchDialog(projectPath: string): void {
 								projectName={group.projectName}
 								{availableAgents}
 								{effectiveTheme}
+								onOpenTerminal={onOpenTerminal
+									? (projectPath) => onOpenTerminal(projectPath)
+									: undefined}
+								onOpenBrowser={onOpenBrowser
+									? (projectPath) => onOpenBrowser(projectPath)
+									: undefined}
 								onCancel={() => {
 									projectPathShowingAgentStrip = null;
 								}}
@@ -891,63 +909,59 @@ function openCreateBranchDialog(projectPath: string): void {
 							class="group flex-1 min-w-0 cursor-pointer hover:bg-accent/50 transition-colors"
 						>
 							{#snippet actions()}
-							<div
-								class="flex shrink-0 items-center"
-								role="presentation"
-								onclick={(e) => e.stopPropagation()}
-								onkeydown={(e) => e.stopPropagation()}
-							>
+								<div
+									class="flex shrink-0 items-center"
+									role="presentation"
+									onclick={(e) => e.stopPropagation()}
+									onkeydown={(e) => e.stopPropagation()}
+								>
 									<ProjectHeaderOverflowMenu
 										projectName={group.projectName}
 										currentColor={group.projectColor}
 										viewMode={viewMode}
 										onViewModeChange={(mode) => setProjectViewMode(group.projectPath, mode)}
-											onOpenTerminal={onOpenTerminal
-												? () => onOpenTerminal(group.projectPath)
-												: undefined}
-											onOpenBrowser={onOpenBrowser
-												? () => onOpenBrowser(group.projectPath)
-												: undefined}
-											onColorChange={onProjectColorChange
-												? (color) => onProjectColorChange(group.projectPath, color)
-												: undefined}
-											onRemoveProject={onRemoveProject
-												? () => onRemoveProject(group.projectPath)
-												: undefined}
-										/>
-									<div
-										class="flex shrink-0 items-center border-l border-border/50"
-										role="presentation"
-										onclick={(e) => {
-											e.stopPropagation();
-											if (availableAgents.length > 0) {
-												projectPathShowingAgentStrip = group.projectPath;
-											} else {
-												handleCreateClick(e, group.projectPath);
-											}
-										}}
-										onkeydown={(e) => e.stopPropagation()}
-									>
-										<Tooltip.Root>
-											<Tooltip.Trigger>
-											<button
-												type="button"
-												class="inline-flex items-center justify-center h-7 w-7 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-												aria-label={m.thread_list_new_session_in_project({
-													projectName: group.projectName,
-												})}
-											>
-												<IconPlus class="h-3 w-3" />
-											</button>
-											</Tooltip.Trigger>
-											<Tooltip.Content>
-												{m.thread_list_new_session_in_project({
-													projectName: group.projectName,
-												})}
-											</Tooltip.Content>
-										</Tooltip.Root>
-									</div>
-									</div>
+										onColorChange={onProjectColorChange
+											? (color) => onProjectColorChange(group.projectPath, color)
+											: undefined}
+										onRemoveProject={onRemoveProject
+											? () => onRemoveProject(group.projectPath)
+											: undefined}
+									/>
+									{#if shouldShowProjectCreateButton()}
+										<div
+											class="flex shrink-0 items-center border-l border-border/50"
+											role="presentation"
+											onclick={(e) => {
+												e.stopPropagation();
+												if (shouldShowProjectQuickActions()) {
+													projectPathShowingAgentStrip = group.projectPath;
+												} else {
+													handleCreateClick(e, group.projectPath);
+												}
+											}}
+											onkeydown={(e) => e.stopPropagation()}
+										>
+											<Tooltip.Root>
+												<Tooltip.Trigger>
+													<button
+														type="button"
+														class="inline-flex items-center justify-center h-7 w-7 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+														aria-label={m.thread_list_new_session_in_project({
+															projectName: group.projectName,
+														})}
+													>
+														<IconPlus class="h-3 w-3" />
+													</button>
+												</Tooltip.Trigger>
+												<Tooltip.Content>
+													{m.thread_list_new_session_in_project({
+														projectName: group.projectName,
+													})}
+												</Tooltip.Content>
+											</Tooltip.Root>
+										</div>
+									{/if}
+								</div>
 							{/snippet}
 						</ProjectHeader>
 					{/if}

@@ -11,8 +11,5 @@ export function canCancelVoiceInteraction(phase: VoiceInputPhase): boolean {
 }
 
 export function shouldShowVoiceOverlay(phase: VoiceInputPhase): boolean {
-	return (
-		phase === "transcribing" ||
-		phase === "error"
-	);
+	return phase === "error";
 }

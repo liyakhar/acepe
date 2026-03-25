@@ -100,9 +100,7 @@ describe("permission-display", () => {
 		const permission = createPermission({
 			parsedArguments: {
 				kind: "edit",
-				file_path: "/src/main.rs",
-				old_string: "foo",
-				new_string: "bar",
+				edits: [{ filePath: "/src/main.rs", oldString: "foo", newString: "bar" }],
 			},
 		});
 
@@ -130,10 +128,7 @@ describe("permission-display", () => {
 		const permission = createPermission({
 			parsedArguments: {
 				kind: "edit",
-				file_path: "   ",
-				old_string: null,
-				new_string: null,
-				content: null,
+				edits: [{ filePath: "   ", oldString: null, newString: null, content: null }],
 			},
 			rawInput: { file_path: "/raw.ts" },
 		});

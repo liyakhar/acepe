@@ -7,6 +7,7 @@ describe("workspace file panel persistence helpers", () => {
 		const serialized = serializeFilePanels([
 			{
 				id: "panel-1",
+				kind: "file",
 				filePath: "README.md",
 				projectPath: "/workspace/app",
 				ownerPanelId: "agent-panel-1",
@@ -55,6 +56,7 @@ describe("workspace file panel persistence helpers", () => {
 		expect(hydrated).toEqual([
 			{
 				id: "persisted-1",
+				kind: "file",
 				filePath: "README.md",
 				projectPath: "/workspace/app",
 				ownerPanelId: "agent-panel-1",
@@ -62,6 +64,7 @@ describe("workspace file panel persistence helpers", () => {
 			},
 			{
 				id: "hydrated-1",
+				kind: "file",
 				filePath: "config.yml",
 				projectPath: "/workspace/app",
 				ownerPanelId: null,

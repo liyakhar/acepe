@@ -3,10 +3,12 @@ import type { Snippet } from "svelte";
 
 let {
 	class: className = "",
+	contentClass = "p-2",
 	content,
 	footer,
 }: {
 	class?: string;
+	contentClass?: string;
 	content: Snippet;
 	footer?: Snippet;
 } = $props();
@@ -15,7 +17,7 @@ let {
 <div
 	class="relative h-fit flex flex-col select-none overflow-hidden rounded-xl bg-input/30 {className}"
 >
-	<div class="p-2">
+	<div class={contentClass}>
 		{@render content()}
 	</div>
 	{#if footer}

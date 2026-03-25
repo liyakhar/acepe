@@ -24,3 +24,8 @@ export interface WorktreeToggleConfig {
  * Callback for when worktree is created and session should be created.
  */
 export type OnWorktreeCreatedCallback = (worktreeInfo: WorktreeInfo) => void;
+
+/**
+ * Callback for when an existing worktree is renamed.
+ */
+export type OnWorktreeRenamedCallback = (worktreeInfo: WorktreeInfo) => void;

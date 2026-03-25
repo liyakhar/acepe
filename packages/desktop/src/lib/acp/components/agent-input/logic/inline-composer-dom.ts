@@ -54,13 +54,6 @@ function createTextFragment(content: string): DocumentFragment {
 	return fragment;
 }
 
-function createEditIcon(): SVGElement {
-	return createSvgIcon(
-		"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7|M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
-		"h-3 w-3"
-	);
-}
-
 function createTokenElement(
 	tokenType: InlineArtefactTokenType,
 	value: string,
@@ -207,6 +200,13 @@ function getNodeSerializedLength(node: Node): number {
 
 export function serializeInlineComposerMessage(editor: HTMLElement): string {
 	let result = "";
+	const bareBreakOnly =
+		editor.childNodes.length === 1 &&
+		editor.firstChild?.nodeType === Node.ELEMENT_NODE &&
+		(editor.firstChild as HTMLElement).tagName === "BR";
+	if (bareBreakOnly) {
+		return "";
+	}
 	const walker = document.createTreeWalker(editor, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
 	let node = walker.nextNode();
 
@@ -423,16 +423,33 @@ export function getSerializedCursorOffset(editor: HTMLElement): number {
 	return getSerializedOffsetWithinNode(editor, range.startContainer, range.startOffset);
 }
 
+export function getSerializedSelectionRange(editor: HTMLElement): { start: number; end: number } | null {
+	const selection = window.getSelection();
+	if (!selection || selection.rangeCount === 0) {
+		return null;
+	}
+
+	const range = selection.getRangeAt(0);
+	if (!editor.contains(range.startContainer) || !editor.contains(range.endContainer)) {
+		return null;
+	}
+
+	const start = getSerializedOffsetWithinNode(editor, range.startContainer, range.startOffset);
+	const end = getSerializedOffsetWithinNode(editor, range.endContainer, range.endOffset);
+
+	return { start, end };
+}
+
 export function getSerializedSelectionEnd(editor: HTMLElement, collapsedOffset: number): number {
 	const selection = window.getSelection();
 	if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
 		return collapsedOffset;
 	}
-	const range = selection.getRangeAt(0);
-	if (!editor.contains(range.endContainer)) {
+	const serializedRange = getSerializedSelectionRange(editor);
+	if (!serializedRange) {
 		return collapsedOffset;
 	}
-	return getSerializedOffsetWithinNode(editor, range.endContainer, range.endOffset);
+	return serializedRange.end;
 }
 
 export function setSerializedCursorOffset(editor: HTMLElement, offset: number): void {

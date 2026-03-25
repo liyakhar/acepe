@@ -14,6 +14,10 @@ import type { Keybinding, KeybindingConflict } from "../types.js";
 
 import { KeybindingError } from "../types.js";
 
+function isSequenceKeybinding(key: string): boolean {
+	return key.includes(" ") && !key.includes("+");
+}
+
 export class KeybindingRegistry {
 	private bindings = $state<Keybinding[]>([]);
 	// Version counter to trigger reactivity when bindings change
@@ -33,6 +37,15 @@ export class KeybindingRegistry {
 	 * Register a new keybinding.
 	 */
 	register(binding: Keybinding): Result<void, KeybindingError> {
+		if (isSequenceKeybinding(binding.key)) {
+			return err(
+				new KeybindingError(
+					"INVALID_KEYBINDING",
+					`Keybinding sequences are not supported: "${binding.key}"`
+				)
+			);
+		}
+
 		// Check for exact duplicates
 		const existing = this.bindings.find(
 			(b) => b.key === binding.key && b.command === binding.command
@@ -68,6 +81,10 @@ export class KeybindingRegistry {
 	 * Upsert a keybinding (add or replace).
 	 */
 	upsert(binding: Keybinding): void {
+		if (isSequenceKeybinding(binding.key)) {
+			return;
+		}
+
 		// Remove existing binding for same key+command and add new one
 		const filtered = this.bindings.filter(
 			(b) => !(b.key === binding.key && b.command === binding.command)

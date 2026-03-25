@@ -1027,10 +1027,13 @@ export class AgentInputState {
 	}
 
 	private cleanupInlineReferenceToken(tokenText: string): void {
-		const match = tokenText.match(/^@\[text_ref:([^\]]+)\]$/);
-		if (!match) return;
-		const id = match[1];
-		this.inlineTextById.delete(id);
+		const matches = tokenText.matchAll(/@\[text_ref:([^\]]+)\]/g);
+		for (const match of matches) {
+			const id = match[1];
+			if (id) {
+				this.inlineTextById.delete(id);
+			}
+		}
 	}
 
 	private isSkillCommand(command: AvailableCommand): boolean {

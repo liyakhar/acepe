@@ -37,6 +37,13 @@ const AGENT_AVAILABLE_MODELS_CACHE_KEY = "agent_available_models_cache";
 const AGENT_AVAILABLE_MODELS_DISPLAY_CACHE_KEY = "agent_available_models_display_cache";
 const AGENT_AVAILABLE_MODES_CACHE_KEY = "agent_available_modes_cache";
 const SESSION_MODEL_PER_MODE_KEY = "session_model_per_mode";
+const PR_GENERATION_PREFS_KEY = "pr_generation_preferences";
+
+/** Global preferences for PR content generation (agent + model). */
+export interface PrGenerationPreferences {
+	agentId?: string;
+	modelId?: string;
+}
 
 // State using Svelte 5 runes
 let defaults = $state<Record<string, AgentDefaultModels>>({});
@@ -45,6 +52,7 @@ let availableModelsCache = $state<Record<string, Model[]>>({});
 let availableModelsDisplayCache = $state<Record<string, ModelsForDisplay>>({});
 let availableModesCache = $state<Record<string, Mode[]>>({});
 let sessionModelPerMode = $state<SessionModelPerMode>({});
+let prGenerationPrefs = $state<PrGenerationPreferences>({});
 let loadPromise: ResultAsync<void, AppError> | null = null;
 let sessionModelLoadState = $state<"unloaded" | "loading" | "loaded" | "failed">("unloaded");
 let cacheLoaded = $state(false);
@@ -204,6 +212,26 @@ export function clearSessionModelPerMode(sessionId: string): void {
 	persistSessionModelPerMode();
 }
 
+// ============================================
+// PR GENERATION PREFERENCES
+// ============================================
+
+/**
+ * Get the global PR generation preferences (agent + model override).
+ */
+export function getPrGenerationPrefs(): PrGenerationPreferences {
+	return prGenerationPrefs;
+}
+
+/**
+ * Update the global PR generation preferences.
+ * Pass partial to merge, or empty object to clear.
+ */
+export function setPrGenerationPrefs(prefs: PrGenerationPreferences): void {
+	prGenerationPrefs = prefs;
+	persistPrGenerationPrefs();
+}
+
 export function isSessionModelLoaded(): boolean {
 	return sessionModelLoadState === "loaded";
 }
@@ -324,6 +352,23 @@ export function loadPersistedState(): ResultAsync<void, AppError> {
 		})
 		.orElse(() => okAsync(undefined));
 
+	const prGenerationPrefsLoad = tauriClient.settings
+		.get<PrGenerationPreferences>(PR_GENERATION_PREFS_KEY)
+		.map((persisted) => {
+			if (persisted && typeof persisted === "object") {
+				prGenerationPrefs = persisted;
+				logger_instance.debug("Loaded PR generation preferences", persisted);
+			}
+			return undefined;
+		})
+		.mapErr((err) => {
+			logger_instance.debug("No PR generation preferences found (expected on first run)", {
+				error: err.message,
+			});
+			return err;
+		})
+		.orElse(() => okAsync(undefined));
+
 	const sessionModelsLoad = tauriClient.settings
 		.get<SessionModelPerMode>(SESSION_MODEL_PER_MODE_KEY)
 		.map((persisted) => {
@@ -352,6 +397,7 @@ export function loadPersistedState(): ResultAsync<void, AppError> {
 		modelsDisplayCacheLoad,
 		modesCacheLoad,
 		sessionModelsLoad,
+		prGenerationPrefsLoad,
 	]).map(() => {
 		cacheLoaded = true;
 	});
@@ -415,5 +461,13 @@ function persistSessionModelPerMode(): void {
 		.set<SessionModelPerMode>(SESSION_MODEL_PER_MODE_KEY, sessionModelPerMode)
 		.mapErr((err) => {
 			logger_instance.error("Failed to persist session model per mode", { error: err.message });
+		});
+}
+
+function persistPrGenerationPrefs(): void {
+	tauriClient.settings
+		.set<PrGenerationPreferences>(PR_GENERATION_PREFS_KEY, prGenerationPrefs)
+		.mapErr((err) => {
+			logger_instance.error("Failed to persist PR generation preferences", { error: err.message });
 		});
 }

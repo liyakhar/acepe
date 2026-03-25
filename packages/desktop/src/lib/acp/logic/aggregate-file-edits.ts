@@ -1,29 +1,76 @@
 import type { SessionEntry } from "../application/dto/session.js";
+import type { EditEntry } from "../../services/converted-session-types.js";
 import type { ModifiedFileEntry } from "../types/modified-file-entry.js";
 import type { ModifiedFilesState } from "../types/modified-files-state.js";
 import type { ToolCall } from "../types/tool-call.js";
 import { TOOL_KINDS } from "../types/tool-kind.js";
 import { calculateDiffStats, getFileName } from "../utils/file-utils.js";
 
-/**
- * Extracts file path from tool call arguments.
- * Uses the normalized discriminated union.
- */
-function extractFilePath(toolCall: ToolCall): string | null {
-	// Check different tool kinds that have file paths
-	switch (toolCall.arguments.kind) {
-		case "read":
-		case "delete":
-			return toolCall.arguments.file_path ?? null;
-		case "edit":
-			return toolCall.arguments.edits[0]?.filePath ?? null;
-		case "search":
-			return toolCall.arguments.file_path ?? null; // optional for search
-		case "glob":
-			return toolCall.arguments.path ?? null;
-		default:
-			return null;
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readOptionalString(value: unknown): string | null {
+	return typeof value === "string" ? value : null;
+}
+
+function readStringProperty(
+	value: Record<string, unknown>,
+	primaryKey: string,
+	fallbackKey: string
+): string | null {
+	if (primaryKey in value) {
+		return readOptionalString(value[primaryKey]);
 	}
+
+	if (fallbackKey in value) {
+		return readOptionalString(value[fallbackKey]);
+	}
+
+	return null;
+}
+
+function normalizeEditEntry(value: unknown): EditEntry | null {
+	if (!isRecord(value)) {
+		return null;
+	}
+
+	const filePath = readStringProperty(value, "filePath", "file_path");
+	const oldString = readStringProperty(value, "oldString", "old_string");
+	const newString = readStringProperty(value, "newString", "new_string");
+	const content = readOptionalString(value.content);
+
+	if (filePath === null && oldString === null && newString === null && content === null) {
+		return null;
+	}
+
+	return {
+		filePath,
+		oldString,
+		newString,
+		content,
+	};
+}
+
+function extractEditEntries(toolCall: ToolCall): EditEntry[] {
+	const argumentsValue = toolCall.arguments as unknown;
+	if (!isRecord(argumentsValue)) {
+		return [];
+	}
+
+	if ("edits" in argumentsValue && Array.isArray(argumentsValue.edits)) {
+		const edits: EditEntry[] = [];
+		for (const entry of argumentsValue.edits) {
+			const normalizedEntry = normalizeEditEntry(entry);
+			if (normalizedEntry) {
+				edits.push(normalizedEntry);
+			}
+		}
+		return edits;
+	}
+
+	const legacyEntry = normalizeEditEntry(argumentsValue);
+	return legacyEntry ? [legacyEntry] : [];
 }
 
 function collectToolCallsRecursive(toolCall: ToolCall, result: ToolCall[]): void {
@@ -65,11 +112,14 @@ export function aggregateFileEdits(entries: ReadonlyArray<SessionEntry>): Modifi
 	const fileMap = new Map<string, FileAccumulator>();
 	const allToolCalls = collectAllToolCalls(entries);
 	const editToolCalls = allToolCalls.filter((toolCall) => toolCall.kind === TOOL_KINDS.EDIT);
+	let validEditToolCallCount = 0;
 
 	for (const toolCall of editToolCalls) {
-		if (toolCall.arguments.kind !== "edit") continue;
+		const editEntries = extractEditEntries(toolCall);
+		if (editEntries.length === 0) continue;
+		validEditToolCallCount += 1;
 
-		for (const edit of toolCall.arguments.edits) {
+		for (const edit of editEntries) {
 			const filePath = edit.filePath;
 			if (!filePath) continue;
 
@@ -125,6 +175,6 @@ export function aggregateFileEdits(entries: ReadonlyArray<SessionEntry>): Modifi
 		files,
 		byPath,
 		fileCount: files.length,
-		totalEditCount: editToolCalls.length,
+		totalEditCount: validEditToolCallCount,
 	};
 }

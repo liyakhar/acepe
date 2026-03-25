@@ -3,6 +3,7 @@ export type VoiceInputPhase =
 	| "idle"
 	| "checking_permission"
 	| "downloading_model"
+	| "loading_model"
 	| "recording"
 	| "transcribing"
 	| "complete"
@@ -28,6 +29,7 @@ export interface VoiceModelInfo {
 	size_bytes: number;
 	is_english_only: boolean;
 	is_downloaded: boolean;
+	is_loaded: boolean;
 	download_url: string;
 }
 

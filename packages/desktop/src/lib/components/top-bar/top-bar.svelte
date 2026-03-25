@@ -2,10 +2,12 @@
 import { AppTopBar } from "@acepe/ui/app-layout";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { EmbeddedIconButton, HeaderCell } from "@acepe/ui/panel-header";
+import { PillButton } from "@acepe/ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Bug from "phosphor-svelte/lib/Bug";
 import Columns from "phosphor-svelte/lib/Columns";
 import DiscordLogo from "phosphor-svelte/lib/DiscordLogo";
+import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
 import GithubLogo from "phosphor-svelte/lib/GithubLogo";
 import HardDrives from "phosphor-svelte/lib/HardDrives";
 import Rows from "phosphor-svelte/lib/Rows";
@@ -17,6 +19,7 @@ import type { Snippet } from "svelte";
 import { getPanelStore } from "$lib/acp/store/index.js";
 import type { ViewMode } from "$lib/acp/store/types.js";
 import type { MainAppViewState } from "$lib/components/main-app-view/logic/main-app-view-state.svelte.js";
+import type { UpdaterBannerState } from "$lib/components/main-app-view/logic/updater-state.js";
 import { ThemeToggle } from "$lib/components/theme/index.js";
 import { Switch } from "$lib/components/ui/switch/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
@@ -26,9 +29,12 @@ interface Props {
 	viewState: MainAppViewState;
 	/** Optional snippet for add project/repository button (e.g. dropdown). Rendered in top bar left after decorations. */
 	addProjectButton?: Snippet;
+	updaterState?: UpdaterBannerState;
+	onUpdateClick?: () => void;
+	onRetryUpdateClick?: () => void;
 }
 
-let { viewState, addProjectButton }: Props = $props();
+let { viewState, addProjectButton, updaterState, onUpdateClick, onRetryUpdateClick }: Props = $props();
 
 const panelStore = getPanelStore();
 
@@ -51,6 +57,38 @@ const viewModes: { value: ViewMode; label: string; color: string }[] = [
 	onSettings={() => viewState.toggleSettings()}
 	showAvatar={false}
 >
+	{#snippet extraLeftActions()}
+		{#if updaterState?.kind === "available"}
+			<div class="flex items-center pl-2">
+			<PillButton variant="invert" size="xs" onclick={onUpdateClick}>
+				{#snippet children()}
+					Update
+				{/snippet}
+			</PillButton>
+			</div>
+		{:else if updaterState?.kind === "downloading"}
+			<div class="flex items-center pl-2">
+			<PillButton variant="invert" size="xs" disabled>
+				{#snippet children()}
+					<span class="size-2.5 animate-spin rounded-full border border-current border-t-transparent"></span>
+						{#if updaterState.totalBytes && updaterState.totalBytes > 0}
+							{Math.round((updaterState.downloadedBytes / updaterState.totalBytes) * 100)}%
+						{:else}
+							Updating
+						{/if}
+					{/snippet}
+				</PillButton>
+			</div>
+		{:else if updaterState?.kind === "error"}
+			<div class="flex items-center pl-2">
+				<PillButton variant="ghost" size="xs" onclick={onRetryUpdateClick}>
+					{#snippet children()}
+						Retry
+					{/snippet}
+				</PillButton>
+			</div>
+		{/if}
+	{/snippet}
 	{#snippet extraRightActions()}
 		<HeaderCell withDivider={false}>
 			<DropdownMenu.Root>

@@ -339,6 +339,16 @@ export class SessionMessagingService {
 	handleTurnError(sessionId: string, error: TurnErrorPayload): void {
 		this.entryManager.clearStreamingAssistantEntry(sessionId);
 		const normalized = normalizeTurnError(error);
+		const errorEntry: SessionEntry = {
+			id: crypto.randomUUID(),
+			type: "error",
+			message: {
+				content: normalized.message,
+				code: normalized.code != null ? String(normalized.code) : undefined,
+			},
+			timestamp: new Date(),
+		};
+		this.entryManager.addEntry(sessionId, errorEntry);
 
 		this.connectionManager.sendTurnFailed(sessionId, {
 			kind: normalized.kind,
@@ -349,7 +359,7 @@ export class SessionMessagingService {
 			this.hotStateManager.updateHotState(sessionId, {
 				status: "error",
 				turnState: "error",
-				connectionError: normalized.message,
+				connectionError: null,
 			});
 			logger.error("Fatal turn error", {
 				sessionId,
@@ -361,7 +371,7 @@ export class SessionMessagingService {
 			this.hotStateManager.updateHotState(sessionId, {
 				status: "ready",
 				turnState: "error",
-				connectionError: normalized.message,
+				connectionError: null,
 			});
 			logger.error("Recoverable turn error", {
 				sessionId,

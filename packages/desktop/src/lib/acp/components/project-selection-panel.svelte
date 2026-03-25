@@ -1,18 +1,16 @@
 <script lang="ts">
 import { onDestroy, onMount } from "svelte";
-import { SvelteMap } from "svelte/reactivity";
-import { Kbd, KbdGroup } from "$lib/components/ui/kbd/index.js";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import * as m from "$lib/paraglide/messages.js";
 import type { FileGitStatus } from "$lib/services/converted-session-types.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
-import "@acepe/ui/markdown-prose.css";
-
 import { getAgentIcon } from "../constants/thread-list-constants.js";
 import type { AgentInfo } from "../logic/agent-manager.js";
 import type { Project } from "../logic/project-manager.svelte.js";
 import { capitalizeName } from "../utils/index.js";
 import ProjectCard from "./project-card.svelte";
 import type { ProjectCardData } from "./project-card-data.js";
+import { getVisibleProjectSelectionProjects } from "./project-selection-visibility.js";
 import {
 	getCachedProjectSelectionMetadata,
 	markProjectSelectionMetadataFieldLoadFinished,
@@ -41,17 +39,7 @@ const modifierSymbol = isMac ? "⌘" : "Ctrl";
 
 // Two-stage keyboard selection state
 let focusedProjectIndex = $state<number | null>(null);
-const displayProjects = $derived.by(() => {
-	if (!preSelectedProjectPath) {
-		return projects;
-	}
-	const matchingProject = projects.find((project) => project.path === preSelectedProjectPath);
-	return matchingProject ? [matchingProject] : projects;
-});
-const isSinglePreselectedProject = $derived.by(
-	() => !!preSelectedProjectPath && displayProjects.length === 1
-);
-
+const missingProjectPaths = new SvelteSet<string>();
 const cardDataMap = new SvelteMap<
 	string,
 	{
@@ -59,14 +47,37 @@ const cardDataMap = new SvelteMap<
 		gitStatus: ReadonlyArray<FileGitStatus> | null;
 	}
 >();
+const remoteStatusMap = new SvelteMap<string, { ahead: number; behind: number }>();
+
+const displayProjects = $derived.by(() => {
+	return getVisibleProjectSelectionProjects(projects, preSelectedProjectPath, missingProjectPaths);
+});
+const isSinglePreselectedProject = $derived.by(
+	() => !!preSelectedProjectPath && displayProjects.length === 1
+);
+let lastProjectsKey = "";
+let lastDisplayProjectsKey = "";
+
+const effectiveFocusedIndex = $derived.by<number | null>(() => {
+	if (isSinglePreselectedProject) {
+		return displayProjects.length > 0 ? 0 : null;
+	}
+	if (focusedProjectIndex !== null && focusedProjectIndex >= displayProjects.length) {
+		return null;
+	}
+	return focusedProjectIndex;
+});
 
 const cardDataList = $derived<ProjectCardData[]>(
 	displayProjects.map((project) => {
 		const cached = cardDataMap.get(project.path) ?? getCachedProjectSelectionMetadata(project.path);
+		const remote = remoteStatusMap.get(project.path);
 		return {
 			project,
 			branch: cached?.branch ?? null,
 			gitStatus: cached?.gitStatus ?? null,
+			ahead: remote?.ahead ?? null,
+			behind: remote?.behind ?? null,
 		};
 	})
 );
@@ -101,6 +112,9 @@ function updateProjectCardData(
 
 function ensureProjectInfoLoaded(project: Project): void {
 	const projectPath = project.path;
+	if (missingProjectPaths.has(projectPath)) {
+		return;
+	}
 	const cached = getCachedProjectSelectionMetadata(projectPath);
 	if (cached) {
 		cardDataMap.set(projectPath, cached);
@@ -128,8 +142,19 @@ function ensureProjectInfoLoaded(project: Project): void {
 				if (shouldLoadGitStatus) {
 					markProjectSelectionMetadataFieldLoadFinished(projectPath, "gitStatus", true);
 				}
+				// Fetch remote status (ahead/behind) in background
+				void tauriClient.git.remoteStatus(projectPath).match(
+					(remote) => {
+						remoteStatusMap.set(projectPath, { ahead: remote.ahead, behind: remote.behind });
+					},
+					() => { /* no remote or not a git repo — ignore */ }
+				);
 			},
-			() => {
+			(err) => {
+				const msg = err instanceof Error ? err.message : String(err);
+				if (msg.includes("not found") || msg.includes("not a directory") || msg.includes("does not exist")) {
+					missingProjectPaths.add(projectPath);
+				}
 				if (shouldLoadBranch) {
 					markProjectSelectionMetadataFieldLoadFinished(projectPath, "branch", false);
 				}
@@ -141,29 +166,83 @@ function ensureProjectInfoLoaded(project: Project): void {
 	}
 }
 
-$effect(() => {
-	if (typeof window === "undefined" || isSinglePreselectedProject) {
+function updateMissingProjectPaths(paths: readonly string[]): void {
+	const nextMissingPaths = new Set(paths);
+
+	for (const existingPath of Array.from(missingProjectPaths)) {
+		if (!nextMissingPaths.has(existingPath)) {
+			missingProjectPaths.delete(existingPath);
+		}
+	}
+
+	for (const path of nextMissingPaths) {
+		if (!missingProjectPaths.has(path)) {
+			missingProjectPaths.add(path);
+		}
+	}
+}
+
+function getProjectPathsKey(list: readonly Project[]): string {
+	return list.map((project) => project.path).join("\n");
+}
+
+function refreshMissingProjectPaths(): void {
+	if (typeof window === "undefined") {
+		return;
+	}
+
+	const projectsKey = getProjectPathsKey(projects);
+	if (projectsKey === lastProjectsKey) {
+		return;
+	}
+	lastProjectsKey = projectsKey;
+
+	const projectPaths = projects.map((project) => project.path);
+	if (projectPaths.length === 0) {
+		updateMissingProjectPaths([]);
+		syncDisplayedProjectMetadata();
+		return;
+	}
+
+	void tauriClient.projects.getMissingProjectPaths(projectPaths).match(
+		(paths) => {
+			updateMissingProjectPaths(paths);
+			syncDisplayedProjectMetadata();
+			if (isSinglePreselectedProject) {
+				const preselectedProject = displayProjects[0];
+				if (preselectedProject && !missingProjectPaths.has(preselectedProject.path)) {
+					ensureProjectInfoLoaded(preselectedProject);
+				}
+			}
+		},
+		() => undefined
+	);
+}
+
+function syncDisplayedProjectMetadata(): void {
+	if (typeof window === "undefined") {
+		return;
+	}
+
+	const displayProjectsKey = getProjectPathsKey(displayProjects);
+	if (!isSinglePreselectedProject && displayProjectsKey === lastDisplayProjectsKey) {
+		return;
+	}
+	lastDisplayProjectsKey = displayProjectsKey;
+
+	if (isSinglePreselectedProject) {
 		return;
 	}
 
 	for (const project of displayProjects) {
 		ensureProjectInfoLoaded(project);
 	}
-});
+}
 
-$effect(() => {
-	if (!isSinglePreselectedProject) {
-		if (focusedProjectIndex !== null && focusedProjectIndex >= displayProjects.length) {
-			focusedProjectIndex = null;
-		}
-		return;
-	}
-	focusedProjectIndex = 0;
-	const preselectedProject = displayProjects[0];
-	if (preselectedProject) {
-		ensureProjectInfoLoaded(preselectedProject);
-	}
-});
+function syncProjectSelectionState(): void {
+	refreshMissingProjectPaths();
+	syncDisplayedProjectMetadata();
+}
 
 function handleKeyDown(event: KeyboardEvent) {
 	const target = event.target as HTMLElement;
@@ -172,7 +251,7 @@ function handleKeyDown(event: KeyboardEvent) {
 	}
 
 	// Handle Escape to clear focus
-	if (event.key === "Escape" && focusedProjectIndex !== null) {
+	if (event.key === "Escape" && effectiveFocusedIndex !== null) {
 		if (isSinglePreselectedProject) {
 			return;
 		}
@@ -190,26 +269,23 @@ function handleKeyDown(event: KeyboardEvent) {
 	if (event.key >= "1" && event.key <= "9") {
 		const index = Number.parseInt(event.key, 10) - 1;
 
-		if (focusedProjectIndex !== null) {
+		if (effectiveFocusedIndex !== null) {
 			// Stage 2: A project is focused, select an agent
 			if (index < availableAgents.length) {
-				const agent = availableAgents[index];
-				if (agent.available) {
-					event.preventDefault();
-					event.stopPropagation();
-					const project = displayProjects[focusedProjectIndex];
-					focusedProjectIndex = null;
-					onProjectAgentSelected(project, agent.id);
-				}
+				event.preventDefault();
+				event.stopPropagation();
+				const project = displayProjects[effectiveFocusedIndex];
+				focusedProjectIndex = null;
+				onProjectAgentSelected(project, availableAgents[index].id);
 			}
 		} else {
 			// Stage 1: No project focused, focus a project
 			if (index < displayProjects.length) {
-				event.preventDefault();
-				event.stopPropagation();
-				focusedProjectIndex = index;
 				const project = displayProjects[index];
-				if (project) {
+				if (project && !missingProjectPaths.has(project.path)) {
+					event.preventDefault();
+					event.stopPropagation();
+					focusedProjectIndex = index;
 					ensureProjectInfoLoaded(project);
 				}
 			}
@@ -218,8 +294,9 @@ function handleKeyDown(event: KeyboardEvent) {
 }
 
 function handleProjectFocus(index: number) {
-	focusedProjectIndex = index;
 	const project = displayProjects[index];
+	if (project && missingProjectPaths.has(project.path)) return;
+	focusedProjectIndex = index;
 	if (project) {
 		ensureProjectInfoLoaded(project);
 	}
@@ -244,6 +321,7 @@ function handleContainerClick(event: MouseEvent) {
 
 onMount(() => {
 	window.addEventListener("keydown", handleKeyDown);
+	syncProjectSelectionState();
 });
 
 onDestroy(() => {
@@ -257,68 +335,19 @@ onDestroy(() => {
 	class="flex flex-col items-center justify-center h-full p-4 gap-4"
 	onclick={handleContainerClick}
 >
-	{#if !isSinglePreselectedProject}
-		<!-- How it works (below title, markdown-style table with keybinds on right) -->
-		<div
-			class="markdown-content w-full max-w-xs text-left"
-			role="region"
-			aria-label={m.project_select_how_title()}
-		>
-			<span class="text-[11px] text-muted-foreground block mb-1.5"
-				>{m.project_select_how_title()}</span
-			>
-			<div class="table-wrapper">
-				<table>
-					<tbody>
-						<tr>
-							<td>1. {m.project_select_how_step1()}</td>
-							<td class="text-right whitespace-nowrap w-0">
-								<KbdGroup class="inline-flex justify-end">
-									<Kbd class="text-[10px] px-1 py-0.5 min-w-0">{modifierSymbol}</Kbd>
-									<Kbd class="text-[10px] px-1 py-0.5 min-w-0">1-9</Kbd>
-								</KbdGroup>
-							</td>
-						</tr>
-						<tr>
-							<td>2. {m.project_select_how_step2()}</td>
-							<td class="text-right whitespace-nowrap w-0">
-								<KbdGroup class="inline-flex justify-end">
-									<Kbd class="text-[10px] px-1 py-0.5 min-w-0">{modifierSymbol}</Kbd>
-									<Kbd class="text-[10px] px-1 py-0.5 min-w-0">1-9</Kbd>
-								</KbdGroup>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-		</div>
-	{/if}
-
 	{#if isSinglePreselectedProject}
 		<div class="grid grid-cols-2 gap-px rounded-md border border-border/50 overflow-hidden">
 			{#each availableAgents as agent (agent.id)}
 				{@const iconSrc = getAgentIcon(agent.id, effectiveTheme)}
-				{#if agent.available}
-					<button
-						class="flex items-center gap-2 px-2.5 py-2 bg-popover opacity-60 hover:opacity-100 hover:bg-accent/50 transition-all cursor-pointer"
-						onclick={() => handleAgentSelect(0, agent.id)}
-					>
-						<img src={iconSrc} alt={agent.name} class="h-6 w-6 shrink-0" />
-						<span class="text-[11px] font-semibold text-foreground truncate">
-							{capitalizeName(agent.name)}
-						</span>
-					</button>
-				{:else}
-					<button
-						class="flex items-center gap-2 px-2.5 py-2 bg-popover opacity-25 cursor-not-allowed"
-						disabled
-					>
-						<img src={iconSrc} alt={agent.name} class="h-6 w-6 shrink-0 grayscale" />
-						<span class="text-[11px] font-semibold text-foreground truncate">
-							{capitalizeName(agent.name)}
-						</span>
-					</button>
-				{/if}
+				<button
+					class="flex items-center gap-2 px-2.5 py-2 bg-popover opacity-60 hover:opacity-100 hover:bg-accent/50 transition-all cursor-pointer"
+					onclick={() => handleAgentSelect(0, agent.id)}
+				>
+					<img src={iconSrc} alt={agent.name} class="h-6 w-6 shrink-0" />
+					<span class="text-[11px] font-semibold text-foreground truncate">
+						{capitalizeName(agent.name)}
+					</span>
+				</button>
 			{/each}
 		</div>
 	{:else}
@@ -329,7 +358,9 @@ onDestroy(() => {
 					{index}
 					{availableAgents}
 					{effectiveTheme}
-					isFocused={focusedProjectIndex === index}
+					{modifierSymbol}
+					isMissing={missingProjectPaths.has(data.project.path)}
+					isFocused={effectiveFocusedIndex === index}
 					onFocus={() => handleProjectFocus(index)}
 					onAgentSelect={(agentId) => handleAgentSelect(index, agentId)}
 				/>

@@ -86,6 +86,11 @@ export interface AgentInputProps {
 	readonly selectedAgentId?: string | null;
 
 	/**
+	 * Optional voice session identifier for dictation outside a real ACP session.
+	 */
+	readonly voiceSessionId?: string | null;
+
+	/**
 	 * Available agents for selection.
 	 */
 	readonly availableAgents?: AgentInfo[];
@@ -94,6 +99,11 @@ export interface AgentInputProps {
 	 * Callback when agent selection changes.
 	 */
 	readonly onAgentChange?: (agentId: string) => void;
+
+	/**
+	 * Force-disable sending even if the input has content.
+	 */
+	readonly disableSend?: boolean;
 
 	/**
 	 * Whether the panel is in project selection mode.

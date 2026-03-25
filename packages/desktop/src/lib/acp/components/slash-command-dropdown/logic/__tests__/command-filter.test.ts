@@ -17,6 +17,20 @@ describe("filterCommands", () => {
 		expect(result).toEqual(commands);
 	});
 
+	it("should cap results when query is empty", () => {
+		const manyCommands = Array.from({ length: 30 }, (_, index) => ({
+			name: `command-${index}`,
+			description: `Command ${index}`,
+			input: null,
+		}));
+
+		const result = filterCommands(manyCommands, "");
+
+		expect(result).toHaveLength(20);
+		expect(result[0]?.name).toBe("command-0");
+		expect(result[19]?.name).toBe("command-19");
+	});
+
 	it("should return all commands when query is whitespace", () => {
 		const result = filterCommands(commands, "   ");
 		// Whitespace is treated as empty, so all commands are returned

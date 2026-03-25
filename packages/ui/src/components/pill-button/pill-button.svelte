@@ -43,7 +43,7 @@
 	};
 
 	const sizeClasses = {
-		xs: "h-4 px-1.5 text-[10px] gap-0.5",
+		xs: "px-1.5 py-0.5 text-[10px] gap-0.5",
 		sm: "h-6 px-2 text-xs gap-1",
 		md: "h-7 pl-2.5 pr-1.5 text-xs gap-1.5",
 		default: "pl-4 pr-2 py-2 text-sm gap-2",

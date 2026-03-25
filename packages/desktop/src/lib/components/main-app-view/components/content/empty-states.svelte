@@ -6,9 +6,8 @@ import { WorktreeToggleControl } from "$lib/acp/components/worktree-toggle/index
 import { getWorktreeDefaultStore } from "$lib/acp/components/worktree-toggle/worktree-default-store.svelte.js";
 import { loadWorktreeEnabled } from "$lib/acp/components/worktree-toggle/worktree-storage.js";
 import type { Project, ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
-import { getAgentStore } from "$lib/acp/store/agent-store.svelte.js";
 import { getPanelStore } from "$lib/acp/store/panel-store.svelte.js";
-import { getAgentPreferencesStore } from "$lib/acp/store/index.js";
+import { getAgentPreferencesStore, getAgentStore } from "$lib/acp/store/index.js";
 import * as m from "$lib/paraglide/messages.js";
 
 import logo from "../../../../../../../../assets/logo.svg?url";
@@ -17,7 +16,9 @@ import {
 	ensureEmptyStatePanelContext,
 } from "./logic/empty-state-panel-context.js";
 import {
+	canSendWithoutSession,
 	EMPTY_STATE_PANEL_ID,
+	resolveEmptyStateAgentId,
 	resolveEmptyStateWorktreePending,
 	resolveEmptyStateWorktreePendingForProjectChange,
 } from "./logic/empty-state-send-state.js";
@@ -46,10 +47,14 @@ let worktreePending = $state(false);
 // Derived
 const availableAgents = $derived(agentPreferencesStore.getPanelSelectableAgents(agentStore.agents));
 const projects = $derived(projectManager.projects);
+const availableAgentIds = $derived(availableAgents.map((agent) => agent.id));
 
-// Resolve effective agent: user selection, then default
+// Resolve effective agent: explicit selection if still available, otherwise first available
 const effectiveAgentId = $derived(
-	selectedAgentId ?? (availableAgents.length > 0 ? agentStore.getDefaultAgentId() : null)
+	resolveEmptyStateAgentId({
+		selectedAgentId,
+		availableAgentIds,
+	})
 );
 
 // Resolve effective project: user selection, then auto-select for single/multi
@@ -62,6 +67,12 @@ const projectName = $derived(effectiveProject?.name ?? null);
 const showProjectPicker = $derived(projects.length > 1);
 const canShowInput = $derived(projects.length > 0 && availableAgents.length > 0);
 const effectiveWorktreePending = $derived(worktreePending && activeWorktreePath === null);
+const canSendFromEmptyState = $derived(
+	canSendWithoutSession({
+		projectPath,
+		selectedAgentId: effectiveAgentId,
+	})
+);
 
 $effect(() => {
 	const currentProjectPath = projectPath;
@@ -139,6 +150,8 @@ function handleEmptyStateSessionCreated(sessionId: string) {
 				projectPath={projectPath ?? undefined}
 				projectName={projectName ?? undefined}
 				selectedAgentId={effectiveAgentId}
+				voiceSessionId={EMPTY_STATE_PANEL_ID}
+				disableSend={!canSendFromEmptyState}
 				{availableAgents}
 				onAgentChange={handleAgentChange}
 				onSessionCreated={handleEmptyStateSessionCreated}
@@ -181,6 +194,9 @@ function handleEmptyStateSessionCreated(sessionId: string) {
 						onWorktreeCreated={(info) => {
 							activeWorktreePath = info.directory;
 							worktreePending = false;
+						}}
+						onWorktreeRenamed={(info) => {
+							activeWorktreePath = info.directory;
 						}}
 						onPendingChange={(pending) => {
 							worktreePending = pending;

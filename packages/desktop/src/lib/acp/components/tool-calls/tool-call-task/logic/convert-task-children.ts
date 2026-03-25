@@ -18,6 +18,7 @@ const KIND_MAP: Record<ToolKind, AgentToolKind> = {
 	web_search: "web_search",
 	think: "think",
 	task: "task",
+	task_output: "task_output",
 	todo: "other",
 	question: "other",
 	skill: "other",

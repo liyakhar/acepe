@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	getAdjacentInlineTokenElement,
 	getSerializedCursorOffset,
+	getSerializedSelectionRange,
 	renderInlineComposerMessage,
 	serializeInlineComposerMessage,
 	setSerializedCursorOffset,
@@ -92,5 +93,27 @@ describe("inline-composer-dom", () => {
 		expect(range?.collapsed).toBe(true);
 		expect(range?.startContainer.nodeType).toBe(Node.TEXT_NODE);
 		expect(getSerializedCursorOffset(editor)).toBe(message.length);
+	});
+
+	it("returns the serialized range for a full selection", () => {
+		const editor = document.createElement("div");
+		const message =
+			"app-start.wavapp-start.wavapp-start.wavapp-start.wavapp-start.wavapp-start.wav ";
+		renderInlineComposerMessage(editor, message);
+
+		const selection = window.getSelection();
+		const range = document.createRange();
+		range.selectNodeContents(editor);
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+
+		expect(getSerializedSelectionRange(editor)).toEqual({ start: 0, end: message.length });
+	});
+
+	it("treats a bare line break editor as empty", () => {
+		const editor = document.createElement("div");
+		editor.appendChild(document.createElement("br"));
+
+		expect(serializeInlineComposerMessage(editor)).toBe("");
 	});
 });

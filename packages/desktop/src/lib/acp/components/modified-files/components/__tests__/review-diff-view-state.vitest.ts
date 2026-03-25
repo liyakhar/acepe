@@ -10,6 +10,10 @@ vi.mock("$lib/acp/utils/worker-pool-singleton.js", () => ({
 	getWorkerPool: (): undefined => undefined,
 }));
 
+vi.mock("../diff-hunk-action-buttons.svelte", () => ({
+	default: class MockDiffHunkActionButtons {},
+}));
+
 type ReviewDiffData = {
 	readonly oldFile: FileContents;
 	readonly newFile: FileContents;
@@ -140,9 +144,8 @@ describe("ReviewDiffViewState", () => {
 		const currentData = Reflect.get(state, "currentDiffData") as ReviewDiffData;
 		expect(currentData.newFile.contents).not.toBe(originalNewContents);
 
-		// The updated contents should match newLines joined
-		// newLines entries retain trailing \n (split via /(?<=\n)/), so join with ""
-		expect(currentData.newFile.contents).toBe(currentData.fileDiffMetadata.newLines?.join(""));
+		// The updated contents should match additionLines joined
+		expect(currentData.newFile.contents).toBe(currentData.fileDiffMetadata.additionLines.join(""));
 	}, 20_000);
 
 	it("sequential rejects produce correct content (all changes reverted)", async () => {

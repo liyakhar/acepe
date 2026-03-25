@@ -6,20 +6,15 @@ import * as m from "$lib/paraglide/messages.js";
 
 import TerminalPanelComponent from "./terminal-panel.svelte";
 
-/** Minimal shape for resolved fullscreen aux (we only need to check kind and panel.id). */
-type FullscreenAuxPanelResolved = { kind: string; panel: { id: string } } | null;
-
 interface Props {
 	terminals: readonly TerminalPanel[];
 	projectPath: string;
 	projectName: string;
 	projectColor: string;
 	panelStore: PanelStore;
-	fullscreenAuxPanel: FullscreenAuxPanelResolved;
 }
 
-let { terminals, projectPath, projectName, projectColor, panelStore, fullscreenAuxPanel }: Props =
-	$props();
+let { terminals, projectPath, projectName, projectColor, panelStore }: Props = $props();
 
 const selectedId = $derived.by(() => {
 	const preferred = panelStore.selectedTerminalPanelIdByProject[projectPath];
@@ -32,10 +27,7 @@ const selectedTerminal = $derived(
 );
 
 const isAuxFullscreen = $derived(
-	(panelStore.fullscreenPanelId !== null || panelStore.fullscreenAuxOnly) &&
-		fullscreenAuxPanel?.kind === "terminal" &&
-		selectedTerminal !== null &&
-		fullscreenAuxPanel.panel.id === selectedTerminal.id
+	selectedTerminal !== null && panelStore.fullscreenPanelId === selectedTerminal.id
 );
 
 function handleSelectTab(panelId: string) {

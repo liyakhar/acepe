@@ -1,5 +1,27 @@
 export const EMPTY_STATE_PANEL_ID = "empty-state-panel";
 
+export function resolveEmptyStateAgentId(options: {
+	selectedAgentId: string | null;
+	availableAgentIds: readonly string[];
+}): string | null {
+	if (
+		options.selectedAgentId &&
+		options.availableAgentIds.includes(options.selectedAgentId)
+	) {
+		return options.selectedAgentId;
+	}
+
+	const firstAvailableAgentId = options.availableAgentIds[0];
+	return firstAvailableAgentId ? firstAvailableAgentId : null;
+}
+
+export function canSendWithoutSession(options: {
+	projectPath: string | null | undefined;
+	selectedAgentId: string | null | undefined;
+}): boolean {
+	return Boolean(options.projectPath) && Boolean(options.selectedAgentId);
+}
+
 export function resolveEmptyStateWorktreePending(options: {
 	activeWorktreePath: string | null;
 	globalWorktreeDefault: boolean;

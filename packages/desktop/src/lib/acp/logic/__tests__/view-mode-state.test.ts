@@ -23,9 +23,9 @@ function createMockPanelStore(overrides: {
 }
 
 const panelsWithState = [
-	{ id: "p1", sessionProjectPath: "/a" },
-	{ id: "p2", sessionProjectPath: "/b" },
-	{ id: "p3", sessionProjectPath: "/a" },
+	{ id: "p1", projectPath: "/a" },
+	{ id: "p2", projectPath: "/b" },
+	{ id: "p3", projectPath: "/a" },
 ];
 
 const allGroups = [
@@ -55,7 +55,7 @@ describe("getViewModeState", () => {
 		expect(state.isFullscreenMode).toBe(true);
 		expect(state.isSingleMode).toBe(true);
 		expect(state.fullscreenPanel?.id).toBe("p2");
-		expect(state.fullscreenPanel?.sessionProjectPath).toBe("/b");
+		expect(state.fullscreenPanel?.projectPath).toBe("/b");
 	});
 
 	it("single with no focused panel uses first panel", () => {
@@ -95,6 +95,38 @@ describe("getViewModeState", () => {
 			focusedViewProjectPath: null,
 		});
 		const state = getViewModeState(store, { panelsWithState, allGroups });
+		expect(state.activeProjectPath).toBe("/b");
+	});
+
+	it("supports explicit fullscreen for a non-agent top-level panel", () => {
+		const mixedPanels = [
+			{ id: "agent-1", projectPath: "/a" },
+			{ id: "browser-1", projectPath: "/b" },
+		];
+		const store = createMockPanelStore({
+			viewMode: "multi",
+			fullscreenPanelId: "browser-1",
+		});
+
+		const state = getViewModeState(store, { panelsWithState: mixedPanels, allGroups });
+
+		expect(state.fullscreenPanel?.id).toBe("browser-1");
+		expect(state.fullscreenPanel?.projectPath).toBe("/b");
+	});
+
+	it("project mode falls back to a focused non-agent panel project", () => {
+		const mixedPanels = [
+			{ id: "agent-1", projectPath: "/a" },
+			{ id: "terminal-1", projectPath: "/b" },
+		];
+		const store = createMockPanelStore({
+			viewMode: "project",
+			focusedPanelId: "terminal-1",
+			focusedViewProjectPath: null,
+		});
+
+		const state = getViewModeState(store, { panelsWithState: mixedPanels, allGroups });
+
 		expect(state.activeProjectPath).toBe("/b");
 	});
 

@@ -7,6 +7,9 @@ export interface FilePanel {
 	 */
 	id: string;
 
+	/** Panel kind for unified workspace panel state. */
+	readonly kind: "file";
+
 	/**
 	 * Relative file path within the project.
 	 */

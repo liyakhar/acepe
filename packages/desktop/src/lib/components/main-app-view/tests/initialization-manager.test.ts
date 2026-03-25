@@ -228,6 +228,50 @@ describe("InitializationManager", () => {
 			expect(mockSessionStore.connectSession).not.toHaveBeenCalled();
 		});
 
+		it("preloads restored sessions using stored session metadata when panel metadata is missing", async () => {
+			mockProjectManager.projects = [
+				{ path: "/project1", name: "Project 1", createdAt: new Date(), color: "blue" },
+			];
+			mockPanelStore.panels = [
+				{
+					id: "panel-1",
+					kind: "agent",
+					ownerPanelId: null,
+					sessionId: "session-1",
+					width: 600,
+					pendingProjectSelection: false,
+					selectedAgentId: "cursor",
+					projectPath: null,
+					agentId: null,
+					sessionTitle: null,
+				},
+			];
+			mockSessionStore.getSessionCold = mock((sessionId: string) =>
+				sessionId === "session-1"
+					? {
+						id: "session-1",
+						projectPath: "/project1",
+						agentId: "cursor",
+						title: "Recovered session",
+						createdAt: new Date(),
+						updatedAt: new Date(),
+						parentId: null,
+					}
+					: undefined
+			);
+
+			await manager.initialize();
+
+			expect(mockSessionStore.loadSessionById).toHaveBeenCalledWith(
+				"session-1",
+				"/project1",
+				"cursor",
+				undefined,
+				"Recovered session"
+			);
+			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("session-1");
+		});
+
 		it("should handle initialization errors", async () => {
 			mockAgentStore.loadAvailableAgents = mock(() =>
 				errAsync(new AgentError("loadAgents", new Error("Failed")))

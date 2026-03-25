@@ -23,6 +23,7 @@ import ToolCallSearch from "./tool-call-search.svelte";
 import ToolCallSimple from "./tool-call-simple.svelte";
 import ToolCallSkill from "./tool-call-skill.svelte";
 import ToolCallTask from "./tool-call-task.svelte";
+import ToolCallTaskOutput from "./tool-call-task-output.svelte";
 import ToolCallThink from "./tool-call-think.svelte";
 import ToolCallTodo from "./tool-call-todo.svelte";
 import ToolCallWebSearch from "./tool-call-web-search.svelte";
@@ -63,6 +64,7 @@ const DEDICATED_COMPONENTS: Partial<Record<ToolKind, Component<ToolComponentProp
 	todo: ToolCallTodo,
 	question: ToolCallQuestion,
 	task: ToolCallTask,
+	task_output: ToolCallTaskOutput,
 	skill: ToolCallSkill,
 };
 

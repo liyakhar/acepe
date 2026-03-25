@@ -1,21 +1,23 @@
+import {
+	advanceRevealProgress,
+	clearRevealFrameTime,
+	commitRenderedReveal,
+	createRevealProgress,
+	hasPendingReveal,
+	syncRevealProgress,
+	updateStreamingState,
+	type RevealProgress,
+} from "./text-reveal-model.js";
+
 /** Base reveal speed in characters per second. */
-const BASE_CHARS_PER_SECOND = 180;
-
-/** Gap threshold before adaptive speed kicks in */
-const ADAPTIVE_GAP_THRESHOLD = 200;
-
-/** Maximum speed multiplier applied when catching up to buffered content. */
-const MAX_ADAPTIVE_MULTIPLIER = 12;
-
-/** Default frame duration used for the first scheduled frame. */
-const DEFAULT_FRAME_DURATION_MS = 1000 / 60;
-
-/** Selector for elements whose text nodes should NOT be revealed */
 const REVEAL_SKIP_SELECTOR = "svg, [data-reveal-skip]";
 
 /** Block elements that cause visual artifacts (bullets, backgrounds, borders) when unrevealed */
 const HIDEABLE_BLOCK_SELECTOR =
 	"p, li, pre, blockquote, h1, h2, h3, h4, h5, h6, table, hr, .table-wrapper, .code-block-wrapper";
+
+/** Duration of the opacity fade-in animation in milliseconds */
+const FADE_DURATION_MS = 120;
 
 interface TextNodeEntry {
 	node: Text;
@@ -36,6 +38,18 @@ interface HideableEntry {
 	inclusive: boolean;
 }
 
+interface RevealStep {
+	entry: TextNodeEntry;
+	stableText: string;
+	fadeText: string;
+}
+
+const OBSERVER_OPTIONS: MutationObserverInit = {
+	childList: true,
+	characterData: true,
+	subtree: true,
+};
+
 export interface TextRevealController {
 	setStreaming(isStreaming: boolean): void;
 	destroy(): void;
@@ -44,38 +58,39 @@ export interface TextRevealController {
 export function createTextReveal(container: HTMLElement): TextRevealController {
 	const textNodes: TextNodeEntry[] = [];
 	const hideableElements: HideableEntry[] = [];
-	let totalChars = 0;
 	let animFrameId: number | null = null;
-	let isStreaming = false;
-	let lastFrameTime: number | null = null;
+	let observer: MutationObserver | null = null;
+	let fadeSpan: HTMLSpanElement | null = null;
+	let fadeAnimation: Animation | null = null;
+	let progress = createRevealProgress(0);
 
 	function indexTextNodes() {
 		textNodes.length = 0;
-		totalChars = 0;
+		let totalChars = 0;
 		const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
 			acceptNode(node: Node) {
 				const parent = (node as Text).parentElement;
 				if (!parent) return NodeFilter.FILTER_REJECT;
 				if (parent.closest(REVEAL_SKIP_SELECTOR)) return NodeFilter.FILTER_REJECT;
+				if (parent.closest("[data-text-reveal-fade]")) return NodeFilter.FILTER_REJECT;
 				return NodeFilter.FILTER_ACCEPT;
 			},
 		});
-		// TreeWalker with SHOW_TEXT guarantees Text nodes
+
 		let node: Text | null;
 		// biome-ignore lint/suspicious/noAssignInExpressions: standard walker loop
 		while ((node = walker.nextNode() as Text | null)) {
-			const original = node.textContent ?? "";
+			const original = node.textContent ? node.textContent : "";
 			textNodes.push({ node, original, startIndex: totalChars });
 			totalChars += original.length;
 		}
+
+		progress = syncRevealProgress(progress, totalChars);
 	}
 
 	function indexHideableElements() {
 		hideableElements.length = 0;
 
-		// Block elements: hide until first character inside is revealed.
-		// Skip nested blocks whose ancestor already matches — the outer element's
-		// display:none already hides everything inside it.
 		const blocks = container.querySelectorAll(HIDEABLE_BLOCK_SELECTOR);
 		for (const block of blocks) {
 			if (block.parentElement?.closest(HIDEABLE_BLOCK_SELECTOR)) continue;
@@ -87,69 +102,129 @@ export function createTextReveal(container: HTMLElement): TextRevealController {
 					break;
 				}
 			}
+
 			if (charPos === -1) {
-				// No text nodes (e.g. <hr>) — position by the first text node after it
 				for (const entry of textNodes) {
 					if (block.compareDocumentPosition(entry.node) & Node.DOCUMENT_POSITION_FOLLOWING) {
 						charPos = entry.startIndex;
 						break;
 					}
 				}
-				if (charPos === -1) charPos = totalChars;
+				if (charPos === -1) charPos = progress.totalChars;
 			}
-			hideableElements.push({ element: block as HTMLElement, charPosition: charPos, inclusive: true });
+
+			hideableElements.push({
+				element: block as HTMLElement,
+				charPosition: charPos,
+				inclusive: true,
+			});
 		}
 
-		// Skip elements (badges): show once all preceding text is fully revealed.
-		// Default charPos = 0 means "show immediately" when no text precedes the element.
 		const skips = container.querySelectorAll("[data-reveal-skip]");
 		for (const skip of skips) {
 			let charPos = 0;
-			for (let i = textNodes.length - 1; i >= 0; i--) {
-				const entry = textNodes[i];
+			for (let index = textNodes.length - 1; index >= 0; index -= 1) {
+				const entry = textNodes[index];
 				if (skip.compareDocumentPosition(entry.node) & Node.DOCUMENT_POSITION_PRECEDING) {
 					charPos = entry.startIndex + entry.original.length;
 					break;
 				}
 			}
-			hideableElements.push({ element: skip as HTMLElement, charPosition: charPos, inclusive: false });
+
+			hideableElements.push({
+				element: skip as HTMLElement,
+				charPosition: charPos,
+				inclusive: false,
+			});
 		}
+	}
+
+	function cleanupFadeSpan() {
+		if (fadeAnimation) {
+			fadeAnimation.cancel();
+			fadeAnimation = null;
+		}
+		if (fadeSpan?.parentNode) {
+			fadeSpan.remove();
+		}
+		fadeSpan = null;
 	}
 
 	function applyElementVisibility() {
 		for (const entry of hideableElements) {
 			const shouldHide = entry.inclusive
-				? revealedChars <= entry.charPosition
-				: revealedChars < entry.charPosition;
+				? progress.revealedChars <= entry.charPosition
+				: progress.revealedChars < entry.charPosition;
 
-			if (isStreaming && shouldHide) {
+			if (progress.isStreaming && shouldHide) {
 				entry.element.style.display = "none";
 			} else {
+				const wasHidden = entry.element.style.display === "none";
 				entry.element.style.removeProperty("display");
+				if (wasHidden && progress.isStreaming) {
+					entry.element.animate?.(
+						[{ opacity: 0 }, { opacity: 1 }],
+						{ duration: FADE_DURATION_MS, easing: "ease-out" },
+					);
+				}
 			}
 		}
 	}
 
-	// Index existing content and treat it as already revealed.
-	// Only NEW content (arriving via DOM mutations) will be animated.
-	indexTextNodes();
-	indexHideableElements();
-	let revealedChars = totalChars;
-	applyMask();
-
 	function applyMask() {
+		observer?.disconnect();
+		cleanupFadeSpan();
+
+		const revealStep = buildRevealStep(progress, textNodes);
+
 		for (const entry of textNodes) {
 			if (!container.contains(entry.node)) continue;
+
 			const end = entry.startIndex + entry.original.length;
-			if (revealedChars >= end) {
-				if (entry.node.textContent !== entry.original) entry.node.textContent = entry.original;
-			} else if (revealedChars > entry.startIndex) {
-				entry.node.textContent = entry.original.slice(0, revealedChars - entry.startIndex);
-			} else {
-				if (entry.node.textContent !== "") entry.node.textContent = "";
+			if (progress.revealedChars >= end) {
+				if (entry.node.textContent !== entry.original) {
+					entry.node.textContent = entry.original;
+				}
+				continue;
+			}
+
+			if (progress.revealedChars <= entry.startIndex) {
+				if (entry.node.textContent !== "") {
+					entry.node.textContent = "";
+				}
+				continue;
+			}
+
+			if (revealStep && revealStep.entry.node === entry.node) {
+				const step = revealStep;
+				entry.node.textContent = step.stableText;
+				if (step.fadeText !== "") {
+					fadeSpan = document.createElement("span");
+					fadeSpan.dataset.textRevealFade = "true";
+					fadeSpan.textContent = step.fadeText;
+					entry.node.parentNode?.insertBefore(fadeSpan, entry.node.nextSibling);
+					if (fadeSpan.animate) {
+						fadeAnimation = fadeSpan.animate(
+							[{ opacity: 0 }, { opacity: 1 }],
+							{ duration: FADE_DURATION_MS, easing: "ease-out" },
+						);
+					} else {
+						fadeAnimation = null;
+					}
+				}
+				continue;
+			}
+
+			const visibleLen = progress.revealedChars - entry.startIndex;
+			const visibleText = entry.original.slice(0, visibleLen);
+			if (entry.node.textContent !== visibleText) {
+				entry.node.textContent = visibleText;
 			}
 		}
+
 		applyElementVisibility();
+		progress = commitRenderedReveal(progress);
+		observer?.observe(container, OBSERVER_OPTIONS);
 	}
 
 	function stopAnimation() {
@@ -157,71 +232,43 @@ export function createTextReveal(container: HTMLElement): TextRevealController {
 			cancelAnimationFrame(animFrameId);
 			animFrameId = null;
 		}
-		lastFrameTime = null;
-	}
-
-	function calculateCharsPerFrame(gap: number, elapsedMs: number): number {
-		const safeElapsedMs = elapsedMs > 0 ? elapsedMs : DEFAULT_FRAME_DURATION_MS;
-		const baseChars = Math.max(
-			1,
-			Math.round((BASE_CHARS_PER_SECOND * safeElapsedMs) / 1000)
-		);
-
-		if (gap <= ADAPTIVE_GAP_THRESHOLD) {
-			return baseChars;
-		}
-
-		const adaptiveMultiplier = Math.min(
-			MAX_ADAPTIVE_MULTIPLIER,
-			Math.max(2, Math.ceil(gap / ADAPTIVE_GAP_THRESHOLD))
-		);
-
-		return baseChars * adaptiveMultiplier;
+		progress = clearRevealFrameTime(progress);
 	}
 
 	function scheduleAnimation() {
-		if (!isStreaming || animFrameId !== null || revealedChars >= totalChars) {
+		if (animFrameId !== null || !hasPendingReveal(progress)) {
 			return;
 		}
 
-		animFrameId = requestAnimationFrame((timestamp) => animate(timestamp));
+		animFrameId = requestAnimationFrame((frameTime) => animate(frameTime));
 	}
 
 	function animate(frameTime: number) {
 		animFrameId = null;
-
-		if (!isStreaming) {
-			lastFrameTime = null;
+		if (!progress.isStreaming || progress.revealedChars >= progress.totalChars) {
+			progress = clearRevealFrameTime(progress);
 			return;
 		}
 
-		if (revealedChars >= totalChars) {
-			lastFrameTime = null;
-			return;
-		}
-
-		const elapsedMs =
-			lastFrameTime === null ? DEFAULT_FRAME_DURATION_MS : Math.max(frameTime - lastFrameTime, 1);
-		lastFrameTime = frameTime;
-
-		const gap = totalChars - revealedChars;
-		const speed = calculateCharsPerFrame(gap, elapsedMs);
-		revealedChars = Math.min(revealedChars + speed, totalChars);
+		progress = advanceRevealProgress(progress, frameTime);
 		applyMask();
 		scheduleAnimation();
 	}
 
-	function onDomMutation() {
+	function onDomMutation(mutations: MutationRecord[]) {
+		if (!shouldReindexForMutations(mutations)) {
+			scheduleAnimation();
+			observer?.observe(container, OBSERVER_OPTIONS);
+			return;
+		}
+
+		cleanupFadeSpan();
+
 		indexTextNodes();
 		indexHideableElements();
-		// Clamp revealedChars to new totalChars in case it decreased.
-		// Happens when markdown syntax resolves (e.g. literal "**" chars disappear as
-		// <strong>) or on the loading→HTML transition. Without this, revealedChars > totalChars
-		// causes applyMask() to reveal all content prematurely and scheduleAnimation() to skip.
-		revealedChars = Math.min(revealedChars, totalChars);
 
-		if (!isStreaming) {
-			revealedChars = totalChars;
+		if (!progress.isStreaming) {
+			progress = updateStreamingState(progress, false);
 			applyMask();
 			stopAnimation();
 			return;
@@ -231,48 +278,141 @@ export function createTextReveal(container: HTMLElement): TextRevealController {
 		scheduleAnimation();
 	}
 
-	const observer = new MutationObserver(onDomMutation);
-	// INVARIANT: All content updates to this container MUST use subtree replacement
-	// (e.g., {@html} or innerHTML), not in-place text node mutation. We only observe
-	// childList (not characterData) because our applyMask() modifies Text node
-	// textContent which fires characterData mutations — by not observing those, we
-	// avoid self-triggering entirely. If a code path starts modifying text nodes
-	// directly, the observer will miss it and the reveal animation will desync.
-	observer.observe(container, {
-		childList: true,
-		subtree: true,
-	});
+	indexTextNodes();
+	indexHideableElements();
+	progress = updateStreamingState(progress, false);
+	applyMask();
+
+	observer = new MutationObserver(onDomMutation);
+	observer.observe(container, OBSERVER_OPTIONS);
 
 	return {
 		setStreaming(nextIsStreaming: boolean) {
-			if (isStreaming === nextIsStreaming) {
+			if (progress.isStreaming === nextIsStreaming) {
 				return;
 			}
 
-			isStreaming = nextIsStreaming;
-
-			if (!isStreaming) {
-				revealedChars = totalChars;
+			progress = updateStreamingState(progress, nextIsStreaming);
+			if (!nextIsStreaming) {
 				applyMask();
 				stopAnimation();
 				return;
 			}
 
-			lastFrameTime = null;
+			scheduleAnimation();
 		},
 		destroy() {
-			observer.disconnect();
+			observer?.disconnect();
+			observer = null;
 			stopAnimation();
-			// Restore all text nodes to full content (skip detached nodes)
+			cleanupFadeSpan();
 			for (const entry of textNodes) {
 				if (container.contains(entry.node) && entry.node.textContent !== entry.original) {
 					entry.node.textContent = entry.original;
 				}
 			}
-			// Restore any hidden elements
 			for (const entry of hideableElements) {
-				entry.element.style.removeProperty("display");
+				if (container.contains(entry.element)) {
+					entry.element.style.removeProperty("display");
+				}
 			}
 		},
 	};
+}
+
+function buildRevealStep(
+	progress: RevealProgress,
+	textNodes: TextNodeEntry[],
+): RevealStep | null {
+	const remainingNewChars =
+		progress.revealedChars > progress.renderedChars
+			? progress.revealedChars - progress.renderedChars
+			: 0;
+
+	if (!progress.isStreaming || remainingNewChars === 0) {
+		return null;
+	}
+
+	for (const entry of textNodes) {
+		const visibleLen = progress.revealedChars - entry.startIndex;
+		if (visibleLen <= 0) {
+			continue;
+		}
+
+		const clampedVisibleLen = visibleLen > entry.original.length ? entry.original.length : visibleLen;
+		const previouslyRenderedLen = progress.renderedChars - entry.startIndex;
+		const clampedPreviouslyRenderedLen = previouslyRenderedLen < 0
+			? 0
+			: previouslyRenderedLen > clampedVisibleLen
+				? clampedVisibleLen
+				: previouslyRenderedLen;
+		const availableNewChars = clampedVisibleLen - clampedPreviouslyRenderedLen;
+		if (availableNewChars <= 0) {
+			continue;
+		}
+
+		const fadeLen = remainingNewChars < availableNewChars ? remainingNewChars : availableNewChars;
+		if (fadeLen <= 0) {
+			break;
+		}
+
+		const stableLen = clampedVisibleLen - fadeLen;
+		return {
+			entry,
+			stableText: entry.original.slice(0, stableLen),
+			fadeText: entry.original.slice(stableLen, clampedVisibleLen),
+		};
+	}
+
+	return null;
+}
+
+function shouldReindexForMutations(mutations: MutationRecord[]): boolean {
+	for (const mutation of mutations) {
+		if (mutation.type === "characterData") {
+			const parent = mutation.target.parentElement;
+			if (parent?.closest("[data-text-reveal-fade]")) {
+				continue;
+			}
+			return true;
+		}
+
+		for (const node of mutation.addedNodes) {
+			if (nodeAffectsReveal(node)) {
+				return true;
+			}
+		}
+
+		for (const node of mutation.removedNodes) {
+			if (nodeAffectsReveal(node)) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+function nodeAffectsReveal(node: Node): boolean {
+	if (node.nodeType === Node.TEXT_NODE) {
+		return true;
+	}
+
+	if (!(node instanceof Element)) {
+		return false;
+	}
+
+	if (node.matches("[data-text-reveal-fade]")) {
+		return false;
+	}
+
+	if (node.matches(REVEAL_SKIP_SELECTOR) || node.matches(HIDEABLE_BLOCK_SELECTOR)) {
+		return true;
+	}
+
+	if (node.querySelector(REVEAL_SKIP_SELECTOR) || node.querySelector(HIDEABLE_BLOCK_SELECTOR)) {
+		return true;
+	}
+
+	return Boolean(node.textContent);
 }

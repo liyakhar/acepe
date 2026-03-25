@@ -91,6 +91,26 @@ describe("preloadAndConnectSession", () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(sessionStore.connectSession).toHaveBeenCalledTimes(1);
 	});
+
+	it("connects even when preload reports the session content as missing", async () => {
+		preloadAndConnectSession({
+			sessionId: "session-1",
+			sessionStore,
+			panelStore,
+			timeoutMs: 10_000,
+			source: "session-handler",
+		});
+
+		const resolver = resolvePreload;
+		expect(resolver).not.toBeNull();
+		if (resolver) {
+			resolver({ loaded: [], missing: ["session-1"] });
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.connectSession).toHaveBeenCalledTimes(1);
+	});
 });
 
 function createMockSession(id: string): Session {

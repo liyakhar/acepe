@@ -58,10 +58,15 @@ describe("SessionHandler", () => {
 			panels: [
 				{
 					id: "panel-1",
+					kind: "agent",
+					ownerPanelId: null,
 					sessionId: null,
 					width: 450,
 					pendingProjectSelection: false,
 					selectedAgentId: "agent-1",
+					projectPath: null,
+					agentId: null,
+					sessionTitle: null,
 				},
 			],
 		} as unknown as PanelStore;
@@ -248,7 +253,7 @@ describe("SessionHandler", () => {
 		});
 	});
 
-		describe("createSessionForProject", () => {
+	describe("createSessionForProject", () => {
 		it("should defer session creation until first message and only update panel project", async () => {
 			const project = { path: "/test", name: "Test Project" };
 
@@ -265,6 +270,8 @@ describe("SessionHandler", () => {
 			mockPanelStore.panels = [
 				{
 					id: "panel-1",
+					kind: "agent",
+					ownerPanelId: null,
 					sessionId: null,
 					width: 450,
 					pendingProjectSelection: false,
@@ -276,6 +283,17 @@ describe("SessionHandler", () => {
 			];
 
 			const result = await handler.createSessionForProject("panel-1", {
+				path: "/test",
+				name: "Test",
+			});
+
+			expect(result.isErr()).toBe(true);
+		});
+
+		it("should return error if the panel does not exist", async () => {
+			mockPanelStore.panels = [];
+
+			const result = await handler.createSessionForProject("missing-panel", {
 				path: "/test",
 				name: "Test",
 			});

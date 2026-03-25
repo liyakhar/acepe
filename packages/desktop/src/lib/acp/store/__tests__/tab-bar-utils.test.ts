@@ -2,8 +2,14 @@ import { describe, expect, it } from "bun:test";
 
 import type { SessionEntry } from "../../application/dto/session-entry.js";
 import type { ToolKind } from "../../types/tool-kind.js";
-import { getCurrentToolKind, type PanelToTabInput, panelToTab } from "../tab-bar-utils.js";
-import type { Panel, SessionHotState } from "../types.js";
+import {
+	getCurrentToolKind,
+	type NonAgentPanelToTabInput,
+	type PanelToTabInput,
+	nonAgentPanelToTab,
+	panelToTab,
+} from "../tab-bar-utils.js";
+import type { BrowserWorkspacePanel, FileWorkspacePanel, Panel, SessionHotState, TerminalWorkspacePanel } from "../types.js";
 
 // =============================================================================
 // panelToTab test helpers
@@ -12,6 +18,8 @@ import type { Panel, SessionHotState } from "../types.js";
 function makePanel(overrides: Partial<Panel> = {}): Panel {
 	return {
 		id: "panel-1",
+		kind: "agent",
+		ownerPanelId: null,
 		sessionId: "session-1",
 		width: 400,
 		pendingProjectSelection: false,
@@ -222,6 +230,88 @@ describe("panelToTab", () => {
 			expect(tab.projectColor).toBeNull();
 			expect(tab.projectPath).toBeNull();
 		});
+	});
+});
+
+function makeFilePanel(overrides: Partial<FileWorkspacePanel> = {}): FileWorkspacePanel {
+	return {
+		id: "file-1",
+		kind: "file",
+		projectPath: "/projects/acepe",
+		ownerPanelId: null,
+		width: 400,
+		filePath: "src/lib/main.ts",
+		...overrides,
+	};
+}
+
+function makeTerminalPanel(
+	overrides: Partial<TerminalWorkspacePanel> = {}
+): TerminalWorkspacePanel {
+	return {
+		id: "terminal-1",
+		kind: "terminal",
+		projectPath: "/projects/acepe",
+		ownerPanelId: null,
+		width: 400,
+		ptyId: null,
+		shell: null,
+		...overrides,
+	};
+}
+
+function makeBrowserPanel(overrides: Partial<BrowserWorkspacePanel> = {}): BrowserWorkspacePanel {
+	return {
+		id: "browser-1",
+		kind: "browser",
+		projectPath: "/projects/acepe",
+		ownerPanelId: null,
+		width: 400,
+		url: "https://example.com",
+		title: "Example",
+		...overrides,
+	};
+}
+
+function makeNonAgentInput(
+	overrides: Partial<NonAgentPanelToTabInput> = {}
+): NonAgentPanelToTabInput {
+	return {
+		panel: makeFilePanel(),
+		focusedPanelId: null,
+		projectName: "acepe",
+		projectColor: "#16DB95",
+		...overrides,
+	};
+}
+
+describe("nonAgentPanelToTab", () => {
+	it("derives a file tab title from the file path", () => {
+		const tab = nonAgentPanelToTab(makeNonAgentInput({ panel: makeFilePanel() }));
+
+		expect(tab.title).toBe("main.ts");
+		expect(tab.projectPath).toBe("/projects/acepe");
+		expect(tab.agentId).toBeNull();
+		expect(tab.sessionId).toBeNull();
+	});
+
+	it("uses a fixed title for terminal tabs", () => {
+		const tab = nonAgentPanelToTab(makeNonAgentInput({ panel: makeTerminalPanel() }));
+
+		expect(tab.title).toBe("Terminal");
+		expect(tab.state.connection).toBe("disconnected");
+		expect(tab.state.activity.kind).toBe("idle");
+	});
+
+	it("uses the browser panel title for browser tabs", () => {
+		const tab = nonAgentPanelToTab(
+			makeNonAgentInput({ panel: makeBrowserPanel({ title: "Docs" }), focusedPanelId: "browser-1" })
+		);
+
+		expect(tab.title).toBe("Docs");
+		expect(tab.isFocused).toBe(true);
+		expect(tab.projectName).toBe("acepe");
+		expect(tab.projectColor).toBe("#16DB95");
 	});
 });
 
