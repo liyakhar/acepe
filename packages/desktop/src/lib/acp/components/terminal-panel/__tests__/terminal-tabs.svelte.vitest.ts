@@ -1,17 +1,17 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock(
-	"svelte",
-	async () => {
-		const { createRequire } = await import("node:module");
-		const { dirname, join } = await import("node:path");
-		const require = createRequire(import.meta.url);
-		const svelteClientPath = join(dirname(require.resolve("svelte/package.json")), "src/index-client.js");
+vi.mock("svelte", async () => {
+	const { createRequire } = await import("node:module");
+	const { dirname, join } = await import("node:path");
+	const require = createRequire(import.meta.url);
+	const svelteClientPath = join(
+		dirname(require.resolve("svelte/package.json")),
+		"src/index-client.js"
+	);
 
-		return import(/* @vite-ignore */ svelteClientPath);
-	}
-);
+	return import(/* @vite-ignore */ svelteClientPath);
+});
 
 vi.mock("$lib/paraglide/messages.js", () => ({
 	terminal_panel_title: () => "Terminal",
@@ -32,6 +32,7 @@ afterEach(cleanup);
 describe("TerminalTabs", () => {
 	it("wires new-tab and move-to-panel actions through the group-scoped store API", async () => {
 		const panelStore = {
+			fullscreenPanelId: null,
 			openTerminalTab: vi.fn(),
 			moveTerminalTabToNewPanel: vi.fn(),
 			getSelectedTerminalTabId: vi.fn(() => "tab-2"),
@@ -47,6 +48,7 @@ describe("TerminalTabs", () => {
 			closeTerminalTab: vi.fn(),
 			enterTerminalFullscreen: vi.fn(),
 			exitFullscreen: vi.fn(),
+			closeTerminalPanel: vi.fn(),
 			resizeTerminalPanel: vi.fn(),
 			updateTerminalPtyId: vi.fn(),
 			canMoveTerminalTabToNewPanel: vi.fn((tabId: string) => tabId === "tab-2"),

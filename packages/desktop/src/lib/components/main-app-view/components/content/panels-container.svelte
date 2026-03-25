@@ -121,7 +121,7 @@ const allGroups = $derived(
 		panelsWithState,
 		panelStore.filePanels.filter((panel) => panel.ownerPanelId === null),
 		panelStore.reviewPanels,
-		panelStore.terminalPanels,
+		panelStore.terminalPanelGroups,
 		panelStore.browserPanels,
 		panelStore.gitPanels,
 		projectManager.projects
@@ -141,13 +141,17 @@ const selectedFullscreenAuxPanel = $derived.by(() => {
 		return null;
 	}
 
-	if (panelStore.filePanels.some((panel) => panel.ownerPanelId === null && panel.id === fullscreenPanelId)) {
+	if (
+		panelStore.filePanels.some(
+			(panel) => panel.ownerPanelId === null && panel.id === fullscreenPanelId
+		)
+	) {
 		return { kind: "file", id: fullscreenPanelId } as const;
 	}
 	if (panelStore.reviewPanels.some((panel) => panel.id === fullscreenPanelId)) {
 		return { kind: "review", id: fullscreenPanelId } as const;
 	}
-	if (panelStore.terminalPanels.some((panel) => panel.id === fullscreenPanelId)) {
+	if (panelStore.terminalPanelGroups.some((panel) => panel.id === fullscreenPanelId)) {
 		return { kind: "terminal", id: fullscreenPanelId } as const;
 	}
 	if (panelStore.gitPanels.some((panel) => panel.id === fullscreenPanelId)) {
@@ -160,7 +164,9 @@ const selectedFullscreenAuxPanel = $derived.by(() => {
 	return null;
 });
 const isAuxOnlyFullscreen = $derived(
-	panelStore.fullscreenPanelId !== null && viewModeState.fullscreenPanel === null && selectedFullscreenAuxPanel !== null
+	panelStore.fullscreenPanelId !== null &&
+		viewModeState.fullscreenPanel === null &&
+		selectedFullscreenAuxPanel !== null
 );
 const fullscreenAuxPanel = $derived(
 	viewModeState.isFullscreenMode || isAuxOnlyFullscreen
@@ -168,7 +174,7 @@ const fullscreenAuxPanel = $derived(
 				selectedAuxPanel: selectedFullscreenAuxPanel,
 				filePanels: panelStore.filePanels.filter((panel) => panel.ownerPanelId === null),
 				reviewPanels: panelStore.reviewPanels,
-				terminalPanels: panelStore.terminalPanels,
+				terminalPanels: panelStore.terminalPanelGroups,
 				gitPanels: panelStore.gitPanels,
 				browserPanels: panelStore.browserPanels,
 			})
@@ -183,7 +189,7 @@ const fullscreenAuxPanelWidthStyle = $derived.by(() => {
 
 const auxOnlyTerminalProjectPath = $derived.by(() => {
 	if (!isAuxOnlyFullscreen || fullscreenAuxPanel?.kind !== "terminal") return null;
-	const terminalPanel = panelStore.terminalPanels.find(
+	const terminalPanel = panelStore.terminalPanelGroups.find(
 		(panel) => panel.id === fullscreenAuxPanel.panel.id
 	);
 	return terminalPanel?.projectPath ?? null;
@@ -299,26 +305,17 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 										panelStore.updateReviewPanelFileIndex(reviewPanel.id, index)}
 								/>
 							{:else if fullscreenAuxPanel.kind === "terminal"}
-								{@const terminalPanel = fullscreenAuxPanel.panel}
+								{@const terminalGroup = fullscreenAuxPanel.panel}
 								{@const terminalProject = projectManager.projects.find(
-									(p) => p.path === terminalPanel.projectPath
+									(p) => p.path === terminalGroup.projectPath
 								)}
-								<TerminalPanel
-									panelId={terminalPanel.id}
-									projectPath={terminalPanel.projectPath}
+								<TerminalTabs
+									group={terminalGroup}
+									tabs={panelStore.getTerminalTabsForGroup(terminalGroup.id)}
+									projectPath={terminalGroup.projectPath}
 									projectName={terminalProject?.name ?? m.project_unknown()}
-									projectColor={terminalProject?.color}
-									width={terminalPanel.width}
-									isFullscreenEmbedded={true}
-									shell={terminalPanel.shell}
-									hideProjectBadge={true}
-									isAuxFullscreen={true}
-									onEnterFullscreen={() => panelStore.enterTerminalFullscreen(terminalPanel.id)}
-									onExitFullscreen={() => panelStore.exitFullscreen()}
-									onClose={() => panelStore.closeTerminalPanel(terminalPanel.id)}
-									onResize={(panelId, delta) => panelStore.resizeTerminalPanel(panelId, delta)}
-									onPtyCreated={(ptyId, shell) =>
-										panelStore.updateTerminalPtyId(terminalPanel.id, ptyId, shell)}
+									projectColor={terminalProject?.color ?? "#4AD0FF"}
+									{panelStore}
 								/>
 							{:else}
 								{@const browserPanel = fullscreenAuxPanel.panel}

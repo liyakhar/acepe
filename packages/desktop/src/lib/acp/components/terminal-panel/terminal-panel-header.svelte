@@ -85,6 +85,13 @@ function canShowMoveTabAction(tabId: string): boolean {
 	return canMoveTabToNewPanel ? canMoveTabToNewPanel(tabId) : false;
 }
 
+function canShowCloseTabAction(): boolean {
+	if (!tabs) {
+		return false;
+	}
+	return tabs.length > 1 && onCloseTab !== undefined;
+}
+
 function toggleTabMenu(tabId: string): void {
 	openMenuTabId = openMenuTabId === tabId ? null : tabId;
 }
@@ -182,7 +189,7 @@ function handleFullscreenToggle() {
 											{OPEN_IN_NEW_PANEL_LABEL}
 										</button>
 									{/if}
-									{#if tabs.length > 1 && onCloseTab}
+									{#if canShowCloseTabAction()}
 										<button
 											type="button"
 											role="menuitem"

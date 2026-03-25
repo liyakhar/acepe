@@ -1,8 +1,22 @@
 <script lang="ts">
-import type { PanelStore } from "$lib/acp/store/panel-store.svelte.js";
 import type { TerminalPanelGroup, TerminalTab } from "$lib/acp/store/types.js";
 
 import TerminalPanelComponent from "./terminal-panel.svelte";
+
+interface TerminalTabsPanelStore {
+	readonly fullscreenPanelId: string | null;
+	getSelectedTerminalTabId: (groupId: string) => string | null;
+	setSelectedTerminalTab: (groupId: string, tabId: string) => void;
+	openTerminalTab: (groupId: string) => TerminalTab | null;
+	closeTerminalTab: (tabId: string) => void;
+	moveTerminalTabToNewPanel: (tabId: string) => TerminalPanelGroup | null;
+	canMoveTerminalTabToNewPanel: (tabId: string) => boolean;
+	enterTerminalFullscreen: (groupId: string) => void;
+	exitFullscreen: () => void;
+	closeTerminalPanel: (groupId: string) => void;
+	resizeTerminalPanel: (groupId: string, delta: number) => void;
+	updateTerminalPtyId: (tabId: string, ptyId: number, shell: string) => void;
+}
 
 interface Props {
 	group: TerminalPanelGroup;
@@ -10,7 +24,7 @@ interface Props {
 	projectPath: string;
 	projectName: string;
 	projectColor: string;
-	panelStore: PanelStore;
+	panelStore: TerminalTabsPanelStore;
 }
 
 let { group, tabs, projectPath, projectName, projectColor, panelStore }: Props = $props();
@@ -26,12 +40,14 @@ const selectedId = $derived.by(() => {
 });
 
 const selectedTerminal = $derived(
-	selectedId ? (tabs.find((tab) => tab.id === selectedId) ? tabs.find((tab) => tab.id === selectedId) : null) : null
+	selectedId
+		? tabs.find((tab) => tab.id === selectedId)
+			? tabs.find((tab) => tab.id === selectedId)
+			: null
+		: null
 );
 
-const isAuxFullscreen = $derived(
-	panelStore.fullscreenPanelId === group.id
-);
+const isAuxFullscreen = $derived(panelStore.fullscreenPanelId === group.id);
 
 function handleSelectTab(tabId: string) {
 	panelStore.setSelectedTerminalTab(group.id, tabId);
