@@ -90,6 +90,95 @@ fn is_english_only_model_path(path: Option<&Path>) -> bool {
         .is_some_and(|file_name| file_name.contains(".en."))
 }
 
+fn should_retry_empty_multilingual_transcription(
+    model_path: Option<&Path>,
+    requested_language: Option<&str>,
+    detected_language: Option<&str>,
+    text: &str,
+) -> bool {
+    if is_english_only_model_path(model_path) {
+        return false;
+    }
+
+    if requested_language.is_some() {
+        return false;
+    }
+
+    if text.trim().is_empty() {
+        return detected_language.is_some();
+    }
+
+    false
+}
+
+fn transcribe_with_params(
+    ctx: &WhisperContext,
+    model_path: Option<&Path>,
+    audio: &[f32],
+    requested_language: Option<&str>,
+) -> anyhow::Result<TranscriptionResult> {
+    let mut state = ctx
+        .create_state()
+        .context("Failed to create whisper state")?;
+
+    let resolved_language = resolve_whisper_language(model_path, requested_language);
+    tracing::info!(
+        requested_language = ?requested_language,
+        resolved_language = ?resolved_language.language,
+        detect_language = resolved_language.detect_language,
+        english_only_model = is_english_only_model_path(model_path),
+        "WhisperEngine: resolved language params"
+    );
+
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    params.set_translate(false);
+    params.set_suppress_blank(false);
+    params.set_suppress_nst(true);
+    params.set_language(resolved_language.language);
+    params.set_detect_language(resolved_language.detect_language);
+
+    let t0 = std::time::Instant::now();
+    state
+        .full(params, audio)
+        .context("Whisper transcription failed")?;
+    let ffi_elapsed = t0.elapsed();
+
+    let mut text = String::new();
+    let mut segment_count = 0_usize;
+    for segment in state.as_iter() {
+        let seg = segment.to_str_lossy().ok().unwrap_or_default();
+        let seg = seg.trim();
+        if !seg.is_empty() {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(seg);
+            segment_count += 1;
+        }
+    }
+
+    let language = whisper_rs::get_lang_str(state.full_lang_id_from_state()).map(String::from);
+    tracing::info!(
+        text_len = text.len(),
+        trimmed_text_len = text.trim().len(),
+        text_preview = %preview_text(&text),
+        segments = segment_count,
+        detected_language = ?language,
+        ffi_ms = ffi_elapsed.as_millis() as u64,
+        "WhisperEngine: transcription done"
+    );
+
+    Ok(TranscriptionResult {
+        text: text.trim().to_string(),
+        language,
+        duration_ms: 0,
+    })
+}
+
 fn resolve_whisper_language<'a>(
     model_path: Option<&Path>,
     requested_language: Option<&'a str>,
@@ -180,66 +269,29 @@ impl TranscriptionEngine for WhisperEngine {
             .context
             .as_ref()
             .context("No model loaded — call voice_load_model first")?;
+        let first_result =
+            transcribe_with_params(ctx, self.model_path.as_deref(), audio, language)?;
+        if should_retry_empty_multilingual_transcription(
+            self.model_path.as_deref(),
+            language,
+            first_result.language.as_deref(),
+            &first_result.text,
+        ) {
+            tracing::info!(
+                detected_language = ?first_result.language,
+                "WhisperEngine: retrying empty multilingual transcription with explicit language"
+            );
 
-        let mut state = ctx
-            .create_state()
-            .context("Failed to create whisper state")?;
-
-        let resolved_language = resolve_whisper_language(self.model_path.as_deref(), language);
-        tracing::info!(
-            requested_language = ?language,
-            resolved_language = ?resolved_language.language,
-            detect_language = resolved_language.detect_language,
-            english_only_model = is_english_only_model_path(self.model_path.as_deref()),
-            "WhisperEngine: resolved language params"
-        );
-
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_print_special(false);
-        params.set_print_progress(false);
-        params.set_print_realtime(false);
-        params.set_print_timestamps(false);
-        params.set_suppress_blank(true);
-        params.set_suppress_nst(true);
-        params.set_language(resolved_language.language);
-        params.set_detect_language(resolved_language.detect_language);
-
-        let t0 = std::time::Instant::now();
-        state
-            .full(params, audio)
-            .context("Whisper transcription failed")?;
-        let ffi_elapsed = t0.elapsed();
-
-        let mut text = String::new();
-        let mut segment_count = 0_usize;
-        for segment in state.as_iter() {
-            let seg = segment.to_str_lossy().ok().unwrap_or_default();
-            let seg = seg.trim();
-            if !seg.is_empty() {
-                if !text.is_empty() {
-                    text.push(' ');
-                }
-                text.push_str(seg);
-                segment_count += 1;
-            }
+            let retry_result = transcribe_with_params(
+                ctx,
+                self.model_path.as_deref(),
+                audio,
+                first_result.language.as_deref(),
+            )?;
+            return Ok(retry_result);
         }
 
-        let language = whisper_rs::get_lang_str(state.full_lang_id_from_state()).map(String::from);
-        tracing::info!(
-            text_len = text.len(),
-            trimmed_text_len = text.trim().len(),
-            text_preview = %preview_text(&text),
-            segments = segment_count,
-            detected_language = ?language,
-            ffi_ms = ffi_elapsed.as_millis() as u64,
-            "WhisperEngine: transcription done"
-        );
-
-        Ok(TranscriptionResult {
-            text: text.trim().to_string(),
-            language,
-            duration_ms: 0, // Caller sets the wall-clock recording duration
-        })
+        Ok(first_result)
     }
 }
 
@@ -268,7 +320,10 @@ pub fn resample(input: &[f32], input_rate: u32, target_rate: u32) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_english_only_model_path, resolve_whisper_language, ResolvedLanguage};
+    use super::{
+        is_english_only_model_path, resolve_whisper_language,
+        should_retry_empty_multilingual_transcription, ResolvedLanguage,
+    };
     use std::path::Path;
 
     #[test]
@@ -333,5 +388,45 @@ mod tests {
         assert!(!is_english_only_model_path(Some(Path::new(
             "/tmp/ggml-small.bin"
         ))));
+    }
+
+    #[test]
+    fn retries_empty_multilingual_transcription_when_language_was_detected() {
+        assert!(should_retry_empty_multilingual_transcription(
+            Path::new("/tmp/ggml-small.bin").into(),
+            None,
+            Some("fr"),
+            "",
+        ));
+    }
+
+    #[test]
+    fn does_not_retry_when_text_is_present() {
+        assert!(!should_retry_empty_multilingual_transcription(
+            Path::new("/tmp/ggml-small.bin").into(),
+            None,
+            Some("fr"),
+            "bonjour",
+        ));
+    }
+
+    #[test]
+    fn does_not_retry_for_english_only_models() {
+        assert!(!should_retry_empty_multilingual_transcription(
+            Path::new("/tmp/ggml-small.en.bin").into(),
+            None,
+            Some("en"),
+            "",
+        ));
+    }
+
+    #[test]
+    fn does_not_retry_when_language_was_explicit() {
+        assert!(!should_retry_empty_multilingual_transcription(
+            Path::new("/tmp/ggml-small.bin").into(),
+            Some("fr"),
+            Some("fr"),
+            "",
+        ));
     }
 }

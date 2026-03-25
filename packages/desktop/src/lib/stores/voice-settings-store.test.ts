@@ -52,8 +52,8 @@ describe("VoiceSettingsStore", () => {
 		({ VoiceSettingsStore } = await import("./voice-settings-store.svelte.js"));
 
 		setSettingMock.mockReturnValue(okAsync(undefined));
-	loadModelMock.mockReturnValue(okAsync(undefined));
-	listenMock.mockResolvedValue(() => undefined);
+		loadModelMock.mockReturnValue(okAsync(undefined));
+		listenMock.mockResolvedValue(() => undefined);
 	listModelsMock.mockReturnValue(
 			okAsync([
 				{
@@ -94,7 +94,7 @@ describe("VoiceSettingsStore", () => {
 		);
 	});
 
-	it("loads persisted voice preferences and available models", async () => {
+	it("loads persisted voice preferences and normalizes multilingual language to auto", async () => {
 		getSettingMock
 			.mockReturnValueOnce(okAsync(false))
 			.mockReturnValueOnce(okAsync("small"))
@@ -105,9 +105,10 @@ describe("VoiceSettingsStore", () => {
 
 		expect(store.enabled).toBe(false);
 		expect(store.selectedModelId).toBe("small");
-		expect(store.language).toBe("fr");
+		expect(store.language).toBe("auto");
 		expect(store.models).toHaveLength(3);
 		expect(store.languages).toHaveLength(3);
+		expect(setSettingMock).toHaveBeenCalledWith("voice_language", "auto");
 	});
 
 	it("preloads the selected downloaded model during initialization", async () => {
@@ -225,6 +226,32 @@ describe("VoiceSettingsStore", () => {
 		expect(store.language).toBe("auto");
 		expect(loadModelMock).not.toHaveBeenCalledWith("base.en");
 		expect(setSettingMock).toHaveBeenCalledWith("voice_model", "base.en");
+		expect(setSettingMock).toHaveBeenCalledWith("voice_language", "auto");
+	});
+
+	it("keeps multilingual auto mode unchanged", async () => {
+		getSettingMock
+			.mockReturnValueOnce(okAsync(true))
+			.mockReturnValueOnce(okAsync("small"))
+			.mockReturnValueOnce(okAsync("auto"));
+
+		const store = new VoiceSettingsStore();
+		await store.initialize();
+
+		expect(store.language).toBe("auto");
+		expect(setSettingMock).not.toHaveBeenCalledWith("voice_language", "en");
+	});
+
+	it("resets persisted explicit language for multilingual models back to auto", async () => {
+		getSettingMock
+			.mockReturnValueOnce(okAsync(true))
+			.mockReturnValueOnce(okAsync("small"))
+			.mockReturnValueOnce(okAsync("en"));
+
+		const store = new VoiceSettingsStore();
+		await store.initialize();
+
+		expect(store.language).toBe("auto");
 		expect(setSettingMock).toHaveBeenCalledWith("voice_language", "auto");
 	});
 });

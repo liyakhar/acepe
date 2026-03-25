@@ -32,7 +32,7 @@ fn normalization_gain_for_peak(peak: f32) -> f32 {
 
     let target_peak = 0.85_f32;
     let unclamped_gain = target_peak / peak;
-    unclamped_gain.clamp(1.0, 32.0)
+    unclamped_gain.clamp(1.0, 64.0)
 }
 
 fn normalize_audio_for_transcription(samples: &[f32]) -> Vec<f32> {
@@ -771,6 +771,16 @@ mod tests {
     #[test]
     fn normalizes_quiet_audio_up_to_target_peak() {
         let audio = vec![0.05_f32, -0.025_f32, 0.0_f32, 0.025_f32];
+
+        let normalized = normalize_audio_for_transcription(&audio);
+
+        assert!(max_abs_sample(&normalized) > 0.8);
+        assert!(max_abs_sample(&normalized) <= 0.85);
+    }
+
+    #[test]
+    fn normalizes_very_quiet_audio_up_to_target_peak() {
+        let audio = vec![0.0138_f32, -0.0069_f32, 0.0_f32, 0.0069_f32];
 
         let normalized = normalize_audio_for_transcription(&audio);
 

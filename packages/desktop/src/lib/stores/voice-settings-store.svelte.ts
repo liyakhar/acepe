@@ -23,8 +23,12 @@ const VOICE_LANGUAGE_KEY = "voice_language";
 const VOICE_MODEL_KEY = "voice_model";
 
 function normalizeLanguageForModel(model: VoiceModelInfo | null, value: string): string {
-	if (!model || !model.is_english_only) {
+	if (!model) {
 		return value;
+	}
+
+	if (!model.is_english_only) {
+		return "auto";
 	}
 
 	if (value === "auto" || value === "en") {
@@ -61,7 +65,7 @@ export class VoiceSettingsStore {
 	private listenersRegistered = false;
 	private readonly unlisteners: UnlistenFn[] = [];
 
-	async initialize(): Promise<void> {
+async initialize(): Promise<void> {
 		if (this.initialized) {
 			return;
 		}

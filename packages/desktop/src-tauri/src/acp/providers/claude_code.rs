@@ -49,6 +49,20 @@ impl AgentProvider for ClaudeCodeProvider {
             || command_exists("claude-code-acp")
     }
 
+    fn model_discovery_commands(&self) -> Vec<SpawnConfig> {
+        vec![SpawnConfig {
+            command: "claude".to_string(),
+            args: vec![
+                "--bare".to_string(),
+                "--no-session-persistence".to_string(),
+                "-p".to_string(),
+                "Return only the exact current model id. Output the raw model id only, with no markdown or explanation."
+                    .to_string(),
+            ],
+            env: claude_env(),
+        }]
+    }
+
     fn normalize_mode_id(&self, id: &str) -> String {
         match id {
             "default" | "acceptEdits" => "build".to_string(),
@@ -277,5 +291,17 @@ mod tests {
             "expected cached Claude ACP binary, got {}",
             configs[0].command
         );
+    }
+
+    #[test]
+    fn model_discovery_uses_claude_print_mode() {
+        let provider = ClaudeCodeProvider;
+        let attempts = provider.model_discovery_commands();
+
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].command, "claude");
+        assert_eq!(attempts[0].args[0], "--bare");
+        assert_eq!(attempts[0].args[1], "--no-session-persistence");
+        assert_eq!(attempts[0].args[2], "-p");
     }
 }

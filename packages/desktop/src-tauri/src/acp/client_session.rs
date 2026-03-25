@@ -96,6 +96,52 @@ pub(crate) fn apply_provider_model_fallback(
     }
 }
 
+fn normalize_model_token(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let without_ansi = if let Some((prefix, suffix)) = trimmed.split_once('[') {
+        if !prefix.is_empty()
+            && suffix.ends_with(']')
+            && suffix[..suffix.len() - 1]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric())
+        {
+            prefix
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+
+    let cleaned = without_ansi
+        .trim()
+        .trim_matches(|c: char| c == '`' || c == '"' || c == '\'' || c == ',' || c == ';');
+
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    let looks_like_model = cleaned.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || c == '-'
+            || c == '_'
+            || c == '.'
+            || c == '/'
+            || c == '+'
+            || c == ':'
+    });
+
+    if !looks_like_model || !cleaned.chars().any(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+
+    Some(cleaned.to_string())
+}
+
 fn parse_models_from_json_value(value: &Value) -> Vec<AvailableModel> {
     fn from_array(items: &[Value]) -> Vec<AvailableModel> {
         let mut seen = HashSet::new();
@@ -103,34 +149,26 @@ fn parse_models_from_json_value(value: &Value) -> Vec<AvailableModel> {
 
         for item in items {
             let model = if let Some(model_id) = item.as_str() {
-                let trimmed = model_id.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(AvailableModel {
-                        model_id: trimmed.to_string(),
-                        name: trimmed.to_string(),
-                        description: None,
-                    })
-                }
+                normalize_model_token(model_id).map(|normalized| AvailableModel {
+                    model_id: normalized.clone(),
+                    name: normalized,
+                    description: None,
+                })
             } else if let Some(obj) = item.as_object() {
                 let model_id = obj
                     .get("modelId")
                     .and_then(Value::as_str)
                     .or_else(|| obj.get("id").and_then(Value::as_str))
                     .or_else(|| obj.get("name").and_then(Value::as_str))
-                    .map(str::trim)
-                    .filter(|id| !id.is_empty());
+                    .and_then(normalize_model_token);
 
                 model_id.map(|id| AvailableModel {
-                    model_id: id.to_string(),
+                    model_id: id.clone(),
                     name: obj
                         .get("name")
                         .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or(id)
-                        .to_string(),
+                        .and_then(normalize_model_token)
+                        .unwrap_or_else(|| id.clone()),
                     description: obj
                         .get("description")
                         .and_then(Value::as_str)
@@ -228,24 +266,10 @@ fn parse_models_from_plaintext(stdout: &str) -> Vec<AvailableModel> {
             .map(|t| t.trim_matches(|c: char| c == ',' || c == ';' || c == ':'))
             .unwrap_or("");
 
-        if token.is_empty() {
+        let Some(model_id) = normalize_model_token(token) else {
             continue;
-        }
+        };
 
-        let looks_like_model = token.chars().all(|c| {
-            c.is_ascii_alphanumeric()
-                || c == '-'
-                || c == '_'
-                || c == '.'
-                || c == '/'
-                || c == '+'
-                || c == ':'
-        });
-        if !looks_like_model || !token.chars().any(|c| c.is_ascii_alphanumeric()) {
-            continue;
-        }
-
-        let model_id = token.to_string();
         if seen.insert(model_id.clone()) {
             models.push(AvailableModel {
                 model_id: model_id.clone(),

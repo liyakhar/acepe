@@ -18,9 +18,12 @@ use uuid::Uuid;
 use crate::acp::client::{
     InitializeResponse, ListSessionsResponse, NewSessionResponse, ResumeSessionResponse,
 };
-use crate::acp::client_session::{default_modes, default_session_model_state};
+use crate::acp::client_session::{
+    apply_provider_model_fallback, default_modes, default_session_model_state, SessionModelState,
+};
 use crate::acp::client_trait::AgentClient;
 use crate::acp::error::{AcpError, AcpResult};
+use crate::acp::model_display::get_transformer;
 use crate::acp::provider::AgentProvider;
 use crate::acp::session_update::{
     SessionUpdate, TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
@@ -249,6 +252,77 @@ impl CcSdkClaudeClient {
             handle.abort();
         }
     }
+
+    async fn hydrated_session_model_state(&self) -> SessionModelState {
+        let mut model_state = default_session_model_state();
+
+        let discovered = self.discover_models_from_provider_cli().await;
+        if !discovered.is_empty() {
+            model_state.available_models = discovered;
+        }
+
+        apply_provider_model_fallback(self.provider.as_ref(), &mut model_state);
+
+        let agent_type = self.provider.parser_agent_type();
+        model_state.models_display = get_transformer(agent_type).transform(&model_state.available_models);
+
+        model_state
+    }
+
+    async fn discover_models_from_provider_cli(&self) -> Vec<crate::acp::client::AvailableModel> {
+        let attempts = self.provider.model_discovery_commands();
+        if attempts.is_empty() {
+            return Vec::new();
+        }
+
+        for attempt in attempts {
+            let mut command = tokio::process::Command::new(&attempt.command);
+            command.args(&attempt.args);
+            command.stdin(std::process::Stdio::null());
+            command.stdout(std::process::Stdio::piped());
+            command.stderr(std::process::Stdio::piped());
+            command.current_dir(
+                self.pending_options
+                    .as_ref()
+                    .and_then(|options| options.cwd.clone())
+                    .unwrap_or_else(|| PathBuf::from(".")),
+            );
+
+            for (key, value) in &attempt.env {
+                command.env(key, value);
+            }
+
+            let output = match timeout(Duration::from_secs(10), command.output()).await {
+                Ok(Ok(output)) => output,
+                Ok(Err(error)) => {
+                    tracing::debug!(
+                        command = %attempt.command,
+                        args = ?attempt.args,
+                        error = %error,
+                        "Claude model discovery command failed"
+                    );
+                    continue;
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        command = %attempt.command,
+                        args = ?attempt.args,
+                        "Claude model discovery command timed out"
+                    );
+                    continue;
+                }
+            };
+
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let mut models = crate::acp::client::parse_model_discovery_output(&stdout);
+            if !models.is_empty() {
+                models.sort_by(|a, b| a.model_id.cmp(&b.model_id));
+                return models;
+            }
+        }
+
+        Vec::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,9 +461,10 @@ impl AgentClient for CcSdkClaudeClient {
         // immediately (avoids an empty Result before any content).
         self.pending_options = Some(options);
         self.session_id = Some(session_id.clone());
+        let models = self.hydrated_session_model_state().await;
         Ok(NewSessionResponse {
             session_id,
-            models: default_session_model_state(),
+            models,
             modes: default_modes(),
             available_commands: vec![],
             config_options: vec![],
@@ -401,10 +476,13 @@ impl AgentClient for CcSdkClaudeClient {
         session_id: String,
         cwd: String,
     ) -> AcpResult<ResumeSessionResponse> {
+        self.pending_options = Some(self.build_options(&cwd, &session_id, Some(session_id.clone()), false));
+        let models = self.hydrated_session_model_state().await;
+        self.pending_options = None;
         let options = self.build_options(&cwd, &session_id, Some(session_id.clone()), false);
         self.connect_and_start_bridge(options, session_id, None).await?;
         Ok(ResumeSessionResponse {
-            models: default_session_model_state(),
+            models,
             modes: default_modes(),
             available_commands: vec![],
             config_options: vec![],
@@ -417,12 +495,15 @@ impl AgentClient for CcSdkClaudeClient {
         cwd: String,
     ) -> AcpResult<NewSessionResponse> {
         let new_session_id = Uuid::new_v4().to_string();
+        self.pending_options = Some(self.build_options(&cwd, &new_session_id, Some(session_id.clone()), true));
+        let models = self.hydrated_session_model_state().await;
+        self.pending_options = None;
         let options = self.build_options(&cwd, &new_session_id, Some(session_id), true);
         self.connect_and_start_bridge(options, new_session_id.clone(), None)
             .await?;
         Ok(NewSessionResponse {
             session_id: new_session_id,
-            models: default_session_model_state(),
+            models,
             modes: default_modes(),
             available_commands: vec![],
             config_options: vec![],

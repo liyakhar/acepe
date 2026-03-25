@@ -607,6 +607,16 @@ fn parse_cursor_models_output_supports_plaintext_bullets() {
 }
 
 #[test]
+fn parse_model_discovery_output_strips_claude_formatting_suffix() {
+    let output = "claude-opus-4-6[1m]";
+    let models = parse_model_discovery_output(output);
+
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].model_id, "claude-opus-4-6");
+    assert_eq!(models[0].name, "claude-opus-4-6");
+}
+
+#[test]
 fn map_outbound_mode_id_maps_claude_build_to_default() {
     let provider = TestProvider { id: "claude-code" };
     let mapped = provider.map_outbound_mode_id("build");

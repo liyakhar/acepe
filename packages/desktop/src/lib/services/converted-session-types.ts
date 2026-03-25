@@ -681,6 +681,11 @@ insertions: number;
 deletions: number }
 
 /**
+ * Classification hint for the explorer preview pane.
+ */
+export type PreviewKind = "diff" | "text" | "binary" | "large" | "deleted" | "unsupported"
+
+/**
  * Complete project index result.
  */
 export type ProjectIndex = { 
@@ -704,11 +709,6 @@ totalFiles: number;
  * Total line count across all files.
  */
 totalLines: number }
-
-/**
- * What kind of preview the frontend should render for a result row.
- */
-export type PreviewKind = "diff" | "text" | "binary" | "large" | "deleted" | "unsupported"
 
 /**
  * A single row in the file explorer results list.
