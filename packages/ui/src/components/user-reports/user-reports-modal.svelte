@@ -11,7 +11,7 @@
 		HeaderTitleCell
 	} from '../panel-header/index.js';
 	import type { GitHubService, IssueCategory, IssueState, View } from './types.js';
-	import { CATEGORY_CONFIG, STATUS_CONFIG } from './types.js';
+	import { CATEGORY_CONFIG } from './types.js';
 	import { cn } from '../../lib/utils.js';
 
 	import UserReportsCreate from './user-reports-create.svelte';
@@ -47,38 +47,25 @@
 		view.kind === 'create'
 			? 'New Issue'
 			: view.kind === 'detail'
-				? 'Issue'
+				? `Issue #${view.issueNumber}`
 				: 'Issues'
 	);
 
 	const categories: { value: IssueCategory | null; label: string }[] = [
-		{ value: null, label: 'All Types' },
+		{ value: null, label: 'All' },
 		{ value: 'bug', label: 'Bug' },
 		{ value: 'enhancement', label: 'Feature' },
 		{ value: 'question', label: 'Question' },
 		{ value: 'discussion', label: 'Discussion' }
 	];
 
-	const states: { value: IssueState | null; label: string }[] = [
-		{ value: null, label: 'Open' },
-		{ value: 'open', label: 'Open' },
-		{ value: 'closed', label: 'Closed' }
-	];
-
 	const sorts: { value: string; label: string }[] = [
 		{ value: 'created', label: 'Newest' },
-		{ value: 'updated', label: 'Recently updated' },
-		{ value: 'comments', label: 'Most discussed' }
+		{ value: 'updated', label: 'Updated' },
+		{ value: 'comments', label: 'Discussed' }
 	];
 
-	function findLabel<T extends { value: unknown; label: string }>(items: T[], value: unknown, fallback: string): string {
-		const found = items.find((item) => item.value === value);
-		return found ? found.label : fallback;
-	}
-
-	const activeCategoryLabel = $derived(findLabel(categories, activeCategory, 'All Types'));
-	const activeStateLabel = $derived(activeState === 'closed' ? 'Closed' : 'Open');
-	const activeSortLabel = $derived(findLabel(sorts, sortOrder, 'Newest'));
+	const activeSortLabel = $derived(sorts.find((s) => s.value === sortOrder)?.label ? sorts.find((s) => s.value === sortOrder)!.label : 'Newest');
 
 	function handleBack() {
 		view = { kind: 'list' };
@@ -97,13 +84,14 @@
 			class="fixed inset-0 z-50 bg-black/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
 		/>
 		<Dialog.Content
-			class="fixed start-[50%] top-[50%] z-50 translate-x-[-50%] translate-y-[-50%] w-[680px] max-w-[calc(100vw-3rem)] h-[80vh] max-h-[700px] flex flex-col rounded-xl border border-border/40 bg-background shadow-2xl overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-200"
+			class="fixed start-[50%] top-[50%] z-50 translate-x-[-50%] translate-y-[-50%] w-[740px] max-w-[calc(100vw-2rem)] h-[82vh] max-h-[760px] flex flex-col rounded-lg border border-border/50 bg-background shadow-lg overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-200"
 		>
 			<span class="sr-only">
 				<Dialog.Title>GitHub Issues</Dialog.Title>
 				<Dialog.Description>Browse, create, and manage GitHub issues for the Acepe repository.</Dialog.Description>
 			</span>
 			<QueryClientProvider client={queryClient}>
+				<!-- Header bar -->
 				<EmbeddedPanelHeader>
 					{#if view.kind !== 'list'}
 						<EmbeddedIconButton title="Back" ariaLabel="Back to list" onclick={handleBack}>
@@ -169,9 +157,10 @@
 					</HeaderActionCell>
 				</EmbeddedPanelHeader>
 
+				<!-- Search bar -->
 				{#if searchOpen && view.kind === 'list'}
-					<div class="flex items-center h-8 px-3 border-b border-border/30 bg-accent/10">
-						<MagnifyingGlass size={12} class="text-muted-foreground/50 shrink-0 mr-2" />
+					<div class="flex items-center h-7 px-3 border-b border-border/30 bg-accent/5">
+						<MagnifyingGlass size={11} class="text-muted-foreground/40 shrink-0 mr-2" />
 						<label for="issue-search" class="sr-only">Search issues</label>
 						<!-- svelte-ignore a11y_autofocus -->
 						<input
@@ -180,76 +169,78 @@
 							placeholder="Search issues..."
 							bind:value={searchQuery}
 							oninput={resetPage}
-							class="bg-transparent border-none outline-none text-[11px] font-mono text-foreground placeholder:text-muted-foreground/40 w-full"
+							class="bg-transparent border-none outline-none text-[11px] font-mono text-foreground placeholder:text-muted-foreground/30 w-full"
 							autofocus
 						/>
 					</div>
 				{/if}
 
+				<!-- Filter bar: status tabs + category pills + sort -->
 				{#if view.kind === 'list'}
-					<div class="flex items-center gap-2 h-9 px-3 border-b border-border/20 bg-background">
-						<DropdownMenu.Root>
-							<DropdownMenu.Trigger
-								aria-label="Filter by category"
-								class="flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-mono font-medium text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors cursor-pointer"
-							>
-								{activeCategoryLabel}
-								<CaretDown size={10} />
-							</DropdownMenu.Trigger>
-							<DropdownMenu.Content align="start" sideOffset={4} class="z-[60] min-w-[140px]">
-								{#each categories as cat}
-									{@const config = cat.value ? CATEGORY_CONFIG[cat.value] : null}
-									<DropdownMenu.Item class="flex items-center gap-2 cursor-pointer" onSelect={() => { activeCategory = cat.value; resetPage(); }}>
-										{#if config}
-											{@const Icon = config.icon}
-											{@const textClass = config.classes.split(' ').find((c) => c.startsWith('text-'))}
-											<Icon size={12} weight="fill" class={textClass ? textClass : ''} />
-										{/if}
-										<span class="flex-1">{cat.label}</span>
-										{#if activeCategory === cat.value}
-											<Check size={12} class="text-primary" />
-										{/if}
-									</DropdownMenu.Item>
-								{/each}
-							</DropdownMenu.Content>
-						</DropdownMenu.Root>
+					<div class="flex items-center h-8 px-2 border-b border-border/30 gap-1">
+						<!-- Status tabs -->
+						<button
+							type="button"
+							class={cn(
+								'h-6 px-2.5 rounded text-[10px] font-mono font-medium transition-colors cursor-pointer',
+								activeState !== 'closed'
+									? 'bg-accent/60 text-foreground'
+									: 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-accent/30'
+							)}
+							onclick={() => { activeState = null; resetPage(); }}
+						>
+							Open
+						</button>
+						<button
+							type="button"
+							class={cn(
+								'h-6 px-2.5 rounded text-[10px] font-mono font-medium transition-colors cursor-pointer',
+								activeState === 'closed'
+									? 'bg-accent/60 text-foreground'
+									: 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-accent/30'
+							)}
+							onclick={() => { activeState = 'closed'; resetPage(); }}
+						>
+							Closed
+						</button>
 
-						<DropdownMenu.Root>
-							<DropdownMenu.Trigger
-								aria-label="Filter by status"
-								class="flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-mono font-medium text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors cursor-pointer"
+						<div class="w-px h-3.5 bg-border/40 mx-1"></div>
+
+						<!-- Category pills -->
+						{#each categories as cat}
+							{@const config = cat.value ? CATEGORY_CONFIG[cat.value] : null}
+							{@const isActive = activeCategory === cat.value}
+							<button
+								type="button"
+								class={cn(
+									'h-5 px-2 rounded text-[10px] font-mono font-medium transition-colors cursor-pointer flex items-center gap-1',
+									isActive
+										? 'bg-accent/60 text-foreground'
+										: 'text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent/20'
+								)}
+								onclick={() => { activeCategory = cat.value; resetPage(); }}
 							>
-								{activeStateLabel}
-								<CaretDown size={10} />
-							</DropdownMenu.Trigger>
-							<DropdownMenu.Content align="start" sideOffset={4} class="z-[60] min-w-[140px]">
-								{#each states as s}
-									{@const config = s.value ? STATUS_CONFIG[s.value] : null}
-									<DropdownMenu.Item class="flex items-center gap-2 cursor-pointer" onSelect={() => { activeState = s.value; resetPage(); }}>
-										{#if config}
-											{@const Icon = config.icon}
-											<Icon size={12} weight="fill" class={config.color} />
-										{/if}
-										<span class="flex-1">{s.label}</span>
-										{#if activeState === s.value}
-											<Check size={12} class="text-primary" />
-										{/if}
-									</DropdownMenu.Item>
-								{/each}
-							</DropdownMenu.Content>
-						</DropdownMenu.Root>
+								{#if config}
+									{@const Icon = config.icon}
+									{@const textClass = config.classes.split(' ').find((c) => c.startsWith('text-'))}
+									<Icon size={10} weight="fill" class={isActive ? (textClass ? textClass : '') : 'opacity-50'} />
+								{/if}
+								{cat.label}
+							</button>
+						{/each}
 
 						<div class="flex-1"></div>
 
+						<!-- Sort dropdown -->
 						<DropdownMenu.Root>
 							<DropdownMenu.Trigger
 								aria-label="Sort order"
-								class="flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-mono font-medium text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors cursor-pointer"
+								class="flex items-center gap-1 h-5 px-2 rounded text-[10px] font-mono font-medium text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent/20 transition-colors cursor-pointer"
 							>
 								{activeSortLabel}
-								<CaretDown size={10} />
+								<CaretDown size={9} />
 							</DropdownMenu.Trigger>
-							<DropdownMenu.Content align="end" sideOffset={4} class="z-[60] min-w-[140px]">
+							<DropdownMenu.Content align="end" sideOffset={4} class="z-[60] min-w-[120px]">
 								{#each sorts as s}
 									<DropdownMenu.Item class="flex items-center gap-2 cursor-pointer" onSelect={() => { sortOrder = s.value; resetPage(); }}>
 										<span class="flex-1">{s.label}</span>
@@ -263,6 +254,7 @@
 					</div>
 				{/if}
 
+				<!-- Content area -->
 				<div class="flex-1 min-h-0 overflow-y-auto">
 					{#if view.kind === 'list'}
 						<UserReportsList

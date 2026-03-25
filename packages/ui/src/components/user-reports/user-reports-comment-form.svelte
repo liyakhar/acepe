@@ -9,7 +9,7 @@
 
 	let {
 		placeholder = 'Write a comment...',
-		submitLabel = 'Comment',
+		submitLabel = 'comment',
 		autofocus = false,
 		onSubmit,
 		onCancel
@@ -37,8 +37,8 @@
 	<textarea
 		bind:value={body}
 		{placeholder}
-		rows={3}
-		class="w-full resize-y rounded-md border border-border/40 bg-input/30 px-2.5 py-2 text-[12px] text-foreground leading-relaxed placeholder:text-muted-foreground/40 focus:border-ring focus:ring-ring/50 focus:ring-[3px] outline-none transition-shadow"
+		rows={2}
+		class="w-full resize-y rounded-md border border-border/30 bg-transparent px-3 py-2 text-[11px] font-mono text-foreground leading-relaxed placeholder:text-muted-foreground/25 focus:border-ring focus:ring-ring/50 focus:ring-[2px] outline-none transition-shadow"
 		onkeydown={(e) => {
 			if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleSubmit();
 		}}
@@ -47,19 +47,19 @@
 		{#if onCancel}
 			<button
 				type="button"
-				class="px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+				class="h-6 px-2.5 text-[10px] font-mono text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer rounded hover:bg-accent/25"
 				onclick={onCancel}
 			>
-				Cancel
+				cancel
 			</button>
 		{/if}
 		<button
 			type="button"
-			class="px-3 py-1 text-[11px] font-medium text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-40 rounded-md transition-colors cursor-pointer disabled:cursor-not-allowed"
+			class="h-6 px-3 text-[10px] font-mono font-medium text-primary-foreground bg-primary hover:bg-primary/90 disabled:opacity-30 rounded transition-colors cursor-pointer disabled:cursor-not-allowed"
 			disabled={!canSubmit}
 			onclick={handleSubmit}
 		>
-			{submitting ? 'Posting...' : submitLabel}
+			{submitting ? 'posting...' : submitLabel}
 		</button>
 	</div>
 </div>

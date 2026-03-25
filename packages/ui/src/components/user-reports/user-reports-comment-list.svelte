@@ -13,21 +13,23 @@
 </script>
 
 <div class="flex flex-col">
-	<div class="border-b border-border/20 px-5 py-2.5">
-		<span class="text-[11px] font-semibold font-mono text-muted-foreground/70"
-			>{comments.length} Comment{comments.length !== 1 ? 's' : ''}</span
-		>
+	<div class="h-7 flex items-center px-4 border-b border-border/15">
+		<span class="text-[10px] font-mono text-muted-foreground/40">
+			{comments.length} comment{comments.length !== 1 ? 's' : ''}
+		</span>
 	</div>
 
-	<div class="flex flex-col gap-0 px-5">
-		{#each comments as comment (comment.id)}
-			<div class="py-2.5 border-b border-border/15">
-				<UserReportsComment {comment} {service} />
-			</div>
-		{/each}
-	</div>
+	{#if comments.length > 0}
+		<div class="flex flex-col">
+			{#each comments as comment (comment.id)}
+				<div class="px-4 py-2.5 border-b border-border/10">
+					<UserReportsComment {comment} {service} />
+				</div>
+			{/each}
+		</div>
+	{/if}
 
-	<div class="px-5 py-3">
+	<div class="px-4 py-3">
 		<UserReportsCommentForm onSubmit={onNewComment} />
 	</div>
 </div>

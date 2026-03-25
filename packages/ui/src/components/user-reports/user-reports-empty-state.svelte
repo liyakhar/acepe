@@ -1,6 +1,4 @@
 <script lang="ts">
-	import { Notepad } from 'phosphor-svelte';
-
 	interface Props {
 		title?: string;
 		description?: string;
@@ -9,23 +7,20 @@
 	}
 
 	let {
-		title = 'No reports yet',
-		description = 'Be the first to share feedback',
+		title = 'No issues found',
+		description = 'Be the first to report something',
 		actionLabel,
 		onAction
 	}: Props = $props();
 </script>
 
-<div class="flex flex-col items-center justify-center min-h-full py-16 gap-3">
-	<Notepad size={40} weight="duotone" class="text-muted-foreground/20" />
-	<div class="text-center">
-		<p class="text-[12px] text-muted-foreground/60 font-medium">{title}</p>
-		<p class="text-[11px] text-muted-foreground/40 mt-0.5">{description}</p>
-	</div>
+<div class="flex flex-col items-center justify-center min-h-full py-16 gap-2">
+	<p class="text-[11px] font-mono text-muted-foreground/40">{title}</p>
+	<p class="text-[10px] font-mono text-muted-foreground/25">{description}</p>
 	{#if actionLabel && onAction}
 		<button
 			type="button"
-			class="mt-1 px-3 py-1 text-[11px] font-medium text-primary bg-primary/10 hover:bg-primary/15 rounded-full transition-colors cursor-pointer"
+			class="mt-2 h-6 px-3 text-[10px] font-mono font-medium text-primary hover:text-primary/80 bg-primary/5 hover:bg-primary/10 rounded transition-colors cursor-pointer"
 			onclick={onAction}
 		>
 			{actionLabel}

@@ -22,52 +22,53 @@
 	});
 
 	const REACTIONS = [
-		{ content: '+1', emoji: '👍', key: 'plus1' as const },
-		{ content: 'heart', emoji: '❤️', key: 'heart' as const },
-		{ content: 'rocket', emoji: '🚀', key: 'rocket' as const },
-		{ content: 'eyes', emoji: '👀', key: 'eyes' as const }
+		{ content: '+1', emoji: '+1', key: 'plus1' as const },
+		{ content: 'heart', emoji: 'heart', key: 'heart' as const },
+		{ content: 'rocket', emoji: 'rocket', key: 'rocket' as const },
+		{ content: 'eyes', emoji: 'eyes', key: 'eyes' as const }
 	];
 </script>
 
-<div class="flex gap-2">
-	<div class="flex-1 min-w-0 py-1.5">
-		<div class="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/70 mb-1">
-			<img src={comment.author.avatarUrl} alt="" class="h-4 w-4 rounded-full" />
-			<span class="font-medium text-foreground/80">{comment.author.login}</span>
-			<span class="flex items-center gap-0.5">
-				<Clock size={9} />
-				{formatTimeAgo(comment.createdAt)}
-			</span>
-			<button
-				type="button"
-				class="ml-auto flex items-center gap-0.5 text-muted-foreground/30 hover:text-muted-foreground transition-colors cursor-pointer"
-				onclick={() => window.open(comment.htmlUrl, '_blank', 'noopener,noreferrer')}
-			>
-				<ArrowSquareOut size={9} />
-			</button>
-		</div>
-
-		<div class="text-[12px] text-foreground/90 leading-relaxed whitespace-pre-wrap">
-			{comment.body}
-		</div>
-
-		{#if comment.reactions.totalCount > 0}
-			<div class="flex items-center gap-1 mt-2">
-				{#each REACTIONS as r}
-					{@const count = comment.reactions[r.key]}
-					{#if count > 0}
-						<button
-							type="button"
-							class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-accent/30 text-muted-foreground border border-border/20 hover:bg-accent/50 transition-colors cursor-pointer"
-							disabled={$reactionMutation.isPending}
-							onclick={() => $reactionMutation.mutate(r.content)}
-						>
-							<span>{r.emoji}</span>
-							<span class="tabular-nums">{count}</span>
-						</button>
-					{/if}
-				{/each}
-			</div>
-		{/if}
+<div class="flex flex-col gap-1.5">
+	<!-- Comment header -->
+	<div class="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/40">
+		<img src={comment.author.avatarUrl} alt="" class="h-3.5 w-3.5 rounded-full" />
+		<span class="font-medium text-foreground/60">{comment.author.login}</span>
+		<span class="flex items-center gap-0.5">
+			<Clock size={9} />
+			{formatTimeAgo(comment.createdAt)}
+		</span>
+		<button
+			type="button"
+			class="ml-auto text-muted-foreground/20 hover:text-muted-foreground transition-colors cursor-pointer"
+			onclick={() => window.open(comment.htmlUrl, '_blank', 'noopener,noreferrer')}
+		>
+			<ArrowSquareOut size={9} />
+		</button>
 	</div>
+
+	<!-- Comment body -->
+	<div class="text-[11px] text-foreground/80 leading-relaxed whitespace-pre-wrap font-mono pl-5">
+		{comment.body}
+	</div>
+
+	<!-- Reactions -->
+	{#if comment.reactions.totalCount > 0}
+		<div class="flex items-center gap-1 pl-5 mt-0.5">
+			{#each REACTIONS as r}
+				{@const count = comment.reactions[r.key]}
+				{#if count > 0}
+					<button
+						type="button"
+						class="flex items-center gap-0.5 h-4 px-1.5 rounded text-[9px] font-mono bg-accent/30 text-muted-foreground hover:bg-accent/50 transition-colors cursor-pointer"
+						disabled={$reactionMutation.isPending}
+						onclick={() => $reactionMutation.mutate(r.content)}
+					>
+						<span>{r.emoji}</span>
+						<span class="tabular-nums">{count}</span>
+					</button>
+				{/if}
+			{/each}
+		</div>
+	{/if}
 </div>

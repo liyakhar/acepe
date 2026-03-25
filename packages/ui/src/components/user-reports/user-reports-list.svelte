@@ -60,7 +60,7 @@
 {:else if $query.isError}
 	<div class="flex flex-col items-center justify-center py-16 px-4 gap-2">
 		<span class="text-[11px] font-mono text-destructive/80">Failed to load issues</span>
-		<span class="text-[10px] text-muted-foreground/50 text-center max-w-xs">
+		<span class="text-[10px] text-muted-foreground/40 text-center max-w-xs font-mono">
 			{$query.error instanceof Error ? $query.error.message : 'An unexpected error occurred'}
 		</span>
 		<button
@@ -68,7 +68,7 @@
 			class="mt-2 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors cursor-pointer"
 			onclick={() => $query.refetch()}
 		>
-			Retry
+			retry
 		</button>
 	</div>
 {:else if queryResult && queryResult.items.length > 0}
@@ -79,25 +79,25 @@
 	</div>
 
 	{#if queryResult.hasNextPage || page > 1}
-		<div class="flex items-center justify-center gap-2 py-3 border-t border-border/20">
+		<div class="flex items-center justify-center gap-3 h-8 border-t border-border/15">
 			<button
 				type="button"
-				class="text-[11px] px-2.5 py-1 rounded-md transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default hover:bg-accent/50 text-muted-foreground"
+				class="text-[10px] font-mono text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer disabled:opacity-20 disabled:cursor-default"
 				disabled={page <= 1}
 				onclick={() => onPageChange(page - 1)}
 			>
-				← Prev
+				prev
 			</button>
-			<span class="text-[10px] text-muted-foreground/60 tabular-nums font-mono">
-				Page {page}
+			<span class="text-[10px] text-muted-foreground/30 tabular-nums font-mono">
+				{page}
 			</span>
 			<button
 				type="button"
-				class="text-[11px] px-2.5 py-1 rounded-md transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default hover:bg-accent/50 text-muted-foreground"
+				class="text-[10px] font-mono text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer disabled:opacity-20 disabled:cursor-default"
 				disabled={!queryResult.hasNextPage}
 				onclick={() => onPageChange(page + 1)}
 			>
-				Next →
+				next
 			</button>
 		</div>
 	{/if}
