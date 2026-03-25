@@ -1,28 +1,21 @@
 /**
- * Terminal panel for interactive shell sessions.
+ * Primary top-level terminal model.
+ * A visible terminal panel is a TerminalPanelGroup with one or more TerminalTab records.
  */
-export interface TerminalPanel {
-	/** Unique panel identifier */
-	id: string;
+export type {
+	PersistedTerminalPanelGroupState,
+	PersistedTerminalTabState,
+	TerminalPanelGroup,
+	TerminalTab,
+	PersistedTerminalWorkspacePanelState,
+	TerminalWorkspacePanel,
+} from "./types.js";
 
-	/** Panel kind for unified workspace panel state. */
-	readonly kind: "terminal";
-
-	/** Absolute path to the project root (working directory) */
-	projectPath: string;
-
-	/** Panel width in pixels */
-	width: number;
-
-	/** Owning workspace panel for embedded use; null for top-level terminals. */
-	ownerPanelId: null;
-
-	/** PTY session ID (from tauri-pty) */
-	ptyId: number | null;
-
-	/** Shell process being used (e.g., /bin/zsh) */
-	shell: string | null;
-}
+/**
+ * @deprecated Prefer TerminalPanelGroup for the visible top-level terminal panel model.
+ * This compatibility alias exists only while store implementation still imports TerminalPanel.
+ */
+export type { TerminalWorkspacePanel as TerminalPanel } from "./types.js";
 
 export const DEFAULT_TERMINAL_PANEL_WIDTH = 500;
 export const MIN_TERMINAL_PANEL_WIDTH = 300;

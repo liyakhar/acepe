@@ -44,8 +44,7 @@ describe("workspace panel types", () => {
 			projectPath: "/tmp/project",
 			width: 500,
 			ownerPanelId: null,
-			ptyId: null,
-			shell: null,
+			groupId: "group-1",
 		};
 
 		const browserPanel: BrowserWorkspacePanel = {
@@ -105,6 +104,7 @@ describe("workspace panel types", () => {
 				projectPath: "/tmp/project",
 				width: 500,
 				ownerPanelId: null,
+				groupId: "group-1",
 			},
 			{
 				id: "browser-1",

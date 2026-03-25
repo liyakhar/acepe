@@ -450,13 +450,16 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 
 					<!-- Terminal panels (always use TerminalTabs for tab support in header) -->
 					{#if group.terminalPanels.length > 0}
-						<TerminalTabs
-							terminals={group.terminalPanels}
-							projectPath={group.projectPath}
-							projectName={group.projectName}
-							projectColor={group.projectColor}
-							{panelStore}
-						/>
+						{#each group.terminalPanels as terminalGroup (terminalGroup.id)}
+							<TerminalTabs
+								group={terminalGroup}
+								tabs={panelStore.getTerminalTabsForGroup(terminalGroup.id)}
+								projectPath={group.projectPath}
+								projectName={group.projectName}
+								projectColor={group.projectColor}
+								{panelStore}
+							/>
+						{/each}
 					{/if}
 
 					<!-- Browser panels (project-scoped) -->

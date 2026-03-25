@@ -254,8 +254,7 @@ function makeTerminalPanel(
 		projectPath: "/projects/acepe",
 		ownerPanelId: null,
 		width: 400,
-		ptyId: null,
-		shell: null,
+		groupId: "group-1",
 		...overrides,
 	};
 }

@@ -49,8 +49,7 @@ describe("TabBarStore non-agent tabs", () => {
 					projectPath: "/projects/acepe",
 					ownerPanelId: null,
 					width: 420,
-					ptyId: null,
-					shell: null,
+					groupId: "group-1",
 				},
 				{
 					id: "browser-1",

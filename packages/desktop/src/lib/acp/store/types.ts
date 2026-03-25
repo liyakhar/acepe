@@ -225,12 +225,28 @@ export interface FileWorkspacePanel extends WorkspacePanelBase {
 	readonly targetColumn?: number;
 }
 
+export interface TerminalPanelGroup {
+	readonly id: string;
+	readonly projectPath: string;
+	readonly width: number;
+	readonly selectedTabId: string | null;
+	readonly order: number;
+}
+
+export interface TerminalTab {
+	readonly id: string;
+	readonly groupId: string;
+	readonly projectPath: string;
+	readonly createdAt: number;
+	readonly ptyId: number | null;
+	readonly shell: string | null;
+}
+
 export interface TerminalWorkspacePanel extends WorkspacePanelBase {
 	readonly kind: "terminal";
 	readonly projectPath: string;
 	readonly ownerPanelId: null;
-	readonly ptyId: number | null;
-	readonly shell: string | null;
+	readonly groupId: string;
 }
 
 export interface BrowserWorkspacePanel extends WorkspacePanelBase {
@@ -280,10 +296,26 @@ export interface PersistedFileWorkspacePanelState extends PersistedWorkspacePane
 	readonly targetColumn?: number;
 }
 
+export interface PersistedTerminalPanelGroupState {
+	readonly id: string;
+	readonly projectPath: string;
+	readonly width: number;
+	readonly selectedTabId?: string | null;
+	readonly order: number;
+}
+
+export interface PersistedTerminalTabState {
+	readonly id: string;
+	readonly groupId: string;
+	readonly projectPath: string;
+	readonly createdAt: number;
+}
+
 export interface PersistedTerminalWorkspacePanelState extends PersistedWorkspacePanelBase {
 	readonly kind: "terminal";
 	readonly projectPath: string;
 	readonly ownerPanelId: null;
+	readonly groupId: string;
 }
 
 export interface PersistedBrowserWorkspacePanelState extends PersistedWorkspacePanelBase {
@@ -387,8 +419,12 @@ export interface PersistedWorkspaceState {
 	readonly sqlStudio?: PersistedSqlStudioState;
 	/** Full-screen review overlay state (added in version 5) */
 	readonly reviewFullscreen?: PersistedReviewFullscreenState;
-	/** Open terminal panels persisted across app restarts (added in version 7) */
+	/** Open terminal panels persisted across app restarts (added in version 7, legacy flat shape) */
 	readonly terminalPanels?: ReadonlyArray<PersistedTerminalPanelState>;
+	/** Explicit top-level terminal groups persisted across app restarts (added in version 10). */
+	readonly terminalPanelGroups?: ReadonlyArray<PersistedTerminalPanelGroupState>;
+	/** Terminal tabs persisted separately from runtime PTY state (added in version 10). */
+	readonly terminalTabs?: ReadonlyArray<PersistedTerminalTabState>;
 	/** Open browser panels persisted across app restarts (added in version 7) */
 	readonly browserPanels?: ReadonlyArray<PersistedBrowserPanelState>;
 	/** View mode: "single", "project", or "multi" (added in version 8) */

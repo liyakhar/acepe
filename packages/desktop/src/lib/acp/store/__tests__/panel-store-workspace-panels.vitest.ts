@@ -39,8 +39,8 @@ describe("PanelStore workspacePanels", () => {
 
 		expect(store.workspacePanels.map((panel) => panel.kind)).toEqual([
 			"browser",
-			"terminal",
 			"file",
+			"terminal",
 		]);
 	});
 

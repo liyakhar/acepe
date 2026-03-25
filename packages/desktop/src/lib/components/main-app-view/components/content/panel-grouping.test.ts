@@ -25,12 +25,10 @@ describe("groupAllPanelsByProject", () => {
 			[
 				{
 					id: "terminal-1",
-					kind: "terminal",
 					projectPath: "/tmp/project-a",
-					ownerPanelId: null,
 					width: 500,
-					ptyId: null,
-					shell: null,
+					selectedTabId: "tab-1",
+					order: 0,
 				},
 			],
 			[
@@ -62,6 +60,45 @@ describe("groupAllPanelsByProject", () => {
 		expect(groups[0].terminalPanels).toHaveLength(1);
 		expect(groups[0].browserPanels).toHaveLength(1);
 	});
+
+	it("keeps multiple terminal panel groups for one project", () => {
+		const groups = groupAllPanelsByProject(
+			[],
+			[],
+			[],
+			[
+				{
+					id: "group-a",
+					projectPath: "/tmp/project-a",
+					width: 500,
+					selectedTabId: "tab-a",
+					order: 0,
+				},
+				{
+					id: "group-b",
+					projectPath: "/tmp/project-a",
+					width: 520,
+					selectedTabId: "tab-b",
+					order: 1,
+				},
+			],
+			[],
+			[],
+			[
+				{
+					path: "/tmp/project-a",
+					name: "Project A",
+					color: "#123456",
+					createdAt: new Date(),
+				},
+			]
+		);
+
+		expect(groups).toHaveLength(1);
+		expect(groups[0]?.terminalPanels).toHaveLength(2);
+		expect(groups[0]?.terminalPanels[0]?.id).toBe("group-a");
+		expect(groups[0]?.terminalPanels[1]?.id).toBe("group-b");
+	});
 });
 
 describe("groupWorkspacePanelsByProject", () => {
@@ -88,8 +125,7 @@ describe("groupWorkspacePanelsByProject", () => {
 					projectPath: "/tmp/project-a",
 					ownerPanelId: null,
 					width: 500,
-					ptyId: null,
-					shell: null,
+					groupId: "group-1",
 				},
 				{
 					id: "browser-1",

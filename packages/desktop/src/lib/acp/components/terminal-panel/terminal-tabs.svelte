@@ -1,77 +1,85 @@
 <script lang="ts">
 import type { PanelStore } from "$lib/acp/store/panel-store.svelte.js";
-import type { TerminalPanel } from "$lib/acp/store/terminal-panel-type.js";
-
-import * as m from "$lib/paraglide/messages.js";
+import type { TerminalPanelGroup, TerminalTab } from "$lib/acp/store/types.js";
 
 import TerminalPanelComponent from "./terminal-panel.svelte";
 
 interface Props {
-	terminals: readonly TerminalPanel[];
+	group: TerminalPanelGroup;
+	tabs: readonly TerminalTab[];
 	projectPath: string;
 	projectName: string;
 	projectColor: string;
 	panelStore: PanelStore;
 }
 
-let { terminals, projectPath, projectName, projectColor, panelStore }: Props = $props();
+let { group, tabs, projectPath, projectName, projectColor, panelStore }: Props = $props();
 
 const selectedId = $derived.by(() => {
-	const preferred = panelStore.selectedTerminalPanelIdByProject[projectPath];
-	const valid = terminals.some((t) => t.id === preferred);
-	return valid ? preferred : (terminals[0]?.id ?? null);
+	const preferred = panelStore.getSelectedTerminalTabId(group.id);
+	const valid = tabs.some((tab) => tab.id === preferred);
+	if (valid) {
+		return preferred;
+	}
+	const firstTab = tabs[0];
+	return firstTab ? firstTab.id : null;
 });
 
 const selectedTerminal = $derived(
-	selectedId ? (terminals.find((t) => t.id === selectedId) ?? null) : null
+	selectedId ? (tabs.find((tab) => tab.id === selectedId) ? tabs.find((tab) => tab.id === selectedId) : null) : null
 );
 
 const isAuxFullscreen = $derived(
-	selectedTerminal !== null && panelStore.fullscreenPanelId === selectedTerminal.id
+	panelStore.fullscreenPanelId === group.id
 );
 
-function handleSelectTab(panelId: string) {
-	panelStore.setSelectedTerminalPanel(projectPath, panelId);
+function handleSelectTab(tabId: string) {
+	panelStore.setSelectedTerminalTab(group.id, tabId);
 }
 
 function handleNewTerminal() {
-	panelStore.openTerminalPanel(projectPath);
+	panelStore.openTerminalTab(group.id);
 }
 
 function handleCloseTab(tabId: string) {
-	panelStore.closeTerminalPanel(tabId);
+	panelStore.closeTerminalTab(tabId);
+}
+
+function handleMoveTabToNewPanel(tabId: string) {
+	panelStore.moveTerminalTabToNewPanel(tabId);
 }
 </script>
 
 <div class="flex flex-col h-full min-h-0 flex-1 min-w-0">
-	{#each terminals as terminal (terminal.id)}
+	{#if selectedTerminal}
 		<div
 			class="flex-1 min-h-0 min-w-0"
-			class:hidden={terminal.id !== selectedId}
 		>
 			<TerminalPanelComponent
-				panelId={terminal.id}
-				projectPath={terminal.projectPath}
+				panelId={group.id}
+				projectPath={selectedTerminal.projectPath}
 				{projectName}
 				{projectColor}
-				width={terminal.width}
-				shell={terminal.shell}
+				width={group.width}
+				shell={selectedTerminal.shell}
 				hideProjectBadge={true}
 				isFullscreenEmbedded={isAuxFullscreen}
 				{isAuxFullscreen}
-				tabs={terminals}
+				tabs={tabs}
 				selectedTabId={selectedId}
 				onSelectTab={handleSelectTab}
 				onNewTab={handleNewTerminal}
 				onCloseTab={handleCloseTab}
-				onEnterFullscreen={() => panelStore.enterTerminalFullscreen(terminal.id)}
+				onMoveTabToNewPanel={handleMoveTabToNewPanel}
+				canMoveTabToNewPanel={(tabId: string) => panelStore.canMoveTerminalTabToNewPanel(tabId)}
+				onEnterFullscreen={() => panelStore.enterTerminalFullscreen(group.id)}
 				onExitFullscreen={() => panelStore.exitFullscreen()}
-				onClose={() => panelStore.closeTerminalPanel(terminal.id)}
+				onClose={() => panelStore.closeTerminalPanel(group.id)}
 				onResize={(panelId: string, delta: number) =>
 					panelStore.resizeTerminalPanel(panelId, delta)}
 				onPtyCreated={(ptyId: number, shell: string) =>
-					panelStore.updateTerminalPtyId(terminal.id, ptyId, shell)}
+					panelStore.updateTerminalPtyId(selectedTerminal.id, ptyId, shell)}
 			/>
 		</div>
-	{/each}
+	{/if}
 </div>

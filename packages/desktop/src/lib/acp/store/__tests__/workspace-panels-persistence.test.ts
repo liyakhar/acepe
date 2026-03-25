@@ -36,8 +36,7 @@ describe("workspace panel persistence", () => {
 				projectPath: "/tmp/project",
 				width: 500,
 				ownerPanelId: null,
-				ptyId: 99,
-				shell: "/bin/zsh",
+				groupId: "group-1",
 			},
 			{
 				id: "browser-1",
@@ -79,6 +78,7 @@ describe("workspace panel persistence", () => {
 				projectPath: "/tmp/project",
 				width: 500,
 				ownerPanelId: null,
+				groupId: "group-1",
 			},
 			{
 				id: "browser-1",
@@ -100,6 +100,7 @@ describe("workspace panel persistence", () => {
 				projectPath: "/tmp/project",
 				width: 500,
 				ownerPanelId: null,
+				groupId: "group-1",
 			},
 		]);
 
@@ -110,8 +111,7 @@ describe("workspace panel persistence", () => {
 				projectPath: "/tmp/project",
 				width: 500,
 				ownerPanelId: null,
-				ptyId: null,
-				shell: null,
+				groupId: "group-1",
 			},
 		]);
 	});

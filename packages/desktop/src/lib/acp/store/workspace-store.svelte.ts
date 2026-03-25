@@ -17,7 +17,6 @@ import { remapOwnerPanelId } from "./file-panel-ownership.js";
 import type { FilePanel } from "./file-panel-type.js";
 import type { PanelStore } from "./panel-store.svelte.js";
 import type { SessionStore } from "./session-store.svelte.js";
-import type { TerminalPanel } from "./terminal-panel-type.js";
 import {
 	MIN_PANEL_WIDTH,
 	type AgentWorkspacePanel,
@@ -25,6 +24,8 @@ import {
 	type FileWorkspacePanel,
 	type Panel,
 	type PersistedBrowserPanelState,
+	type PersistedTerminalPanelGroupState,
+	type PersistedTerminalTabState,
 	type PersistedBrowserWorkspacePanelState,
 	type PersistedFilePanelState,
 	type PersistedFileWorkspacePanelState,
@@ -35,6 +36,8 @@ import {
 	type PersistedTerminalWorkspacePanelState,
 	type PersistedWorkspacePanelState,
 	type PersistedWorkspaceState,
+	type TerminalPanelGroup,
+	type TerminalTab,
 	type TerminalWorkspacePanel,
 	type WorkspacePanel,
 } from "./types.js";
@@ -83,7 +86,7 @@ export function hydratePersistedFilePanels(
  * Runtime-only fields (ptyId, shell) are stripped.
  */
 export function serializeTerminalPanels(
-	terminalPanels: ReadonlyArray<TerminalPanel>
+	terminalPanels: ReadonlyArray<TerminalWorkspacePanel>
 ): PersistedTerminalPanelState[] {
 	return terminalPanels.map((panel) => ({
 		id: panel.id,
@@ -92,18 +95,82 @@ export function serializeTerminalPanels(
 	}));
 }
 
+export function serializeTerminalPanelGroups(
+	terminalPanelGroups: ReadonlyArray<TerminalPanelGroup>
+): PersistedTerminalPanelGroupState[] {
+	return terminalPanelGroups.map((group) => ({
+		id: group.id,
+		projectPath: group.projectPath,
+		width: group.width,
+		selectedTabId: group.selectedTabId,
+		order: group.order,
+	}));
+}
+
+export function serializeTerminalTabs(
+	terminalTabs: ReadonlyArray<TerminalTab>
+): PersistedTerminalTabState[] {
+	return terminalTabs.map((tab) => ({
+		id: tab.id,
+		groupId: tab.groupId,
+		projectPath: tab.projectPath,
+		createdAt: tab.createdAt,
+	}));
+}
+
 /**
  * Hydrate persisted terminal panels with fresh runtime state.
  */
 export function hydratePersistedTerminalPanels(
-	persisted: ReadonlyArray<PersistedTerminalPanelState>
-): TerminalPanel[] {
+	persisted: ReadonlyArray<PersistedTerminalPanelState>,
+	createCreatedAt: (index: number) => number = (index) => index + 1
+): { terminalPanelGroups: TerminalPanelGroup[]; terminalTabs: TerminalTab[] } {
+	const terminalPanelGroups: TerminalPanelGroup[] = [];
+	const terminalTabs: TerminalTab[] = [];
+
+	for (const [index, panel] of persisted.entries()) {
+		const groupId = panel.id ? panel.id : crypto.randomUUID();
+		const tabId = `${groupId}-tab`;
+		terminalPanelGroups.push({
+			id: groupId,
+			projectPath: panel.projectPath,
+			width: panel.width,
+			selectedTabId: tabId,
+			order: index,
+		});
+		terminalTabs.push({
+			id: tabId,
+			groupId,
+			projectPath: panel.projectPath,
+			createdAt: createCreatedAt(index),
+			ptyId: null,
+			shell: null,
+		});
+	}
+
+	return { terminalPanelGroups, terminalTabs };
+}
+
+export function hydratePersistedTerminalPanelGroups(
+	persisted: ReadonlyArray<PersistedTerminalPanelGroupState>
+): TerminalPanelGroup[] {
 	return persisted.map((panel) => ({
-		id: panel.id ?? crypto.randomUUID(),
-		kind: "terminal",
+		id: panel.id,
 		projectPath: panel.projectPath,
 		width: panel.width,
-		ownerPanelId: null,
+		selectedTabId: panel.selectedTabId ? panel.selectedTabId : null,
+		order: panel.order,
+	}));
+}
+
+export function hydratePersistedTerminalTabs(
+	persisted: ReadonlyArray<PersistedTerminalTabState>
+): TerminalTab[] {
+	return persisted.map((tab) => ({
+		id: tab.id,
+		groupId: tab.groupId,
+		projectPath: tab.projectPath,
+		createdAt: tab.createdAt,
 		ptyId: null,
 		shell: null,
 	}));
@@ -182,6 +249,7 @@ export function serializeWorkspacePanels(
 				projectPath: panel.projectPath,
 				width: panel.width,
 				ownerPanelId: panel.ownerPanelId,
+				groupId: panel.groupId,
 			};
 			return persisted;
 		}
@@ -241,8 +309,7 @@ export function hydratePersistedWorkspacePanels(
 				projectPath: panel.projectPath,
 				width: clampedWidth,
 				ownerPanelId: panel.ownerPanelId,
-				ptyId: null,
-				shell: null,
+				groupId: panel.groupId,
 			};
 			return hydrated;
 		}
@@ -331,7 +398,7 @@ export class WorkspaceStore {
 				(panel) => panel.kind === "agent" || panel.ownerPanelId === null
 			);
 			const state: PersistedWorkspaceState = {
-				version: 10,
+				version: 11,
 				workspacePanels: serializeWorkspacePanels(this.panelStore.workspacePanels),
 				panels: this.panelStore.panels.map((p) => {
 					// Use immutable session identity when possible to avoid reconstructing full session objects.
@@ -388,6 +455,8 @@ export class WorkspaceStore {
 				reviewFullscreen: this.providers.getReviewFullscreenState?.(),
 				// Terminal + browser panels (version 7+)
 				terminalPanels: serializeTerminalPanels(this.panelStore.terminalPanels),
+				terminalPanelGroups: serializeTerminalPanelGroups(this.panelStore.terminalPanelGroups),
+				terminalTabs: serializeTerminalTabs(this.panelStore.terminalTabs),
 				browserPanels: serializeBrowserPanels(this.panelStore.browserPanels),
 				// Embedded terminal tabs per panel (version 9+)
 				embeddedTerminalTabs: this.panelStore.embeddedTerminals.serialize(),
@@ -429,13 +498,38 @@ export class WorkspaceStore {
 			if (state.workspacePanels && state.workspacePanels.length > 0) {
 				const restoredWorkspacePanels = hydratePersistedWorkspacePanels(state.workspacePanels);
 				this.panelStore.workspacePanels = restoredWorkspacePanels;
+				if (state.terminalPanelGroups && state.terminalTabs) {
+					this.panelStore.terminalPanelGroups = hydratePersistedTerminalPanelGroups(
+						state.terminalPanelGroups
+					);
+					this.panelStore.terminalTabs = hydratePersistedTerminalTabs(state.terminalTabs);
+				}
 
 				const restoredAgentPanels = restoredWorkspacePanels.filter(
 					(panel): panel is AgentWorkspacePanel => panel.kind === "agent"
 				);
 
-				if (restoredAgentPanels.length > 0) {
-					this.panelStore.focusedPanelId = restoredAgentPanels[0].id;
+				const topLevelWorkspacePanels = restoredWorkspacePanels.filter(
+					(panel) => panel.kind === "agent" || panel.ownerPanelId === null
+				);
+
+				if (
+					state.focusedPanelIndex !== null &&
+					state.focusedPanelIndex >= 0 &&
+					state.focusedPanelIndex < topLevelWorkspacePanels.length
+				) {
+					this.panelStore.focusedPanelId = topLevelWorkspacePanels[state.focusedPanelIndex].id;
+				} else if (topLevelWorkspacePanels.length > 0) {
+					this.panelStore.focusedPanelId = topLevelWorkspacePanels[0].id;
+				}
+
+				if (
+					state.fullscreenPanelIndex !== undefined &&
+					state.fullscreenPanelIndex !== null &&
+					state.fullscreenPanelIndex >= 0 &&
+					state.fullscreenPanelIndex < topLevelWorkspacePanels.length
+				) {
+					this.panelStore.fullscreenPanelId = topLevelWorkspacePanels[state.fullscreenPanelIndex].id;
 				}
 
 				const sessionIds = restoredAgentPanels
@@ -600,9 +694,40 @@ export class WorkspaceStore {
 			this.providers.setReviewFullscreenState?.(state.reviewFullscreen);
 		}
 
-		// Restore terminal panels (version 7+)
-		if (state.terminalPanels && state.terminalPanels.length > 0) {
-			this.panelStore.terminalPanels = hydratePersistedTerminalPanels(state.terminalPanels);
+		if (state.terminalPanelGroups && state.terminalTabs) {
+			this.panelStore.terminalPanelGroups = hydratePersistedTerminalPanelGroups(
+				state.terminalPanelGroups
+			);
+			this.panelStore.terminalTabs = hydratePersistedTerminalTabs(state.terminalTabs);
+		} else if (state.terminalPanels && state.terminalPanels.length > 0) {
+			const hydratedTerminals = hydratePersistedTerminalPanels(state.terminalPanels);
+			this.panelStore.terminalPanelGroups = hydratedTerminals.terminalPanelGroups;
+			this.panelStore.terminalTabs = hydratedTerminals.terminalTabs;
+			const migratedTerminalPanels: TerminalWorkspacePanel[] = hydratedTerminals.terminalPanelGroups.map((group) => ({
+				id: group.id,
+				kind: "terminal" as const,
+				projectPath: group.projectPath,
+				width: group.width,
+				ownerPanelId: null,
+				groupId: group.id,
+			}));
+			this.panelStore.terminalPanels = migratedTerminalPanels;
+			this.panelStore.workspacePanels = migratedTerminalPanels;
+			if (
+				state.focusedPanelIndex !== null &&
+				state.focusedPanelIndex >= 0 &&
+				state.focusedPanelIndex < migratedTerminalPanels.length
+			) {
+				this.panelStore.focusedPanelId = migratedTerminalPanels[state.focusedPanelIndex].id;
+			}
+			if (
+				state.fullscreenPanelIndex !== undefined &&
+				state.fullscreenPanelIndex !== null &&
+				state.fullscreenPanelIndex >= 0 &&
+				state.fullscreenPanelIndex < migratedTerminalPanels.length
+			) {
+				this.panelStore.fullscreenPanelId = migratedTerminalPanels[state.fullscreenPanelIndex].id;
+			}
 		}
 
 		// Restore browser panels (version 7+)

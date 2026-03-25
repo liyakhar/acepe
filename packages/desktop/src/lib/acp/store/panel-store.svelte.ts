@@ -34,7 +34,6 @@ import { DEFAULT_GIT_PANEL_WIDTH, MIN_GIT_PANEL_WIDTH } from "./git-panel-type.j
 import type { ReviewPanel } from "./review-panel-type.js";
 import { DEFAULT_REVIEW_PANEL_WIDTH, MIN_REVIEW_PANEL_WIDTH } from "./review-panel-type.js";
 import type { SessionStore } from "./session-store.svelte.js";
-import type { TerminalPanel } from "./terminal-panel-type.js";
 import { DEFAULT_TERMINAL_PANEL_WIDTH, MIN_TERMINAL_PANEL_WIDTH } from "./terminal-panel-type.js";
 import type {
 	AgentWorkspacePanel,
@@ -43,6 +42,8 @@ import type {
 	Panel,
 	PanelHotState,
 	SessionEntry,
+	TerminalPanelGroup,
+	TerminalTab,
 	TerminalWorkspacePanel,
 	ViewMode,
 	WorkspacePanel,
@@ -72,6 +73,7 @@ export class PanelStore {
 	// Track in-flight opens
 	private openingSessionIds = new SvelteSet<string>();
 	private activeFilePanelIdByOwnerPanelId = new SvelteMap<string, string>();
+	private nextTerminalTabCreatedAt = 1;
 
 	private ensureOwnerPanelWidth(ownerPanelId: string, attachedWidth: number): void {
 		const requiredWidth = Math.max(MIN_PANEL_WIDTH, attachedWidth);
@@ -127,13 +129,13 @@ export class PanelStore {
 		this.replaceWorkspacePanels("file", nextPanels);
 	}
 
-	get terminalPanels(): TerminalPanel[] {
+	get terminalPanels(): TerminalWorkspacePanel[] {
 		return this.workspacePanels.filter(
 			(panel): panel is TerminalWorkspacePanel => panel.kind === "terminal"
 		);
 	}
 
-	set terminalPanels(nextPanels: TerminalPanel[]) {
+	set terminalPanels(nextPanels: TerminalWorkspacePanel[]) {
 		this.replaceWorkspacePanels("terminal", nextPanels);
 	}
 
@@ -216,10 +218,10 @@ export class PanelStore {
 
 	readonly reviewPanelCount = $derived(this.reviewPanels.length);
 
-	readonly terminalPanelCount = $derived(this.terminalPanels.length);
+	terminalPanelGroups = $state<TerminalPanelGroup[]>([]);
+	terminalTabs = $state<TerminalTab[]>([]);
 
-	/** Selected terminal panel id per project path (for tab switching). */
-	selectedTerminalPanelIdByProject = $state<Record<string, string>>({});
+	readonly terminalPanelCount = $derived(this.terminalPanelGroups.length);
 
 	readonly gitPanelByProjectPath = $derived.by(
 		() => new SvelteMap(this.gitPanels.map((p) => [p.projectPath, p]))
@@ -1134,11 +1136,110 @@ export class PanelStore {
 	// TERMINAL PANEL MANAGEMENT
 	// ============================================
 
+	private getNextTerminalCreatedAt(): number {
+		const createdAt = this.nextTerminalTabCreatedAt;
+		this.nextTerminalTabCreatedAt += 1;
+		return createdAt;
+	}
+
+	private createTerminalWorkspacePanel(group: TerminalPanelGroup): TerminalWorkspacePanel {
+		return {
+			id: group.id,
+			kind: "terminal",
+			projectPath: group.projectPath,
+			ownerPanelId: null,
+			width: group.width,
+			groupId: group.id,
+		};
+	}
+
+	private syncTerminalWorkspacePanels(): void {
+		const groups = this.getAllTerminalPanelGroups();
+		const groupsById = new Map(groups.map((group) => [group.id, group]));
+		const nextWorkspacePanels: WorkspacePanel[] = [];
+		const insertedGroupIds = new Set<string>();
+
+		for (const panel of this.workspacePanels) {
+			if (panel.kind !== "terminal") {
+				nextWorkspacePanels.push(panel);
+				continue;
+			}
+
+			const group = groupsById.get(panel.id);
+			if (!group) {
+				continue;
+			}
+
+			nextWorkspacePanels.push(this.createTerminalWorkspacePanel(group));
+			insertedGroupIds.add(group.id);
+		}
+
+		for (const group of groups) {
+			if (insertedGroupIds.has(group.id)) {
+				continue;
+			}
+			nextWorkspacePanels.push(this.createTerminalWorkspacePanel(group));
+		}
+
+		this.workspacePanels = nextWorkspacePanels;
+	}
+
+	private getAllTerminalPanelGroups(): TerminalPanelGroup[] {
+		const groups = Array.from(this.terminalPanelGroups);
+		groups.sort((left, right) => left.order - right.order);
+		return groups;
+	}
+
+	private getTerminalTabsFromCollection(tabs: readonly TerminalTab[], groupId: string): TerminalTab[] {
+		const groupTabs = tabs.filter((tab) => tab.groupId === groupId);
+		groupTabs.sort((left, right) => left.createdAt - right.createdAt);
+		return groupTabs;
+	}
+
+	private setTerminalPanelGroupsInDisplayOrder(groups: readonly TerminalPanelGroup[]): void {
+		this.terminalPanelGroups = groups.map((group, index) => ({
+			id: group.id,
+			projectPath: group.projectPath,
+			width: group.width,
+			selectedTabId: group.selectedTabId,
+			order: index,
+		}));
+		this.syncTerminalWorkspacePanels();
+	}
+
+	private updateTerminalGroup(groupId: string, updater: (group: TerminalPanelGroup) => TerminalPanelGroup): void {
+		const groups = this.getAllTerminalPanelGroups();
+		const nextGroups = groups.map((group) => (group.id === groupId ? updater(group) : group));
+		this.setTerminalPanelGroupsInDisplayOrder(nextGroups);
+	}
+
+	private createTerminalTab(groupId: string, projectPath: string): TerminalTab {
+		return {
+			id: crypto.randomUUID(),
+			groupId,
+			projectPath,
+			createdAt: this.getNextTerminalCreatedAt(),
+			ptyId: null,
+			shell: null,
+		};
+	}
+
+	private getFallbackSelectedTerminalTabId(groupId: string, removedIndex: number): string | null {
+		const remainingTabs = this.getTerminalTabsForGroup(groupId);
+		if (remainingTabs.length === 0) {
+			return null;
+		}
+
+		const nextIndex = removedIndex < remainingTabs.length ? removedIndex : remainingTabs.length - 1;
+		const nextTab = remainingTabs[nextIndex];
+		return nextTab ? nextTab.id : null;
+	}
+
 	/**
 	 * Get all terminal panels for a project (supports multiple terminals per project).
 	 */
-	getTerminalPanelsForProject(projectPath: string): TerminalPanel[] {
-		return this.terminalPanels.filter((p) => p.projectPath === projectPath);
+	getTerminalPanelsForProject(projectPath: string): TerminalPanelGroup[] {
+		return this.getTerminalPanelGroupsForProject(projectPath);
 	}
 
 	/**
@@ -1146,107 +1247,330 @@ export class PanelStore {
 	 * When in fullscreen with a terminal for this project, updates fullscreen aux to the selected panel.
 	 */
 	setSelectedTerminalPanel(projectPath: string, panelId: string): void {
-		this.selectedTerminalPanelIdByProject = {
-			...this.selectedTerminalPanelIdByProject,
-			[projectPath]: panelId,
-		};
-		if (this.fullscreenPanelId !== null && this.getTerminalPanelsForProject(projectPath).some((p) => p.id === panelId)) {
-			this.fullscreenPanelId = panelId;
+		const group = this.getTerminalPanelGroup(panelId);
+		if (!group) {
+			console.warn("Attempted to select stale terminal group", { projectPath, panelId });
+			return;
 		}
+		this.focusedPanelId = group.id;
+		if (this.fullscreenPanelId !== null) {
+			const fullscreenGroup = this.getTerminalPanelGroup(this.fullscreenPanelId);
+			if (fullscreenGroup && fullscreenGroup.projectPath === projectPath) {
+				this.fullscreenPanelId = group.id;
+			}
+		}
+		this.onPersist();
+	}
+
+	getTerminalPanelGroup(groupId: string): TerminalPanelGroup | undefined {
+		return this.terminalPanelGroups.find((group) => group.id === groupId);
+	}
+
+	getTerminalPanelGroupsForProject(projectPath: string): TerminalPanelGroup[] {
+		return this.getAllTerminalPanelGroups().filter((group) => group.projectPath === projectPath);
+	}
+
+	getTerminalTabsForGroup(groupId: string): TerminalTab[] {
+		return this.getTerminalTabsFromCollection(this.terminalTabs, groupId);
+	}
+
+	getSelectedTerminalTabId(groupId: string): string | null {
+		const group = this.getTerminalPanelGroup(groupId);
+		if (!group) {
+			return null;
+		}
+
+		const tabs = this.getTerminalTabsForGroup(groupId);
+		const selectedTab = tabs.find((tab) => tab.id === group.selectedTabId);
+		if (selectedTab) {
+			return selectedTab.id;
+		}
+
+		const firstTab = tabs[0];
+		return firstTab ? firstTab.id : null;
+	}
+
+	getSelectedTerminalTab(groupId: string): TerminalTab | null {
+		const selectedTabId = this.getSelectedTerminalTabId(groupId);
+		if (!selectedTabId) {
+			return null;
+		}
+		const tab = this.getTerminalTabsForGroup(groupId).find((candidate) => candidate.id === selectedTabId);
+		return tab ? tab : null;
+	}
+
+	canMoveTerminalTabToNewPanel(tabId: string): boolean {
+		const tab = this.terminalTabs.find((candidate) => candidate.id === tabId);
+		if (!tab) {
+			return false;
+		}
+		return this.getTerminalTabsForGroup(tab.groupId).length > 1;
 	}
 
 	/**
 	 * Open a new terminal panel for a project (always creates; use for "New terminal").
 	 */
-	openTerminalPanel(projectPath: string, width?: number): TerminalPanel {
-		const panel: TerminalPanel = {
-			id: crypto.randomUUID(),
-			kind: "terminal",
+	openTerminalPanel(projectPath: string, width?: number): TerminalPanelGroup {
+		const groupId = crypto.randomUUID();
+		const normalizedWidth = width ? width : DEFAULT_TERMINAL_PANEL_WIDTH;
+		const firstTab = this.createTerminalTab(groupId, projectPath);
+		const group: TerminalPanelGroup = {
+			id: groupId,
 			projectPath,
-			width: width ?? DEFAULT_TERMINAL_PANEL_WIDTH,
-			ownerPanelId: null,
-			ptyId: null,
-			shell: null,
+			width: normalizedWidth,
+			selectedTabId: firstTab.id,
+			order: 0,
 		};
 
-		this.terminalPanels = [panel, ...this.terminalPanels];
-		this.focusedPanelId = panel.id;
-		this.fullscreenPanelId = panel.id;
-		this.selectedTerminalPanelIdByProject = {
-			...this.selectedTerminalPanelIdByProject,
-			[projectPath]: panel.id,
-		};
+		const groups = this.getAllTerminalPanelGroups();
+		let insertIndex = groups.length;
+		for (let index = 0; index < groups.length; index += 1) {
+			if (groups[index]?.projectPath === projectPath) {
+				insertIndex = index + 1;
+			}
+		}
+
+		const nextGroups = groups.slice(0, insertIndex).concat([group], groups.slice(insertIndex));
+		this.terminalTabs = this.terminalTabs.concat([firstTab]);
+		this.setTerminalPanelGroupsInDisplayOrder(nextGroups);
+		this.focusedPanelId = group.id;
+		this.fullscreenPanelId = group.id;
 		this.onPersist();
 
-		logger.debug("Opened terminal panel", { projectPath, panelId: panel.id });
-		return panel;
+		logger.debug("Opened terminal panel", { projectPath, panelId: group.id });
+		return group;
+	}
+
+	openTerminalTab(groupId: string): TerminalTab | null {
+		const group = this.getTerminalPanelGroup(groupId);
+		if (!group) {
+			console.warn("Attempted to open terminal tab for stale group", { groupId });
+			return null;
+		}
+
+		const tab = this.createTerminalTab(groupId, group.projectPath);
+		this.terminalTabs = this.terminalTabs.concat([tab]);
+		this.updateTerminalGroup(groupId, (current) => ({
+			id: current.id,
+			projectPath: current.projectPath,
+			width: current.width,
+			selectedTabId: tab.id,
+			order: current.order,
+		}));
+		this.focusedPanelId = groupId;
+		this.onPersist();
+		return tab;
+	}
+
+	setSelectedTerminalTab(groupId: string, tabId: string): void {
+		const group = this.getTerminalPanelGroup(groupId);
+		if (!group) {
+			console.warn("Attempted to select terminal tab for stale group", { groupId, tabId });
+			return;
+		}
+		const tabExists = this.getTerminalTabsForGroup(groupId).some((tab) => tab.id === tabId);
+		if (!tabExists) {
+			console.warn("Attempted to select stale terminal tab", { groupId, tabId });
+			return;
+		}
+
+		this.updateTerminalGroup(groupId, (current) => ({
+			id: current.id,
+			projectPath: current.projectPath,
+			width: current.width,
+			selectedTabId: tabId,
+			order: current.order,
+		}));
+		this.focusedPanelId = groupId;
+		this.onPersist();
+	}
+
+	moveTerminalTabToNewPanel(tabId: string): TerminalPanelGroup | null {
+		const tab = this.terminalTabs.find((candidate) => candidate.id === tabId);
+		if (!tab) {
+			console.warn("Attempted to move stale terminal tab", { tabId });
+			return null;
+		}
+		if (!this.canMoveTerminalTabToNewPanel(tabId)) {
+			console.warn("Attempted to move non-movable terminal tab", { tabId, groupId: tab.groupId });
+			return null;
+		}
+
+		const sourceGroup = this.getTerminalPanelGroup(tab.groupId);
+		if (!sourceGroup) {
+			console.warn("Attempted to move terminal tab from stale group", {
+				tabId,
+				groupId: tab.groupId,
+			});
+			return null;
+		}
+
+		const sourceTabs = this.getTerminalTabsForGroup(sourceGroup.id);
+		const movedTabIndex = sourceTabs.findIndex((candidate) => candidate.id === tabId);
+		if (movedTabIndex === -1) {
+			console.warn("Attempted to move terminal tab missing from group", { tabId, groupId: sourceGroup.id });
+			return null;
+		}
+
+		const newGroup: TerminalPanelGroup = {
+			id: crypto.randomUUID(),
+			projectPath: sourceGroup.projectPath,
+			width: DEFAULT_TERMINAL_PANEL_WIDTH,
+			selectedTabId: tab.id,
+			order: sourceGroup.order + 1,
+		};
+
+		this.terminalTabs = this.terminalTabs.map((candidate) =>
+			candidate.id === tabId
+				? {
+					id: candidate.id,
+					groupId: newGroup.id,
+					projectPath: candidate.projectPath,
+					createdAt: candidate.createdAt,
+					ptyId: candidate.ptyId,
+					shell: candidate.shell,
+				}
+				: candidate
+		);
+
+		const remainingSourceTabs = sourceTabs.filter((candidate) => candidate.id !== tabId);
+		const previousFullscreenPanelId = this.fullscreenPanelId;
+		const groups = this.getAllTerminalPanelGroups();
+		const nextGroups: TerminalPanelGroup[] = [];
+		for (const group of groups) {
+			if (group.id !== sourceGroup.id) {
+				nextGroups.push(group);
+				continue;
+			}
+
+			if (remainingSourceTabs.length > 0) {
+				nextGroups.push({
+					id: group.id,
+					projectPath: group.projectPath,
+					width: group.width,
+					selectedTabId: this.getFallbackSelectedTerminalTabId(group.id, movedTabIndex),
+					order: group.order,
+				});
+			}
+			nextGroups.push(newGroup);
+		}
+
+		this.setTerminalPanelGroupsInDisplayOrder(nextGroups);
+		this.focusedPanelId = newGroup.id;
+		if (previousFullscreenPanelId === sourceGroup.id) {
+			this.fullscreenPanelId = newGroup.id;
+		}
+		this.onPersist();
+
+		return this.getTerminalPanelGroup(newGroup.id) ?? newGroup;
 	}
 
 	/**
 	 * Close a terminal panel by ID.
 	 */
 	closeTerminalPanel(panelId: string): void {
-		const closed = this.terminalPanels.find((p) => p.id === panelId);
-		const nextTopLevelPanelId = closed ? this.getNextTopLevelPanelId(panelId) : null;
-		this.terminalPanels = this.terminalPanels.filter((p) => p.id !== panelId);
-		if (closed) {
-			const forProject = this.terminalPanels.filter((p) => p.projectPath === closed.projectPath);
-			const currentSelected = this.selectedTerminalPanelIdByProject[closed.projectPath];
-			if (currentSelected === panelId) {
-				const next = forProject[0];
-				if (next) {
-					this.selectedTerminalPanelIdByProject = {
-						...this.selectedTerminalPanelIdByProject,
-						[closed.projectPath]: next.id,
-					};
-				} else {
-					const { [closed.projectPath]: _, ...rest } = this.selectedTerminalPanelIdByProject;
-					this.selectedTerminalPanelIdByProject = rest;
-				}
-			}
-			if (this.fullscreenPanelId === panelId) {
-				const nextForProject = this.selectedTerminalPanelIdByProject[closed.projectPath];
-				const nextPanel =
-					nextForProject && this.terminalPanels.find((p) => p.id === nextForProject);
-				if (nextPanel) {
-					this.fullscreenPanelId = nextPanel.id;
-				} else {
-					this.fullscreenPanelId = nextTopLevelPanelId;
-				}
-			}
+		const group = this.getTerminalPanelGroup(panelId);
+		if (!group) {
+			console.warn("Attempted to close stale terminal group", { panelId });
+			return;
 		}
-		if (this.focusedPanelId === panelId) {
-			this.focusedPanelId = nextTopLevelPanelId;
+		const tabIds = this.getTerminalTabsForGroup(panelId).map((tab) => tab.id);
+		for (const tabId of tabIds) {
+			this.closeTerminalTab(tabId);
 		}
-		this.onPersist();
-		logger.debug("Closed terminal panel", { panelId });
 	}
 
 	/**
 	 * Update the PTY ID and shell for a terminal panel.
 	 * Called after the PTY is spawned.
 	 */
-	updateTerminalPtyId(panelId: string, ptyId: number, shell: string): void {
-		this.terminalPanels = this.terminalPanels.map((p) =>
-			p.id === panelId ? { ...p, ptyId, shell } : p
+	updateTerminalPtyId(tabId: string, ptyId: number, shell: string): void {
+		const tab = this.terminalTabs.find((candidate) => candidate.id === tabId);
+		if (!tab) {
+			console.warn("Attempted to update PTY for stale terminal tab", { tabId, ptyId, shell });
+			return;
+		}
+		this.terminalTabs = this.terminalTabs.map((tab) =>
+			tab.id === tabId
+				? {
+					id: tab.id,
+					groupId: tab.groupId,
+					projectPath: tab.projectPath,
+					createdAt: tab.createdAt,
+					ptyId,
+					shell,
+				}
+				: tab
 		);
+	}
+
+	closeTerminalTab(tabId: string): void {
+		const tab = this.terminalTabs.find((candidate) => candidate.id === tabId);
+		if (!tab) {
+			console.warn("Attempted to close stale terminal tab", { tabId });
+			return;
+		}
+
+		const group = this.getTerminalPanelGroup(tab.groupId);
+		if (!group) {
+			console.warn("Attempted to close terminal tab in stale group", { tabId, groupId: tab.groupId });
+			return;
+		}
+
+		const sourceTabs = this.getTerminalTabsForGroup(group.id);
+		const removedIndex = sourceTabs.findIndex((candidate) => candidate.id === tabId);
+		const nextTopLevelPanelId = this.getNextTopLevelPanelId(group.id);
+		this.terminalTabs = this.terminalTabs.filter((candidate) => candidate.id !== tabId);
+
+		const remainingTabs = this.getTerminalTabsForGroup(group.id);
+		if (remainingTabs.length === 0) {
+			const groups = this.getAllTerminalPanelGroups().filter((candidate) => candidate.id !== group.id);
+			this.setTerminalPanelGroupsInDisplayOrder(groups);
+			if (this.focusedPanelId === group.id) {
+				this.focusedPanelId = nextTopLevelPanelId;
+			}
+			if (this.fullscreenPanelId === group.id) {
+				this.fullscreenPanelId = nextTopLevelPanelId;
+			}
+			this.onPersist();
+			return;
+		}
+
+		const selectedTabId = group.selectedTabId === tabId ? this.getFallbackSelectedTerminalTabId(group.id, removedIndex) : this.getSelectedTerminalTabId(group.id);
+		this.updateTerminalGroup(group.id, (current) => ({
+			id: current.id,
+			projectPath: current.projectPath,
+			width: current.width,
+			selectedTabId,
+			order: current.order,
+		}));
+		this.onPersist();
 	}
 
 	/**
 	 * Resize a terminal panel.
 	 */
-	resizeTerminalPanel(panelId: string, delta: number): void {
-		this.terminalPanels = this.terminalPanels.map((p) =>
-			p.id === panelId ? { ...p, width: Math.max(p.width + delta, MIN_TERMINAL_PANEL_WIDTH) } : p
-		);
+	resizeTerminalPanel(groupId: string, delta: number): void {
+		const group = this.getTerminalPanelGroup(groupId);
+		if (!group) {
+			console.warn("Attempted to resize stale terminal group", { groupId, delta });
+			return;
+		}
+		this.updateTerminalGroup(groupId, (current) => ({
+			id: current.id,
+			projectPath: current.projectPath,
+			width: Math.max(current.width + delta, MIN_TERMINAL_PANEL_WIDTH),
+			selectedTabId: current.selectedTabId,
+			order: current.order,
+		}));
 		this.onPersist();
 	}
 
 	/**
 	 * Get a terminal panel by ID.
 	 */
-	getTerminalPanel(panelId: string): TerminalPanel | undefined {
-		return this.terminalPanels.find((p) => p.id === panelId);
+	getTerminalPanel(panelId: string): TerminalPanelGroup | undefined {
+		return this.getTerminalPanelGroup(panelId);
 	}
 
 	/**
@@ -1258,10 +1582,7 @@ export class PanelStore {
 			const first = forProject[0];
 			this.focusedPanelId = first.id;
 			this.fullscreenPanelId = first.id;
-			this.selectedTerminalPanelIdByProject = {
-				...this.selectedTerminalPanelIdByProject,
-				[projectPath]: first.id,
-			};
+			this.onPersist();
 		} else {
 			this.openTerminalPanel(projectPath, width);
 		}

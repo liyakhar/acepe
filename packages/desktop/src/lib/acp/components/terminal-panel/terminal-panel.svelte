@@ -1,8 +1,7 @@
 <script lang="ts">
 import { TerminalPanelLayout } from "@acepe/ui/terminal-panel";
 import { invoke } from "@tauri-apps/api/core";
-import type { TerminalPanel } from "$lib/acp/store/terminal-panel-type.js";
-import * as m from "$lib/paraglide/messages.js";
+import type { TerminalTab } from "$lib/acp/store/types.js";
 
 import TerminalPanelHeader from "./terminal-panel-header.svelte";
 import TerminalRenderer from "./terminal-renderer.svelte";
@@ -24,11 +23,13 @@ interface Props {
 	onEnterFullscreen?: () => void;
 	onExitFullscreen?: () => void;
 	/** Tab support */
-	tabs?: readonly TerminalPanel[];
+	tabs?: readonly TerminalTab[];
 	selectedTabId?: string | null;
 	onSelectTab?: (id: string) => void;
 	onNewTab?: () => void;
 	onCloseTab?: (id: string) => void;
+	onMoveTabToNewPanel?: (id: string) => void;
+	canMoveTabToNewPanel?: (id: string) => boolean;
 }
 
 let {
@@ -51,7 +52,12 @@ let {
 	onSelectTab,
 	onNewTab,
 	onCloseTab,
+	onMoveTabToNewPanel,
+	canMoveTabToNewPanel,
 }: Props = $props();
+
+const SHELL_ERROR_PREFIX = "Failed to load shell";
+const PTY_ERROR_PREFIX = "Failed to start terminal";
 
 // Resize state
 let isDragging = $state(false);
@@ -83,9 +89,9 @@ const widthStyle = $derived(
 );
 const combinedError = $derived(
 	shellError
-		? m.terminal_shell_error({ error: shellError })
+		? `${SHELL_ERROR_PREFIX}: ${shellError}`
 		: ptyError
-			? m.terminal_pty_error({ error: ptyError })
+			? `${PTY_ERROR_PREFIX}: ${ptyError}`
 			: null
 );
 
@@ -147,6 +153,8 @@ function handlePointerUp() {
 				{onSelectTab}
 				{onNewTab}
 				{onCloseTab}
+				{onMoveTabToNewPanel}
+				{canMoveTabToNewPanel}
 			/>
 		{/snippet}
 

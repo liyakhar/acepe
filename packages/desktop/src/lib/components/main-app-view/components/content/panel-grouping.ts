@@ -7,8 +7,7 @@ import type { BrowserPanel } from "$lib/acp/store/browser-panel-type.js";
 import type { FilePanel } from "$lib/acp/store/file-panel-type.js";
 import type { GitPanel } from "$lib/acp/store/git-panel-type.js";
 import type { ReviewPanel } from "$lib/acp/store/review-panel-type.js";
-import type { TerminalPanel } from "$lib/acp/store/terminal-panel-type.js";
-import type { WorkspacePanel } from "$lib/acp/store/types.js";
+import type { BrowserWorkspacePanel, TerminalPanelGroup, WorkspacePanel } from "$lib/acp/store/types.js";
 
 export interface UnifiedWorkspacePanelGroup<TAgent extends { id: string; projectPath: string | null }> {
 	readonly projectPath: string;
@@ -17,7 +16,7 @@ export interface UnifiedWorkspacePanelGroup<TAgent extends { id: string; project
 	readonly agentPanels: readonly TAgent[];
 	readonly filePanels: readonly FilePanel[];
 	readonly reviewPanels: readonly ReviewPanel[];
-	readonly terminalPanels: readonly TerminalPanel[];
+	readonly terminalPanels: readonly TerminalPanelGroup[];
 	readonly browserPanels: readonly BrowserPanel[];
 	readonly gitPanels: readonly GitPanel[];
 }
@@ -42,7 +41,7 @@ export interface ProjectPanelGroup<TAgent extends { sessionProjectPath: string |
 	readonly agentPanels: readonly TAgent[];
 	readonly filePanels: readonly FilePanel[];
 	readonly reviewPanels: readonly ReviewPanel[];
-	readonly terminalPanels: readonly TerminalPanel[];
+	readonly terminalPanels: readonly TerminalPanelGroup[];
 	readonly browserPanels: readonly BrowserPanel[];
 	readonly gitPanels: readonly GitPanel[];
 }
@@ -128,7 +127,7 @@ export function groupAllPanelsByProject<TAgent extends { sessionProjectPath: str
 	agentPanels: readonly TAgent[],
 	filePanels: readonly FilePanel[],
 	reviewPanels: readonly ReviewPanel[],
-	terminalPanels: readonly TerminalPanel[],
+	terminalPanels: readonly TerminalPanelGroup[],
 	browserPanels: readonly BrowserPanel[],
 	gitPanels: readonly GitPanel[],
 	projects: readonly Project[]
@@ -159,7 +158,7 @@ export function groupAllPanelsByProject<TAgent extends { sessionProjectPath: str
 	for (const panel of terminalPanels) {
 		const key = panel.projectPath ?? "";
 		const group = ensureGroup(key, groupMap, groupOrder, projects);
-		(group.terminalPanels as TerminalPanel[]).push(panel);
+		(group.terminalPanels as TerminalPanelGroup[]).push(panel);
 	}
 
 	for (const panel of browserPanels) {
@@ -190,8 +189,8 @@ export function groupWorkspacePanelsByProject<TAgent extends { id: string; proje
 			agentPanels: TAgent[];
 			filePanels: FilePanel[];
 			reviewPanels: ReviewPanel[];
-			terminalPanels: TerminalPanel[];
-			browserPanels: BrowserPanel[];
+			terminalPanels: TerminalPanelGroup[];
+			browserPanels: BrowserWorkspacePanel[];
 			gitPanels: GitPanel[];
 		}
 	>();
@@ -246,7 +245,13 @@ export function groupWorkspacePanelsByProject<TAgent extends { id: string; proje
 			continue;
 		}
 		if (panel.kind === "terminal") {
-			group.terminalPanels.push(panel);
+			group.terminalPanels.push({
+				id: panel.groupId,
+				projectPath: panel.projectPath,
+				width: panel.width,
+				selectedTabId: null,
+				order: group.terminalPanels.length,
+			});
 			continue;
 		}
 		group.browserPanels.push(panel);

@@ -1,4 +1,5 @@
 <script lang="ts">
+import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
 import {
 	CloseAction,
 	EmbeddedIconButton,
@@ -11,9 +12,7 @@ import {
 } from "@acepe/ui";
 import IconPlus from "@tabler/icons-svelte/icons/plus";
 import IconTerminal from "@tabler/icons-svelte/icons/terminal";
-import IconX from "@tabler/icons-svelte/icons/x";
-import type { TerminalPanel } from "$lib/acp/store/terminal-panel-type.js";
-import * as m from "$lib/paraglide/messages.js";
+import type { TerminalTab } from "$lib/acp/store/types.js";
 
 interface Props {
 	projectName: string;
@@ -26,11 +25,13 @@ interface Props {
 	onEnterFullscreen?: () => void;
 	onExitFullscreen?: () => void;
 	/** Tab support */
-	tabs?: readonly TerminalPanel[];
+	tabs?: readonly TerminalTab[];
 	selectedTabId?: string | null;
 	onSelectTab?: (id: string) => void;
 	onNewTab?: () => void;
 	onCloseTab?: (id: string) => void;
+	onMoveTabToNewPanel?: (id: string) => void;
+	canMoveTabToNewPanel?: (id: string) => boolean;
 }
 
 let {
@@ -47,12 +48,65 @@ let {
 	onSelectTab,
 	onNewTab,
 	onCloseTab,
+	onMoveTabToNewPanel,
+	canMoveTabToNewPanel,
 }: Props = $props();
 
-const effectiveColor = $derived(projectColor ?? "");
-const shellName = $derived(shell?.split("/").pop() ?? null);
+let openMenuTabId = $state<string | null>(null);
+
+const TERMINAL_TITLE = "Terminal";
+const CLOSE_LABEL = "Close";
+const NEW_TAB_LABEL = "New tab";
+const ENTER_FULLSCREEN_LABEL = "Enter fullscreen";
+const EXIT_FULLSCREEN_LABEL = "Exit fullscreen";
+const TAB_ACTIONS_LABEL = "Terminal tab actions";
+const OPEN_IN_NEW_PANEL_LABEL = "Open in new panel";
+
+const effectiveColor = $derived(projectColor ? projectColor : "");
+const shellName = $derived(shell ? (shell.split("/").pop() ? shell.split("/").pop() : null) : null);
 const showFullscreen = $derived(onEnterFullscreen !== undefined || onExitFullscreen !== undefined);
 const hasTabs = $derived(tabs !== undefined && tabs.length > 0);
+
+function canShowTabMenu(tabId: string): boolean {
+	if (tabs === undefined) {
+		return false;
+	}
+
+	return onCloseTab !== undefined || onMoveTabToNewPanel !== undefined;
+}
+
+function canShowMoveTabAction(tabId: string): boolean {
+	if (!tabs || tabs.length <= 1) {
+		return false;
+	}
+	if (!onMoveTabToNewPanel) {
+		return false;
+	}
+	return canMoveTabToNewPanel ? canMoveTabToNewPanel(tabId) : false;
+}
+
+function toggleTabMenu(tabId: string): void {
+	openMenuTabId = openMenuTabId === tabId ? null : tabId;
+}
+
+function closeTabMenu(): void {
+	openMenuTabId = null;
+}
+
+function handleSelectTab(tabId: string): void {
+	closeTabMenu();
+	onSelectTab?.(tabId);
+}
+
+function handleMoveTabToNewPanel(tabId: string): void {
+	closeTabMenu();
+	onMoveTabToNewPanel?.(tabId);
+}
+
+function handleCloseTab(tabId: string): void {
+	closeTabMenu();
+	onCloseTab?.(tabId);
+}
 
 function handleFullscreenToggle() {
 	if (isAuxFullscreen) {
@@ -83,45 +137,75 @@ function handleFullscreenToggle() {
 		<div class="h-7 flex items-stretch flex-1 min-w-0 overflow-x-auto" role="tablist">
 			{#each tabs as tab, i (tab.id)}
 				<div
-					class="flex items-center gap-1 px-2 text-xs cursor-pointer border-r border-border/30 transition-colors
+					class="group/tab relative flex items-center gap-1 px-2 text-xs cursor-pointer border-r border-border/30 transition-colors
 						{selectedTabId === tab.id
 						? 'bg-accent'
 						: 'hover:bg-accent/50'}"
 						role="tab"
 						tabindex="0"
 						aria-selected={selectedTabId === tab.id}
-						onclick={() => onSelectTab?.(tab.id)}
+						onclick={() => handleSelectTab(tab.id)}
 						onkeydown={(e) => {
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
-								onSelectTab?.(tab.id);
+								handleSelectTab(tab.id);
 							}
 						}}
 					>
-						<span class="whitespace-nowrap text-[11px]">{m.terminal_panel_title()} {i + 1}</span>
-						{#if tabs && tabs.length > 1}
+						<span class="whitespace-nowrap text-[11px]">{TERMINAL_TITLE} {i + 1}</span>
+						{#if canShowTabMenu(tab.id)}
 							<button
 								type="button"
-								class="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded
-									opacity-50 hover:opacity-100 hover:bg-muted-foreground/10 cursor-pointer"
-								title={m.common_close()}
+								class="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded transition-opacity hover:bg-muted-foreground/10 cursor-pointer focus-visible:opacity-100 {selectedTabId === tab.id
+									? 'opacity-100'
+									: 'opacity-0 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100'}"
+								aria-label={TAB_ACTIONS_LABEL}
 								onclick={(e) => {
 									e.stopPropagation();
-									onCloseTab?.(tab.id);
+									toggleTabMenu(tab.id);
 								}}
 							>
-								<IconX class="h-3 w-3" />
-								<span class="sr-only">{m.common_close()}</span>
+								<IconDotsVertical class="h-3 w-3" />
 							</button>
+							{#if openMenuTabId === tab.id}
+								<div class="absolute right-1 top-6 z-20 min-w-[160px] rounded-md border border-border bg-background p-1 shadow-md">
+									{#if canShowMoveTabAction(tab.id)}
+										<button
+											type="button"
+											role="menuitem"
+											class="flex w-full items-center rounded px-2 py-1.5 text-left text-[11px] hover:bg-accent"
+											onclick={(e) => {
+												e.stopPropagation();
+												handleMoveTabToNewPanel(tab.id);
+											}}
+										>
+											{OPEN_IN_NEW_PANEL_LABEL}
+										</button>
+									{/if}
+									{#if tabs.length > 1 && onCloseTab}
+										<button
+											type="button"
+											role="menuitem"
+											class="flex w-full items-center rounded px-2 py-1.5 text-left text-[11px] hover:bg-accent"
+											onclick={(e) => {
+												e.stopPropagation();
+												handleCloseTab(tab.id);
+											}}
+										>
+											{CLOSE_LABEL}
+										</button>
+									{/if}
+								</div>
+							{/if}
 						{/if}
 					</div>
-				{/each}
+			{/each}
 		</div>
 	{:else}
 		<HeaderTitleCell>
 			<div class="flex items-center gap-1.5 min-w-0">
 				<IconTerminal class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-				<span class="text-[11px] font-medium truncate">{m.terminal_panel_title()}</span>
+				<span class="text-[11px] font-medium truncate">{TERMINAL_TITLE}</span>
 				{#if shellName}
 					<span class="text-[11px] text-muted-foreground truncate">({shellName})</span>
 				{/if}
@@ -132,7 +216,7 @@ function handleFullscreenToggle() {
 	<HeaderActionCell withDivider={true}>
 		{#if onNewTab}
 			<EmbeddedIconButton
-				title={m.terminal_new_tab()}
+				title={NEW_TAB_LABEL}
 				onclick={onNewTab}
 			>
 				<IconPlus class="h-3.5 w-3.5" />
@@ -142,10 +226,10 @@ function handleFullscreenToggle() {
 			<FullscreenAction
 				isFullscreen={isAuxFullscreen}
 				onToggle={handleFullscreenToggle}
-				titleEnter={m.panel_fullscreen()}
-				titleExit={m.panel_exit_fullscreen()}
+				titleEnter={ENTER_FULLSCREEN_LABEL}
+				titleExit={EXIT_FULLSCREEN_LABEL}
 			/>
 		{/if}
-		<CloseAction {onClose} title={m.common_close()} />
+		<CloseAction {onClose} title={CLOSE_LABEL} />
 	</HeaderActionCell>
 </EmbeddedPanelHeader>
