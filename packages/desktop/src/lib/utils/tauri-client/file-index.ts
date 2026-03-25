@@ -1,6 +1,11 @@
 import type { ResultAsync } from "neverthrow";
 import type { AppError } from "../../acp/errors/app-error.js";
-import type { FileGitStatus, ProjectIndex } from "../../services/converted-session-types.js";
+import type {
+	FileExplorerPreviewResponse,
+	FileExplorerSearchResponse,
+	FileGitStatus,
+	ProjectIndex,
+} from "../../services/converted-session-types.js";
 import { CMD } from "./commands.js";
 import { invokeAsync } from "./invoke.js";
 
@@ -86,6 +91,30 @@ export const fileIndex = {
 		return invokeAsync(CMD.fileIndex.create_directory, {
 			projectPath,
 			relativePath,
+		});
+	},
+
+	searchProjectFilesForExplorer: (
+		projectPath: string,
+		query: string,
+		limit: number,
+		offset: number
+	): ResultAsync<FileExplorerSearchResponse, AppError> => {
+		return invokeAsync(CMD.fileIndex.search_project_files_for_explorer, {
+			projectPath,
+			query,
+			limit,
+			offset,
+		});
+	},
+
+	getFileExplorerPreview: (
+		projectPath: string,
+		filePath: string
+	): ResultAsync<FileExplorerPreviewResponse, AppError> => {
+		return invokeAsync(CMD.fileIndex.get_file_explorer_preview, {
+			projectPath,
+			filePath,
 		});
 	},
 };

@@ -34,6 +34,7 @@ pub enum CanonicalTool {
 
     // Agent/Thinking
     Task,
+    TaskOutput,
     TodoWrite,
     AskUserQuestion,
     Skill,
@@ -75,6 +76,7 @@ impl From<CanonicalTool> for ToolKind {
 
             // Agent operations - each has its own kind for direct UI routing
             CanonicalTool::Task => ToolKind::Task,
+            CanonicalTool::TaskOutput => ToolKind::TaskOutput,
             CanonicalTool::TodoWrite => ToolKind::Todo,
             CanonicalTool::AskUserQuestion => ToolKind::Question,
             CanonicalTool::Skill => ToolKind::Skill,

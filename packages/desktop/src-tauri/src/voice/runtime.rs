@@ -13,11 +13,50 @@ use zeroize::Zeroize;
 
 use super::engine::{resample, TranscriptionEngine, TranscriptionResult};
 
+fn max_abs_sample(samples: &[f32]) -> f32 {
+    samples.iter().fold(0.0_f32, |max, sample| max.max(sample.abs()))
+}
+
+fn rms_level(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    (samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
+fn normalization_gain_for_peak(peak: f32) -> f32 {
+    if peak <= 0.0 {
+        return 1.0;
+    }
+
+    let target_peak = 0.85_f32;
+    let unclamped_gain = target_peak / peak;
+    unclamped_gain.clamp(1.0, 32.0)
+}
+
+fn normalize_audio_for_transcription(samples: &[f32]) -> Vec<f32> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+
+    let peak = max_abs_sample(samples);
+    let gain = normalization_gain_for_peak(peak);
+    if gain <= 1.0 {
+        return samples.to_vec();
+    }
+
+    samples
+        .iter()
+        .map(|sample| (sample * gain).clamp(-1.0, 1.0))
+        .collect()
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────
 
 /// Ring buffer capacity: 30 s of mono audio at 48 kHz.
 const RING_BUF_FRAMES: usize = 48_000 * 30;
-const WORKER_TICK: Duration = Duration::from_millis(100);
+const WORKER_TICK: Duration = Duration::from_millis(50);
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
 const WARN_SECS: u64 = 8 * 60;
 const MAX_SECS: u64 = 10 * 60;
@@ -71,6 +110,10 @@ enum WorkerMessage {
     LoadModel {
         path: PathBuf,
         reply: ReplyTx<()>,
+    },
+    IsModelLoaded {
+        path: PathBuf,
+        reply: ReplyTx<bool>,
     },
     StartRecording {
         session_id: String,
@@ -150,6 +193,15 @@ impl VoiceRuntimeHandle {
             .map_err(|_| anyhow::anyhow!("Voice worker died before replying"))?
     }
 
+    pub async fn is_model_loaded(&self, path: PathBuf) -> anyhow::Result<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(WorkerMessage::IsModelLoaded { path, reply: tx })
+            .map_err(|_| anyhow::anyhow!("Voice worker has stopped"))?;
+        rx.await
+            .map_err(|_| anyhow::anyhow!("Voice worker died before replying"))?
+    }
+
     /// Start recording from the default microphone for the given session.
     /// Errors if already recording or if no input device is available.
     pub async fn start_recording(
@@ -219,12 +271,38 @@ fn worker_loop(
     mut engine: Box<dyn TranscriptionEngine>,
 ) {
     let mut state = WorkerState::Idle;
+    // Track the currently loaded model path to skip redundant loads.
+    let mut loaded_model_path: Option<PathBuf> = None;
+    tracing::info!("voice worker loop started");
 
     loop {
         match rx.recv_timeout(WORKER_TICK) {
             Ok(WorkerMessage::LoadModel { path, reply }) => {
+                // Skip if same model is already loaded
+                if loaded_model_path.as_ref() == Some(&path) {
+                    tracing::info!(path = %path.display(), "worker: LoadModel skipped (already loaded)");
+                    let _ = reply.send(Ok(()));
+                    continue;
+                }
+
+                tracing::info!(path = %path.display(), "worker: LoadModel");
+                let t0 = Instant::now();
                 let result = engine.load_model(&path);
+                match &result {
+                    Ok(()) => {
+                        loaded_model_path = Some(path);
+                        tracing::info!(elapsed_ms = t0.elapsed().as_millis() as u64, "worker: model loaded OK");
+                    }
+                    Err(e) => {
+                        loaded_model_path = None;
+                        tracing::error!(error = %e, elapsed_ms = t0.elapsed().as_millis() as u64, "worker: model load FAILED");
+                    }
+                }
                 let _ = reply.send(result);
+            }
+
+            Ok(WorkerMessage::IsModelLoaded { path, reply }) => {
+                let _ = reply.send(Ok(loaded_model_path.as_ref() == Some(&path)));
             }
 
             Ok(WorkerMessage::StartRecording {
@@ -233,16 +311,20 @@ fn worker_loop(
                 amp_cb,
                 error_cb,
             }) => {
+                tracing::info!(session_id, "worker: StartRecording");
                 if matches!(state, WorkerState::Recording(_)) {
+                    tracing::warn!(session_id, "worker: already recording, rejecting");
                     let _ = reply.send(Err(anyhow::anyhow!("Already recording")));
                     continue;
                 }
-                match start_capture(session_id, amp_cb, error_cb, tx.clone()) {
+                match start_capture(session_id.clone(), amp_cb, error_cb, tx.clone()) {
                     Ok(session) => {
+                        tracing::info!(session_id, sample_rate = session.sample_rate, "worker: capture started");
                         state = WorkerState::Recording(Box::new(session));
                         let _ = reply.send(Ok(()));
                     }
                     Err(e) => {
+                        tracing::error!(session_id, error = %e, "worker: capture start FAILED");
                         let _ = reply.send(Err(e));
                     }
                 }
@@ -253,11 +335,13 @@ fn worker_loop(
                 language,
                 reply,
             }) => {
+                tracing::info!(session_id, ?language, "worker: StopRecording");
                 let matches_session = matches!(
                     &state,
                     WorkerState::Recording(s) if s.session_id == session_id
                 );
                 if !matches_session {
+                    tracing::warn!(session_id, "worker: not recording for this session");
                     let _ = reply.send(Err(anyhow::anyhow!("Not currently recording")));
                     continue;
                 }
@@ -273,6 +357,15 @@ fn worker_loop(
 
                 // Drain remaining ring-buffer samples
                 drain_into(&mut session.cons, &mut session.accumulated);
+                tracing::info!(
+                    session_id,
+                    accumulated_samples = session.accumulated.len(),
+                    accumulated_peak = max_abs_sample(&session.accumulated),
+                    accumulated_rms = rms_level(&session.accumulated),
+                    sample_rate = session.sample_rate,
+                    duration_ms,
+                    "worker: recording stopped, resampling"
+                );
 
                 // Resample to the 16 kHz Whisper requires
                 let audio_16k = resample(
@@ -280,18 +373,46 @@ fn worker_loop(
                     session.sample_rate,
                     WHISPER_SAMPLE_RATE,
                 );
+                let normalized_audio_16k = normalize_audio_for_transcription(&audio_16k);
+                tracing::info!(
+                    session_id,
+                    audio_16k_samples = audio_16k.len(),
+                    audio_16k_secs = audio_16k.len() as f32 / WHISPER_SAMPLE_RATE as f32,
+                    audio_16k_peak = max_abs_sample(&audio_16k),
+                    audio_16k_rms = rms_level(&audio_16k),
+                    suggested_gain = normalization_gain_for_peak(max_abs_sample(&audio_16k)),
+                    normalized_audio_16k_peak = max_abs_sample(&normalized_audio_16k),
+                    normalized_audio_16k_rms = rms_level(&normalized_audio_16k),
+                    "worker: resampled, starting transcription"
+                );
 
                 // Secure-zero the full-rate buffer before dropping
                 session.accumulated.zeroize();
 
+                let t0 = Instant::now();
                 let result = engine
-                    .transcribe(&audio_16k, WHISPER_SAMPLE_RATE, language.as_deref())
+                    .transcribe(&normalized_audio_16k, WHISPER_SAMPLE_RATE, language.as_deref())
                     .map(|mut r| {
                         if r.duration_ms == 0 {
                             r.duration_ms = duration_ms;
                         }
                         r
                     });
+                match &result {
+                    Ok(r) => tracing::info!(
+                        session_id,
+                        text_len = r.text.len(),
+                        language = ?r.language,
+                        transcribe_ms = t0.elapsed().as_millis() as u64,
+                        "worker: transcription complete"
+                    ),
+                    Err(e) => tracing::error!(
+                        session_id,
+                        error = %e,
+                        transcribe_ms = t0.elapsed().as_millis() as u64,
+                        "worker: transcription FAILED"
+                    ),
+                }
                 let _ = reply.send(result);
             }
 
@@ -300,6 +421,7 @@ fn worker_loop(
                     &state,
                     WorkerState::Recording(s) if s.session_id == session_id
                 );
+                tracing::info!(session_id, was_recording = matches_session, "worker: CancelRecording");
                 if matches_session {
                     let WorkerState::Recording(mut session) =
                         std::mem::replace(&mut state, WorkerState::Idle)
@@ -314,6 +436,7 @@ fn worker_loop(
             }
 
             Ok(WorkerMessage::InputStreamError { session_id, message }) => {
+                tracing::error!(session_id, error = %message, "worker: InputStreamError");
                 let matches_session = matches!(
                     &state,
                     WorkerState::Recording(s) if s.session_id == session_id
@@ -332,7 +455,10 @@ fn worker_loop(
                 (session.error_cb)(RecordingErrorPayload { session_id, message });
             }
 
-            Ok(WorkerMessage::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
+            Ok(WorkerMessage::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
+                tracing::info!("worker: shutting down");
+                break;
+            }
 
             Err(RecvTimeoutError::Timeout) => {
                 // Check duration limits without taking ownership of session yet.
@@ -397,12 +523,18 @@ fn start_capture(
     error_cb: Box<dyn Fn(RecordingErrorPayload) + Send + 'static>,
     tx: SyncSender<WorkerMessage>,
 ) -> anyhow::Result<RecordingSession> {
+    tracing::info!(session_id, "start_capture: getting default input device");
     let host = cpal::default_host();
     let device = host
         .default_input_device()
         .ok_or_else(|| anyhow::anyhow!(
             "No audio input device available. On macOS, check System Settings \u{2192} Privacy & Security \u{2192} Microphone."
         ))?;
+
+    let device_name = device
+        .name()
+        .unwrap_or_else(|error| format!("<unknown device name: {error}>"));
+    tracing::info!(session_id, device_name = %device_name, "start_capture: selected input device");
 
     let supported = device.default_input_config()
         .map_err(|e| anyhow::anyhow!(
@@ -411,6 +543,7 @@ fn start_capture(
     let sample_rate = supported.sample_rate().0;
     let channels = supported.channels() as usize;
     let format = supported.sample_format();
+    tracing::info!(session_id, sample_rate, channels, ?format, "start_capture: input device config");
     let config: cpal::StreamConfig = supported.into();
 
     let rb = HeapRb::<f32>::new(RING_BUF_FRAMES);
@@ -553,4 +686,104 @@ fn compute_amplitude_batch(samples: &[f32]) -> [f32; 3] {
         rms(&samples[chunk..(2 * chunk).min(samples.len())]),
         rms(&samples[(2 * chunk).min(samples.len())..]),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+
+    struct CountingEngine {
+        loads: Arc<Mutex<Vec<PathBuf>>>,
+    }
+
+    impl super::super::engine::TranscriptionEngine for CountingEngine {
+        fn transcribe(
+            &self,
+            _audio: &[f32],
+            _sample_rate: u32,
+            _language: Option<&str>,
+        ) -> anyhow::Result<TranscriptionResult> {
+            Ok(TranscriptionResult {
+                text: String::new(),
+                language: None,
+                duration_ms: 0,
+            })
+        }
+
+        fn load_model(&mut self, path: &Path) -> anyhow::Result<()> {
+            self.loads.lock().expect("load mutex poisoned").push(path.to_path_buf());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn skips_reloading_the_same_model_path() {
+        let loads = Arc::new(Mutex::new(Vec::new()));
+        let runtime = VoiceRuntimeHandle::spawn(Box::new(CountingEngine {
+            loads: Arc::clone(&loads),
+        }))
+        .expect("spawn runtime");
+        let model_path = PathBuf::from("/tmp/small.en.bin");
+
+        runtime
+            .load_model(model_path.clone())
+            .await
+            .expect("first load succeeds");
+        runtime
+            .load_model(model_path.clone())
+            .await
+            .expect("second load succeeds");
+
+        assert_eq!(
+            loads.lock().expect("load mutex poisoned").as_slice(),
+            &[model_path]
+        );
+    }
+
+    #[tokio::test]
+    async fn reloads_when_model_path_changes() {
+        let loads = Arc::new(Mutex::new(Vec::new()));
+        let runtime = VoiceRuntimeHandle::spawn(Box::new(CountingEngine {
+            loads: Arc::clone(&loads),
+        }))
+        .expect("spawn runtime");
+        let first_model_path = PathBuf::from("/tmp/small.en.bin");
+        let second_model_path = PathBuf::from("/tmp/base.en.bin");
+
+        runtime
+            .load_model(first_model_path.clone())
+            .await
+            .expect("first load succeeds");
+        runtime
+            .load_model(second_model_path.clone())
+            .await
+            .expect("second model load succeeds");
+
+        assert_eq!(
+            loads.lock().expect("load mutex poisoned").as_slice(),
+            &[first_model_path, second_model_path]
+        );
+    }
+
+    #[test]
+    fn normalizes_quiet_audio_up_to_target_peak() {
+        let audio = vec![0.05_f32, -0.025_f32, 0.0_f32, 0.025_f32];
+
+        let normalized = normalize_audio_for_transcription(&audio);
+
+        assert!(max_abs_sample(&normalized) > 0.8);
+        assert!(max_abs_sample(&normalized) <= 0.85);
+    }
+
+    #[test]
+    fn leaves_loud_audio_unchanged() {
+        let audio = vec![0.9_f32, -0.4_f32, 0.1_f32];
+
+        let normalized = normalize_audio_for_transcription(&audio);
+
+        assert_eq!(normalized, audio);
+    }
 }

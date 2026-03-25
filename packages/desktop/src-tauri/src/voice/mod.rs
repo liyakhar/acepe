@@ -2,6 +2,7 @@ pub mod commands;
 pub mod engine;
 pub mod events;
 pub mod models;
+pub mod models_validation;
 pub mod runtime;
 
 use std::path::Path;

@@ -50,6 +50,24 @@ pub async fn create_client(
                 })?;
             Box::new(client)
         }
+        CommunicationMode::CcSdk => {
+            tracing::debug!(
+                "Creating cc-sdk client for {} in {}",
+                agent_id.as_str(),
+                cwd.display()
+            );
+            let mut client =
+                crate::acp::client::cc_sdk_client::CcSdkClaudeClient::new(provider, app_handle, cwd)?;
+            timeout(CLIENT_START_TIMEOUT, client.start())
+                .await
+                .map_err(|_| {
+                    AcpError::InvalidState("cc-sdk client start timed out after 30s".to_string())
+                })?
+                .map_err(|e| {
+                    AcpError::InvalidState(format!("Failed to start cc-sdk client: {}", e))
+                })?;
+            Box::new(client)
+        }
         CommunicationMode::Http => {
             let (project_key, manager) = opencode_manager_registry
                 .get_or_start(&cwd)

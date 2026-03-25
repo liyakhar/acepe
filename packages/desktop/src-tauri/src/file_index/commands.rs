@@ -1,6 +1,6 @@
 //! Tauri commands for file indexing.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use tauri::State;
@@ -11,44 +11,100 @@ use crate::path_safety::validate_project_directory_from_str;
 
 use super::git::get_file_content_from_head;
 use super::service::FileIndexService;
-use super::types::{FileDiffResult, FileGitStatus, ProjectGitOverview, ProjectIndex};
+use super::types::{FileDiffResult, FileExplorerPreviewResponse, FileExplorerSearchResponse, FileGitStatus, ProjectGitOverview, ProjectIndex};
 
 fn validate_project_path_for_indexing(project_path: &str) -> Result<String, String> {
-    let validated = validate_project_directory_from_str(project_path)
-        .map_err(|error| error.message_for(Path::new(project_path.trim())))?;
+    let validated = validate_project_root(project_path)?;
 
     Ok(validated.to_string_lossy().to_string())
 }
 
+fn validate_project_root(project_path: &str) -> Result<PathBuf, String> {
+    validate_project_directory_from_str(project_path)
+        .map_err(|error| error.message_for(Path::new(project_path.trim())))
+}
+
+fn validate_relative_project_path(relative_path: &str) -> Result<PathBuf, String> {
+    let trimmed = relative_path.trim();
+    if trimmed.is_empty() {
+        return Err("Invalid path: path cannot be empty".to_string());
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in Path::new(trimmed).components() {
+        match component {
+            Component::Normal(segment) => normalized.push(segment),
+            Component::CurDir => {
+                return Err("Invalid path: '.' is not allowed".to_string());
+            }
+            Component::ParentDir => {
+                return Err("Invalid path: '..' is not allowed".to_string());
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err("Invalid path: absolute paths are not allowed".to_string());
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        return Err("Invalid path: path cannot be empty".to_string());
+    }
+
+    Ok(normalized)
+}
+
+fn ensure_path_is_within_project(project_root: &Path, resolved_path: &Path) -> Result<(), String> {
+    if !resolved_path.starts_with(project_root) {
+        return Err("Path escapes project directory".to_string());
+    }
+
+    Ok(())
+}
+
 /// Validates that `relative_path` is inside `project_path` and returns the canonical full path.
 /// Rejects paths containing ".." or starting with "/".
-fn validate_path_within_project(
+fn validate_existing_path_within_project(
     project_path: &str,
     relative_path: &str,
 ) -> Result<PathBuf, String> {
-    if relative_path.contains("..") {
-        return Err("Invalid path: '..' is not allowed".to_string());
-    }
-    if relative_path.starts_with('/') {
-        return Err("Invalid path: absolute paths are not allowed".to_string());
-    }
-
-    let project = Path::new(project_path);
-    let full_path = project.join(relative_path);
+    let project_root = validate_project_root(project_path)?;
+    let relative = validate_relative_project_path(relative_path)?;
+    let full_path = project_root.join(relative);
 
     let canonical = full_path
         .canonicalize()
         .map_err(|e| format!("Cannot access path: {}", e))?;
 
-    let project_canonical = project
-        .canonicalize()
-        .map_err(|e| format!("Cannot access project: {}", e))?;
-
-    if !canonical.starts_with(&project_canonical) {
-        return Err("Path escapes project directory".to_string());
-    }
+    ensure_path_is_within_project(&project_root, &canonical)?;
 
     Ok(canonical)
+}
+
+fn validate_preview_path_within_project(
+    project_path: &str,
+    relative_path: &str,
+) -> Result<PathBuf, String> {
+    let project_root = validate_project_root(project_path)?;
+    let relative = validate_relative_project_path(relative_path)?;
+    let full_path = project_root.join(relative);
+
+    if full_path.exists() {
+        let canonical = full_path
+            .canonicalize()
+            .map_err(|e| format!("Cannot access path: {}", e))?;
+        ensure_path_is_within_project(&project_root, &canonical)?;
+        return Ok(canonical);
+    }
+
+    let parent = full_path
+        .parent()
+        .ok_or_else(|| "Invalid path: missing parent directory".to_string())?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| format!("Cannot access parent directory: {}", e))?;
+    ensure_path_is_within_project(&project_root, &canonical_parent)?;
+
+    Ok(full_path)
 }
 
 /// Validates that a relative path (which may not exist yet) is under the project.
@@ -57,22 +113,27 @@ fn validate_target_under_project(
     project_path: &str,
     relative_path: &str,
 ) -> Result<PathBuf, String> {
-    if relative_path.contains("..") {
-        return Err("Invalid path: '..' is not allowed".to_string());
-    }
-    if relative_path.starts_with('/') {
-        return Err("Invalid path: absolute paths are not allowed".to_string());
+    let project_root = validate_project_root(project_path)?;
+    let relative = validate_relative_project_path(relative_path)?;
+    let full_path = project_root.join(relative);
+
+    if full_path.exists() {
+        let canonical = full_path
+            .canonicalize()
+            .map_err(|e| format!("Cannot access path: {}", e))?;
+        ensure_path_is_within_project(&project_root, &canonical)?;
+        return Ok(full_path);
     }
 
-    let project_canonical = Path::new(project_path)
+    let parent = full_path
+        .parent()
+        .ok_or_else(|| "Invalid path: missing parent directory".to_string())?;
+    let canonical_parent = parent
         .canonicalize()
-        .map_err(|e| format!("Cannot access project: {}", e))?;
+        .map_err(|e| format!("Cannot access parent directory: {}", e))?;
+    ensure_path_is_within_project(&project_root, &canonical_parent)?;
 
-    let full = project_canonical.join(relative_path);
-    if !full.starts_with(&project_canonical) {
-        return Err("Path escapes project directory".to_string());
-    }
-    Ok(full)
+    Ok(full_path)
 }
 
 fn detect_image_mime(path: &Path) -> &'static str {
@@ -408,7 +469,7 @@ pub async fn read_image_as_base64(file_path: String) -> Result<String, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_path(project_path: String, relative_path: String) -> Result<(), String> {
-    let canonical = validate_path_within_project(&project_path, &relative_path)?;
+    let canonical = validate_existing_path_within_project(&project_path, &relative_path)?;
 
     let meta = fs::metadata(&canonical)
         .await
@@ -429,7 +490,11 @@ pub async fn delete_path(project_path: String, relative_path: String) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::validate_project_path_for_indexing;
+    use super::{
+        validate_existing_path_within_project, validate_preview_path_within_project,
+        validate_project_path_for_indexing, validate_target_under_project,
+    };
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -452,6 +517,54 @@ mod tests {
         let result = validate_project_path_for_indexing(&home.to_string_lossy());
         assert!(result.is_err());
     }
+
+    #[test]
+    fn validate_existing_path_within_project_rejects_absolute_paths() {
+        let dir = tempdir().expect("temp dir");
+
+        let result = validate_existing_path_within_project(&dir.path().to_string_lossy(), "/etc/passwd");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_existing_path_within_project_rejects_parent_traversal() {
+        let dir = tempdir().expect("temp dir");
+
+        let result = validate_existing_path_within_project(&dir.path().to_string_lossy(), "../escape.txt");
+
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_target_under_project_rejects_symlink_parent_escape() {
+        use std::os::unix::fs::symlink;
+
+        let project = tempdir().expect("project temp dir");
+        let outside = tempdir().expect("outside temp dir");
+        let symlink_path = project.path().join("linked-outside");
+        symlink(outside.path(), &symlink_path).expect("create symlink");
+
+        let result = validate_target_under_project(
+            &project.path().to_string_lossy(),
+            "linked-outside/created.txt",
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_preview_path_within_project_allows_missing_deleted_file() {
+        let project = tempdir().expect("project temp dir");
+        let tracked_file = project.path().join("gone.ts");
+        fs::write(&tracked_file, "hello").expect("write file");
+        fs::remove_file(&tracked_file).expect("remove file");
+
+        let result = validate_preview_path_within_project(&project.path().to_string_lossy(), "gone.ts");
+
+        assert!(result.is_ok());
+    }
 }
 
 /// Rename or move a file or directory within the project.
@@ -462,7 +575,7 @@ pub async fn rename_path(
     from_relative: String,
     to_relative: String,
 ) -> Result<(), String> {
-    let from_full = validate_path_within_project(&project_path, &from_relative)?;
+    let from_full = validate_existing_path_within_project(&project_path, &from_relative)?;
     let to_full = validate_target_under_project(&project_path, &to_relative)?;
 
     fs::rename(&from_full, &to_full)
@@ -476,7 +589,7 @@ pub async fn rename_path(
 #[tauri::command]
 #[specta::specta]
 pub async fn copy_file(project_path: String, relative_path: String) -> Result<String, String> {
-    let source = validate_path_within_project(&project_path, &relative_path)?;
+    let source = validate_existing_path_within_project(&project_path, &relative_path)?;
 
     let meta = fs::metadata(&source)
         .await
@@ -561,4 +674,41 @@ pub async fn create_directory(project_path: String, relative_path: String) -> Re
         .map_err(|e| format!("Failed to create directory: {}", e))?;
 
     Ok(())
+}
+
+/// Search project files for the file explorer modal.
+///
+/// Returns a ranked, windowed list of file rows from the cached project index.
+/// All ranking and filtering happens in Rust.
+#[tauri::command]
+#[specta::specta]
+pub async fn search_project_files_for_explorer(
+    service: State<'_, FileIndexService>,
+    project_path: String,
+    query: String,
+    limit: u32,
+    offset: u32,
+) -> Result<FileExplorerSearchResponse, String> {
+    let validated_path = validate_project_path_for_indexing(&project_path)?;
+    service
+        .explorer_search(&validated_path, &query, limit, offset)
+        .await
+}
+
+/// Get a preview payload for the selected explorer row.
+///
+/// Returns typed preview content (diff, text, or fallback) based on Rust-side
+/// classification. The frontend should never guess preview kind.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_file_explorer_preview(
+    service: State<'_, FileIndexService>,
+    project_path: String,
+    file_path: String,
+) -> Result<FileExplorerPreviewResponse, String> {
+    let validated_project = validate_project_path_for_indexing(&project_path)?;
+    let _validated_file = validate_preview_path_within_project(&validated_project, &file_path)?;
+    service
+        .explorer_preview(&validated_project, &file_path)
+        .await
 }

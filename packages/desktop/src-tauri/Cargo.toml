@@ -54,6 +54,7 @@ aws-sdk-s3 = "1"
 aws-credential-types = "1"
 # SSE stream parsing for OpenCode events
 tokio-util = { version = "0.7", features = ["io"] }
+tauri-plugin-notification = "2.3.3"
 # Unix signal handling for graceful shutdown
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.28", features = ["signal", "process"] }
@@ -104,6 +105,8 @@ flate2 = "1.0"
 zip = "2"
 # Partial JSON recovery for streaming tool input parsing
 partial-json-fixer = "0.5"
+# Direct Rust SDK for Claude Code CLI (replaces Bun/ACP subprocess)
+cc-sdk = "0.7.0"
 # MCP plugin for AI agent debugging (disabled — no active bridge client)
 # tauri-plugin-mcp = { path = "packages/tauri-plugin-mcp" }
 tauri-plugin-mcp-bridge = "0.9"

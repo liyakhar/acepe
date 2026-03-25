@@ -223,6 +223,44 @@ fn generate_unique_candidate(
     Err("Failed to generate unique worktree name after 26 attempts".to_string())
 }
 
+fn rename_acepe_branch_name(current_branch: &str, new_name: &str) -> String {
+    if current_branch.starts_with("acepe/") {
+        return format!("acepe/{}", new_name);
+    }
+
+    new_name.to_string()
+}
+
+fn build_renamed_worktree_path(current_path: &Path, new_name: &str) -> Result<PathBuf, String> {
+    let parent = current_path
+        .parent()
+        .ok_or("Could not determine worktree parent directory")?;
+
+    Ok(parent.join(new_name))
+}
+
+fn get_main_repo_from_worktree_path(worktree_path: &Path) -> Result<PathBuf, String> {
+    let git_dir = worktree_path.join(".git");
+    if !git_dir.is_file() {
+        return Err("Could not determine main repository from worktree".to_string());
+    }
+
+    let content = std::fs::read_to_string(&git_dir)
+        .map_err(|e| format!("Failed to read .git file: {}", e))?;
+    let gitdir_path = content
+        .strip_prefix("gitdir: ")
+        .ok_or("Invalid .git file format")?
+        .trim();
+    let gitdir = PathBuf::from(gitdir_path);
+
+    gitdir
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .map(Path::to_path_buf)
+        .ok_or("Could not determine main repository".to_string())
+}
+
 /// Create a new git worktree for isolated agent work
 ///
 /// # Arguments
@@ -356,26 +394,7 @@ pub async fn git_worktree_remove(worktree_path: String, force: bool) -> Result<(
         .ok_or("Could not determine parent directory")?;
 
     // Read the gitdir file to find the main repo
-    let git_dir = worktree_path_buf.join(".git");
-    let main_repo = if git_dir.is_file() {
-        // .git is a file pointing to the actual git directory
-        let content = std::fs::read_to_string(&git_dir)
-            .map_err(|e| format!("Failed to read .git file: {}", e))?;
-        let gitdir_path = content
-            .strip_prefix("gitdir: ")
-            .ok_or("Invalid .git file format")?
-            .trim();
-        // The gitdir points to .git/worktrees/<name>, we need to go up to find the main repo
-        let gitdir = PathBuf::from(gitdir_path);
-        gitdir
-            .parent() // .git/worktrees
-            .and_then(|p| p.parent()) // .git
-            .and_then(|p| p.parent()) // main repo
-            .ok_or("Could not determine main repository")?
-            .to_path_buf()
-    } else {
-        return Err("Could not determine main repository from worktree".to_string());
-    };
+    let main_repo = get_main_repo_from_worktree_path(&worktree_path_buf)?;
 
     // Remove the worktree
     let mut args = vec!["worktree", "remove"];
@@ -420,6 +439,97 @@ pub async fn git_worktree_remove(worktree_path: String, force: bool) -> Result<(
     );
 
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_worktree_rename(
+    worktree_path: String,
+    new_name: String,
+) -> Result<WorktreeInfo, String> {
+    tracing::info!(
+        worktree_path = %worktree_path,
+        new_name = %new_name,
+        "Renaming git worktree"
+    );
+
+    path_safety::validate_path_segment(&new_name, "worktree name")
+        .map_err(|e| format!("Invalid worktree name: {}", e))?;
+
+    let worktree_path_buf = worktree_config::validate_worktree_path(Path::new(&worktree_path))
+        .map_err(|e| format!("Invalid worktree path: {}", e))?;
+
+    if !worktree_path_buf.exists() {
+        return Err("Worktree path does not exist".to_string());
+    }
+
+    let current_name = worktree_path_buf
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Could not determine current worktree name")?;
+
+    if current_name == new_name {
+        let branch = get_current_branch(&worktree_path_buf)?;
+        let origin = determine_worktree_origin(&worktree_path, &branch);
+        return Ok(WorktreeInfo {
+            name: new_name,
+            branch,
+            directory: worktree_path,
+            origin,
+        });
+    }
+
+    let renamed_path = build_renamed_worktree_path(&worktree_path_buf, &new_name)?;
+    let validated_renamed_path = worktree_config::validate_worktree_path(&renamed_path)
+        .map_err(|e| format!("Invalid renamed worktree path: {}", e))?;
+
+    if validated_renamed_path.exists() {
+        return Err(format!("A worktree named '{}' already exists", new_name));
+    }
+
+    let current_branch = get_current_branch(&worktree_path_buf)?;
+    let renamed_branch = rename_acepe_branch_name(&current_branch, &new_name);
+
+    let main_repo = get_main_repo_from_worktree_path(&worktree_path_buf)?;
+
+    if current_branch != renamed_branch {
+        if branch_exists(&main_repo, &renamed_branch)? {
+            return Err(format!("A branch named '{}' already exists", renamed_branch));
+        }
+
+        let output = Command::new("git")
+            .args(["branch", "-m", &renamed_branch])
+            .current_dir(&worktree_path_buf)
+            .output()
+            .map_err(|e| format!("Failed to execute git branch rename: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Failed to rename branch: {}", stderr.trim()));
+        }
+    }
+
+    let output = Command::new("git")
+        .args(["worktree", "move", &worktree_path, &validated_renamed_path.to_string_lossy()])
+        .current_dir(&main_repo)
+        .output()
+        .map_err(|e| format!("Failed to execute git worktree move: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to rename worktree: {}", stderr.trim()));
+    }
+
+    let branch = get_current_branch(&validated_renamed_path)?;
+    let directory = validated_renamed_path.to_string_lossy().into_owned();
+    let origin = determine_worktree_origin(&directory, &branch);
+
+    Ok(WorktreeInfo {
+        name: new_name,
+        branch,
+        directory,
+        origin,
+    })
 }
 
 /// Reset a worktree to match the main branch (origin/main or main)
@@ -1042,6 +1152,26 @@ branch refs/heads/acepe/clever-falcon";
         assert_eq!(
             determine_worktree_origin("/some/external/path", "feature/login"),
             WorktreeOrigin::External
+        );
+    }
+
+    #[test]
+    fn test_rename_acepe_branch_name_updates_prefix() {
+        assert_eq!(
+            rename_acepe_branch_name("acepe/happy-canyon", "brave-river"),
+            "acepe/brave-river"
+        );
+    }
+
+    #[test]
+    fn test_build_renamed_worktree_path_swaps_last_segment() {
+        let current = Path::new("/Users/alex/.acepe/worktrees/123abc/happy-canyon");
+        let renamed =
+            build_renamed_worktree_path(current, "brave-river").expect("path should build");
+
+        assert_eq!(
+            renamed,
+            PathBuf::from("/Users/alex/.acepe/worktrees/123abc/brave-river")
         );
     }
 }

@@ -1,10 +1,11 @@
 use super::super::provider::{
     command_exists, AgentProvider, CommandAvailabilityCache, SpawnConfig,
 };
+use crate::acp::client_trait::CommunicationMode;
 use crate::acp::session_update::PlanSource;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
 
-/// Claude Code ACP Agent Provider
+/// Claude Code Agent Provider — uses cc-sdk for direct Rust ↔ Claude CLI communication
 pub struct ClaudeCodeProvider;
 
 impl AgentProvider for ClaudeCodeProvider {
@@ -17,6 +18,8 @@ impl AgentProvider for ClaudeCodeProvider {
     }
 
     fn spawn_config(&self) -> SpawnConfig {
+        // Not used for CcSdk mode, but trait requires it.
+        // Fallback to ACP spawn configs for compatibility.
         self.spawn_configs()
             .into_iter()
             .next()
@@ -27,12 +30,18 @@ impl AgentProvider for ClaudeCodeProvider {
         resolve_claude_spawn_configs()
     }
 
+    fn communication_mode(&self) -> CommunicationMode {
+        CommunicationMode::CcSdk
+    }
+
     fn icon(&self) -> &str {
         "claude"
     }
 
     fn is_available(&self) -> bool {
-        agent_installer::is_installed(&CanonicalAgentId::ClaudeCode)
+        // cc-sdk handles CLI resolution internally; check if `claude` is in PATH
+        command_exists("claude")
+            || agent_installer::is_installed(&CanonicalAgentId::ClaudeCode)
             || std::env::var("CLAUDE_CODE_ACP_PATH")
                 .ok()
                 .filter(|p| !p.trim().is_empty())

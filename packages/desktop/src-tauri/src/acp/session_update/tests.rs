@@ -518,6 +518,7 @@ mod parse_tool_call_from_acp {
             ("Delete", ToolKind::Delete),
             ("EnterPlanMode", ToolKind::EnterPlanMode),
             ("ExitPlanMode", ToolKind::ExitPlanMode),
+            ("TaskOutput", ToolKind::TaskOutput),
             ("UnknownTool", ToolKind::Other),
         ];
 
@@ -1410,6 +1411,36 @@ mod parse_tool_call_from_acp {
             assert_eq!(tool_call.name, "Search");
             assert_eq!(tool_call.kind, Some(ToolKind::Search));
         });
+    }
+
+    #[test]
+    fn task_output_tool_parses_with_arguments() {
+        let data = json!({
+            "toolCallId": "tool-task-output-1",
+            "_meta": {
+                "claudeCode": {
+                    "toolName": "TaskOutput"
+                }
+            },
+            "rawInput": {
+                "task_id": "task-abc-123",
+                "timeout": 30000
+            },
+            "status": "pending"
+        });
+
+        let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+        let tool_call = result.unwrap();
+        assert_eq!(tool_call.kind, Some(ToolKind::TaskOutput));
+        match tool_call.arguments {
+            ToolArguments::TaskOutput { task_id, timeout } => {
+                assert_eq!(task_id.as_deref(), Some("task-abc-123"));
+                assert_eq!(timeout, Some(30000));
+            }
+            other => panic!("Expected TaskOutput arguments, got {:?}", other),
+        }
     }
 }
 

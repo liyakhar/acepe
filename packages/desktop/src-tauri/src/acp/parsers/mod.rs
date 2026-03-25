@@ -16,6 +16,7 @@
 
 pub mod acp_fields;
 pub mod adapters;
+pub mod cc_sdk_bridge;
 pub(crate) mod arguments;
 pub mod canonical_tool;
 pub(crate) mod claude_code_parser;

@@ -13,7 +13,7 @@ export type SessionHistoryCommands = { get_session_history: string; get_session_
 /**
  * Storage command names
  */
-export type StorageCommands = { save_conversation_metadata: string; get_conversation_metadata: string; get_all_conversation_metadata: string; delete_conversation_metadata: string; update_conversation_metadata: string; delete_conversation: string; open_in_finder: string; open_streaming_log: string; get_projects: string; get_recent_projects: string; get_project_count: string; import_project: string; add_project: string; remove_project: string; browse_project: string; get_all_conversations: string; upsert_conversation: string; get_user_setting: string; save_user_setting: string; get_analytics_distinct_id: string; get_panel_layout: string; save_panel_layout: string; clear_panel_layout: string; get_thread_list_settings: string; save_thread_list_settings: string; get_api_key: string; save_api_key: string; delete_api_key: string; get_user_keybindings: string; save_user_keybinding: string; delete_user_keybinding: string; reset_keybindings_to_defaults: string }
+export type StorageCommands = { save_conversation_metadata: string; get_conversation_metadata: string; get_all_conversation_metadata: string; delete_conversation_metadata: string; update_conversation_metadata: string; delete_conversation: string; open_in_finder: string; open_streaming_log: string; get_projects: string; get_recent_projects: string; get_project_count: string; get_missing_project_paths: string; import_project: string; add_project: string; remove_project: string; browse_project: string; get_all_conversations: string; upsert_conversation: string; get_user_setting: string; save_user_setting: string; get_analytics_distinct_id: string; get_panel_layout: string; save_panel_layout: string; clear_panel_layout: string; get_thread_list_settings: string; save_thread_list_settings: string; get_api_key: string; save_api_key: string; delete_api_key: string; get_user_keybindings: string; save_user_keybinding: string; delete_user_keybinding: string; reset_keybindings_to_defaults: string }
 
 /**
  * Cursor history command names
@@ -71,6 +71,7 @@ export const COMMANDS: Commands = {
     "get_projects": "get_projects",
     "get_recent_projects": "get_recent_projects",
     "get_project_count": "get_project_count",
+    "get_missing_project_paths": "get_missing_project_paths",
     "import_project": "import_project",
     "add_project": "add_project",
     "remove_project": "remove_project",

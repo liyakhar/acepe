@@ -265,6 +265,7 @@ fn tool_arguments_detail_score(arguments: &ToolArguments) -> usize {
                 + usize::from(skill_args.is_some())
                 + usize::from(raw.is_some())
         }
+        ToolArguments::TaskOutput { task_id, .. } => usize::from(task_id.is_some()),
         ToolArguments::Move { from, to } => usize::from(from.is_some()) + usize::from(to.is_some()),
         ToolArguments::Delete { file_path } => usize::from(file_path.is_some()),
         ToolArguments::PlanMode { mode } => usize::from(mode.is_some()),

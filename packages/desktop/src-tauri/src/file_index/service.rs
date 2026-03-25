@@ -10,7 +10,11 @@ use tracing::{debug, info};
 
 use super::git::{get_git_overview_summary, get_git_status, get_git_status_summary};
 use super::scanner::scan_project;
-use super::types::{FileGitStatus, IndexedFile, ProjectGitOverview, ProjectIndex};
+use super::explorer::{load_explorer_preview, search_explorer};
+use super::types::{
+    FileExplorerPreviewResponse, FileExplorerSearchResponse, FileGitStatus, IndexedFile,
+    ProjectGitOverview, ProjectIndex,
+};
 
 /// Cache TTL in seconds.
 const CACHE_TTL_SECS: u64 = 60;
@@ -208,6 +212,38 @@ impl FileIndexService {
         })
         .await
         .map_err(|e| format!("Task join error: {}", e))?
+    }
+
+    /// Search project files for the explorer modal.
+    ///
+    /// Reuses the cached project index so repeated keystrokes don't re-scan.
+    pub async fn explorer_search(
+        &self,
+        project_path: &str,
+        query: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<FileExplorerSearchResponse, String> {
+        let index = self.get_project_index(project_path).await?;
+        Ok(search_explorer(project_path, &index, query, limit, offset))
+    }
+
+    /// Load a preview payload for a selected explorer row.
+    ///
+    /// Reuses the cached git status map from the project index to avoid a
+    /// redundant git invocation.
+    pub async fn explorer_preview(
+        &self,
+        project_path: &str,
+        file_path: &str,
+    ) -> Result<FileExplorerPreviewResponse, String> {
+        let index = self.get_project_index(project_path).await?;
+        let git_map: std::collections::HashMap<String, FileGitStatus> = index
+            .git_status
+            .into_iter()
+            .map(|gs| (gs.path.clone(), gs))
+            .collect();
+        load_explorer_preview(project_path, file_path, &git_map)
     }
 
     /// Invalidate cache for a project.

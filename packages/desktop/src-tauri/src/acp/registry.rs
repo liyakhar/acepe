@@ -27,8 +27,6 @@ pub struct AgentInfo {
     pub id: String,
     pub name: String,
     pub icon: String,
-    /// Whether the agent's command is available in PATH
-    pub available: bool,
     /// How this agent is provisioned
     pub availability_kind: AgentAvailabilityKind,
 }
@@ -113,21 +111,16 @@ impl AgentRegistry {
         for agent_id in &Self::AGENT_ORDER {
             if let Some(provider) = self.built_in.get(agent_id) {
                 let availability_kind = Self::availability_kind_for(agent_id);
-                let available = match &availability_kind {
-                    AgentAvailabilityKind::Bundled => {
-                        if check_availability {
-                            provider.is_available()
-                        } else {
-                            true
-                        }
-                    }
-                    AgentAvailabilityKind::Installable { installed } => *installed,
-                };
+                if check_availability {
+                    let _ = match &availability_kind {
+                        AgentAvailabilityKind::Bundled => provider.is_available(),
+                        AgentAvailabilityKind::Installable { installed } => *installed,
+                    };
+                }
                 agents.push(AgentInfo {
                     id: provider.id().to_string(),
                     name: provider.name().to_string(),
                     icon: provider.icon().to_string(),
-                    available,
                     availability_kind,
                 });
             }
@@ -145,15 +138,13 @@ impl AgentRegistry {
         custom_agents.sort_by_key(|provider| provider.id());
 
         for provider in custom_agents {
+            if check_availability {
+                let _ = provider.is_available();
+            }
             agents.push(AgentInfo {
                 id: provider.id().to_string(),
                 name: provider.name().to_string(),
                 icon: provider.icon().to_string(),
-                available: if check_availability {
-                    provider.is_available()
-                } else {
-                    true
-                },
                 availability_kind: AgentAvailabilityKind::Bundled,
             });
         }
@@ -260,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn list_all_for_ui_marks_custom_agents_available_without_runtime_probe() {
+    fn list_all_for_ui_lists_custom_agents_without_runtime_probe() {
         let registry = AgentRegistry::new();
         registry
             .register_custom(CustomAgentConfig {
@@ -278,9 +269,26 @@ mod tests {
             .find(|entry| entry.id == "custom-agent")
             .expect("custom agent should be listed");
 
+        assert_eq!(agent.id, "custom-agent");
+    }
+
+    #[test]
+    fn agent_info_serialization_does_not_expose_available_flag() {
+        let registry = AgentRegistry::new();
+        let agent = registry
+            .list_all_for_ui()
+            .into_iter()
+            .find(|entry| entry.id == "claude-code")
+            .expect("claude-code should be listed");
+
+        let value = serde_json::to_value(agent).expect("agent should serialize");
+        let object = value
+            .as_object()
+            .expect("serialized agent should be an object");
+
         assert!(
-            agent.available,
-            "custom agents should be selectable in UI listing"
+            !object.contains_key("available"),
+            "ui agent payload should not expose an available flag"
         );
     }
 }

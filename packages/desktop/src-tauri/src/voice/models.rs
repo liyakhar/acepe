@@ -8,6 +8,11 @@ use std::{fs, io::Read};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as TokioMutex;
 
+use super::models_validation::{
+	clear_validation_metadata, load_validation_metadata, save_validation_metadata,
+	ValidationMetadata,
+};
+
 const MAX_DOWNLOAD_SIZE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MODEL_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
@@ -18,6 +23,7 @@ pub struct ModelInfo {
     pub size_bytes: u64,
     pub is_english_only: bool,
     pub is_downloaded: bool,
+    pub is_loaded: bool,
     pub download_url: String,
 }
 
@@ -197,11 +203,15 @@ impl ModelManager {
 
     pub fn delete_model(&self, model_id: &str) -> anyhow::Result<()> {
         let path = self.model_path(model_id).context("Unknown voice model")?;
+        tracing::info!(model_id, path = %path.display(), exists = path.exists(), "ModelManager: deleting model");
 
         if path.exists() {
             fs::remove_file(&path)
                 .with_context(|| format!("Failed to delete model file {}", path.display()))?;
+            tracing::info!(model_id, "ModelManager: model file deleted");
         }
+
+		clear_validation_metadata(&path)?;
 
         Ok(())
     }
@@ -239,6 +249,7 @@ impl ModelManager {
         F: FnMut(ModelDownloadProgress),
     {
         let spec = Self::find_spec(model_id).context("Unknown voice model")?;
+        tracing::info!(model_id, url = spec.url, size_bytes = spec.size_bytes, "ModelManager: starting download");
         fs::create_dir_all(&self.models_dir).with_context(|| {
             format!(
                 "Failed to create models directory {}",
@@ -248,6 +259,7 @@ impl ModelManager {
 
         let final_path = self.models_dir.join(format!("ggml-{}.bin", spec.id));
         if self.validate_model(spec.id, &final_path).is_ok() {
+            tracing::info!(model_id, "ModelManager: model already exists and is valid, skipping download");
             emit_progress(ModelDownloadProgress {
                 model_id: spec.id.to_string(),
                 downloaded_bytes: spec.size_bytes,
@@ -371,6 +383,7 @@ impl ModelManager {
             size_bytes: spec.size_bytes,
             is_english_only: spec.is_english_only,
             is_downloaded: self.is_model_available_fast(spec.id),
+            is_loaded: false,
             download_url: spec.url.to_string(),
         }
     }
@@ -386,6 +399,8 @@ impl ModelManager {
 /// This is a **blocking** operation — call from a blocking context only
 /// (dedicated thread or `spawn_blocking`).
 pub fn validate_model_file(model_id: &str, path: &Path) -> anyhow::Result<()> {
+    tracing::debug!(model_id, path = %path.display(), "validate_model_file: starting");
+    let t0 = std::time::Instant::now();
     let spec = ModelManager::find_spec(model_id).context("Unknown voice model")?;
     let metadata = fs::metadata(path)
         .with_context(|| format!("Failed to read metadata for {}", path.display()))?;
@@ -398,6 +413,13 @@ pub fn validate_model_file(model_id: &str, path: &Path) -> anyhow::Result<()> {
             metadata.len()
         );
     }
+
+	if let Some(cached) = load_validation_metadata(path)? {
+		if cached.size_bytes == spec.size_bytes && cached.sha256 == spec.sha256 {
+			tracing::debug!(model_id, elapsed_ms = t0.elapsed().as_millis() as u64, "validate_model_file: cache hit");
+			return Ok(());
+		}
+	}
 
     let mut file = fs::File::open(path)
         .with_context(|| format!("Failed to open model file {}", path.display()))?;
@@ -416,6 +438,7 @@ pub fn validate_model_file(model_id: &str, path: &Path) -> anyhow::Result<()> {
 
     let digest = format!("{:x}", hasher.finalize());
     if digest != spec.sha256 {
+        tracing::error!(model_id, expected = spec.sha256, got = %digest, "validate_model_file: SHA-256 mismatch");
         anyhow::bail!(
             "Model checksum mismatch for {}: expected {}, got {}",
             spec.id,
@@ -424,5 +447,14 @@ pub fn validate_model_file(model_id: &str, path: &Path) -> anyhow::Result<()> {
         );
     }
 
+	save_validation_metadata(
+		path,
+		&ValidationMetadata {
+			size_bytes: spec.size_bytes,
+			sha256: spec.sha256.to_string(),
+		},
+	)?;
+
+    tracing::debug!(model_id, elapsed_ms = t0.elapsed().as_millis() as u64, "validate_model_file: OK");
     Ok(())
 }

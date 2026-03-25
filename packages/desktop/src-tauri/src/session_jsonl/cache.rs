@@ -117,27 +117,16 @@ impl FileMetadataCache {
     /// Returns:
     /// - `Some(cached_entry)` if file unchanged (cache hit)
     /// - `None` if file changed, new, or error (cache miss)
-    pub async fn check_file(&self, path: &PathBuf) -> Option<HistoryEntry> {
-        // Get current file metadata (async — doesn't block tokio runtime)
-        let metadata = match tokio::fs::metadata(path).await {
-            Ok(m) => m,
-            Err(_) => {
-                // File doesn't exist or can't be read - evict from cache
-                self.evict(path).await;
-                return None;
-            }
-        };
-
-        let current_mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        let current_size = metadata.len();
-
-        // Check cache
+    pub async fn check_file_with_metadata(
+        &self,
+        path: &PathBuf,
+        current_mtime: SystemTime,
+        current_size: u64,
+    ) -> Option<HistoryEntry> {
         let cached_data = {
             let entries = self.entries.read().await;
             if let Some(cached) = entries.get(path) {
-                // Compare mtime and size
                 if cached.mtime == current_mtime && cached.size == current_size {
-                    // Cache hit - file unchanged
                     Some(cached.data.clone())
                 } else {
                     None
@@ -152,9 +141,26 @@ impl FileMetadataCache {
             return Some(data);
         }
 
-        // Cache miss - file changed or not in cache
         self.stat_misses.fetch_add(1, Ordering::Relaxed);
         None
+    }
+
+    pub async fn check_file(&self, path: &PathBuf) -> Option<HistoryEntry> {
+        // Get current file metadata (async — doesn't block tokio runtime)
+        let metadata = match tokio::fs::metadata(path).await {
+            Ok(m) => m,
+            Err(_) => {
+                // File doesn't exist or can't be read - evict from cache
+                self.evict(path).await;
+                return None;
+            }
+        };
+
+        let current_mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let current_size = metadata.len();
+
+        self.check_file_with_metadata(path, current_mtime, current_size)
+            .await
     }
 
     /// Insert or update a cached entry.
@@ -484,6 +490,55 @@ mod tests {
         let cached = cache.check_file(&file_path).await;
         assert!(cached.is_none());
         assert!(cache.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_check_file_with_metadata_returns_hit_without_restat() {
+        let cache = FileMetadataCache::new(Duration::from_secs(30));
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.jsonl");
+        std::fs::write(&file_path, "content").unwrap();
+
+        let metadata = tokio::fs::metadata(&file_path).await.unwrap();
+        let mtime = metadata.modified().unwrap();
+        let size = metadata.len();
+
+        cache
+            .insert(file_path.clone(), make_test_entry("s1"), mtime, size)
+            .await;
+
+        let cached = cache.check_file_with_metadata(&file_path, mtime, size).await;
+        assert!(cached.is_some());
+        assert_eq!(cached.unwrap().session_id, "s1");
+
+        let stats = cache.get_stats();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 0);
+    }
+
+    #[tokio::test]
+    async fn test_check_file_with_metadata_returns_miss_for_changed_metadata() {
+        let cache = FileMetadataCache::new(Duration::from_secs(30));
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.jsonl");
+        std::fs::write(&file_path, "content").unwrap();
+
+        let metadata = tokio::fs::metadata(&file_path).await.unwrap();
+        let mtime = metadata.modified().unwrap();
+        let size = metadata.len();
+
+        cache
+            .insert(file_path.clone(), make_test_entry("s1"), mtime, size)
+            .await;
+
+        let cached = cache
+            .check_file_with_metadata(&file_path, mtime, size + 1)
+            .await;
+        assert!(cached.is_none());
+
+        let stats = cache.get_stats();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 1);
     }
 
     #[tokio::test]

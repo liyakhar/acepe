@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use serde_json::Value;
+use std::io::BufRead;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -12,6 +13,182 @@ use super::text_utils::{
     extract_display_name_from_user_message, get_session_jsonl_root, is_valid_uuid,
     parse_iso_timestamp_to_ms, path_to_slug,
 };
+
+struct MetadataParseState {
+    first_message_json: Option<Value>,
+    display: Option<String>,
+    saw_any_line: bool,
+}
+
+impl MetadataParseState {
+    fn new() -> Self {
+        Self {
+            first_message_json: None,
+            display: None,
+            saw_any_line: false,
+        }
+    }
+
+    fn process_line(&mut self, file_path: &std::path::Path, line: &str) {
+        if line.trim().is_empty() {
+            return;
+        }
+        self.saw_any_line = true;
+
+        let json: Value = match serde_json::from_str(line) {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::error!(
+                    file = %file_path.display(),
+                    error = %e,
+                    line_preview = %&line[..line.len().min(200)],
+                    "Failed to parse JSONL line during session scan"
+                );
+                return;
+            }
+        };
+
+        let msg_type = json.get("type").and_then(|v| v.as_str());
+
+        if let Some("file-history-snapshot" | "queue-operation" | "summary") = msg_type {
+            return;
+        }
+
+        let is_user = msg_type == Some("user");
+        let is_assistant = msg_type == Some("assistant");
+
+        if !is_user && !is_assistant {
+            return;
+        }
+
+        if self.first_message_json.is_none() {
+            self.first_message_json = Some(json.clone());
+        }
+
+        if is_user && self.display.is_none() {
+            self.display = extract_display_name_from_user_message(&json);
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.first_message_json.is_some() && self.display.is_some()
+    }
+
+    fn into_history_entry(self, file_name: &str) -> Result<Option<HistoryEntry>> {
+        let base_name = file_name.strip_suffix(".jsonl").unwrap_or(file_name);
+
+        if !self.saw_any_line {
+            if is_valid_uuid(base_name) {
+                return Ok(Some(HistoryEntry {
+                    id: base_name.to_string(),
+                    display: "Untitled conversation".to_string(),
+                    timestamp: 0,
+                    project: "".to_string(),
+                    session_id: base_name.to_string(),
+                    pasted_contents: serde_json::json!({}),
+                    agent_id: CanonicalAgentId::ClaudeCode,
+                    updated_at: 0,
+                    source_path: None,
+                    parent_id: None,
+                    worktree_path: None,
+                    pr_number: None,
+                    worktree_deleted: None,
+                }));
+            }
+            return Ok(None);
+        }
+
+        let first_json = match self.first_message_json {
+            Some(json) => json,
+            None => return Ok(None),
+        };
+
+        let display = match self.display {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+
+        let session_id = if let Some(sid) = first_json.get("sessionId").and_then(|v| v.as_str()) {
+            sid.to_string()
+        } else if is_valid_uuid(base_name) {
+            base_name.to_string()
+        } else {
+            return Ok(None);
+        };
+
+        let timestamp = first_json
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .and_then(|ts| parse_iso_timestamp_to_ms(ts).ok())
+            .unwrap_or(0);
+
+        let project = first_json
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        Ok(Some(HistoryEntry {
+            id: session_id.clone(),
+            display,
+            timestamp,
+            project,
+            session_id,
+            pasted_contents: serde_json::json!({}),
+            agent_id: CanonicalAgentId::ClaudeCode,
+            updated_at: timestamp,
+            source_path: None,
+            parent_id: None,
+            worktree_path: None,
+            pr_number: None,
+            worktree_deleted: None,
+        }))
+    }
+}
+
+fn build_history_entry_from_values(
+    file_path: &std::path::Path,
+    file_name: &str,
+    lines: impl IntoIterator<Item = std::result::Result<String, std::io::Error>>,
+) -> Result<Option<HistoryEntry>> {
+    let mut state = MetadataParseState::new();
+
+    for line_result in lines {
+        let line = line_result?;
+        state.process_line(file_path, &line);
+        if state.is_complete() {
+            break;
+        }
+    }
+
+    state.into_history_entry(file_name)
+}
+
+fn extract_thread_metadata_sync(file_path: &std::path::Path) -> Result<Option<HistoryEntry>> {
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow!("Invalid file name"))?;
+
+    if !file_name.ends_with(".jsonl") {
+        return Ok(None);
+    }
+
+    let file = match std::fs::File::open(file_path) {
+        Ok(file) => file,
+        Err(_) => return Ok(None),
+    };
+
+    let reader = std::io::BufReader::new(file);
+    build_history_entry_from_values(file_path, file_name, reader.lines())
+}
+
+#[cfg(test)]
+pub(super) fn extract_thread_metadata_sync_for_test(
+    file_path: &std::path::Path,
+) -> Result<Option<HistoryEntry>> {
+    extract_thread_metadata_sync(file_path)
+}
 
 pub async fn extract_thread_metadata(file_path: &PathBuf) -> Result<Option<HistoryEntry>> {
     let file_name = file_path
@@ -30,132 +207,16 @@ pub async fn extract_thread_metadata(file_path: &PathBuf) -> Result<Option<Histo
 
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
-
-    let base_name = file_name.strip_suffix(".jsonl").unwrap_or(file_name);
-
-    // Single-pass: find first message (for sessionId/timestamp/cwd) and first user message (for display name)
-    let mut first_message_json: Option<Value> = None;
-    let mut display: Option<String> = None;
-    let mut saw_any_line = false;
+    let mut state = MetadataParseState::new();
 
     while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() {
-            continue;
-        }
-        saw_any_line = true;
-
-        let json: Value = match serde_json::from_str(&line) {
-            Ok(json) => json,
-            Err(e) => {
-                tracing::error!(
-                    file = %file_path.display(),
-                    error = %e,
-                    line_preview = %&line[..line.len().min(200)],
-                    "Failed to parse JSONL line during session scan"
-                );
-                continue;
-            }
-        };
-
-        let msg_type = json.get("type").and_then(|v| v.as_str());
-
-        // Skip non-message entries
-        if let Some("file-history-snapshot" | "queue-operation" | "summary") = msg_type {
-            continue;
-        }
-
-        let is_user = msg_type == Some("user");
-        let is_assistant = msg_type == Some("assistant");
-
-        if !is_user && !is_assistant {
-            continue;
-        }
-
-        // Capture first message for session metadata
-        if first_message_json.is_none() {
-            first_message_json = Some(json.clone());
-        }
-
-        // Extract display name from user messages only
-        if is_user && display.is_none() {
-            display = extract_display_name_from_user_message(&json);
-        }
-
-        // Stop as soon as we have both
-        if first_message_json.is_some() && display.is_some() {
+        state.process_line(file_path, &line);
+        if state.is_complete() {
             break;
         }
     }
 
-    // Handle empty files with valid UUID filenames
-    if !saw_any_line {
-        if is_valid_uuid(base_name) {
-            return Ok(Some(HistoryEntry {
-                id: base_name.to_string(),
-                display: "Untitled conversation".to_string(),
-                timestamp: 0,
-                project: "".to_string(),
-                session_id: base_name.to_string(),
-                pasted_contents: serde_json::json!({}),
-                agent_id: CanonicalAgentId::ClaudeCode,
-                updated_at: 0,
-                source_path: None,
-                parent_id: None,
-                worktree_path: None,
-                pr_number: None,
-                worktree_deleted: None,
-            }));
-        }
-        return Ok(None);
-    }
-
-    let first_json = match first_message_json {
-        Some(json) => json,
-        None => return Ok(None),
-    };
-
-    // No meaningful user message found — skip this session
-    let display = match display {
-        Some(d) => d,
-        None => return Ok(None),
-    };
-
-    // Extract sessionId
-    let session_id = if let Some(sid) = first_json.get("sessionId").and_then(|v| v.as_str()) {
-        sid.to_string()
-    } else if is_valid_uuid(base_name) {
-        base_name.to_string()
-    } else {
-        return Ok(None);
-    };
-
-    let timestamp = first_json
-        .get("timestamp")
-        .and_then(|v| v.as_str())
-        .and_then(|ts| parse_iso_timestamp_to_ms(ts).ok())
-        .unwrap_or(0);
-
-    let project = first_json
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-
-    Ok(Some(HistoryEntry {
-        id: session_id.clone(),
-        display,
-        timestamp,
-        project,
-        session_id,
-        pasted_contents: serde_json::json!({}),
-        agent_id: CanonicalAgentId::ClaudeCode,
-        updated_at: timestamp,
-        source_path: None,
-        parent_id: None,
-        worktree_path: None,
-        pr_number: None,
-        worktree_deleted: None,
-    }))
+    state.into_history_entry(file_name)
 }
 
 /// Scans all project folders and extracts thread metadata from all .jsonl files.
@@ -258,7 +319,7 @@ pub async fn scan_all_threads() -> Result<Vec<HistoryEntry>> {
             }
 
             // Check cache first - only parse if file changed
-            if let Some(cached_entry) = cache.check_file(&file_path).await {
+            if let Some(cached_entry) = cache.check_file_with_metadata(&file_path, mtime, size).await {
                 all_entries.push(cached_entry);
                 sessions_in_project += 1;
                 continue;
@@ -427,26 +488,40 @@ where
                     let project_path_ref = &project_path_owned;
                     async move {
                         // Check cache first — only parse if file changed
-                        if let Some(cached_entry) = cache.check_file(&file_path).await {
+                        if let Some(cached_entry) =
+                            cache.check_file_with_metadata(&file_path, mtime, size).await
+                        {
                             let corrected =
                                 process_cached_entry_for_project(cached_entry, project_path_ref);
                             return (Some(corrected), true); // (entry, is_cache_hit)
                         }
 
                         // Cache miss — parse file
-                        match extract_thread_metadata(&file_path).await {
-                            Ok(Some(mut entry)) => {
+                        let blocking_file_path = file_path.clone();
+                        match tokio::task::spawn_blocking(move || {
+                            extract_thread_metadata_sync(&blocking_file_path)
+                        })
+                        .await
+                        {
+                            Ok(Ok(Some(mut entry))) => {
                                 entry.project = project_path_ref.clone();
-                                // mtime and size already known from dir listing — no extra stat
                                 cache.insert(file_path, entry.clone(), mtime, size).await;
                                 (Some(entry), false)
                             }
-                            Ok(None) => (None, false),
-                            Err(e) => {
+                            Ok(Ok(None)) => (None, false),
+                            Ok(Err(e)) => {
                                 tracing::error!(
                                     file_path = %file_path.display(),
                                     error = %e,
                                     "Failed to parse session file"
+                                );
+                                (None, false)
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    file_path = %file_path.display(),
+                                    error = %e,
+                                    "Failed to join blocking session parse task"
                                 );
                                 (None, false)
                             }
@@ -457,7 +532,7 @@ where
                 .collect()
                 .await;
 
-        // Collect-then-emit per project (avoids Arc<Mutex<>> for on_entry callback)
+        // Emit per project after collection so callbacks remain progressive.
         for (entry_opt, is_hit) in project_results {
             if is_hit {
                 cache_hits += 1;

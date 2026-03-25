@@ -71,7 +71,7 @@ fn default_current_model_id() -> String {
     "auto".to_string()
 }
 
-fn default_session_model_state() -> SessionModelState {
+pub(crate) fn default_session_model_state() -> SessionModelState {
     SessionModelState {
         available_models: Vec::new(),
         current_model_id: default_current_model_id(),

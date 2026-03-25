@@ -30,6 +30,10 @@ export const browserWebview = {
 		return invokeAsync("resize_browser_webview", { label, x, y, w, h });
 	},
 
+	setZoom: (label: string, scale: number): ResultAsync<void, AppError> => {
+		return invokeAsync("set_browser_webview_zoom", { label, scale });
+	},
+
 	navigate: (label: string, url: string): ResultAsync<void, AppError> => {
 		return invokeAsync("navigate_browser_webview", { label, url });
 	},

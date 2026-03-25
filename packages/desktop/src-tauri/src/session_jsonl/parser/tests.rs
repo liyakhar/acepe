@@ -4,6 +4,7 @@ use crate::session_jsonl::types::{ContentBlock, HistoryEntry, SessionMessage, St
 use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tempfile::TempDir;
 
 use super::scan::{extract_session_id_from_file, find_session_file_in};
@@ -16,6 +17,33 @@ fn setup_test_claude_dir() -> Result<(TempDir, PathBuf)> {
     fs::create_dir_all(&claude_dir)?;
     fs::create_dir_all(claude_dir.join("projects"))?;
     Ok((temp_dir, claude_dir))
+}
+
+fn claude_home_test_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct ClaudeHomeGuard {
+    previous_value: Option<String>,
+}
+
+impl ClaudeHomeGuard {
+    fn set(path: &Path) -> Self {
+        let previous_value = std::env::var("CLAUDE_HOME").ok();
+        std::env::set_var("CLAUDE_HOME", path);
+        Self { previous_value }
+    }
+}
+
+impl Drop for ClaudeHomeGuard {
+    fn drop(&mut self) {
+        if let Some(previous_value) = &self.previous_value {
+            std::env::set_var("CLAUDE_HOME", previous_value);
+        } else {
+            std::env::remove_var("CLAUDE_HOME");
+        }
+    }
 }
 
 // Helper to override get_session_jsonl_root for testing
@@ -167,6 +195,39 @@ async fn test_extract_thread_metadata_invalid_json() {
 
     let result = extract_thread_metadata(&file_path).await.unwrap();
     assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn test_extract_thread_metadata_sync_matches_async_for_malformed_then_valid_user() {
+    let (_temp_dir, claude_dir) = setup_test_claude_dir().unwrap();
+    let projects_dir = claude_dir.join("projects").join("test-project");
+    fs::create_dir_all(&projects_dir).unwrap();
+
+    let file_path = projects_dir.join("agent-a123456.jsonl");
+    let content = "not valid json\n{\"type\":\"user\",\"cwd\":\"/Users/test\",\"sessionId\":\"550e8400-e29b-41d4-a716-446655440000\",\"message\":{\"role\":\"user\",\"content\":\"Meaningful message\"},\"timestamp\":\"2025-12-16T19:53:41.812Z\"}";
+    fs::write(&file_path, content).unwrap();
+
+    let async_result = extract_thread_metadata(&file_path).await.unwrap();
+    let sync_result = super::scan::extract_thread_metadata_sync_for_test(&file_path).unwrap();
+
+    let async_entry = async_result.expect("async result should exist");
+    let sync_entry = sync_result.expect("sync result should exist");
+
+    assert_eq!(sync_entry.session_id, async_entry.session_id);
+    assert_eq!(sync_entry.display, async_entry.display);
+    assert_eq!(sync_entry.timestamp, async_entry.timestamp);
+    assert_eq!(sync_entry.project, async_entry.project);
+}
+
+#[tokio::test]
+async fn test_extract_thread_metadata_sync_missing_file_matches_async() {
+    let file_path = PathBuf::from("/tmp/acepe-session-jsonl-does-not-exist.jsonl");
+
+    let async_result = extract_thread_metadata(&file_path).await.unwrap();
+    let sync_result = super::scan::extract_thread_metadata_sync_for_test(&file_path).unwrap();
+
+    assert!(async_result.is_none());
+    assert!(sync_result.is_none());
 }
 
 #[tokio::test]
@@ -1431,10 +1492,64 @@ async fn test_cache_hit_project_path_override_scenario() {
     invalidate_cache().await;
 }
 
+#[tokio::test]
+async fn test_scan_projects_streaming_emits_entries_progressively_per_project() {
+    use crate::session_jsonl::cache::invalidate_cache;
+
+    let _lock = claude_home_test_lock().lock().unwrap();
+    let (_temp_dir, claude_dir) = setup_test_claude_dir().unwrap();
+    let project_path = "/Users/test/project".to_string();
+    let project_slug = path_to_slug(&project_path);
+    let project_dir = claude_dir.join("projects").join(&project_slug);
+    fs::create_dir_all(&project_dir).unwrap();
+
+    let newer_session_id = "11111111-1111-1111-1111-111111111111";
+    let older_session_id = "22222222-2222-2222-2222-222222222222";
+
+    let older_file = project_dir.join(format!("{}.jsonl", older_session_id));
+    let newer_file = project_dir.join(format!("{}.jsonl", newer_session_id));
+
+    fs::write(
+        &older_file,
+        format!(
+            r#"{{"type":"user","cwd":"{}","sessionId":"{}","message":{{"role":"user","content":"older"}},"timestamp":"2025-12-16T19:53:41.812Z"}}"#,
+            project_path, older_session_id
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &newer_file,
+        format!(
+            r#"{{"type":"user","cwd":"{}","sessionId":"{}","message":{{"role":"user","content":"newer"}},"timestamp":"2025-12-16T20:53:41.812Z"}}"#,
+            project_path, newer_session_id
+        ),
+    )
+    .unwrap();
+
+    let _claude_home = ClaudeHomeGuard::set(&claude_dir);
+    invalidate_cache().await;
+
+    let mut emitted_ids = Vec::new();
+    let entries = scan_projects_streaming(std::slice::from_ref(&project_path), |entry| {
+        emitted_ids.push(entry.session_id.clone());
+    })
+    .await
+    .unwrap();
+
+    invalidate_cache().await;
+
+    let returned_ids: Vec<String> = entries.iter().map(|entry| entry.session_id.clone()).collect();
+    assert_eq!(returned_ids, vec![newer_session_id.to_string(), older_session_id.to_string()]);
+    assert_eq!(emitted_ids.len(), returned_ids.len());
+    assert!(emitted_ids.contains(&newer_session_id.to_string()));
+    assert!(emitted_ids.contains(&older_session_id.to_string()));
+}
+
 /// Test that find_session_file returns immediately when direct path exists.
 /// This verifies O(1) lookup behavior - no scanning of other files.
 #[tokio::test]
 async fn test_find_session_file_direct_path_no_scanning() {
+    let _lock = claude_home_test_lock().lock().unwrap();
     let (_temp_dir, claude_dir) = setup_test_claude_dir().unwrap();
     let project_path = "/Users/test/project";
     let project_slug = path_to_slug(project_path);
@@ -1457,14 +1572,10 @@ async fn test_find_session_file_direct_path_no_scanning() {
         fs::write(&other_file, "INVALID_JSON_SHOULD_NOT_BE_PARSED").unwrap();
     }
 
-    // Override CLAUDE_HOME for this test
-    std::env::set_var("CLAUDE_HOME", claude_dir.to_string_lossy().as_ref());
+    let _claude_home = ClaudeHomeGuard::set(&claude_dir);
 
     // Call find_session_file - it should return immediately without scanning agent-* files
     let result = find_session_file(session_id, project_path).await;
-
-    // Clean up env var
-    std::env::remove_var("CLAUDE_HOME");
 
     assert!(result.is_ok(), "find_session_file should succeed");
     let found_path = result.unwrap();
@@ -1477,6 +1588,7 @@ async fn test_find_session_file_direct_path_no_scanning() {
 /// Test that parse_converted_session only reads the specific session file.
 #[tokio::test]
 async fn test_parse_converted_session_single_file_read() {
+    let _lock = claude_home_test_lock().lock().unwrap();
     let (_temp_dir, claude_dir) = setup_test_claude_dir().unwrap();
     let project_path = "/Users/test/project";
     let project_slug = path_to_slug(project_path);
@@ -1510,14 +1622,10 @@ async fn test_parse_converted_session_single_file_read() {
         fs::write(&other_file, "INVALID").unwrap();
     }
 
-    // Override CLAUDE_HOME for this test
-    std::env::set_var("CLAUDE_HOME", claude_dir.to_string_lossy().as_ref());
+    let _claude_home = ClaudeHomeGuard::set(&claude_dir);
 
     // Call parse_converted_session
     let result = parse_converted_session(session_id, project_path).await;
-
-    // Clean up env var
-    std::env::remove_var("CLAUDE_HOME");
 
     assert!(
         result.is_ok(),
@@ -1533,6 +1641,7 @@ async fn test_parse_converted_session_single_file_read() {
 /// fragments into one assistant entry.
 #[tokio::test]
 async fn test_parse_converted_session_merges_fragmented_assistant_response() {
+    let _lock = claude_home_test_lock().lock().unwrap();
     let (_temp_dir, claude_dir) = setup_test_claude_dir().unwrap();
     let project_path = "/Users/test/project";
     let project_slug = path_to_slug(project_path);
@@ -1552,9 +1661,8 @@ async fn test_parse_converted_session_merges_fragmented_assistant_response() {
     );
     fs::write(&session_file, content).unwrap();
 
-    std::env::set_var("CLAUDE_HOME", claude_dir.to_string_lossy().as_ref());
+    let _claude_home = ClaudeHomeGuard::set(&claude_dir);
     let result = parse_converted_session(session_id, project_path).await;
-    std::env::remove_var("CLAUDE_HOME");
 
     assert!(
         result.is_ok(),

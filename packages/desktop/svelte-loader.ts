@@ -5,7 +5,7 @@ import { afterEach, beforeEach } from "bun:test";
 import { readFileSync } from "node:fs";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { plugin } from "bun";
-import { compile } from "svelte/compiler";
+import { compile, compileModule } from "svelte/compiler";
 
 beforeEach(async () => {
 	await GlobalRegistrator.register();
@@ -35,12 +35,21 @@ plugin({
 			};
 		});
 
-		// Note: .svelte.ts files (TypeScript modules with runes) are not handled here.
-		// These files require Vite/SvelteKit's preprocessing pipeline which includes
-		// TypeScript compilation and Svelte rune transformation. For testing .svelte.ts
-		// files, consider:
-		// 1. Testing the business logic through manager classes (recommended)
-		// 2. Using integration tests with the full Vite build
-		// 3. Extracting testable logic into separate .ts files
+		// Handle .svelte.ts/.svelte.js files (TypeScript/JS modules with runes)
+		// Strip TypeScript first (acorn can't parse TS), then compile runes.
+		const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun" });
+		builder.onLoad({ filter: /\.svelte\.[tj]s$/ }, ({ path }) => {
+			const source = readFileSync(path, "utf-8");
+			const jsSource = path.endsWith(".ts") ? transpiler.transformSync(source) : source;
+			const result = compileModule(jsSource, {
+				filename: path,
+				generate: "client",
+				dev: false,
+			});
+			return {
+				contents: result.js.code,
+				loader: "js",
+			};
+		});
 	},
 });

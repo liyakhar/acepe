@@ -111,6 +111,29 @@ pub async fn resize_browser_webview<R: Runtime>(
     Ok(())
 }
 
+/// Apply zoom level to a browser webview.
+#[tauri::command]
+pub async fn set_browser_webview_zoom<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, BrowserWebviewState<R>>,
+    label: String,
+    scale: f64,
+) -> Result<(), String> {
+    let webviews = state
+        .webviews
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    let webview = webviews
+        .get(&label)
+        .ok_or_else(|| format!("Webview not found: {label}"))?;
+
+    webview
+        .set_zoom(scale)
+        .map_err(|e| format!("Failed to set zoom: {e}"))?;
+
+    Ok(())
+}
+
 /// Navigate a browser webview to a new URL.
 #[tauri::command]
 pub async fn navigate_browser_webview<R: Runtime>(

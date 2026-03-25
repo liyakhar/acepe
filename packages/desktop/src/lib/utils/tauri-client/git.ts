@@ -66,6 +66,10 @@ export const git = {
 		return invokeAsync(CMD.git.worktree_list, { projectPath });
 	},
 
+	worktreeRename: (worktreePath: string, newName: string): ResultAsync<WorktreeInfo, AppError> => {
+		return invokeAsync(CMD.git.worktree_rename, { worktreePath, newName });
+	},
+
 	worktreeDiskSize: (path: string): ResultAsync<number, AppError> => {
 		return invokeAsync(CMD.git.worktree_disk_size, { path });
 	},

@@ -13,6 +13,8 @@ pub enum CommunicationMode {
     Subprocess,
     /// HTTP REST API + SSE
     Http,
+    /// Direct Rust SDK (cc-sdk) — no subprocess indirection
+    CcSdk,
 }
 
 /// Trait for agent client implementations

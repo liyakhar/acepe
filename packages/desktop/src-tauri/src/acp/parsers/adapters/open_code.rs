@@ -174,6 +174,12 @@ impl OpenCodeAdapter {
         }
         if any_eq(
             name,
+            &["taskoutput", "task_output", "get_task_output"],
+        ) {
+            return CanonicalTool::TaskOutput;
+        }
+        if any_eq(
+            name,
             &[
                 "todo",
                 "todowrite",

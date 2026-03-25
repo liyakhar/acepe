@@ -19,6 +19,10 @@ export const projects = {
 		return invokeAsync(CMD.projects.get_project_count);
 	},
 
+	getMissingProjectPaths: (paths: string[]): ResultAsync<string[], AppError> => {
+		return invokeAsync(CMD.projects.get_missing_project_paths, { paths });
+	},
+
 	importProject: (path: string, name: string): ResultAsync<ProjectData, AppError> => {
 		return invokeAsync(CMD.projects.import_project, { path, name });
 	},

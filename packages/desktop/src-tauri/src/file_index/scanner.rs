@@ -28,6 +28,17 @@ pub fn scan_project(project_path: &Path) -> Result<Vec<IndexedFile>> {
     let files: Vec<_> = walker
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter(|entry| {
+            let path = entry.path();
+            let relative = match path.strip_prefix(project_path) {
+                Ok(value) => value,
+                Err(_) => return false,
+            };
+
+            !relative
+                .components()
+                .any(|component| component.as_os_str() == ".git")
+        })
         .map(|entry| entry.into_path())
         .collect();
 
@@ -115,5 +126,24 @@ mod tests {
         let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
         assert!(paths.iter().any(|p| p.contains("included.ts")));
         assert!(!paths.iter().any(|p| p.contains("ignored.txt")));
+    }
+
+    #[test]
+    fn test_scan_skips_git_internal_files() {
+        let dir = TempDir::new().expect("temp dir");
+        fs::create_dir_all(dir.path().join(".git/hooks")).expect("create git dir");
+        fs::write(dir.path().join(".git/config"), "[core]").expect("write config");
+        fs::write(dir.path().join(".git/hooks/pre-commit"), "#!/bin/sh").expect("write hook");
+        fs::write(
+            dir.path().join("visible.ts"),
+            "export const visible = true;",
+        )
+        .expect("write visible file");
+
+        let files = scan_project(dir.path()).expect("scan project");
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+
+        assert!(paths.contains(&"visible.ts"));
+        assert!(!paths.iter().any(|path| path.starts_with(".git/")));
     }
 }

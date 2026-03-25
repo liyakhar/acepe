@@ -21,6 +21,7 @@ pub enum ToolKind {
     Todo,
     Question,
     Task,
+    TaskOutput,
     Skill,
     Move,
     Delete,
@@ -45,6 +46,7 @@ impl ToolKind {
             ToolKind::Todo => "todo",
             ToolKind::Question => "question",
             ToolKind::Task => "task",
+            ToolKind::TaskOutput => "task_output",
             ToolKind::Skill => "skill",
             ToolKind::Move => "move",
             ToolKind::Delete => "delete",
@@ -168,6 +170,12 @@ pub enum ToolArguments {
         #[serde(skip_serializing_if = "Option::is_none")]
         raw: Option<serde_json::Value>,
     },
+    TaskOutput {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timeout: Option<u64>,
+    },
     Move {
         #[serde(skip_serializing_if = "Option::is_none")]
         from: Option<String>,
@@ -205,6 +213,7 @@ impl ToolArguments {
             ToolArguments::Fetch { .. } => ToolKind::Fetch,
             ToolArguments::WebSearch { .. } => ToolKind::WebSearch,
             ToolArguments::Think { .. } => ToolKind::Think,
+            ToolArguments::TaskOutput { .. } => ToolKind::TaskOutput,
             ToolArguments::Move { .. } => ToolKind::Move,
             ToolArguments::Delete { .. } => ToolKind::Delete,
             ToolArguments::PlanMode { .. } => ToolKind::Other,

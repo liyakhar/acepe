@@ -5,6 +5,9 @@ use std::sync::{Mutex, OnceLock};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectPathSafetyError {
     Empty,
+    /// Path does not exist on disk (deleted or moved).
+    PathNotFound,
+    /// Path exists but is not a directory (it's a file).
     NotDirectory,
     RootDirectory,
     HomeDirectory,
@@ -14,6 +17,7 @@ impl ProjectPathSafetyError {
     pub fn message_for(self, path: &Path) -> String {
         match self {
             Self::Empty => "Project path cannot be empty".to_string(),
+            Self::PathNotFound => format!("Project folder not found: {}", path.display()),
             Self::NotDirectory => format!("Project path is not a directory: {}", path.display()),
             Self::RootDirectory => {
                 format!(
@@ -108,6 +112,9 @@ pub fn validate_project_directory(path: &Path) -> Result<PathBuf, ProjectPathSaf
 }
 
 fn validate_project_directory_uncached(path: &Path) -> Result<PathBuf, ProjectPathSafetyError> {
+    if !path.exists() {
+        return Err(ProjectPathSafetyError::PathNotFound);
+    }
     if !path.is_dir() {
         return Err(ProjectPathSafetyError::NotDirectory);
     }
@@ -255,6 +262,13 @@ mod tests {
 
         assert_eq!(first, second);
         assert!(matches!(first, Err(ProjectPathSafetyError::NotDirectory)));
+    }
+
+    #[test]
+    fn missing_path_returns_path_not_found() {
+        let path = std::path::Path::new("/tmp/acepe-test-nonexistent-path-xyz123");
+        let result = validate_project_directory(path);
+        assert!(matches!(result, Err(ProjectPathSafetyError::PathNotFound)));
     }
 
     #[test]

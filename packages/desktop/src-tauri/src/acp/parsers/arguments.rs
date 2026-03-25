@@ -357,6 +357,12 @@ pub(crate) fn parse_canonical_tool_arguments(
                 .or_else(|| parse_parser_first_item_string(raw_arguments, "time", &["utc_offset"]))
                 .or_else(|| parse_parser_search_query_from_url_value(raw_arguments)),
         },
+        ToolKind::TaskOutput => ToolArguments::TaskOutput {
+            task_id: extract_parser_string(raw_arguments, &["task_id", "taskId"]),
+            timeout: raw_arguments
+                .get("timeout")
+                .and_then(|v| v.as_u64()),
+        },
         ToolKind::Think
         | ToolKind::Task
         | ToolKind::Todo

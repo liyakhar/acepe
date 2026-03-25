@@ -4,8 +4,10 @@
 //! - Fast file scanning with .gitignore support
 //! - Git status extraction (M/A/D/? with line changes)
 //! - Caching for instant subsequent lookups
+//! - Explorer search/preview for the Cmd+I file explorer modal
 
 pub mod commands;
+pub mod explorer;
 pub mod git;
 mod scanner;
 pub mod service;

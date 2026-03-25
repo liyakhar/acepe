@@ -39,28 +39,28 @@ fn resample_down_sample_ratio_is_approximately_correct() {
 
 #[tokio::test]
 async fn runtime_can_be_spawned_and_dropped() {
-    let handle = VoiceRuntimeHandle::spawn(Box::new(StubEngine));
+    let handle = VoiceRuntimeHandle::spawn(Box::new(StubEngine)).unwrap();
     drop(handle);
     // Worker thread received Shutdown and exited cleanly.
 }
 
 #[tokio::test]
 async fn stop_when_not_recording_returns_error() {
-    let handle = VoiceRuntimeHandle::spawn(Box::new(StubEngine));
+    let handle = VoiceRuntimeHandle::spawn(Box::new(StubEngine)).unwrap();
     let result = handle.stop_recording("session-99".to_string(), None).await;
     assert!(result.is_err(), "stop when idle should return Err");
 }
 
 #[tokio::test]
 async fn cancel_when_not_recording_is_idempotent() {
-    let handle = VoiceRuntimeHandle::spawn(Box::new(StubEngine));
+    let handle = VoiceRuntimeHandle::spawn(Box::new(StubEngine)).unwrap();
     let result = handle.cancel_recording("session-99".to_string()).await;
     assert!(result.is_ok(), "cancel when idle should return Ok");
 }
 
 #[tokio::test]
 async fn multiple_cancel_calls_are_idempotent() {
-    let handle = VoiceRuntimeHandle::spawn(Box::new(StubEngine));
+    let handle = VoiceRuntimeHandle::spawn(Box::new(StubEngine)).unwrap();
     for _ in 0..3 {
         let result = handle.cancel_recording("session-99".to_string()).await;
         assert!(result.is_ok());

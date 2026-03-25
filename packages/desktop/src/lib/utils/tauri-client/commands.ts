@@ -48,6 +48,7 @@ export const CMD = {
 		get_projects: storage.get_projects,
 		get_recent_projects: storage.get_recent_projects,
 		get_project_count: storage.get_project_count,
+		get_missing_project_paths: storage.get_missing_project_paths,
 		import_project: storage.import_project,
 		add_project: storage.add_project,
 		remove_project: storage.remove_project,
@@ -90,6 +91,7 @@ export const CMD = {
 		worktree_remove: "git_worktree_remove",
 		worktree_reset: "git_worktree_reset",
 		worktree_list: "git_worktree_list",
+		worktree_rename: "git_worktree_rename",
 		worktree_disk_size: "git_worktree_disk_size",
 		panel_status: "git_panel_status",
 		diff_stats: "git_diff_stats",
@@ -141,6 +143,8 @@ export const CMD = {
 		copy_file: "copy_file",
 		create_file: "create_file",
 		create_directory: "create_directory",
+		search_project_files_for_explorer: "search_project_files_for_explorer",
+		get_file_explorer_preview: "get_file_explorer_preview",
 	} as const,
 
 	checkpoint: {

@@ -17,7 +17,10 @@ use crate::acp::session_update::{
 };
 use crate::acp::types::{CanonicalAgentId, ContentBlock, EmbeddedResource};
 use crate::checkpoint::types::FileDiffContent;
-use crate::file_index::types::{FileGitStatus, IndexedFile, ProjectIndex};
+use crate::file_index::types::{
+    FileExplorerPreviewResponse, FileExplorerRow, FileExplorerSearchResponse, FileGitStatus,
+    IndexedFile, ProjectIndex,
+};
 use crate::session_jsonl::types::*;
 use crate::storage::types::UserSettingKey;
 use specta_typescript::Typescript;
@@ -132,6 +135,11 @@ pub fn export_all_types() {
     export_type!(IndexedFile);
     export_type!(FileGitStatus);
     export_type!(ProjectIndex);
+
+    // File explorer types (for Cmd+I file explorer modal)
+    export_type!(FileExplorerRow);
+    export_type!(FileExplorerSearchResponse);
+    export_type!(FileExplorerPreviewResponse);
 
     let converted_path = Path::new(manifest_dir).join(CONVERTED_SESSION_TYPES_PATH);
     fs::write(&converted_path, converted_types)

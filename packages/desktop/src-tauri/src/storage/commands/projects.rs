@@ -1,9 +1,26 @@
 use crate::db::repository::ProjectRepository;
+use crate::path_safety::{validate_project_directory_from_str, ProjectPathSafetyError};
 use rand::Rng;
 use sea_orm::DatabaseConnection;
 use tauri::{AppHandle, State};
 
 use super::shared::{capitalize_name, get_db, validate_project_path_for_storage, Project};
+
+fn classify_missing_project_paths(paths: &[String]) -> Vec<String> {
+    paths.iter()
+        .filter_map(|path| match validate_project_directory_from_str(path) {
+            Ok(_) => None,
+            Err(ProjectPathSafetyError::PathNotFound | ProjectPathSafetyError::NotDirectory) => {
+                Some(path.clone())
+            }
+            Err(
+                ProjectPathSafetyError::Empty
+                | ProjectPathSafetyError::RootDirectory
+                | ProjectPathSafetyError::HomeDirectory,
+            ) => None,
+        })
+        .collect()
+}
 
 #[tauri::command]
 #[specta::specta]
@@ -79,6 +96,12 @@ pub async fn get_project_count(app: AppHandle) -> Result<u64, String> {
 
     tracing::debug!(count = %count, "Returning project count");
     Ok(count)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_missing_project_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    Ok(classify_missing_project_paths(&paths))
 }
 
 #[tauri::command]
@@ -286,5 +309,36 @@ pub async fn browse_project(_app: AppHandle) -> Result<Option<Project>, String> 
             tracing::debug!("Folder selection cancelled");
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_missing_project_paths;
+    use tempfile::tempdir;
+
+    #[test]
+    fn reports_missing_and_non_directory_paths() {
+        let temp = tempdir().expect("temp dir");
+        let existing_dir = temp.path().join("existing");
+        let file_path = temp.path().join("file.txt");
+        let missing_path = temp.path().join("missing");
+
+        std::fs::create_dir(&existing_dir).expect("create dir");
+        std::fs::write(&file_path, "content").expect("write file");
+
+        let missing = classify_missing_project_paths(&[
+            existing_dir.to_string_lossy().to_string(),
+            file_path.to_string_lossy().to_string(),
+            missing_path.to_string_lossy().to_string(),
+        ]);
+
+        assert_eq!(
+            missing,
+            vec![
+                file_path.to_string_lossy().to_string(),
+                missing_path.to_string_lossy().to_string(),
+            ]
+        );
     }
 }

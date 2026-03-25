@@ -74,6 +74,9 @@ impl ClaudeCodeAdapter {
         if any_eq(clean_name, &["think", "task", "spawn", "agent", "subagent"]) {
             return CanonicalTool::Task;
         }
+        if any_eq(clean_name, &["taskoutput", "task_output"]) {
+            return CanonicalTool::TaskOutput;
+        }
         if any_eq(clean_name, &["todowrite", "todo", "todoread"]) {
             return CanonicalTool::TodoWrite;
         }

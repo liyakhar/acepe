@@ -86,6 +86,7 @@ pub fn infer_kind_from_payload(
         "enter_plan_mode" | "enterplanmode" | "enter-plan-mode" => Some(ToolKind::EnterPlanMode),
         "exit_plan_mode" | "exitplanmode" | "exit-plan-mode" => Some(ToolKind::ExitPlanMode),
         "create_plan" | "createplan" | "create-plan" => Some(ToolKind::CreatePlan),
+        "task_output" | "taskoutput" | "task-output" => Some(ToolKind::TaskOutput),
         _ => None,
     }
 }
@@ -112,6 +113,7 @@ pub fn canonical_name_for_kind(kind: ToolKind) -> &'static str {
         ToolKind::EnterPlanMode => "EnterPlanMode",
         ToolKind::ExitPlanMode => "ExitPlanMode",
         ToolKind::CreatePlan => "CreatePlan",
+        ToolKind::TaskOutput => "TaskOutput",
         ToolKind::Other => "Tool",
     }
 }

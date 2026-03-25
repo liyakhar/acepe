@@ -860,5 +860,7 @@
 	"voice_error_model_status_failed": "Failed to check model status",
 	"voice_error_start_failed": "Failed to start recording",
 	"voice_error_load_failed": "Failed to load model",
-	"voice_error_transcription_timeout": "Transcription timed out"
+	"voice_error_transcription_timeout": "Transcription timed out",
+	"voice_model_menu_label": "Voice model",
+	"voice_model_menu_downloading": "Downloading…"
 }

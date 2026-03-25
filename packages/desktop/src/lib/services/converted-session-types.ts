@@ -128,7 +128,7 @@ export type ToolArguments = { kind: "read"; file_path?: string | null } |
  * `edits` is always a non-empty Vec. Single-file edits have exactly one entry;
  * multi-file edits (OpenCode `patch`, Codex multi-entry `changes` map) have N entries.
  */
-{ kind: "edit"; edits: EditEntry[] } | { kind: "execute"; command?: string | null } | { kind: "search"; query?: string | null; file_path?: string | null } | { kind: "glob"; pattern?: string | null; path?: string | null } | { kind: "fetch"; url?: string | null } | { kind: "webSearch"; query?: string | null } | { kind: "think"; description?: string | null; prompt?: string | null; subagent_type?: string | null; skill?: string | null; skill_args?: string | null; raw?: JsonValue | null } | { kind: "move"; from?: string | null; to?: string | null } | { kind: "delete"; file_path?: string | null } | { kind: "planMode"; mode?: string | null } | { kind: "other"; raw: JsonValue }
+{ kind: "edit"; edits: EditEntry[] } | { kind: "execute"; command?: string | null } | { kind: "search"; query?: string | null; file_path?: string | null } | { kind: "glob"; pattern?: string | null; path?: string | null } | { kind: "fetch"; url?: string | null } | { kind: "webSearch"; query?: string | null } | { kind: "think"; description?: string | null; prompt?: string | null; subagent_type?: string | null; skill?: string | null; skill_args?: string | null; raw?: JsonValue | null } | { kind: "taskOutput"; task_id?: string | null; timeout?: number | null } | { kind: "move"; from?: string | null; to?: string | null } | { kind: "delete"; file_path?: string | null } | { kind: "planMode"; mode?: string | null } | { kind: "other"; raw: JsonValue }
 
 /**
  * Tool call update data.
@@ -311,7 +311,7 @@ export type PlanConfidence = "high" | "medium"
 /**
  * Tool kind for routing to appropriate UI components.
  */
-export type ToolKind = "read" | "edit" | "execute" | "search" | "glob" | "fetch" | "web_search" | "think" | "todo" | "question" | "task" | "skill" | "move" | "delete" | "enter_plan_mode" | "exit_plan_mode" | "create_plan" | "other"
+export type ToolKind = "read" | "edit" | "execute" | "search" | "glob" | "fetch" | "web_search" | "think" | "todo" | "question" | "task" | "task_output" | "skill" | "move" | "delete" | "enter_plan_mode" | "exit_plan_mode" | "create_plan" | "other"
 
 /**
  * Tool call status.
@@ -705,3 +705,94 @@ totalFiles: number;
  */
 totalLines: number }
 
+/**
+ * What kind of preview the frontend should render for a result row.
+ */
+export type PreviewKind = "diff" | "text" | "binary" | "large" | "deleted" | "unsupported"
+
+/**
+ * A single row in the file explorer results list.
+ */
+export type FileExplorerRow = { 
+/**
+ * Absolute path to the owning project root.
+ */
+projectPath: string; 
+/**
+ * Relative path from project root.
+ */
+path: string; 
+/**
+ * Basename of the file.
+ */
+fileName: string; 
+/**
+ * File extension without dot, empty for no extension.
+ */
+extension: string; 
+/**
+ * Path split into segments for breadcrumb display.
+ */
+pathSegments: string[]; 
+/**
+ * Git status if the file has been modified/added/deleted/etc.
+ */
+gitStatus: FileGitStatus | null; 
+/**
+ * Whether the file is tracked by git.
+ */
+isTracked: boolean; 
+/**
+ * Whether the file appears to be binary content.
+ */
+isBinary: boolean; 
+/**
+ * File last-modified time in milliseconds since Unix epoch, if available.
+ */
+lastModifiedMs: number | null; 
+/**
+ * File size in bytes, if available.
+ */
+sizeBytes: number | null; 
+/**
+ * Classification hint for the preview pane.
+ */
+previewKind: PreviewKind }
+
+/**
+ * Response from the explorer search command.
+ */
+export type FileExplorerSearchResponse = { 
+/**
+ * Project path echoed back.
+ */
+projectPath: string; 
+/**
+ * Query echoed back.
+ */
+query: string; 
+/**
+ * Total number of matching rows before limiting/offsetting.
+ */
+total: number; 
+/**
+ * Ranked result rows for this page.
+ */
+rows: FileExplorerRow[] }
+
+/**
+ * Preview payload returned for a selected explorer row.
+ */
+export type FileExplorerPreviewResponse = 
+/**
+ * Changed text file with diff content.
+ */
+{ kind: "diff"; file_path: string; file_name: string; old_content: string | null; new_content: string; git_status: FileGitStatus } | 
+/**
+ * Unchanged text file with full content.
+ */
+{ kind: "text"; file_path: string; file_name: string; content: string; language_hint: string | null } | 
+/**
+ * Fallback for binary, too-large, deleted, or unsupported files.
+ */
+{ kind: "fallback"; file_path: string; file_name: string; reason: string; size_bytes: number | null; git_status: FileGitStatus | null; preview_kind: PreviewKind }
