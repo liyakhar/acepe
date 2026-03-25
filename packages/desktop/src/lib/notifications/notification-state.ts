@@ -5,10 +5,15 @@
  * The .svelte.ts wrapper subscribes to changes and mirrors into $state.
  */
 
-import { Result } from "neverthrow";
+import { okAsync, Result, ResultAsync } from "neverthrow";
 import { SoundEffect } from "$lib/acp/types/sounds.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
 import { playSound } from "$lib/acp/utils/sound.js";
+import {
+	getNotificationPermission,
+	requestNotificationPermission,
+	sendNativeNotification,
+} from "./native-notification.js";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -55,29 +60,36 @@ export interface ActiveNotification {
 	onAction: (actionId: PopupActionId) => void;
 }
 
+interface NotificationRuntime {
+	readonly isMacOs: () => boolean;
+	readonly getPermission: () => Promise<boolean>;
+	readonly requestPermission: () => Promise<NativeNotificationPermissionState>;
+	readonly send: (payload: { title: string; body: string }) => void;
+}
+
+type NativeNotificationPermission = "unknown" | "granted" | "denied";
+type NativeNotificationPermissionState = "default" | "denied" | "granted";
+
 let notifications: ActiveNotification[] = [];
 let lastSoundTime = 0;
-let onChange: (() => void) | null = null;
+let nativeNotificationPermission: NativeNotificationPermission = "unknown";
+
+const defaultNotificationRuntime: NotificationRuntime = {
+	isMacOs: () => {
+		if (typeof navigator === "undefined") return false;
+		return navigator.platform.includes("Mac");
+	},
+	getPermission: () => getNotificationPermission(),
+	requestPermission: () => requestNotificationPermission(),
+	send: (payload) => {
+		sendNativeNotification(payload);
+	},
+};
+
+let notificationRuntime: NotificationRuntime = defaultNotificationRuntime;
 
 const SOUND_DEBOUNCE_MS = 2000;
 const MAX_NOTIFICATIONS = 6;
-
-// ── Change Subscription ────────────────────────────────────────────────
-
-/**
- * Register a callback that fires after any state mutation.
- * Only one subscriber is supported (the .svelte.ts reactive wrapper).
- */
-export function onNotificationsChanged(callback: () => void): void {
-	if (onChange !== null) {
-		throw new Error("onNotificationsChanged already has a subscriber");
-	}
-	onChange = callback;
-}
-
-function notifyChange(): void {
-	onChange?.();
-}
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -96,7 +108,14 @@ export function showNotification(
 ): void {
 	if (opts.windowFocused) return;
 	if (!opts.categoryEnabled) return;
-	if (notifications.some((n) => n.id === payload.id)) return;
+	const useNativeNotification = notificationRuntime.isMacOs();
+	if (!useNativeNotification && notifications.some((n) => n.id === payload.id)) return;
+
+	if (useNativeNotification) {
+		maybeSendNativeNotification(payload);
+		maybePlaySound();
+		return;
+	}
 
 	notifications = [...notifications, { id: payload.id, payload, onAction }];
 
@@ -106,16 +125,13 @@ export function showNotification(
 	}
 
 	maybePlaySound();
-	notifyChange();
 }
 
 /**
  * Dismiss a single notification. Idempotent.
  */
 export function dismissNotification(id: string): void {
-	const prev = notifications.length;
 	notifications = notifications.filter((n) => n.id !== id);
-	if (notifications.length !== prev) notifyChange();
 }
 
 /**
@@ -124,16 +140,13 @@ export function dismissNotification(id: string): void {
 export function dismissAll(): void {
 	if (notifications.length === 0) return;
 	notifications = [];
-	notifyChange();
 }
 
 /**
  * Dismiss notifications matching a predicate.
  */
 export function dismissWhere(predicate: (notif: ActiveNotification) => boolean): void {
-	const prev = notifications.length;
 	notifications = notifications.filter((n) => !predicate(n));
-	if (notifications.length !== prev) notifyChange();
 }
 
 /**
@@ -168,7 +181,67 @@ export function getActiveCount(): number {
 	return notifications.length;
 }
 
+export function setNotificationRuntimeForTesting(runtime: NotificationRuntime): void {
+	notificationRuntime = runtime;
+	nativeNotificationPermission = "unknown";
+}
+
+export function resetNotificationRuntimeForTesting(): void {
+	notificationRuntime = defaultNotificationRuntime;
+	nativeNotificationPermission = "unknown";
+}
+
 // ── Internal ───────────────────────────────────────────────────────────
+
+function maybeSendNativeNotification(payload: NotificationPayload): void {
+	ensureNativeNotificationPermission()
+		.andThen((permissionGranted) => {
+			if (!permissionGranted) return okAsync(undefined);
+
+			return ResultAsync.fromPromise(
+				Promise.resolve().then(() => {
+					notificationRuntime.send({
+						title: payload.title,
+						body: payload.body,
+					});
+				}),
+				(error) => new Error(`Failed to send native notification: ${error}`)
+			);
+		})
+		.match(
+			() => {},
+			(error) => {
+				logger.error("Failed to send native notification", {
+					notificationId: payload.id,
+					error,
+				});
+			}
+		);
+}
+
+function ensureNativeNotificationPermission(): ResultAsync<boolean, Error> {
+	if (nativeNotificationPermission === "granted") return okAsync(true);
+	if (nativeNotificationPermission === "denied") return okAsync(false);
+
+	return ResultAsync.fromPromise(
+		notificationRuntime.getPermission(),
+		(error) => new Error(`Failed to read native notification permission: ${error}`)
+	).andThen((alreadyGranted) => {
+		if (alreadyGranted) {
+			nativeNotificationPermission = "granted";
+			return okAsync(true);
+		}
+
+		return ResultAsync.fromPromise(
+			notificationRuntime.requestPermission(),
+			(error) => new Error(`Failed to request native notification permission: ${error}`)
+		).map((permission) => {
+			const granted = permission === "granted";
+			nativeNotificationPermission = granted ? "granted" : "denied";
+			return granted;
+		});
+	});
+}
 
 function maybePlaySound(): void {
 	const now = Date.now();

@@ -42,8 +42,14 @@ export class NotificationPreferencesStore {
 
 		const result = await tauriClient.settings.get<PersistedPreferences>(SETTINGS_KEY);
 		if (result.isOk() && result.value) {
-			this.questionsEnabled = result.value.questionsEnabled ?? DEFAULTS.questionsEnabled;
-			this.completionsEnabled = result.value.completionsEnabled ?? DEFAULTS.completionsEnabled;
+			this.questionsEnabled =
+				result.value.questionsEnabled === undefined
+					? DEFAULTS.questionsEnabled
+					: result.value.questionsEnabled;
+			this.completionsEnabled =
+				result.value.completionsEnabled === undefined
+					? DEFAULTS.completionsEnabled
+					: result.value.completionsEnabled;
 		}
 	}
 
