@@ -1,7 +1,23 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
+import { vi } from "vitest";
+import type { MessageQueueStore } from "$lib/acp/store/message-queue/index.js";
 
 import QueueCardStripHarness from "./__tests__/queue-card-strip.test-harness.svelte";
+
+vi.mock(
+	"svelte",
+	async () =>
+		// @ts-expect-error Test-only client runtime override for Vitest component mounting
+		import("../../../../node_modules/svelte/src/index-client.js")
+);
+
+function requireStore(store: MessageQueueStore | null): MessageQueueStore {
+	if (!store) {
+		throw new Error("Queue store was not provided by the test harness");
+	}
+	return store;
+}
 
 describe("QueueCardStrip", () => {
 	afterEach(() => {
@@ -9,9 +25,13 @@ describe("QueueCardStrip", () => {
 	});
 
 	it("allows editing a queued message", async () => {
+		let store: MessageQueueStore | null = null;
 		render(QueueCardStripHarness, {
 			sessionId: "session-1",
 			messages: [{ content: "first queued message", attachments: [] }],
+			onStoreReady: (value: MessageQueueStore) => {
+				store = value;
+			},
 		});
 
 		await fireEvent.click(screen.getByRole("button", { name: /queued/i }));
@@ -21,19 +41,22 @@ describe("QueueCardStrip", () => {
 		await fireEvent.input(editor, { target: { value: "updated queued message" } });
 		await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-		expect(screen.getByText("updated queued message")).toBeTruthy();
+		expect(requireStore(store).getQueue("session-1")[0]?.content).toBe("updated queued message");
 	});
 
 	it("allows deleting a queued message", async () => {
+		let store: MessageQueueStore | null = null;
 		render(QueueCardStripHarness, {
 			sessionId: "session-1",
 			messages: [{ content: "message to delete", attachments: [] }],
+			onStoreReady: (value: MessageQueueStore) => {
+				store = value;
+			},
 		});
 
 		await fireEvent.click(screen.getByRole("button", { name: /queued/i }));
 		await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
-		expect(screen.queryByText("message to delete")).toBeNull();
-		expect(screen.queryByRole("button", { name: /queued/i })).toBeNull();
+		expect(requireStore(store).getQueue("session-1")).toEqual([]);
 	});
 });

@@ -74,12 +74,9 @@ function formatBytes(bytes: number): string {
 									: "size-3 shrink-0 text-transparent"}
 								weight="bold"
 							/>
-							<div class="flex flex-1 items-center gap-1.5 min-w-0">
+							<div class="flex flex-1 items-center min-w-0">
 								<span class="truncate text-[12px] font-medium">
 									{model.name}
-								</span>
-								<span class="text-[10px] text-muted-foreground/50 shrink-0">
-									{model.is_english_only ? "EN" : m.voice_settings_model_multilingual()}
 								</span>
 							</div>
 							<span class="text-[10px] text-muted-foreground/40 shrink-0">
@@ -93,12 +90,9 @@ function formatBytes(bytes: number): string {
 						class="model-row relative z-10 flex items-center gap-2 px-2 py-1 text-[11px] font-medium select-none border-b border-border/20 last:border-b-0"
 					>
 						<Check class="size-3 shrink-0 text-transparent" weight="bold" />
-						<div class="flex flex-1 items-center gap-1.5 min-w-0">
+						<div class="flex flex-1 items-center min-w-0">
 							<span class="truncate text-[12px] font-medium text-muted-foreground">
 								{model.name}
-							</span>
-							<span class="text-[10px] text-muted-foreground/50 shrink-0">
-								{model.is_english_only ? "EN" : m.voice_settings_model_multilingual()}
 							</span>
 						</div>
 
@@ -109,6 +103,7 @@ function formatBytes(bytes: number): string {
 								label=""
 								percent={voiceSettingsStore.downloadPercent}
 								segmentCount={20}
+								showPercent={false}
 							/>
 						{:else}
 							<PillButton

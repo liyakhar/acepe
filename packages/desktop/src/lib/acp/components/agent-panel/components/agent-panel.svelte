@@ -1612,7 +1612,7 @@ function handleCheckpointRevertComplete() {
 						</div>
 					{/if}
 					<div
-						class="shrink-0 px-2 pt-0.5 pb-0.5 {isFullscreen ? 'flex justify-center' : ''}"
+						class="shrink-0 px-2 pt-0.5 pb-2 {isFullscreen ? 'flex justify-center' : ''}"
 						data-input-area
 					>
 						<div class={isFullscreen ? "w-full max-w-[60%]" : ""}>

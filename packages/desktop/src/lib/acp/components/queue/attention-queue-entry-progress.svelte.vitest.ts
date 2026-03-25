@@ -1,0 +1,81 @@
+import { ActivityEntry } from "@acepe/ui";
+import { cleanup, render } from "@testing-library/svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("svelte", async () => {
+	const { createRequire } = await import("node:module");
+	const { dirname, join } = await import("node:path");
+	const require = createRequire(import.meta.url);
+	const svelteClientPath = join(
+		dirname(require.resolve("svelte/package.json")),
+		"src/index-client.js"
+	);
+
+	return import(/* @vite-ignore */ svelteClientPath);
+});
+
+afterEach(() => {
+	cleanup();
+});
+
+describe("ActivityEntry todo progress", () => {
+	it("renders one segment per todo and fills completed ones without numeric counter", () => {
+		const { container } = render(ActivityEntry, {
+			selected: false,
+			onSelect: vi.fn(),
+			mode: null,
+			title: "Queue item",
+			timeAgo: "1m",
+			insertions: 0,
+			deletions: 0,
+			isStreaming: false,
+			taskDescription: null,
+			taskSubagentSummaries: [],
+			showTaskSubagentList: false,
+			fileToolDisplayText: null,
+			toolContent: null,
+			showToolShimmer: false,
+			statusText: null,
+			showStatusShimmer: false,
+			todoProgress: {
+				current: 3,
+				total: 5,
+				label: "Working through todos",
+			},
+			currentQuestion: null,
+			totalQuestions: 0,
+			hasMultipleQuestions: false,
+			currentQuestionIndex: 0,
+			questionId: "",
+			questionProgress: [],
+			currentQuestionAnswered: false,
+			currentAnswerDisplay: "",
+			currentQuestionOptions: [],
+			otherText: "",
+			otherPlaceholder: "Other",
+			showOtherInput: true,
+			showSubmitButton: false,
+			canSubmit: false,
+			submitLabel: "Submit",
+			onOptionSelect: vi.fn(),
+			onOtherInput: vi.fn(),
+			onOtherKeydown: vi.fn(),
+			onSubmitAll: vi.fn(),
+			onPrevQuestion: vi.fn(),
+			onNextQuestion: vi.fn(),
+		});
+
+		const segments = Array.from(
+			container.querySelectorAll("[data-testid='todo-progress-segment']")
+		);
+
+		expect(segments).toHaveLength(5);
+		expect(container.textContent).not.toContain("3/5");
+		expect(
+			segments.filter((segment) => segment.getAttribute("data-filled") === "true")
+		).toHaveLength(3);
+		expect(
+			segments.filter((segment) => segment.getAttribute("data-filled") === "false")
+		).toHaveLength(2);
+	});
+});

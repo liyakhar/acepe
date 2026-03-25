@@ -56,6 +56,9 @@ export interface MessageSender {
 }
 
 export interface MessageQueueStore {
+	readonly queues: SvelteMap<string, QueuedMessage[]>;
+	readonly pausedIds: SvelteSet<string>;
+	readonly versions: SvelteMap<string, number>;
 	getQueue(sessionId: string): readonly QueuedMessage[];
 	/** Enqueue a message. Returns false if the queue is full. */
 	enqueue(sessionId: string, content: string, attachments: readonly Attachment[]): boolean;
@@ -78,8 +81,18 @@ export function createMessageQueueStore(sender: MessageSender): MessageQueueStor
 	const queues = new SvelteMap<string, QueuedMessage[]>();
 	// Paused sessions — SvelteSet for reactivity (UI reads isPaused)
 	const pausedIds = new SvelteSet<string>();
+	const versions = new SvelteMap<string, number>();
 	// Draining sessions — plain Set (intentionally non-reactive, no UI reads this)
 	const drainingIds = new Set<string>();
+
+	function bumpVersion(sessionId: string): void {
+		const current = versions.get(sessionId) ? versions.get(sessionId)! : 0;
+		versions.set(sessionId, current + 1);
+	}
+
+	function clearVersion(sessionId: string): void {
+		versions.delete(sessionId);
+	}
 
 	function getQueue(sessionId: string): readonly QueuedMessage[] {
 		return queues.get(sessionId) ?? EMPTY_QUEUE;
@@ -104,6 +117,7 @@ export function createMessageQueueStore(sender: MessageSender): MessageQueueStor
 		};
 
 		queues.set(sessionId, [...queue, message]);
+		bumpVersion(sessionId);
 		logger.debug("Message enqueued", {
 			sessionId,
 			messageId: message.id,
@@ -132,6 +146,7 @@ export function createMessageQueueStore(sender: MessageSender): MessageQueueStor
 		});
 
 		queues.set(sessionId, nextQueue);
+		bumpVersion(sessionId);
 		return true;
 	}
 
@@ -142,13 +157,16 @@ export function createMessageQueueStore(sender: MessageSender): MessageQueueStor
 		const filtered = queue.filter((m) => m.id !== messageId);
 		if (filtered.length === 0) {
 			queues.delete(sessionId);
+			clearVersion(sessionId);
 		} else {
 			queues.set(sessionId, filtered);
+			bumpVersion(sessionId);
 		}
 	}
 
 	function clearQueue(sessionId: string): void {
 		queues.delete(sessionId);
+		clearVersion(sessionId);
 		logger.debug("Queue cleared", { sessionId });
 	}
 
@@ -162,8 +180,10 @@ export function createMessageQueueStore(sender: MessageSender): MessageQueueStor
 		const [next, ...rest] = queue;
 		if (rest.length > 0) {
 			queues.set(sessionId, rest);
+			bumpVersion(sessionId);
 		} else {
 			queues.delete(sessionId);
+			clearVersion(sessionId);
 		}
 
 		drainingIds.add(sessionId);
@@ -180,6 +200,7 @@ export function createMessageQueueStore(sender: MessageSender): MessageQueueStor
 				// Send failed — re-insert at front and pause
 				const current = queues.get(sessionId) ?? [];
 				queues.set(sessionId, [next, ...current]);
+				bumpVersion(sessionId);
 				drainingIds.delete(sessionId);
 				pausedIds.add(sessionId);
 				logger.warn("Drain failed, re-inserted and paused", {
@@ -209,6 +230,7 @@ export function createMessageQueueStore(sender: MessageSender): MessageQueueStor
 		queues.delete(sessionId);
 		pausedIds.delete(sessionId);
 		drainingIds.delete(sessionId);
+		clearVersion(sessionId);
 	}
 
 	function queueCount(sessionId: string): number {
@@ -216,6 +238,9 @@ export function createMessageQueueStore(sender: MessageSender): MessageQueueStor
 	}
 
 	const store: MessageQueueStore = {
+		queues,
+		pausedIds,
+		versions,
 		getQueue,
 		enqueue,
 		updateMessage,

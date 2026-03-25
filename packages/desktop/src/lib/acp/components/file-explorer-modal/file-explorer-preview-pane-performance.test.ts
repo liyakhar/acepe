@@ -17,6 +17,11 @@ describe("file explorer preview pane performance integration", () => {
 		expect(source).not.toContain("if (fileDiffInstance) {\n\t\tfileDiffInstance.cleanUp();");
 	});
 
+	it("only passes containerWrapper on the first render", () => {
+		expect(source).toContain("const isFirstRender = fileDiffInstance === null;");
+		expect(source).toContain("containerWrapper: isFirstRender ? container : undefined");
+	});
+
 	it("captures render timing for parse and render phases", () => {
 		expect(source).toContain("performance.now()");
 		expect(source).toContain("parseElapsedMs");

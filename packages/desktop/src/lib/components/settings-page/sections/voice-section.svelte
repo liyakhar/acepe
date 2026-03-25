@@ -1,14 +1,11 @@
 <script lang="ts">
 import { AgentToolCard } from "@acepe/ui/agent-panel";
-import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import {
 	EmbeddedPanelHeader,
 	HeaderActionCell,
 	HeaderCell,
 	HeaderTitleCell,
 } from "@acepe/ui/panel-header";
-import CaretDown from "phosphor-svelte/lib/CaretDown";
-import Check from "phosphor-svelte/lib/Check";
 import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
 import Microphone from "phosphor-svelte/lib/Microphone";
 import Trash from "phosphor-svelte/lib/Trash";
@@ -21,18 +18,6 @@ import { getVoiceSettingsStore } from "$lib/stores/voice-settings-store.svelte.j
 import SettingsSectionHeader from "../settings-section-header.svelte";
 
 const voiceSettingsStore = getVoiceSettingsStore();
-
-const selectedLanguageLabel = $derived.by(() => {
-	if (voiceSettingsStore.language === "auto") {
-		return m.voice_settings_auto_detect();
-	}
-
-	const selectedLanguage =
-		voiceSettingsStore.languages.find((language) => language.code === voiceSettingsStore.language) ??
-		null;
-
-	return selectedLanguage ? selectedLanguage.name : m.voice_settings_auto_detect();
-});
 
 const selectedModelIsEnglishOnly = $derived.by(() => {
 	const selectedModel = voiceSettingsStore.selectedModel;
@@ -58,7 +43,7 @@ function formatBytes(bytes: number): string {
 		description={m.voice_settings_enable_description()}
 	/>
 
-	<!-- Voice enable + language card -->
+	<!-- Voice enable card -->
 	<AgentToolCard variant="muted">
 		<EmbeddedPanelHeader>
 			<HeaderCell withDivider={false}>
@@ -80,63 +65,6 @@ function formatBytes(bytes: number): string {
 				</div>
 			</HeaderActionCell>
 		</EmbeddedPanelHeader>
-
-		<!-- Language selector row -->
-		<DropdownMenu.Root>
-			<DropdownMenu.Trigger>
-				{#snippet child({ props })}
-					<button
-						type="button"
-						class="flex items-center gap-1.5 h-7 w-full px-2.5 text-muted-foreground hover:bg-accent/50 transition-colors"
-						{...props}
-					>
-						<span class="text-[12px] text-muted-foreground/60">
-							{m.voice_settings_language_label()}
-						</span>
-						<span class="ml-auto truncate text-[13px] font-medium text-foreground/70">
-							{selectedLanguageLabel}
-						</span>
-						<CaretDown class="size-2.5 shrink-0 opacity-40" weight="bold" />
-					</button>
-				{/snippet}
-			</DropdownMenu.Trigger>
-			<DropdownMenu.Content align="end" class="w-[240px]">
-				<DropdownMenu.Item onclick={() => void voiceSettingsStore.setLanguage("auto")}>
-					<div class="flex items-center gap-2">
-						<Check
-							class={voiceSettingsStore.language === "auto"
-								? "size-3 text-foreground"
-								: "size-3 text-transparent"}
-							weight="bold"
-						/>
-						<span class="text-[13px]">{m.voice_settings_auto_detect()}</span>
-					</div>
-				</DropdownMenu.Item>
-				<DropdownMenu.Separator />
-				{#each voiceSettingsStore.languages as language (language.code)}
-					{@const isUnavailable = selectedModelIsEnglishOnly && language.code !== "en"}
-					<DropdownMenu.Item
-						onclick={() => {
-							if (isUnavailable) {
-								return;
-							}
-
-							void voiceSettingsStore.setLanguage(language.code);
-						}}
-					>
-						<div class="flex items-center gap-2">
-							<Check
-								class={voiceSettingsStore.language === language.code
-									? "size-3 text-foreground"
-									: "size-3 text-transparent"}
-								weight="bold"
-							/>
-							<span class:isUnavailable class="text-[13px]">{language.name}</span>
-						</div>
-					</DropdownMenu.Item>
-				{/each}
-			</DropdownMenu.Content>
-		</DropdownMenu.Root>
 		{#if selectedModelIsEnglishOnly}
 			<div class="flex items-center h-6 px-2.5 border-t border-border/30 text-[11px] text-muted-foreground/55">
 				English-only model uses English transcription.
@@ -245,9 +173,3 @@ function formatBytes(bytes: number): string {
 		{/if}
 	</AgentToolCard>
 </div>
-
-<style>
-	.isUnavailable {
-		opacity: 0.4;
-	}
-</style>

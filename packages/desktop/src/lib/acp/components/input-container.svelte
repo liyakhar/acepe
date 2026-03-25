@@ -15,7 +15,7 @@ let {
 </script>
 
 <div
-	class="relative h-fit flex flex-col select-none overflow-hidden rounded-xl bg-input/30 {className}"
+	class="relative h-fit flex flex-col select-none overflow-hidden rounded-sm bg-input/30 {className}"
 >
 	<div class={contentClass}>
 		{@render content()}

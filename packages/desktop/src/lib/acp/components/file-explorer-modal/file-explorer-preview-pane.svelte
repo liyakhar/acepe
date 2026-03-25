@@ -130,8 +130,9 @@ async function renderDiff(
 	const fileDiffMetadata = parseDiffFromFile(oldFile, newFile);
 	const parseElapsedMs = Math.round(performance.now() - parseStartedAt);
 	const options = buildFileDiffOptions(theme);
+	const isFirstRender = fileDiffInstance === null;
 
-	if (fileDiffInstance === null) {
+	if (isFirstRender) {
 		fileDiffInstance = new FileDiff<never>(options, getWorkerPool(), true);
 	} else {
 		fileDiffInstance.setOptions(options);
@@ -142,7 +143,7 @@ async function renderDiff(
 		const renderStartedAt = performance.now();
 		fileDiffInstance.render({
 			fileDiff: fileDiffMetadata,
-			containerWrapper: container,
+			containerWrapper: isFirstRender ? container : undefined,
 			forceRender: true,
 		});
 		const renderElapsedMs = Math.round(performance.now() - renderStartedAt);

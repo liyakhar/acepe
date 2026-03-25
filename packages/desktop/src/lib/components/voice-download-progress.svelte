@@ -10,9 +10,10 @@ interface Props {
 	label: string;
 	percent: number;
 	segmentCount: number;
+	showPercent?: boolean;
 }
 
-const { ariaLabel, compact, label, percent, segmentCount }: Props = $props();
+const { ariaLabel, compact, label, percent, segmentCount, showPercent = true }: Props = $props();
 
 const percentLabel = $derived(formatVoiceDownloadPercent(percent));
 const segments = $derived(buildVoiceDownloadSegments(percent, segmentCount));
@@ -25,13 +26,15 @@ const segments = $derived(buildVoiceDownloadSegments(percent, segmentCount));
 
 	<div class="voice-download-segments" aria-hidden="true">
 		{#each segments as isFilled, index (index)}
-			<div class:filled={isFilled} class="voice-download-segment"></div>
+			<div class:filled={isFilled} class="voice-download-segment voice-download-segment-vertical"></div>
 		{/each}
 	</div>
 
-	<span class="voice-download-percent shrink-0 tabular-nums text-muted-foreground/55">
-		{percentLabel}
-	</span>
+	{#if showPercent}
+		<span class="voice-download-percent shrink-0 tabular-nums text-muted-foreground/55">
+			{percentLabel}
+		</span>
+	{/if}
 </div>
 
 <style>
@@ -42,23 +45,29 @@ const segments = $derived(buildVoiceDownloadSegments(percent, segmentCount));
 	.voice-download-segments {
 		display: grid;
 		grid-auto-flow: column;
-		grid-auto-columns: 4px;
+		grid-auto-columns: 3px;
 		gap: 2px;
-		align-items: center;
+		align-items: end;
+		height: 8px;
 	}
 
 	.voice-download-segment {
-		width: 4px;
-		height: 2px;
+		width: 3px;
+		height: 8px;
 		border-radius: 999px;
 		background: color-mix(in oklab, var(--foreground) 10%, transparent);
 		transition: background-color 180ms ease-out, opacity 180ms ease-out, transform 180ms ease-out;
 		opacity: 0.55;
+		transform-origin: bottom center;
 	}
 
 	.voice-download-segment.filled {
 		background: #f9c396;
 		opacity: 1;
+	}
+
+	.voice-download-segment-vertical:not(.filled) {
+		height: 5px;
 	}
 
 	.voice-download-percent {
@@ -71,13 +80,18 @@ const segments = $derived(buildVoiceDownloadSegments(percent, segmentCount));
 	}
 
 	.compact .voice-download-segments {
-		grid-auto-columns: 3px;
+		grid-auto-columns: 2px;
 		gap: 1.5px;
+		height: 7px;
 	}
 
 	.compact .voice-download-segment {
-		width: 3px;
-		height: 2px;
+		width: 2px;
+		height: 7px;
+	}
+
+	.compact .voice-download-segment-vertical:not(.filled) {
+		height: 4px;
 	}
 
 	.compact .voice-download-percent {

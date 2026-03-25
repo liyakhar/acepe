@@ -1,5 +1,5 @@
 <script lang="ts">
-import { TextShimmer, TodoNumberIcon } from "@acepe/ui";
+import { SegmentedProgress, TextShimmer, TodoNumberIcon } from "@acepe/ui";
 import CheckCircle from "phosphor-svelte/lib/CheckCircle";
 import * as m from "$lib/paraglide/messages.js";
 import type { SessionEntry } from "../application/dto/session-entry.js";
@@ -44,12 +44,6 @@ const todoState = $derived.by(() => {
 let isExpanded = $state(true);
 
 const shouldRender = $derived(todoState !== null && todoState.totalCount > 0);
-
-const progressPercent = $derived(
-	todoState && todoState.totalCount > 0
-		? Math.round((todoState.completedCount / todoState.totalCount) * 100)
-		: 0
-);
 
 function formatDuration(durationMs: number | null | undefined): string {
 	if (durationMs === null || durationMs === undefined) return "";
@@ -154,9 +148,9 @@ function toggleExpanded() {
 		>
 			<div class="flex items-center gap-1.5 text-[0.6875rem] min-w-0">
 				{#if todoState.isLive && todoState.currentTask}
-					<TextShimmer class="text-foreground font-medium truncate text-[0.6875rem]">
+					<span class="text-foreground font-medium truncate text-[0.6875rem]">
 						{todoState.currentTask.activeForm ?? todoState.currentTask.content}
-					</TextShimmer>
+					</span>
 				{:else if todoState.currentTask}
 					<span class="text-muted-foreground truncate">
 						{todoState.currentTask.content}
@@ -170,18 +164,7 @@ function toggleExpanded() {
 			</div>
 
 			<div class="flex items-center gap-1.5 shrink-0">
-				<!-- Progress indicator -->
-				<span class="text-[0.6875rem] text-muted-foreground">
-					{todoState.completedCount}/{todoState.totalCount}
-				</span>
-
-				<!-- Mini progress bar -->
-				<div class="w-8 h-1 bg-muted rounded-full overflow-hidden">
-					<div
-						class="h-full bg-primary transition-all duration-300"
-						style="width: {progressPercent}%"
-					></div>
-				</div>
+				<SegmentedProgress current={todoState.completedCount} total={todoState.totalCount} />
 
 				<CopyButton getText={getMarkdown} size={12} variant="icon" class="p-0.5" stopPropagation />
 

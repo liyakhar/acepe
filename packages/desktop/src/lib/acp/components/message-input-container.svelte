@@ -8,7 +8,7 @@ let { class: className = "", children }: { class?: string; children: Snippet } =
 let contentRef: HTMLDivElement | null = $state(null);
 </script>
 
-<InputContainer class="w-full !p-0.5 {className}">
+<InputContainer class="w-full !p-0.5 {className}" contentClass="p-1.5">
 	{#snippet content()}
 		<div class="group/copy flex items-start gap-2">
 			<div

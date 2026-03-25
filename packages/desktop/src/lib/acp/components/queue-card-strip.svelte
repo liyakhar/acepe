@@ -1,7 +1,4 @@
 <script lang="ts">
-import PencilSimple from "phosphor-svelte/lib/PencilSimple";
-import Play from "phosphor-svelte/lib/Play";
-import Trash from "phosphor-svelte/lib/Trash";
 import * as m from "$lib/paraglide/messages.js";
 
 import { getMessageQueueStore } from "../store/message-queue/message-queue-store.svelte.js";
@@ -15,8 +12,12 @@ const { sessionId }: Props = $props();
 
 const messageQueueStore = getMessageQueueStore();
 
-const queue = $derived(messageQueueStore.getQueue(sessionId));
-const isPaused = $derived(messageQueueStore.isPaused(sessionId));
+const queueVersion = $derived(messageQueueStore.versions.get(sessionId) ?? 0);
+const queue = $derived.by(() => {
+	queueVersion;
+	return messageQueueStore.getQueue(sessionId);
+});
+const isPaused = $derived(messageQueueStore.pausedIds.has(sessionId));
 const count = $derived(queue.length);
 
 let isExpanded = $state(false);
@@ -91,7 +92,7 @@ function truncate(text: string, maxLength: number): string {
 									<textarea
 										bind:value={editingContent}
 										class="min-h-20 w-full resize-y rounded border border-border bg-background px-2 py-1 text-xs outline-none"
-									/>
+									></textarea>
 									<div class="flex items-center justify-end gap-2 text-[0.6875rem]">
 										<button type="button" class="hover:text-foreground" onclick={handleCancelEdit}>
 											{m.common_cancel()}
@@ -111,14 +112,12 @@ function truncate(text: string, maxLength: number): string {
 											</div>
 										{/if}
 									</div>
-									<div class="flex items-center gap-1 shrink-0 text-muted-foreground">
-										<button type="button" class="rounded p-1 hover:bg-muted/70 hover:text-foreground" onclick={() => handleStartEdit(message.id, message.content)}>
-											<PencilSimple class="size-3" />
-											<span class="sr-only">{m.common_edit()}</span>
+									<div class="flex items-center gap-2 shrink-0 text-[0.6875rem] text-muted-foreground">
+										<button type="button" class="hover:text-foreground" onclick={() => handleStartEdit(message.id, message.content)}>
+											{m.common_edit()}
 										</button>
-										<button type="button" class="rounded p-1 hover:bg-muted/70 hover:text-foreground" onclick={() => handleRemove(message.id)}>
-											<Trash class="size-3" />
-											<span class="sr-only">{m.common_delete()}</span>
+										<button type="button" class="hover:text-foreground" onclick={() => handleRemove(message.id)}>
+											{m.common_delete()}
 										</button>
 									</div>
 								</div>
@@ -152,7 +151,6 @@ function truncate(text: string, maxLength: number): string {
 			<div class="flex items-center gap-2 shrink-0 text-[0.6875rem]" onclick={(event: MouseEvent) => event.stopPropagation()} role="none">
 				{#if isPaused}
 					<button type="button" class="flex items-center gap-1 hover:text-foreground" onclick={handleResume}>
-						<Play class="size-2.5" weight="fill" />
 						<span>{m.agent_input_queue_resume()}</span>
 					</button>
 				{/if}

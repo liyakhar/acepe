@@ -9,7 +9,6 @@ export function getMicButtonVisualState(phase: VoiceInputPhase): MicButtonVisual
 
 	if (
 		phase === "loading_model" ||
-		phase === "checking_permission" ||
 		phase === "transcribing"
 	) {
 		return "spinner";

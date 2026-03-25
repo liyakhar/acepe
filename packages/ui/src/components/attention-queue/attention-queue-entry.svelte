@@ -1,129 +1,130 @@
 <script lang="ts">
-	import IconSquare from "@tabler/icons-svelte/icons/square";
-	import IconCheck from "@tabler/icons-svelte/icons/check";
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
-	import CaretLeft from "phosphor-svelte/lib/CaretLeft";
-	import type { Snippet } from "svelte";
+import IconSquare from "@tabler/icons-svelte/icons/square";
+import IconCheck from "@tabler/icons-svelte/icons/check";
+import CaretRight from "phosphor-svelte/lib/CaretRight";
+import CaretLeft from "phosphor-svelte/lib/CaretLeft";
+import type { Snippet } from "svelte";
 
-	import { TextShimmer } from "../text-shimmer/index.js";
-	import { DiffPill } from "../diff-pill/index.js";
-	import FeedItem from "./attention-queue-item.svelte";
-	import type {
-		ActivityEntryMode,
-		ActivityEntryQuestion,
-		ActivityEntryQuestionOption,
-		ActivityEntryQuestionProgress,
-		ActivityEntryTodoProgress,
-	} from "./types.js";
+import { TextShimmer } from "../text-shimmer/index.js";
+import { DiffPill } from "../diff-pill/index.js";
+import { SegmentedProgress } from "../segmented-progress/index.js";
+import FeedItem from "./attention-queue-item.svelte";
+import type {
+	ActivityEntryMode,
+	ActivityEntryQuestion,
+	ActivityEntryQuestionOption,
+	ActivityEntryQuestionProgress,
+	ActivityEntryTodoProgress,
+} from "./types.js";
 
-	interface Props {
-		selected?: boolean;
-		onSelect: () => void;
-		mode: ActivityEntryMode;
-		title: string;
-		timeAgo: string | null;
-		insertions: number;
-		deletions: number;
-		projectBadge?: Snippet;
-		agentBadge?: Snippet;
-		trailingAction?: Snippet;
-		isStreaming: boolean;
-		taskDescription: string | null;
-		taskSubagentSummaries: readonly string[];
-		showTaskSubagentList: boolean;
-		fileToolDisplayText: string | null;
-		toolContent: string | null;
-		showToolShimmer: boolean;
-		statusText: string | null;
-		showStatusShimmer: boolean;
-		todoProgress: ActivityEntryTodoProgress | null;
-		currentQuestion: ActivityEntryQuestion | null;
-		totalQuestions: number;
-		hasMultipleQuestions: boolean;
-		currentQuestionIndex: number;
-		questionId: string;
-		questionProgress: readonly ActivityEntryQuestionProgress[];
-		currentQuestionAnswered: boolean;
-		currentAnswerDisplay: string;
-		currentQuestionOptions: readonly ActivityEntryQuestionOption[];
-		otherText: string;
-		otherPlaceholder: string;
-		showOtherInput?: boolean;
-		showSubmitButton: boolean;
-		canSubmit: boolean;
-		submitLabel: string;
-		onOptionSelect: (optionLabel: string) => void;
-		onOtherInput: (value: string) => void;
-		onOtherKeydown: (key: string) => void;
-		onSubmitAll: () => void;
-		onPrevQuestion: () => void;
-		onNextQuestion: () => void;
-		/** When true, FeedItem uses no bg/hover; parent provides sliding highlight (e.g. session list). */
-		slidingHighlight?: boolean;
-		/** When true, use smaller px/py (e.g. sidebar session list). */
-		compactPadding?: boolean;
-		/** When true, sidebar is collapsed — show only agent badge, hide all text. */
-		collapsed?: boolean;
-	}
+interface Props {
+	selected?: boolean;
+	onSelect: () => void;
+	mode: ActivityEntryMode;
+	title: string;
+	timeAgo: string | null;
+	insertions: number;
+	deletions: number;
+	projectBadge?: Snippet;
+	agentBadge?: Snippet;
+	trailingAction?: Snippet;
+	isStreaming: boolean;
+	taskDescription: string | null;
+	taskSubagentSummaries: readonly string[];
+	showTaskSubagentList: boolean;
+	fileToolDisplayText: string | null;
+	toolContent: string | null;
+	showToolShimmer: boolean;
+	statusText: string | null;
+	showStatusShimmer: boolean;
+	todoProgress: ActivityEntryTodoProgress | null;
+	currentQuestion: ActivityEntryQuestion | null;
+	totalQuestions: number;
+	hasMultipleQuestions: boolean;
+	currentQuestionIndex: number;
+	questionId: string;
+	questionProgress: readonly ActivityEntryQuestionProgress[];
+	currentQuestionAnswered: boolean;
+	currentAnswerDisplay: string;
+	currentQuestionOptions: readonly ActivityEntryQuestionOption[];
+	otherText: string;
+	otherPlaceholder: string;
+	showOtherInput?: boolean;
+	showSubmitButton: boolean;
+	canSubmit: boolean;
+	submitLabel: string;
+	onOptionSelect: (optionLabel: string) => void;
+	onOtherInput: (value: string) => void;
+	onOtherKeydown: (key: string) => void;
+	onSubmitAll: () => void;
+	onPrevQuestion: () => void;
+	onNextQuestion: () => void;
+	/** When true, FeedItem uses no bg/hover; parent provides sliding highlight (e.g. session list). */
+	slidingHighlight?: boolean;
+	/** When true, use smaller px/py (e.g. sidebar session list). */
+	compactPadding?: boolean;
+	/** When true, sidebar is collapsed — show only agent badge, hide all text. */
+	collapsed?: boolean;
+}
 
-	let {
-		selected = false,
-		onSelect,
-		mode,
-		title,
-		timeAgo,
-		insertions,
-		deletions,
-		projectBadge,
-		agentBadge,
-		trailingAction,
-		isStreaming,
-		taskDescription,
-		taskSubagentSummaries,
-		showTaskSubagentList,
-		fileToolDisplayText,
-		toolContent,
-		showToolShimmer,
-		statusText,
-		showStatusShimmer,
-		todoProgress,
-		currentQuestion,
-		totalQuestions,
-		hasMultipleQuestions,
-		currentQuestionIndex,
-		questionId,
-		questionProgress,
-		currentQuestionAnswered,
-		currentAnswerDisplay,
-		currentQuestionOptions,
-		otherText,
-		otherPlaceholder,
-		showOtherInput = true,
-		showSubmitButton,
-		canSubmit,
-		submitLabel,
-		onOptionSelect,
-		onOtherInput,
-		onOtherKeydown,
-		onSubmitAll,
-		onPrevQuestion,
-		onNextQuestion,
-		slidingHighlight = false,
-		compactPadding = false,
-		collapsed = false,
-	}: Props = $props();
+let {
+	selected = false,
+	onSelect,
+	mode,
+	title,
+	timeAgo,
+	insertions,
+	deletions,
+	projectBadge,
+	agentBadge,
+	trailingAction,
+	isStreaming,
+	taskDescription,
+	taskSubagentSummaries,
+	showTaskSubagentList,
+	fileToolDisplayText,
+	toolContent,
+	showToolShimmer,
+	statusText,
+	showStatusShimmer,
+	todoProgress,
+	currentQuestion,
+	totalQuestions,
+	hasMultipleQuestions,
+	currentQuestionIndex,
+	questionId,
+	questionProgress,
+	currentQuestionAnswered,
+	currentAnswerDisplay,
+	currentQuestionOptions,
+	otherText,
+	otherPlaceholder,
+	showOtherInput = true,
+	showSubmitButton,
+	canSubmit,
+	submitLabel,
+	onOptionSelect,
+	onOtherInput,
+	onOtherKeydown,
+	onSubmitAll,
+	onPrevQuestion,
+	onNextQuestion,
+	slidingHighlight = false,
+	compactPadding = false,
+	collapsed = false,
+}: Props = $props();
 
-	const showMainRow = $derived(!currentQuestion);
-	const hasMainRowContent = $derived(
-		Boolean(
-			taskDescription ||
-				showTaskSubagentList ||
-				fileToolDisplayText ||
-				toolContent ||
-				statusText ||
-				todoProgress
-		)
-	);
+const showMainRow = $derived(!currentQuestion);
+const hasMainRowContent = $derived(
+	Boolean(
+		taskDescription ||
+			showTaskSubagentList ||
+			fileToolDisplayText ||
+			toolContent ||
+			statusText ||
+			todoProgress
+	)
+);
 </script>
 
 <FeedItem selected={selected} onSelect={onSelect} {slidingHighlight} {compactPadding} {collapsed}>
@@ -210,21 +211,7 @@
 
 			{#if todoProgress}
 				<div class="flex items-center gap-1 text-[10px] text-muted-foreground min-w-0 shrink-0">
-					<svg viewBox="0 0 20 20" class="size-3 shrink-0 text-primary">
-						<circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2" opacity="0.2" />
-						<circle
-							cx="10"
-							cy="10"
-							r="8"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-dasharray="50.265"
-							stroke-dashoffset={50.265 - (todoProgress.current / todoProgress.total) * 50.265}
-						/>
-					</svg>
-					<span class="tabular-nums text-foreground/70 shrink-0">{todoProgress.current}/{todoProgress.total}</span>
+					<SegmentedProgress current={todoProgress.current} total={todoProgress.total} />
 					<span class="truncate text-foreground/70">{todoProgress.label}</span>
 				</div>
 			{/if}

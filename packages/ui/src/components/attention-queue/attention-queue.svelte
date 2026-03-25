@@ -73,7 +73,7 @@
 			</div>
 		</button>
 	{:else}
-		<div class="flex flex-col overflow-hidden border border-border rounded-lg bg-card/50 shrink-0 mb-2 transition-[transform,opacity] duration-200 ease-out">
+		<div class="flex flex-col overflow-hidden border border-border rounded-lg bg-card/50 shrink-0 mb-0.5 transition-[transform,opacity] duration-200 ease-out">
 			<button
 				type="button"
 				class="flex items-center gap-1.5 px-2 py-1.5 w-full text-left cursor-pointer bg-transparent border-none hover:bg-accent/50 rounded-md transition-colors"
