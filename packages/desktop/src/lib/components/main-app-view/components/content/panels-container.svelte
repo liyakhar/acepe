@@ -135,10 +135,37 @@ const viewModeState = $derived.by(() =>
 
 // Main fullscreen mode is only for agent-panel fullscreen.
 // Terminal aux-only fullscreen stays on the project-card rendering path so the terminal component does not remount.
+const selectedFullscreenAuxPanel = $derived.by(() => {
+	const fullscreenPanelId = panelStore.fullscreenPanelId;
+	if (fullscreenPanelId === null) {
+		return null;
+	}
+
+	if (panelStore.filePanels.some((panel) => panel.ownerPanelId === null && panel.id === fullscreenPanelId)) {
+		return { kind: "file", id: fullscreenPanelId } as const;
+	}
+	if (panelStore.reviewPanels.some((panel) => panel.id === fullscreenPanelId)) {
+		return { kind: "review", id: fullscreenPanelId } as const;
+	}
+	if (panelStore.terminalPanels.some((panel) => panel.id === fullscreenPanelId)) {
+		return { kind: "terminal", id: fullscreenPanelId } as const;
+	}
+	if (panelStore.gitPanels.some((panel) => panel.id === fullscreenPanelId)) {
+		return { kind: "git", id: fullscreenPanelId } as const;
+	}
+	if (panelStore.browserPanels.some((panel) => panel.id === fullscreenPanelId)) {
+		return { kind: "browser", id: fullscreenPanelId } as const;
+	}
+
+	return null;
+});
+const isAuxOnlyFullscreen = $derived(
+	panelStore.fullscreenPanelId !== null && viewModeState.fullscreenPanel === null && selectedFullscreenAuxPanel !== null
+);
 const fullscreenAuxPanel = $derived(
-	viewModeState.isFullscreenMode || panelStore.fullscreenAuxOnly
+	viewModeState.isFullscreenMode || isAuxOnlyFullscreen
 		? resolveFullscreenAuxPanel({
-				selectedAuxPanel: panelStore.fullscreenAuxPanel,
+				selectedAuxPanel: selectedFullscreenAuxPanel,
 				filePanels: panelStore.filePanels.filter((panel) => panel.ownerPanelId === null),
 				reviewPanels: panelStore.reviewPanels,
 				terminalPanels: panelStore.terminalPanels,
@@ -155,7 +182,7 @@ const fullscreenAuxPanelWidthStyle = $derived.by(() => {
 });
 
 const auxOnlyTerminalProjectPath = $derived.by(() => {
-	if (!panelStore.fullscreenAuxOnly || fullscreenAuxPanel?.kind !== "terminal") return null;
+	if (!isAuxOnlyFullscreen || fullscreenAuxPanel?.kind !== "terminal") return null;
 	const terminalPanel = panelStore.terminalPanels.find(
 		(panel) => panel.id === fullscreenAuxPanel.panel.id
 	);
@@ -175,7 +202,7 @@ const sourceControlPanelSnapshot = $derived.by(() => {
 });
 
 function isGroupHidden(group: { projectPath: string }): boolean {
-	if (panelStore.fullscreenAuxOnly && auxOnlyTerminalProjectPath !== null) {
+	if (isAuxOnlyFullscreen && auxOnlyTerminalProjectPath !== null) {
 		return group.projectPath !== auxOnlyTerminalProjectPath;
 	}
 	return (
@@ -209,7 +236,7 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 <div class="flex flex-col flex-1 min-h-0 gap-0.5">
 	<!-- Tabs are now rendered in parent (main-app-view.svelte) via TabBar -->
 	<div
-		class="flex flex-row items-stretch gap-0.5 flex-1 min-h-0 {panelStore.fullscreenAuxOnly
+		class="flex flex-row items-stretch gap-0.5 flex-1 min-h-0 {isAuxOnlyFullscreen
 			? 'overflow-hidden'
 			: 'overflow-x-auto'}"
 	>
@@ -226,7 +253,6 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 					id: a.id,
 					name: a.name,
 					icon: a.icon,
-					available: a.available,
 					availability_kind: a.availability_kind,
 				}))}
 			{@const selectedAgentId = fullscreenPanelSnapshot.selectedAgentId
@@ -387,7 +413,7 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 			{@const hasAgentPanels = group.agentPanels.length > 0}
 			{@const isSingleProject = allGroups.length === 1}
 			{#snippet groupPanels()}
-					{#if !panelStore.fullscreenAuxOnly}
+					{#if !isAuxOnlyFullscreen}
 						<!-- File panels -->
 						{#each group.filePanels as filePanel (filePanel.id)}
 							{@const project = projectManager.projects.find(
@@ -430,12 +456,11 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 							projectName={group.projectName}
 							projectColor={group.projectColor}
 							{panelStore}
-							{fullscreenAuxPanel}
 						/>
 					{/if}
 
 					<!-- Browser panels (project-scoped) -->
-					{#if !panelStore.fullscreenAuxOnly}
+					{#if !isAuxOnlyFullscreen}
 						{#each group.browserPanels as browserPanel (browserPanel.id)}
 							<BrowserPanel
 								panelId={browserPanel.id}
@@ -449,7 +474,7 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 						{/each}
 					{/if}
 
-					{#if !panelStore.fullscreenAuxOnly}
+					{#if !isAuxOnlyFullscreen}
 						<!-- Agent panels -->
 						{#each group.agentPanels as panel (panel.id)}
 							{@const effectiveTheme = themeState.effectiveTheme}
@@ -463,7 +488,6 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 									id: a.id,
 									name: a.name,
 									icon: a.icon,
-									available: a.available,
 									availability_kind: a.availability_kind,
 								}))}
 							{@const selectedAgentId = panel.selectedAgentId
@@ -522,7 +546,7 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 				{@render groupPanels()}
 			{:else}
 			<ProjectCard
-				class="{panelStore.fullscreenAuxOnly || !hasAgentPanels
+				class="{isAuxOnlyFullscreen || !hasAgentPanels
 					? 'flex-1 min-w-0 min-h-0'
 					: 'flex-none min-h-0'} {isGroupHidden(group) ? 'hidden' : ''}"
 					projectName={group.projectName}

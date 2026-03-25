@@ -19,7 +19,7 @@ use crate::acp::types::{CanonicalAgentId, ContentBlock, EmbeddedResource};
 use crate::checkpoint::types::FileDiffContent;
 use crate::file_index::types::{
     FileExplorerPreviewResponse, FileExplorerRow, FileExplorerSearchResponse, FileGitStatus,
-    IndexedFile, ProjectIndex,
+    IndexedFile, PreviewKind, ProjectIndex,
 };
 use crate::session_jsonl::types::*;
 use crate::storage::types::UserSettingKey;
@@ -137,6 +137,7 @@ pub fn export_all_types() {
     export_type!(ProjectIndex);
 
     // File explorer types (for Cmd+I file explorer modal)
+    export_type!(PreviewKind);
     export_type!(FileExplorerRow);
     export_type!(FileExplorerSearchResponse);
     export_type!(FileExplorerPreviewResponse);

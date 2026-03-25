@@ -157,7 +157,7 @@ function truncate(text: string, maxLength: number): string {
 				<button type="button" class="hover:text-foreground" onclick={handleClear}>
 					{m.agent_input_queue_clear()}
 				</button>
-				<AnimatedChevron expanded={isExpanded} />
+				<AnimatedChevron isOpen={isExpanded} />
 			</div>
 		</div>
 	</div>

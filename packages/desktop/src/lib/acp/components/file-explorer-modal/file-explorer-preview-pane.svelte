@@ -24,7 +24,7 @@ interface Props {
 	preview: FileExplorerPreviewResponse | null;
 }
 
-const props = $props<Props>();
+const props: Props = $props();
 
 let containerRef: HTMLDivElement | null = $state(null);
 let fileDiffInstance: FileDiff<never> | null = $state(null);
@@ -131,11 +131,16 @@ async function renderDiff(
 	const parseElapsedMs = Math.round(performance.now() - parseStartedAt);
 	const options = buildFileDiffOptions(theme);
 	const isFirstRender = fileDiffInstance === null;
-
 	if (isFirstRender) {
 		fileDiffInstance = new FileDiff<never>(options, getWorkerPool(), true);
 	} else {
+		if (fileDiffInstance === null) {
+			return;
+		}
 		fileDiffInstance.setOptions(options);
+	}
+	if (fileDiffInstance === null) {
+		return;
 	}
 	fileDiffInstance.setThemeType(theme);
 

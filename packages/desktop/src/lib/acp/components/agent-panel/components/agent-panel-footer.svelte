@@ -76,7 +76,7 @@ const worktreeProjectPath = $derived(projectPath || "");
 		/>
 	{/if}
 
-	{#if onSettings && !hideWorktreeButton && hasProjectPath}
+	{#if onSettings && hasProjectPath}
 		<div class="flex items-center border-l border-border/50">
 			<EmbeddedIconButton
 				title={m.project_settings()}

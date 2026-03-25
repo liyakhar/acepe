@@ -3,7 +3,7 @@
 //! Handles two edit formats from OpenCode:
 //! 1. Standard fields (`filePath`, `new_string`, etc.) — delegated to generic parser.
 //! 2. `patch_text` — OpenCode's custom multi-file diff format:
-//!    ```
+//!    ```text
 //!    *** Begin Patch
 //!    *** Update File: src/foo.ts
 //!    @@ context_line
@@ -32,7 +32,7 @@ pub(crate) fn parse_edit_arguments(raw_arguments: &serde_json::Value) -> ToolArg
 /// Parse OpenCode's `patch_text` format into one `EditEntry` per modified file.
 ///
 /// Format:
-/// ```
+/// ```text
 /// *** Begin Patch
 /// *** Update File: <path>
 /// @@ <context_line>

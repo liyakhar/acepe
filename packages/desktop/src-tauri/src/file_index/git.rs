@@ -361,26 +361,34 @@ mod tests {
     use std::process::Command;
     use tempfile::TempDir;
 
-    fn init_git_repo(dir: &Path) {
+    fn real_git_command() -> Command {
+        if cfg!(unix) && Path::new("/usr/bin/git").exists() {
+            return Command::new("/usr/bin/git");
+        }
+
         Command::new("git")
+    }
+
+    fn init_git_repo(dir: &Path) {
+        real_git_command()
             .args(["init"])
             .current_dir(dir)
             .output()
             .expect("Failed to init git repo");
 
-        Command::new("git")
+        real_git_command()
             .args(["config", "user.email", "test@test.com"])
             .current_dir(dir)
             .output()
             .expect("Failed to set git email");
 
-        Command::new("git")
+        real_git_command()
             .args(["config", "user.name", "Test"])
             .current_dir(dir)
             .output()
             .expect("Failed to set git name");
 
-        Command::new("git")
+        real_git_command()
             .args(["config", "commit.gpgsign", "false"])
             .current_dir(dir)
             .output()
@@ -410,13 +418,13 @@ mod tests {
         // Create and commit a file
         fs::write(dir.path().join("file.txt"), "original\n").unwrap();
 
-        Command::new("git")
+        real_git_command()
             .args(["add", "file.txt"])
             .current_dir(dir.path())
             .output()
             .expect("Failed to add file");
 
-        Command::new("git")
+        real_git_command()
             .args(["commit", "-m", "initial"])
             .current_dir(dir.path())
             .output()
@@ -442,13 +450,13 @@ mod tests {
         // Create and commit a file
         fs::write(dir.path().join("file.txt"), "original\n").unwrap();
 
-        Command::new("git")
+        real_git_command()
             .args(["add", "file.txt"])
             .current_dir(dir.path())
             .output()
             .expect("Failed to add file");
 
-        Command::new("git")
+        real_git_command()
             .args(["commit", "-m", "initial"])
             .current_dir(dir.path())
             .output()
@@ -475,13 +483,13 @@ mod tests {
         fs::create_dir_all(&nested_dir).unwrap();
         fs::write(nested_dir.join("file.txt"), "hello\n").unwrap();
 
-        Command::new("git")
+        real_git_command()
             .args(["add", "nested/file.txt"])
             .current_dir(dir.path())
             .output()
             .expect("Failed to add file");
 
-        Command::new("git")
+        real_git_command()
             .args(["commit", "-m", "initial"])
             .current_dir(dir.path())
             .output()
@@ -505,13 +513,13 @@ mod tests {
         let nested_file = nested_dir.join("file.txt");
         fs::write(&nested_file, "hello\n").unwrap();
 
-        Command::new("git")
+        real_git_command()
             .args(["add", "nested/file.txt"])
             .current_dir(dir.path())
             .output()
             .expect("Failed to add file");
 
-        Command::new("git")
+        real_git_command()
             .args(["commit", "-m", "initial"])
             .current_dir(dir.path())
             .output()
@@ -536,13 +544,13 @@ mod tests {
         fs::create_dir_all(&nested_dir).unwrap();
         fs::write(nested_dir.join("file.txt"), "hello\n").unwrap();
 
-        Command::new("git")
+        real_git_command()
             .args(["add", "nested/file.txt"])
             .current_dir(dir.path())
             .output()
             .expect("Failed to add file");
 
-        Command::new("git")
+        real_git_command()
             .args(["commit", "-m", "initial"])
             .current_dir(dir.path())
             .output()
@@ -571,13 +579,13 @@ mod tests {
         fs::write(nested_dir.join("scoped.txt"), "hello\n").unwrap();
         fs::write(dir.path().join("outside.txt"), "outside\n").unwrap();
 
-        Command::new("git")
+        real_git_command()
             .args(["add", "nested/scoped.txt", "outside.txt"])
             .current_dir(dir.path())
             .output()
             .expect("Failed to add files");
 
-        Command::new("git")
+        real_git_command()
             .args(["commit", "-m", "initial"])
             .current_dir(dir.path())
             .output()

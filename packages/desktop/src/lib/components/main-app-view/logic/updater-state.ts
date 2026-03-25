@@ -1,3 +1,4 @@
+import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import { applyDownloadEventToProgress } from "./update-download-progress.js";
 
 export type UpdaterBannerState =
@@ -34,7 +35,7 @@ export function createDownloadingUpdaterState(version: string): UpdaterBannerSta
 
 export function applyUpdaterDownloadEvent(
 	state: UpdaterBannerState,
-	event: { event: "Started"; data: { contentLength: number | undefined } } | { event: "Progress"; data: { chunkLength: number } } | { event: "Finished" }
+	event: DownloadEvent
 ): UpdaterBannerState {
 	if (state.kind !== "downloading") {
 		return state;

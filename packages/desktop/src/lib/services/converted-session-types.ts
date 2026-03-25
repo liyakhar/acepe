@@ -681,11 +681,6 @@ insertions: number;
 deletions: number }
 
 /**
- * Classification hint for the explorer preview pane.
- */
-export type PreviewKind = "diff" | "text" | "binary" | "large" | "deleted" | "unsupported"
-
-/**
  * Complete project index result.
  */
 export type ProjectIndex = { 
@@ -709,6 +704,35 @@ totalFiles: number;
  * Total line count across all files.
  */
 totalLines: number }
+
+/**
+ * What kind of preview the frontend should render for a result row.
+ */
+export type PreviewKind = 
+/**
+ * Changed text file — Pierre diff is safe to render.
+ */
+"diff" | 
+/**
+ * Unchanged text file — Pierre read-view is safe to render.
+ */
+"text" | 
+/**
+ * Detected as binary content.
+ */
+"binary" | 
+/**
+ * File exceeds safe preview size.
+ */
+"large" | 
+/**
+ * File has been deleted from the working tree.
+ */
+"deleted" | 
+/**
+ * Unsupported content type for preview.
+ */
+"unsupported"
 
 /**
  * A single row in the file explorer results list.
@@ -796,3 +820,4 @@ export type FileExplorerPreviewResponse =
  * Fallback for binary, too-large, deleted, or unsupported files.
  */
 { kind: "fallback"; file_path: string; file_name: string; reason: string; size_bytes: number | null; git_status: FileGitStatus | null; preview_kind: PreviewKind }
+

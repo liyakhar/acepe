@@ -924,6 +924,10 @@ function handleProjectAgentSelected(project: Project, agentId: string) {
 	onCreateSessionForProject?.(project);
 }
 
+function installAgentThenCreateSession(project: Project, agentId: string) {
+	handleProjectAgentSelected(project, agentId);
+}
+
 function handleSessionCreated(sessionIdParam: string) {
 	onSessionCreated?.(sessionIdParam);
 }
@@ -1549,10 +1553,9 @@ function handleCheckpointRevertComplete() {
 								<AgentInstallCard
 									agentId={agentInstallState.agentId}
 									agentName={agentInstallState.agentName}
-									stage={agentInstallState.stage}
-									progress={agentInstallState.progress}
-									failed={false}
-								/>
+								stage={agentInstallState.stage}
+								progress={agentInstallState.progress}
+							/>
 							</div>
 						</div>
 					{/if}

@@ -24,7 +24,7 @@ interface Props {
 	onInsert: (projectPath: string, filePath: string) => void;
 }
 
-const props = $props<Props>();
+const props: Props = $props();
 const { onClose, onInsert, projectInfoByPath } = props;
 
 // ---------------------------------------------------------------------------
