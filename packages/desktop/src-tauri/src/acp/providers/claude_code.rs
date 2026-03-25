@@ -1,5 +1,5 @@
 use super::super::provider::{
-    command_exists, AgentProvider, CommandAvailabilityCache, SpawnConfig,
+    command_exists, AgentProvider, CommandAvailabilityCache, ModelFallbackCandidate, SpawnConfig,
 };
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::session_update::PlanSource;
@@ -60,6 +60,26 @@ impl AgentProvider for ClaudeCodeProvider {
             ],
             env: claude_env(),
         }]
+    }
+
+    fn default_model_candidates(&self) -> Vec<ModelFallbackCandidate> {
+        vec![
+            ModelFallbackCandidate {
+                model_id: cc_sdk::model_recommendation::best_model().to_string(),
+                name: "Claude Opus 4.6".to_string(),
+                description: Some("Most capable Claude model".to_string()),
+            },
+            ModelFallbackCandidate {
+                model_id: cc_sdk::model_recommendation::balanced_model().to_string(),
+                name: "Claude Sonnet 4.5".to_string(),
+                description: Some("Balanced Claude model for most tasks".to_string()),
+            },
+            ModelFallbackCandidate {
+                model_id: cc_sdk::model_recommendation::cheapest_model().to_string(),
+                name: "Claude Haiku 4.5".to_string(),
+                description: Some("Fastest and cheapest Claude model".to_string()),
+            },
+        ]
     }
 
     fn normalize_mode_id(&self, id: &str) -> String {

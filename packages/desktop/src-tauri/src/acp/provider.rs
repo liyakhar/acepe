@@ -67,6 +67,11 @@ pub trait AgentProvider: Send + Sync {
         Vec::new()
     }
 
+    /// Provider-owned model catalog for agents that do not expose a list-models API.
+    fn default_model_candidates(&self) -> Vec<ModelFallbackCandidate> {
+        Vec::new()
+    }
+
     /// Parser agent type used for ACP session update parsing and model display grouping.
     fn parser_agent_type(&self) -> AgentType {
         let canonical = CanonicalAgentId::parse(self.id());

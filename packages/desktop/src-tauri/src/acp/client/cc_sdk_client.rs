@@ -19,7 +19,8 @@ use crate::acp::client::{
     InitializeResponse, ListSessionsResponse, NewSessionResponse, ResumeSessionResponse,
 };
 use crate::acp::client_session::{
-    apply_provider_model_fallback, default_modes, default_session_model_state, SessionModelState,
+    apply_provider_model_fallback, AvailableModel, default_modes, default_session_model_state,
+    SessionModelState,
 };
 use crate::acp::client_trait::AgentClient;
 use crate::acp::error::{AcpError, AcpResult};
@@ -142,6 +143,8 @@ pub struct CcSdkClaudeClient {
     dispatcher: AcpUiEventDispatcher,
     /// Deferred options: stored by new_session, consumed by the first send_prompt.
     pending_options: Option<cc_sdk::ClaudeCodeOptions>,
+    pending_mode_id: Option<String>,
+    pending_model_id: Option<String>,
 }
 
 impl CcSdkClaudeClient {
@@ -161,6 +164,8 @@ impl CcSdkClaudeClient {
             bridge_task: None,
             dispatcher,
             pending_options: None,
+            pending_mode_id: None,
+            pending_model_id: None,
         })
     }
 
@@ -184,6 +189,14 @@ impl CcSdkClaudeClient {
 
         let mut builder = cc_sdk::ClaudeCodeOptions::builder().cwd(PathBuf::from(cwd));
         builder = builder.include_partial_messages(true);
+
+        if let Some(mode_id) = &self.pending_mode_id {
+            builder = builder.permission_mode(map_to_claude_permission_mode(mode_id));
+        }
+
+        if let Some(model_id) = &self.pending_model_id {
+            builder = builder.model(model_id.clone());
+        }
 
         if let Some(session_id) = resume {
             builder = builder.resume(session_id);
@@ -257,8 +270,24 @@ impl CcSdkClaudeClient {
         let mut model_state = default_session_model_state();
 
         let discovered = self.discover_models_from_provider_cli().await;
-        if !discovered.is_empty() {
-            model_state.available_models = discovered;
+        let mut available_models = provider_models(self.provider.as_ref());
+
+        for model in discovered {
+            if !available_models.iter().any(|candidate| candidate.model_id == model.model_id) {
+                available_models.push(model);
+            }
+        }
+
+        if !available_models.is_empty() {
+            model_state.available_models = available_models;
+        }
+
+        if let Some(model_id) = &self.pending_model_id {
+            model_state.current_model_id = model_id.clone();
+        } else if model_state.current_model_id == "auto" && model_state.available_models.len() == 1 {
+            if let Some(model) = model_state.available_models.first() {
+                model_state.current_model_id = model.model_id.clone();
+            }
         }
 
         apply_provider_model_fallback(self.provider.as_ref(), &mut model_state);
@@ -351,6 +380,51 @@ impl CcSdkClaudeClient {
         }
 
         Vec::new()
+    }
+
+    async fn apply_runtime_mode(&self, mode_id: &str) -> AcpResult<()> {
+        let Some(sdk_client) = &self.sdk_client else {
+            return Ok(());
+        };
+
+        sdk_client
+            .lock()
+            .await
+            .set_permission_mode(map_to_claude_permission_mode(mode_id))
+            .await
+            .map_err(|error| AcpError::ProtocolError(error.to_string()))
+    }
+
+    async fn apply_runtime_model(&self, model_id: &str) -> AcpResult<()> {
+        let Some(sdk_client) = &self.sdk_client else {
+            return Ok(());
+        };
+
+        sdk_client
+            .lock()
+            .await
+            .set_model(Some(model_id.to_string()))
+            .await
+            .map_err(|error| AcpError::ProtocolError(error.to_string()))
+    }
+}
+
+fn provider_models(provider: &dyn AgentProvider) -> Vec<AvailableModel> {
+    provider
+        .default_model_candidates()
+        .into_iter()
+        .map(|candidate| AvailableModel {
+            model_id: candidate.model_id,
+            name: candidate.name,
+            description: candidate.description,
+        })
+        .collect()
+}
+
+fn map_to_claude_permission_mode(mode_id: &str) -> &'static str {
+    match mode_id {
+        "plan" => "plan",
+        _ => "default",
     }
 }
 
@@ -570,12 +644,14 @@ impl AgentClient for CcSdkClaudeClient {
     }
 
     async fn set_session_model(&mut self, _session_id: String, _model_id: String) -> AcpResult<()> {
-        // cc-sdk 0.7.0 does not expose a set_model method after connect.
+        self.pending_model_id = Some(_model_id.clone());
+        self.apply_runtime_model(&_model_id).await?;
         Ok(())
     }
 
     async fn set_session_mode(&mut self, _session_id: String, _mode_id: String) -> AcpResult<()> {
-        // cc-sdk 0.7.0 does not expose a set_mode method after connect.
+        self.pending_mode_id = Some(_mode_id.clone());
+        self.apply_runtime_mode(&_mode_id).await?;
         Ok(())
     }
 
@@ -689,6 +765,8 @@ mod tests {
             bridge_task: None,
             dispatcher: AcpUiEventDispatcher::new(None, DispatchPolicy::default()),
             pending_options: None,
+            pending_mode_id: None,
+            pending_model_id: None,
         }
     }
 
@@ -704,13 +782,15 @@ mod tests {
 
     #[test]
     fn build_options_applies_pending_mode_and_model() {
-        let client = make_test_client();
+        let mut client = make_test_client();
+        client.pending_mode_id = Some("plan".to_string());
+        client.pending_model_id = Some("claude-opus-4-6".to_string());
 
         let options = client.build_options("/tmp", "session-1", None, false);
 
         assert!(options.include_partial_messages);
-        assert!(options.model.is_none());
-        assert_eq!(options.permission_mode, cc_sdk::PermissionMode::Default);
+        assert_eq!(options.model.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(options.permission_mode, cc_sdk::PermissionMode::Plan);
     }
 
     #[test]
