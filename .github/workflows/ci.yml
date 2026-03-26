@@ -37,6 +37,7 @@ jobs:
       - name: Prepare generated frontend artifacts
         run: |
           cd packages/desktop
+          bunx paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide
           bunx svelte-kit sync
 
       # All three run in parallel via background processes
