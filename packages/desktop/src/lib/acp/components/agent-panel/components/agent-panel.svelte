@@ -1194,17 +1194,12 @@ async function handleExportRawStreaming() {
 		return;
 	}
 
-	// Get the streaming log path and open it as a file panel
-	await tauriClient.shell.getStreamingLogPath(sessionId).match(
-		(logPath) => {
-			// Open the log file in a file panel
-			// The log files are in src-tauri/logs/streaming/, use that as the "project"
-			const logsDir = logPath.substring(0, logPath.lastIndexOf("/"));
-			const fileName = logPath.substring(logPath.lastIndexOf("/") + 1);
-			panelStore.openFilePanel(fileName, logsDir, { ownerPanelId: effectivePanelId });
-		},
-		(error) => toast.error(m.thread_export_raw_error({ error: error.message }))
-	);
+	await tauriClient.shell
+		.openStreamingLog(sessionId)
+		.match(
+			() => undefined,
+			(error) => toast.error(m.thread_export_raw_error({ error: error.message }))
+		);
 }
 
 async function handleOpenRawFile() {

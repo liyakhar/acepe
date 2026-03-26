@@ -161,15 +161,12 @@ async function handleExportJson() {
 }
 
 async function handleOpenStreamingLog() {
-	await tauriClient.shell.getStreamingLogPath(session.id).match(
-		(logPath) => {
-			const parts = logPath.split(/[/\\]/);
-			const fileName = parts.pop() ?? logPath;
-			const logsDir = parts.join("/") || "/";
-			panelStore.openFilePanel(fileName, logsDir);
-		},
-		(err) => toast.error(m.thread_export_raw_error({ error: err.message }))
-	);
+	await tauriClient.shell
+		.openStreamingLog(session.id)
+		.match(
+			() => undefined,
+			(err) => toast.error(m.thread_export_raw_error({ error: err.message }))
+		);
 }
 
 function handleOpenPr(event: MouseEvent) {

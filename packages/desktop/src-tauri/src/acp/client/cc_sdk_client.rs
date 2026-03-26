@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::acp::client::{
     InitializeResponse, ListSessionsResponse, NewSessionResponse, ResumeSessionResponse,
 };
+use crate::acp::agent_context::with_agent;
 use crate::acp::client_session::{
     apply_provider_model_fallback, AvailableModel, default_modes, default_session_model_state,
     SessionModelState,
@@ -26,10 +27,13 @@ use crate::acp::client_session::{
 use crate::acp::client_trait::AgentClient;
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::model_display::get_transformer;
+use crate::acp::parsers::{get_parser, AgentType};
 use crate::acp::provider::AgentProvider;
 use crate::acp::session_update::{
     SessionUpdate, TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
+    build_tool_call_update_from_raw, RawToolCallUpdateInput,
 };
+use crate::acp::streaming_log::{log_emitted_event, log_streaming_event};
 use crate::acp::types::{ContentBlock, PromptRequest};
 use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher, DispatchPolicy};
 
@@ -156,6 +160,13 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
             .take(tool_name)
             .await
             .unwrap_or_else(|| format!("cc-sdk-{}", request_id));
+        tracing::info!(
+            session_id = %self.session_id,
+            request_id = request_id,
+            tool_name = %tool_name,
+            tool_call_id = %tool_call_id,
+            "cc-sdk permission request emitted"
+        );
         let permission_json = serde_json::json!({
             "jsonrpc": "2.0",
             "id": request_id,
@@ -182,10 +193,19 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 updated_input: None,
                 updated_permissions: None,
             }),
-            _ => cc_sdk::PermissionResult::Deny(cc_sdk::PermissionResultDeny {
-                message: "Permission denied or timed out".to_string(),
-                interrupt: false,
-            }),
+            other => {
+                tracing::warn!(
+                    session_id = %self.session_id,
+                    request_id = request_id,
+                    tool_name = %tool_name,
+                    timeout_or_error = ?other,
+                    "cc-sdk permission request denied or timed out"
+                );
+                cc_sdk::PermissionResult::Deny(cc_sdk::PermissionResultDeny {
+                    message: "Permission denied or timed out".to_string(),
+                    interrupt: false,
+                })
+            }
         }
     }
 }
@@ -522,13 +542,30 @@ async fn run_streaming_bridge(
     tracing::info!(session_id = %session_id, "cc-sdk bridge: started, waiting for messages...");
     let mut message_count: u64 = 0;
     let mut turn_stream_state = crate::acp::parsers::cc_sdk_bridge::CcSdkTurnStreamState::default();
+    let mut stream_tool_blocks: HashMap<u64, (String, String)> = HashMap::new();
 
     while let Some(result) = stream.next().await {
         match result {
             Ok(msg) => {
                 message_count += 1;
+                if let Ok(raw_json) = serde_json::to_value(&msg) {
+                    log_streaming_event(&session_id, &raw_json);
+                }
                 if let cc_sdk::Message::StreamEvent { event, .. } = &msg {
                     if let Some(event_type) = event.get("type").and_then(|value| value.as_str()) {
+                        if event_type == "content_block_start" {
+                            if let Some(block) = event.get("content_block") {
+                                let is_tool_use = block.get("type").and_then(|v| v.as_str()) == Some("tool_use");
+                                if is_tool_use {
+                                    let index = event.get("index").and_then(|v| v.as_u64());
+                                    let id = block.get("id").and_then(|v| v.as_str());
+                                    let name = block.get("name").and_then(|v| v.as_str());
+                                    if let (Some(index), Some(id), Some(name)) = (index, id, name) {
+                                        stream_tool_blocks.insert(index, (id.to_string(), name.to_string()));
+                                    }
+                                }
+                            }
+                        }
                         if event_type == "content_block_delta" {
                             if let Some(delta_type) = event
                                 .get("delta")
@@ -540,6 +577,50 @@ async fn run_streaming_bridge(
                                 }
                                 if delta_type == "thinking_delta" {
                                     turn_stream_state.saw_thinking_delta = true;
+                                }
+                                if delta_type == "input_json_delta" {
+                                    let index = event.get("index").and_then(|v| v.as_u64());
+                                    let partial_json = event
+                                        .get("delta")
+                                        .and_then(|delta| delta.get("partial_json"))
+                                        .and_then(|value| value.as_str());
+                                    if let (Some(index), Some(partial_json)) = (index, partial_json) {
+                                        if let Some((tool_call_id, tool_name)) = stream_tool_blocks.get(&index) {
+                                            let raw_update = RawToolCallUpdateInput {
+                                                id: tool_call_id.clone(),
+                                                status: None,
+                                                result: None,
+                                                content: None,
+                                                title: None,
+                                                locations: None,
+                                                streaming_input_delta: Some(partial_json.to_string()),
+                                                tool_name: Some(tool_name.clone()),
+                                                raw_input: None,
+                                                kind: None,
+                                            };
+                                            let parser = get_parser(AgentType::ClaudeCode);
+                                            let update = with_agent(AgentType::ClaudeCode, || {
+                                                build_tool_call_update_from_raw(
+                                                    parser,
+                                                    raw_update,
+                                                    Some(session_id.as_str()),
+                                                )
+                                            });
+                                            log_emitted_event(
+                                                &session_id,
+                                                &SessionUpdate::ToolCallUpdate {
+                                                    update: update.clone(),
+                                                    session_id: Some(session_id.clone()),
+                                                },
+                                            );
+                                            dispatcher.enqueue(AcpUiEvent::session_update(
+                                                SessionUpdate::ToolCallUpdate {
+                                                    update,
+                                                    session_id: Some(session_id.clone()),
+                                                },
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -630,6 +711,7 @@ async fn run_streaming_bridge(
                     "cc-sdk bridge: translated to session updates"
                 );
                 for update in updates {
+                    log_emitted_event(&session_id, &update);
                     if matches!(update, SessionUpdate::TurnComplete { .. } | SessionUpdate::TurnError { .. }) {
                         // Reset per-turn stream state but preserve model_id across turns
                         let preserved_model = turn_stream_state.model_id.clone();
@@ -895,6 +977,7 @@ impl AgentClient for CcSdkClaudeClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cc_sdk::CanUseTool;
 
     fn make_test_client() -> CcSdkClaudeClient {
         CcSdkClaudeClient {
@@ -902,6 +985,7 @@ mod tests {
             sdk_client: None,
             session_id: None,
             permission_bridge: Arc::new(PermissionBridge::new()),
+            tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
             bridge_task: None,
             dispatcher: AcpUiEventDispatcher::new(None, DispatchPolicy::default()),
             pending_options: None,
@@ -1061,6 +1145,107 @@ mod tests {
         assert_eq!(tool_call["name"], "Bash");
         assert_eq!(tool_call["title"], "Bash");
         assert_eq!(tool_call["rawInput"]["command"], "ls");
+    }
+
+    #[tokio::test]
+    async fn tool_call_tracker_returns_stream_tool_use_id_in_fifo_order() {
+        let tracker = ToolCallIdTracker::new();
+
+        tracker
+            .record("Bash".to_string(), "toolu_first".to_string())
+            .await;
+        tracker
+            .record("Bash".to_string(), "toolu_second".to_string())
+            .await;
+
+        assert_eq!(tracker.take("Bash").await.as_deref(), Some("toolu_first"));
+        assert_eq!(tracker.take("Bash").await.as_deref(), Some("toolu_second"));
+        assert_eq!(tracker.take("Bash").await, None);
+    }
+
+    #[tokio::test]
+    async fn can_use_tool_emits_inbound_request_with_tracked_tool_use_id() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let bridge = Arc::new(PermissionBridge::new());
+        let tracker = Arc::new(ToolCallIdTracker::new());
+        tracker
+            .record("Bash".to_string(), "toolu_tracked_123".to_string())
+            .await;
+
+        let handler = AcepePermissionHandler {
+            session_id: "session-1".to_string(),
+            bridge: bridge.clone(),
+            dispatcher,
+            tool_call_tracker: tracker,
+        };
+
+        let resolver_bridge = bridge.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            resolver_bridge.resolve(1, true).await;
+        });
+
+        let context = cc_sdk::ToolPermissionContext {
+            signal: None,
+            suggestions: Vec::new(),
+        };
+
+        let result = handler
+            .can_use_tool("Bash", &serde_json::json!({ "command": "echo ok" }), &context)
+            .await;
+
+        assert!(matches!(result, cc_sdk::PermissionResult::Allow(_)));
+
+        let captured = sink.lock().expect("sink lock");
+        assert_eq!(captured.len(), 1);
+        let event = &captured[0];
+        assert_eq!(event.event_name, "acp-inbound-request");
+        let payload = match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::Json(value) => value,
+            other => panic!("expected json payload, got {:?}", other),
+        };
+        assert_eq!(payload["params"]["sessionId"], "session-1");
+        assert_eq!(payload["params"]["toolCall"]["toolCallId"], "toolu_tracked_123");
+        assert_eq!(payload["params"]["toolCall"]["name"], "Bash");
+    }
+
+    #[tokio::test]
+    async fn can_use_tool_falls_back_to_synthetic_id_when_tracker_is_empty() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let bridge = Arc::new(PermissionBridge::new());
+
+        let handler = AcepePermissionHandler {
+            session_id: "session-2".to_string(),
+            bridge: bridge.clone(),
+            dispatcher,
+            tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
+        };
+
+        let resolver_bridge = bridge.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            resolver_bridge.resolve(1, false).await;
+        });
+
+        let context = cc_sdk::ToolPermissionContext {
+            signal: None,
+            suggestions: Vec::new(),
+        };
+
+        let result = handler
+            .can_use_tool("Bash", &serde_json::json!({ "command": "echo ok" }), &context)
+            .await;
+
+        assert!(matches!(result, cc_sdk::PermissionResult::Deny(_)));
+
+        let captured = sink.lock().expect("sink lock");
+        assert_eq!(captured.len(), 1);
+        let event = &captured[0];
+        let payload = match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::Json(value) => value,
+            other => panic!("expected json payload, got {:?}", other),
+        };
+        assert_eq!(payload["params"]["toolCall"]["toolCallId"], "cc-sdk-1");
     }
 
 }

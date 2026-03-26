@@ -5,10 +5,12 @@
 
 use crate::acp::session_update::{
     ContentChunk, SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData,
-    TurnErrorData, UsageTelemetryData, UsageTelemetryTokens,
+    ToolKind, TurnErrorData, UsageTelemetryData, UsageTelemetryTokens,
 };
 use crate::acp::types::ContentBlock;
 use cc_sdk::Message;
+use crate::acp::agent_context::current_agent;
+use super::get_parser;
 
 #[derive(Debug, Clone, Default)]
 pub struct CcSdkTurnStreamState {
@@ -223,6 +225,9 @@ fn translate_stream_event(
                 .unwrap_or("unknown")
                 .to_string();
 
+
+            let detected_kind = get_parser(current_agent()).detect_tool_kind(&name);
+            let kind = if detected_kind != ToolKind::Other { Some(detected_kind) } else { None };
             let tool_call = ToolCallData {
                 id,
                 name,
@@ -231,7 +236,7 @@ fn translate_stream_event(
                 },
                 status: ToolCallStatus::InProgress,
                 result: None,
-                kind: None,
+                kind,
                 title: None,
                 locations: None,
                 skill_meta: None,
@@ -552,8 +557,12 @@ fn build_result_telemetry(
 
 #[cfg(test)]
 mod tests {
-    use super::{translate_cc_sdk_message_with_turn_state, CcSdkTurnStreamState};
-    use crate::acp::session_update::SessionUpdate;
+    use super::{translate_cc_sdk_message, translate_cc_sdk_message_with_turn_state, CcSdkTurnStreamState};
+    use crate::acp::agent_context::with_agent;
+    use crate::acp::parsers::AgentType;
+    use crate::acp::session_update::{
+        build_tool_call_update_from_raw, RawToolCallUpdateInput, SessionUpdate, ToolArguments, ToolKind,
+    };
     use crate::acp::types::ContentBlock;
     use cc_sdk::{
         AssistantMessage, ContentBlock as CcContentBlock, Message, TextContent, ThinkingContent,
@@ -833,5 +842,112 @@ mod tests {
 
         // Unknown model
         assert_eq!(context_window_for_model("gpt-4o"), None);
+    }
+
+    #[test]
+    fn streamed_bash_input_delta_builds_execute_arguments() {
+        with_agent(AgentType::ClaudeCode, || {
+            let parser = crate::acp::parsers::get_parser(AgentType::ClaudeCode);
+            let raw = RawToolCallUpdateInput {
+                id: "toolu_test_bash".to_string(),
+                status: None,
+                result: None,
+                content: None,
+                title: None,
+                locations: None,
+                streaming_input_delta: Some("{\"command\":\"echo hi\"}".to_string()),
+                tool_name: Some("Bash".to_string()),
+                raw_input: None,
+                kind: None,
+            };
+
+            let update = build_tool_call_update_from_raw(parser, raw, Some("cc-sdk-stream-test"));
+
+            assert_eq!(update.tool_call_id, "toolu_test_bash");
+            assert_eq!(
+                update.streaming_input_delta.as_deref(),
+                Some("{\"command\":\"echo hi\"}")
+            );
+            match update.streaming_arguments {
+                Some(ToolArguments::Execute { command }) => {
+                    assert_eq!(command.as_deref(), Some("echo hi"));
+                }
+                other => panic!("expected execute streaming args, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn content_block_start_write_tool_has_edit_kind() {
+        with_agent(AgentType::ClaudeCode, || {
+            let updates = translate_cc_sdk_message(
+                Message::StreamEvent {
+                    uuid: "msg-001".to_string(),
+                    session_id: "ses-test".to_string(),
+                    event: serde_json::json!({
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": "toolu_write_001",
+                            "name": "Write",
+                            "input": {}
+                        }
+                    }),
+                    parent_tool_use_id: None,
+                },
+                Some("ses-test".to_string()),
+            );
+
+            assert_eq!(updates.len(), 1);
+            if let SessionUpdate::ToolCall { tool_call, .. } = &updates[0] {
+                assert_eq!(tool_call.name, "Write");
+                assert_eq!(
+                    tool_call.kind,
+                    Some(ToolKind::Edit),
+                    "content_block_start for Write should set kind=Edit, got {:?}",
+                    tool_call.kind,
+                );
+            } else {
+                panic!("expected SessionUpdate::ToolCall, got {:?}", updates[0]);
+            }
+        });
+    }
+
+    #[test]
+    fn content_block_start_bash_tool_has_execute_kind() {
+        with_agent(AgentType::ClaudeCode, || {
+            let updates = translate_cc_sdk_message(
+                Message::StreamEvent {
+                    uuid: "msg-002".to_string(),
+                    session_id: "ses-test".to_string(),
+                    event: serde_json::json!({
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": "toolu_bash_001",
+                            "name": "Bash",
+                            "input": {}
+                        }
+                    }),
+                    parent_tool_use_id: None,
+                },
+                Some("ses-test".to_string()),
+            );
+
+            assert_eq!(updates.len(), 1);
+            if let SessionUpdate::ToolCall { tool_call, .. } = &updates[0] {
+                assert_eq!(tool_call.name, "Bash");
+                assert_eq!(
+                    tool_call.kind,
+                    Some(ToolKind::Execute),
+                    "content_block_start for Bash should set kind=Execute, got {:?}",
+                    tool_call.kind,
+                );
+            } else {
+                panic!("expected SessionUpdate::ToolCall, got {:?}", updates[0]);
+            }
+        });
     }
 }
