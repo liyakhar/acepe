@@ -215,6 +215,8 @@ fn ensure_initial_commit_for_unborn_repo(repo_path: &Path) -> Result<bool, Strin
     let add_output = Command::new("git")
         .args(["add", "-A"])
         .current_dir(repo_path)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
         .output()
         .map_err(|e| format!("Failed to stage files for initial commit: {}", e))?;
 
@@ -231,6 +233,8 @@ fn ensure_initial_commit_for_unborn_repo(repo_path: &Path) -> Result<bool, Strin
             "Initial commit created by Acepe for worktree support",
         ])
         .current_dir(repo_path)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
         .env("GIT_AUTHOR_NAME", "Acepe")
         .env("GIT_AUTHOR_EMAIL", "acepe@local")
         .env("GIT_COMMITTER_NAME", "Acepe")
@@ -1078,6 +1082,8 @@ mod tests {
         Command::new("git")
             .args(args)
             .current_dir(repo_path)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
             .output()
             .expect("git command should run")
     }
