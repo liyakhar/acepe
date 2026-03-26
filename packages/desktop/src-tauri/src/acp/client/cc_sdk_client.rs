@@ -390,7 +390,7 @@ impl CcSdkClaudeClient {
         sdk_client
             .lock()
             .await
-            .set_permission_mode(map_to_claude_permission_mode(mode_id))
+            .set_permission_mode(claude_permission_mode_name(map_to_claude_permission_mode(mode_id)))
             .await
             .map_err(|error| AcpError::ProtocolError(error.to_string()))
     }
@@ -421,10 +421,19 @@ fn provider_models(provider: &dyn AgentProvider) -> Vec<AvailableModel> {
         .collect()
 }
 
-fn map_to_claude_permission_mode(mode_id: &str) -> &'static str {
+fn map_to_claude_permission_mode(mode_id: &str) -> cc_sdk::PermissionMode {
     match mode_id {
-        "plan" => "plan",
-        _ => "default",
+        "plan" => cc_sdk::PermissionMode::Plan,
+        _ => cc_sdk::PermissionMode::Default,
+    }
+}
+
+fn claude_permission_mode_name(mode: cc_sdk::PermissionMode) -> &'static str {
+    match mode {
+        cc_sdk::PermissionMode::Plan => "plan",
+        cc_sdk::PermissionMode::AcceptEdits => "acceptEdits",
+        cc_sdk::PermissionMode::BypassPermissions => "bypassPermissions",
+        cc_sdk::PermissionMode::Default => "default",
     }
 }
 
@@ -462,20 +471,56 @@ async fn run_streaming_bridge(
                                 }
                             }
                         }
+                        // Extract model from message_start event
+                        if event_type == "message_start" {
+                            if let Some(model) = event
+                                .get("message")
+                                .and_then(|m| m.get("model"))
+                                .and_then(|v| v.as_str())
+                            {
+                                turn_stream_state.model_id = Some(model.to_string());
+                            }
+                        }
+                    }
+                }
+                // Extract model from Assistant message as fallback
+                if let cc_sdk::Message::Assistant { message, .. } = &msg {
+                    if let Some(model) = &message.model {
+                        if turn_stream_state.model_id.is_none() {
+                            turn_stream_state.model_id = Some(model.clone());
+                        }
                     }
                 }
                 let msg_type = match &msg {
                     cc_sdk::Message::Assistant { .. } => "Assistant",
                     cc_sdk::Message::StreamEvent { .. } => "StreamEvent",
-                    cc_sdk::Message::Result { .. } => "Result",
+                    cc_sdk::Message::Result { ref usage, ref total_cost_usd, .. } => {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            usage = ?usage,
+                            total_cost_usd = ?total_cost_usd,
+                            "cc-sdk bridge: Result message raw data"
+                        );
+                        "Result"
+                    }
                     cc_sdk::Message::User { .. } => "User",
-                    cc_sdk::Message::System { subtype, .. } => {
-                        tracing::info!(session_id = %session_id, subtype = %subtype, "cc-sdk bridge: System message");
+                    cc_sdk::Message::System { subtype, ref data, .. } => {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            subtype = %subtype,
+                            data = %data,
+                            "cc-sdk bridge: System message"
+                        );
                         "System"
                     }
                     cc_sdk::Message::RateLimit { .. } => "RateLimit",
-                    cc_sdk::Message::Unknown { msg_type, .. } => {
-                        tracing::info!(session_id = %session_id, msg_type = %msg_type, "cc-sdk bridge: Unknown message type");
+                    cc_sdk::Message::Unknown { msg_type, ref raw, .. } => {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            msg_type = %msg_type,
+                            raw = %raw,
+                            "cc-sdk bridge: Unknown message type"
+                        );
                         "Unknown"
                     }
                 };
@@ -489,7 +534,7 @@ async fn run_streaming_bridge(
                 let updates = crate::acp::parsers::cc_sdk_bridge::translate_cc_sdk_message_with_turn_state(
                     msg,
                     Some(session_id.clone()),
-                    turn_stream_state,
+                    turn_stream_state.clone(),
                 );
                 tracing::info!(
                     session_id = %session_id,
@@ -498,7 +543,10 @@ async fn run_streaming_bridge(
                 );
                 for update in updates {
                     if matches!(update, SessionUpdate::TurnComplete { .. } | SessionUpdate::TurnError { .. }) {
+                        // Reset per-turn stream state but preserve model_id across turns
+                        let preserved_model = turn_stream_state.model_id.clone();
                         turn_stream_state = crate::acp::parsers::cc_sdk_bridge::CcSdkTurnStreamState::default();
+                        turn_stream_state.model_id = preserved_model;
                     }
                     dispatcher.enqueue(AcpUiEvent::session_update(update));
                 }
