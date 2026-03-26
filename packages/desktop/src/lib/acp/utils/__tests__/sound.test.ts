@@ -53,7 +53,7 @@ describe("sound utilities", () => {
 			configurable: true,
 		});
 
-		const { preloadSound, playSound } = await import("../sound.js");
+		const { preloadSound, playSound } = await import(`../sound.js?case=warm-${Date.now()}`);
 
 		preloadSound(SoundEffect.SoundUp);
 		await Promise.resolve();
@@ -63,7 +63,7 @@ describe("sound utilities", () => {
 		playSound(SoundEffect.SoundUp);
 
 		expect(fakeContext.resume).toHaveBeenCalledTimes(1);
-		expect(fetchMock).toHaveBeenCalledWith("/sounds/sound-up-2.mp3");
+		expect(fetchMock).toHaveBeenCalledWith(`/sounds/${SoundEffect.SoundUp}`);
 	});
 
 	it("falls back to HTML Audio when sound is not cached", async () => {
@@ -79,11 +79,11 @@ describe("sound utilities", () => {
 			configurable: true,
 		});
 
-		const { playSound } = await import("../sound.js");
+		const { playSound } = await import(`../sound.js?case=fallback-${Date.now()}`);
 
 		playSound(SoundEffect.SoundDown);
 
-		expect(AudioMock).toHaveBeenCalledWith("/sounds/sound-down.mp3");
+		expect(AudioMock).toHaveBeenCalledWith(`/sounds/${SoundEffect.SoundDown}`);
 		expect(playMock).toHaveBeenCalledTimes(1);
 	});
 });
