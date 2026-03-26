@@ -208,12 +208,12 @@ function handleRenameKeydown(event: KeyboardEvent): void {
 											<Tree class="size-3.5 shrink-0" weight="regular" />
 											<span class="truncate">Auto worktree</span>
 										</div>
-										<Switch
-											checked={pending}
-											disabled={disabled || loading}
-											onCheckedChange={() => {
-												if (!disabled && !loading) {
-													onCreate();
+									<Switch
+										checked={active}
+										disabled={disabled || loading}
+										onCheckedChange={() => {
+											if (!disabled && !loading) {
+												onCreate();
 												}
 											}}
 										/>

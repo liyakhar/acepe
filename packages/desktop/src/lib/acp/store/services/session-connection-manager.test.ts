@@ -34,6 +34,7 @@ const updateModesCache = vi.fn();
 const getDefaultModel = vi.fn();
 const ensureLoaded = vi.fn();
 const isSessionModelLoaded = vi.fn();
+const getCachedModels = vi.fn().mockReturnValue([]);
 
 vi.mock("../agent-model-preferences-store.svelte.js", () => ({
 	getSessionModelForMode,
@@ -44,6 +45,7 @@ vi.mock("../agent-model-preferences-store.svelte.js", () => ({
 	getDefaultModel,
 	ensureLoaded,
 	isSessionModelLoaded,
+	getCachedModels,
 }));
 
 function createMockEventHandler(): SessionEventHandler {

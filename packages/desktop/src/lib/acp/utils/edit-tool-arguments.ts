@@ -15,23 +15,7 @@ export function getEditEntries(
 		return toolArguments.edits;
 	}
 
-	if (
-		toolArguments.file_path === undefined &&
-		toolArguments.old_string === undefined &&
-		toolArguments.new_string === undefined &&
-		toolArguments.content === undefined
-	) {
-		return [];
-	}
-
-	return [
-		{
-			filePath: toolArguments.file_path,
-			oldString: toolArguments.old_string,
-			newString: toolArguments.new_string,
-			content: toolArguments.content,
-		},
-	];
+	return [];
 }
 
 export function getFirstEditEntry(
@@ -93,10 +77,6 @@ export function withSingleEditEntry(
 ): Extract<ToolArguments, { kind: "edit" }> {
 	return {
 		kind: "edit",
-		file_path: entry.filePath,
-		old_string: entry.oldString,
-		new_string: entry.newString,
-		content: entry.content,
 		edits: [entry],
 	};
 }

@@ -17,6 +17,22 @@ afterEach(() => {
 });
 
 describe("WorktreeToggleButton", () => {
+	it("shows the auto worktree switch as enabled when a worktree already exists", async () => {
+		render(WorktreeToggleButton, {
+			disabled: false,
+			loading: false,
+			tooltipText: "Worktree active",
+			worktreeName: "proud-harbor",
+			pending: false,
+			deleted: false,
+			onCreate: vi.fn(),
+		});
+
+		const switchRoot = document.querySelector('[data-slot="switch"]');
+		expect(switchRoot).toBeTruthy();
+		expect(switchRoot?.getAttribute("data-state")).toBe("checked");
+	});
+
 	it("shows inline rename input from the pencil icon and submits on Enter", async () => {
 		const onRename = vi.fn();
 

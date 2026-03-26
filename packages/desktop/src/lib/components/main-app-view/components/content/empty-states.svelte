@@ -8,6 +8,7 @@ import { loadWorktreeEnabled } from "$lib/acp/components/worktree-toggle/worktre
 import type { Project, ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
 import { getPanelStore } from "$lib/acp/store/panel-store.svelte.js";
 import { getAgentPreferencesStore, getAgentStore } from "$lib/acp/store/index.js";
+import { createLogger } from "$lib/acp/utils/logger.js";
 import * as m from "$lib/paraglide/messages.js";
 
 import logo from "../../../../../../../../assets/logo.svg?url";
@@ -33,6 +34,7 @@ const { projectManager, onSessionCreated }: Props = $props();
 const agentStore = getAgentStore();
 const agentPreferencesStore = getAgentPreferencesStore();
 const panelStore = getPanelStore();
+const logger = createLogger({ id: "empty-state-worktree", name: "EmptyStateWorktree" });
 
 // Global worktree default (loaded once at app root in main-app-view, read reactively here)
 const worktreeDefaultStore = getWorktreeDefaultStore();
@@ -96,11 +98,23 @@ function handleAgentChange(agentId: string) {
 }
 
 function handleProjectChange(project: Project) {
+	logger.info("[worktree-debug] empty-state project change", {
+		projectPath: project.path,
+		previousProjectPath: projectPath,
+		activeWorktreePath,
+		worktreePendingBefore: worktreePending,
+		globalWorktreeDefault,
+	});
 	selectedProject = project;
 	activeWorktreePath = null;
 	worktreePending = resolveEmptyStateWorktreePendingForProjectChange({
 		globalWorktreeDefault,
 		loadEnabled: loadWorktreeEnabled,
+	});
+	logger.info("[worktree-debug] empty-state project change resolved", {
+		projectPath: project.path,
+		activeWorktreePath,
+		worktreePendingAfter: worktreePending,
 	});
 }
 
@@ -110,8 +124,24 @@ function handleBrowseProject() {
 
 function handleWillSend() {
 	if (!projectPath || !effectiveAgentId) {
+		logger.warn("[worktree-debug] empty-state handleWillSend aborted", {
+			projectPath,
+			effectiveAgentId,
+			activeWorktreePath,
+			worktreePending,
+		});
 		return;
 	}
+
+	logger.info("[worktree-debug] empty-state handleWillSend", {
+		projectPath,
+		projectName,
+		effectiveAgentId,
+		activeWorktreePath,
+		worktreePending,
+		effectiveWorktreePending,
+		panelExists: panelStore.panels.some((panel) => panel.id === EMPTY_STATE_PANEL_ID),
+	});
 
 	ensureEmptyStatePanelContext({
 		panelStore,
@@ -119,10 +149,24 @@ function handleWillSend() {
 		projectPath,
 		selectedAgentId: effectiveAgentId,
 	});
+	logger.info("[worktree-debug] empty-state panel context ensured", {
+		panelId: EMPTY_STATE_PANEL_ID,
+		projectPath,
+		effectiveAgentId,
+		panelProjectPath:
+			panelStore.panels.find((panel) => panel.id === EMPTY_STATE_PANEL_ID && "projectPath" in panel)?.projectPath ?? null,
+	});
 	panelStore.focusPanel(EMPTY_STATE_PANEL_ID);
 }
 
 function handleEmptyStateSessionCreated(sessionId: string) {
+	logger.info("[worktree-debug] empty-state session created callback", {
+		sessionId,
+		projectPath,
+		activeWorktreePath,
+		worktreePending,
+		effectiveWorktreePending,
+	});
 	const attached = attachSessionToEmptyStatePanel({
 		panelStore,
 		panelId: EMPTY_STATE_PANEL_ID,

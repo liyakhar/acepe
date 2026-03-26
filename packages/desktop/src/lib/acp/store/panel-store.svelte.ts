@@ -516,6 +516,14 @@ export class PanelStore {
 	updatePanelSession(panelId: string, sessionId: string | null): void {
 		logger.info("[worktree-flow] updatePanelSession", { panelId, sessionId });
 		const session = sessionId ? this.sessionStore.getSessionCold(sessionId) : null;
+		logger.info("[worktree-debug] updatePanelSession resolved session", {
+			panelId,
+			sessionId,
+			sessionProjectPath: session?.projectPath ?? null,
+			sessionWorktreePath: session?.worktreePath ?? null,
+			panelProjectPathBefore:
+				this.panels.find((p) => p.id === panelId)?.projectPath ?? null,
+		});
 		this.panels = this.panels.map((p) =>
 			p.id === panelId
 				? {
@@ -528,6 +536,12 @@ export class PanelStore {
 				}
 				: p
 		);
+		logger.info("[worktree-debug] updatePanelSession applied", {
+			panelId,
+			sessionId,
+			panelProjectPathAfter:
+				this.panels.find((p) => p.id === panelId)?.projectPath ?? null,
+		});
 		this.onPersist();
 	}
 
