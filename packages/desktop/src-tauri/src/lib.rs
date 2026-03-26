@@ -278,6 +278,7 @@ fn init_logging() {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         return (*message).to_string();
@@ -290,6 +291,7 @@ fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
     "unknown panic payload".to_string()
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn run_startup_step<T, F>(step_name: &str, step: F) -> anyhow::Result<T>
 where
     F: FnOnce() -> T,

@@ -38,6 +38,7 @@ impl ProjectAccessReason {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ProtectedParentKind {
     Documents,
@@ -45,6 +46,7 @@ enum ProtectedParentKind {
     Downloads,
 }
 
+#[cfg(target_os = "macos")]
 impl ProtectedParentKind {
     fn as_str(self) -> &'static str {
         match self {
