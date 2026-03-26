@@ -519,7 +519,8 @@ mod tests {
     #[cfg(unix)]
     use std::path::PathBuf;
     #[cfg(unix)]
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
 
     #[cfg(unix)]
     use tempfile::TempDir;
@@ -624,7 +625,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn merge_pull_request_treats_worktree_cleanup_failure_as_success_when_pr_is_merged() {
-        let _env_guard = env_lock().lock().expect("env lock");
+        let _env_guard = env_lock().lock().await;
         let (repo_dir, bin_dir) = setup_fake_binaries(
             r#"#!/bin/sh
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then

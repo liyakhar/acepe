@@ -62,6 +62,7 @@ jobs:
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
         with:
+          tauriScript: bunx tauri
           projectPath: packages/desktop
           tagName: v__VERSION__
           releaseName: v__VERSION__

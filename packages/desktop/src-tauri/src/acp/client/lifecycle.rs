@@ -1,5 +1,6 @@
 use super::*;
 use crate::acp::client_loop::read_stderr_buffer;
+use tokio_util::sync::CancellationToken;
 
 impl AcpClient {
     pub(super) fn has_next_spawn_config(&self) -> bool {
@@ -214,6 +215,11 @@ impl AcpClient {
 
             // Shared child handle for death monitor and stop()
             let child_shared = StdArc::new(std::sync::Mutex::new(Some(child)));
+            // Create a fresh cancellation token for this process lifetime.
+            // stop() will cancel it so the death monitor exits before a
+            // subsequent start() can insert new pending requests.
+            let cancel = CancellationToken::new();
+            self.death_monitor_cancel = cancel.clone();
             spawn_death_monitor(
                 child_shared.clone(),
                 self.pending_requests.clone(),
@@ -221,6 +227,7 @@ impl AcpClient {
                 self.web_search_dedup.clone(),
                 dispatcher.clone(),
                 stderr_buffer,
+                cancel,
             );
 
             self.child = Some(child_shared);
@@ -245,6 +252,11 @@ impl AcpClient {
             stderr = self.stderr_buffer.as_ref().and_then(read_stderr_buffer),
             "AcpClient::stop invoked"
         );
+
+        // Cancel the death monitor BEFORE touching the child, so it cannot
+        // race with a subsequent start() by draining newly-inserted pending requests.
+        self.death_monitor_cancel.cancel();
+
         if let Some(child_arc) = self.child.take() {
             let mut guard = child_arc.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(mut child) = guard.take() {

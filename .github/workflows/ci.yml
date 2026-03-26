@@ -31,6 +31,9 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # Website svelte-check needs env vars declared in .env for $env/static/public types
+      - run: cp packages/website/.env.example packages/website/.env
+
       # All three run in parallel via background processes
       - name: Lint + Typecheck + Test
         run: |

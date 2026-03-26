@@ -1,4 +1,5 @@
 use super::*;
+use tokio_util::sync::CancellationToken;
 
 /// Shared child handle so the death monitor and stop() can both access it.
 /// Uses std::sync::Mutex because stop() is sync (called from Drop).
@@ -42,6 +43,9 @@ pub struct AcpClient {
     /// Whether session/load replay is currently in progress.
     /// Set by ReplayGuard in resume_session(); auto-cancels all inbound requests during replay.
     pub(super) is_replay_active: StdArc<std::sync::atomic::AtomicBool>,
+    /// Cancels the death monitor task when `stop()` is called, preventing it from
+    /// racing with a subsequent `start()` by draining newly-inserted pending requests.
+    pub(super) death_monitor_cancel: CancellationToken,
 }
 
 impl Clone for AcpClient {
@@ -65,6 +69,7 @@ impl Clone for AcpClient {
             active_session_id: self.active_session_id.clone(),
             inbound_response_adapters: self.inbound_response_adapters.clone(),
             is_replay_active: self.is_replay_active.clone(),
+            death_monitor_cancel: CancellationToken::new(),
         }
     }
 }
@@ -101,6 +106,7 @@ impl AcpClient {
             active_session_id: StdArc::new(std::sync::Mutex::new(None)),
             inbound_response_adapters: StdArc::new(std::sync::Mutex::new(HashMap::new())),
             is_replay_active: StdArc::new(std::sync::atomic::AtomicBool::new(false)),
+            death_monitor_cancel: CancellationToken::new(),
         })
     }
 

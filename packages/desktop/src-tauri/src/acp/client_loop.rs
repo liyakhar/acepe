@@ -615,10 +615,17 @@ pub(crate) fn spawn_death_monitor(
     web_search_dedup: StdArc<std::sync::Mutex<WebSearchDedup>>,
     dispatcher: AcpUiEventDispatcher,
     stderr_buffer: StderrBuffer,
+    cancel: tokio_util::sync::CancellationToken,
 ) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    tracing::debug!("Death monitor cancelled by stop()");
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+            }
             let exit_reason = {
                 let mut guard = match child_monitor.lock() {
                     Ok(g) => g,
@@ -638,6 +645,13 @@ pub(crate) fn spawn_death_monitor(
             };
 
             if let Some(base_reason) = exit_reason {
+                // Re-check cancellation before draining pending requests.
+                // If stop() was called between our try_wait and here, skip the drain
+                // so we don't corrupt newly-inserted entries from a subsequent start().
+                if cancel.is_cancelled() {
+                    tracing::debug!("Death monitor skipping drain — cancelled by stop()");
+                    break;
+                }
                 let reason = match read_stderr_buffer(&stderr_buffer) {
                     Some(stderr) => format!("Agent process exited unexpectedly:\n{stderr}"),
                     None => base_reason.clone(),
