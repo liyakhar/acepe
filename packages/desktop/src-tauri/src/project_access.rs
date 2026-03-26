@@ -38,25 +38,6 @@ impl ProjectAccessReason {
     }
 }
 
-#[cfg(target_os = "macos")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum ProtectedParentKind {
-    Documents,
-    Desktop,
-    Downloads,
-}
-
-#[cfg(target_os = "macos")]
-impl ProtectedParentKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Documents => "Documents",
-            Self::Desktop => "Desktop",
-            Self::Downloads => "Downloads",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 struct ProjectAccessMetrics {
     total_requests: u64,
@@ -412,7 +393,7 @@ impl ProjectAccessBroker {
         probe_kind: &str,
         project_path_hash: &str,
     ) {
-        let Some((kind, parent_dir)) = protected_parent_for_path(path) else {
+        let Some((protected_parent, parent_dir)) = protected_parent_for_path(path) else {
             return;
         };
 
@@ -436,7 +417,7 @@ impl ProjectAccessBroker {
                 startup_phase = startup_phase,
                 subsystem = subsystem,
                 project_path_hash = %project_path_hash,
-                protected_parent = kind.as_str(),
+                protected_parent = protected_parent,
                 probe_kind = probe_kind,
                 cache_hit = true,
                 singleflight_waiter = false,
@@ -451,7 +432,7 @@ impl ProjectAccessBroker {
             startup_phase = startup_phase,
             subsystem = subsystem,
             project_path_hash = %project_path_hash,
-            protected_parent = kind.as_str(),
+            protected_parent = protected_parent,
             probe_kind = probe_kind,
             cache_hit = false,
             singleflight_waiter = false,
@@ -474,7 +455,7 @@ fn normalize_cache_key(path: &Path) -> PathBuf {
     }
 }
 
-fn protected_parent_for_path(path: &Path) -> Option<(ProtectedParentKind, PathBuf)> {
+fn protected_parent_for_path(path: &Path) -> Option<(&'static str, PathBuf)> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = path;
@@ -486,17 +467,17 @@ fn protected_parent_for_path(path: &Path) -> Option<(ProtectedParentKind, PathBu
         let home = dirs::home_dir()?;
         let documents = home.join("Documents");
         if path.starts_with(&documents) {
-            return Some((ProtectedParentKind::Documents, documents));
+            return Some(("Documents", documents));
         }
 
         let desktop = home.join("Desktop");
         if path.starts_with(&desktop) {
-            return Some((ProtectedParentKind::Desktop, desktop));
+            return Some(("Desktop", desktop));
         }
 
         let downloads = home.join("Downloads");
         if path.starts_with(&downloads) {
-            return Some((ProtectedParentKind::Downloads, downloads));
+            return Some(("Downloads", downloads));
         }
 
         None
@@ -618,15 +599,15 @@ mod tests {
 
         assert_eq!(
             protected_parent_for_path(&documents_project).map(|(kind, _)| kind),
-            Some(ProtectedParentKind::Documents)
+            Some("Documents")
         );
         assert_eq!(
             protected_parent_for_path(&desktop_project).map(|(kind, _)| kind),
-            Some(ProtectedParentKind::Desktop)
+            Some("Desktop")
         );
         assert_eq!(
             protected_parent_for_path(&downloads_project).map(|(kind, _)| kind),
-            Some(ProtectedParentKind::Downloads)
+            Some("Downloads")
         );
     }
 }
