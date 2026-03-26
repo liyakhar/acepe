@@ -59,6 +59,16 @@ const AGENT_ENV_OVERRIDES_KEY: &str = "agent_env_overrides";
 
 type AgentEnvOverrides = HashMap<String, HashMap<String, String>>;
 
+pub(crate) struct PendingRequestEntry {
+    pub generation: u64,
+    pub sender: oneshot::Sender<Value>,
+}
+
+pub(crate) struct PromptRequestSession {
+    pub generation: u64,
+    pub session_id: String,
+}
+
 fn is_protected_agent_env_override_key(key: &str) -> bool {
     key == "PATH" || crate::shell_env::is_denied_env_key(key)
 }

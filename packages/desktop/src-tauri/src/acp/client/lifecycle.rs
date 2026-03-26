@@ -193,9 +193,14 @@ impl AcpClient {
             let dispatcher =
                 AcpUiEventDispatcher::new(app_handle.clone(), DispatchPolicy::default());
             self.dispatcher = Some(dispatcher.clone());
+            self.process_generation += 1;
+            let process_generation = self.process_generation;
+            let stdout_cancel = CancellationToken::new();
+            self.stdout_reader_cancel = stdout_cancel.clone();
             spawn_stdout_reader(
                 stdout,
                 StdoutLoopContext {
+                    process_generation,
                     pending: self.pending_requests.clone(),
                     stdin_writer: self.stdin_writer.clone(),
                     prompt_sessions: self.prompt_request_sessions.clone(),
@@ -210,6 +215,7 @@ impl AcpClient {
                     agent_type,
                     max_logged_line_bytes: MAX_LOGGED_SUBPROCESS_LINE_BYTES,
                     stderr_buffer: stderr_buffer.clone(),
+                    cancel: stdout_cancel,
                 },
             );
 
@@ -222,6 +228,7 @@ impl AcpClient {
             self.death_monitor_cancel = cancel.clone();
             spawn_death_monitor(
                 child_shared.clone(),
+                process_generation,
                 self.pending_requests.clone(),
                 self.permission_tracker.clone(),
                 self.web_search_dedup.clone(),
@@ -256,6 +263,7 @@ impl AcpClient {
         // Cancel the death monitor BEFORE touching the child, so it cannot
         // race with a subsequent start() by draining newly-inserted pending requests.
         self.death_monitor_cancel.cancel();
+        self.stdout_reader_cancel.cancel();
 
         if let Some(child_arc) = self.child.take() {
             let mut guard = child_arc.lock().unwrap_or_else(|e| e.into_inner());

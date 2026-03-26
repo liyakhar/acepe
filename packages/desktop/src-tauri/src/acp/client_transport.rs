@@ -1,4 +1,5 @@
 use crate::acp::error::{AcpError, AcpResult};
+use crate::acp::client::PendingRequestEntry;
 use crate::acp::permission_tracker::PermissionTracker;
 use crate::acp::session_update::{SessionUpdate, ToolCallStatus, ToolCallUpdateData};
 use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher};
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc as StdArc;
 use tokio::io::AsyncWriteExt;
 use tokio::process::ChildStdin;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::Mutex;
 
 pub(crate) fn truncate_for_log(line: &str, max_bytes: usize) -> String {
     if line.len() <= max_bytes {
@@ -29,18 +30,32 @@ fn subprocess_exit_error_response(reason: &str) -> Value {
 }
 
 pub(crate) async fn fail_pending_requests(
-    pending: &StdArc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    pending: &StdArc<Mutex<HashMap<u64, PendingRequestEntry>>>,
+    process_generation: u64,
     reason: &str,
 ) {
     let mut locked = pending.lock().await;
-    if locked.is_empty() {
+    let failed_ids: Vec<u64> = locked
+        .iter()
+        .filter_map(|(id, entry)| {
+            if entry.generation == process_generation {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if failed_ids.is_empty() {
         return;
     }
 
     let response = subprocess_exit_error_response(reason);
-    let pending_count = locked.len();
-    for (id, sender) in locked.drain() {
-        let _ = sender.send(response.clone());
+    let pending_count = failed_ids.len();
+    for id in failed_ids {
+        let Some(entry) = locked.remove(&id) else {
+            continue;
+        };
+        let _ = entry.sender.send(response.clone());
         tracing::warn!(id, reason = %reason, "Failing pending request due to subprocess termination");
     }
     tracing::warn!(pending_count, reason = %reason, "Failed pending ACP requests after subprocess termination");

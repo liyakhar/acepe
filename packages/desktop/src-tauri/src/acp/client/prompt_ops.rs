@@ -31,6 +31,7 @@ impl AcpClient {
             &self.stdin_writer,
             &self.request_id,
             &self.prompt_request_sessions,
+            self.process_generation,
             session_id,
             acp_methods::PROMPT,
             params,

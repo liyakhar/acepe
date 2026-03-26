@@ -1,4 +1,5 @@
 use crate::acp::client_errors::extract_turn_error;
+use crate::acp::client::{PendingRequestEntry, PromptRequestSession};
 use crate::acp::client_transport::{
     drain_permissions_as_failed, fail_pending_requests, send_inbound_response, truncate_for_log,
     InboundRequestResponder,
@@ -29,7 +30,7 @@ use std::sync::Arc as StdArc;
 use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::Mutex;
 use tokio::time::Duration;
 
 /// Maximum number of stderr lines to retain in the buffer.
@@ -112,17 +113,36 @@ impl BatcherWithGuard {
 /// dispatched TurnError directly, the frontend could receive TurnError BEFORE the
 /// batcher's Drop-flush delivers final text chunks (ordering violation).
 async fn drain_prompt_sessions_as_turn_errors(
-    prompt_sessions: &StdArc<Mutex<HashMap<u64, String>>>,
+    prompt_sessions: &StdArc<Mutex<HashMap<u64, PromptRequestSession>>>,
+    process_generation: u64,
     streaming_batcher: &mut BatcherWithGuard,
     dispatcher: &AcpUiEventDispatcher,
     reason: &str,
 ) {
-    let drained: HashMap<u64, String> = prompt_sessions.lock().await.drain().collect();
+    let mut locked: tokio::sync::MutexGuard<'_, HashMap<u64, PromptRequestSession>> =
+        prompt_sessions.lock().await;
+    let drained_ids: Vec<u64> = locked
+        .iter()
+        .filter_map(|(id, prompt)| {
+            if prompt.generation == process_generation {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let drained: HashMap<u64, PromptRequestSession> = drained_ids
+        .into_iter()
+        .filter_map(|id| locked.remove(&id).map(|prompt| (id, prompt)))
+        .collect();
     if drained.is_empty() {
         return;
     }
 
-    let unique_sessions: HashSet<String> = drained.into_values().collect();
+    let unique_sessions: HashSet<String> = drained
+        .into_values()
+        .map(|prompt| prompt.session_id)
+        .collect();
     tracing::warn!(
         count = unique_sessions.len(),
         reason,
@@ -191,9 +211,10 @@ pub(crate) fn spawn_stderr_reader(
 }
 
 pub(crate) struct StdoutLoopContext {
-    pub pending: StdArc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    pub process_generation: u64,
+    pub pending: StdArc<Mutex<HashMap<u64, PendingRequestEntry>>>,
     pub stdin_writer: StdArc<Mutex<Option<ChildStdin>>>,
-    pub prompt_sessions: StdArc<Mutex<HashMap<u64, String>>>,
+    pub prompt_sessions: StdArc<Mutex<HashMap<u64, PromptRequestSession>>>,
     pub app_handle: Option<AppHandle>,
     pub dispatcher: AcpUiEventDispatcher,
     pub permission_tracker: StdArc<std::sync::Mutex<PermissionTracker>>,
@@ -205,6 +226,7 @@ pub(crate) struct StdoutLoopContext {
     pub agent_type: AgentType,
     pub max_logged_line_bytes: usize,
     pub stderr_buffer: StderrBuffer,
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
@@ -238,10 +260,18 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
 
             tokio::select! {
                 biased;
+                _ = ctx.cancel.cancelled() => {
+                    tracing::debug!("Stdout reader cancelled by stop()");
+                    break;
+                }
                 line_result = lines.next_line() => {
                     let line = match line_result {
                         Ok(Some(line)) => line,
                         Ok(None) => {
+                            if ctx.cancel.is_cancelled() {
+                                tracing::debug!("Stdout reader skipping EOF drain after stop()");
+                                break;
+                            }
                             tracing::error!(
                                 stderr = read_stderr_buffer(&ctx.stderr_buffer),
                                 "Subprocess stdout closed (EOF)"
@@ -251,15 +281,19 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                 None => "Agent process exited unexpectedly".to_string(),
                             };
                             drain_prompt_sessions_as_turn_errors(
-                                &ctx.prompt_sessions, &mut streaming_batcher, &ctx.dispatcher,
+                                &ctx.prompt_sessions, ctx.process_generation, &mut streaming_batcher, &ctx.dispatcher,
                                 &reason
                             ).await;
-                            fail_pending_requests(&ctx.pending, &reason).await;
+                            fail_pending_requests(&ctx.pending, ctx.process_generation, &reason).await;
                             drain_permissions_as_failed(&ctx.permission_tracker, &ctx.dispatcher);
                             if let Ok(mut dedup) = ctx.web_search_dedup.lock() { dedup.drain_all(); }
                             break;
                         }
                         Err(e) => {
+                            if ctx.cancel.is_cancelled() {
+                                tracing::debug!("Stdout reader skipping read-error drain after stop()");
+                                break;
+                            }
                             let base_reason = format!("Subprocess stdout read error: {e}");
                             let reason = match read_stderr_buffer(&ctx.stderr_buffer) {
                                 Some(stderr) => format!("{base_reason}\n{stderr}"),
@@ -267,9 +301,9 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                             };
                             tracing::error!(error = %e, "Error reading from subprocess stdout");
                             drain_prompt_sessions_as_turn_errors(
-                                &ctx.prompt_sessions, &mut streaming_batcher, &ctx.dispatcher, &reason
+                                &ctx.prompt_sessions, ctx.process_generation, &mut streaming_batcher, &ctx.dispatcher, &reason
                             ).await;
-                            fail_pending_requests(&ctx.pending, &reason).await;
+                            fail_pending_requests(&ctx.pending, ctx.process_generation, &reason).await;
                             drain_permissions_as_failed(&ctx.permission_tracker, &ctx.dispatcher);
                             if let Ok(mut dedup) = ctx.web_search_dedup.lock() { dedup.drain_all(); }
                             break;
@@ -464,7 +498,8 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                             } else {
                                 tracing::debug!(id = id, "Received response with id");
 
-                                if let Some(session_id) = ctx.prompt_sessions.lock().await.remove(&id) {
+                                if let Some(prompt_session) = ctx.prompt_sessions.lock().await.remove(&id) {
+                                    let session_id = prompt_session.session_id;
                                     if ctx.provider.as_ref().is_some_and(|provider| provider.clear_message_tracker_on_prompt_response()) {
                                         if let Ok(mut tracker) = message_id_tracker.lock() {
                                             tracker.remove(&session_id);
@@ -483,8 +518,8 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                     for update in updates {
                                         ctx.dispatcher.enqueue(AcpUiEvent::session_update(update));
                                     }
-                                } else if let Some(tx) = ctx.pending.lock().await.remove(&id) {
-                                    let _ = tx.send(json);
+                                } else if let Some(entry) = ctx.pending.lock().await.remove(&id) {
+                                    let _ = entry.sender.send(json);
                                 } else {
                                     tracing::warn!(id = id, "No pending request found for id");
                                 }
@@ -570,6 +605,10 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                             "Failed to parse JSON from subprocess line"
                         );
                         if consecutive_parse_failures >= MALFORMED_OUTPUT_THRESHOLD {
+                            if ctx.cancel.is_cancelled() {
+                                tracing::debug!("Stdout reader skipping malformed-output drain after stop()");
+                                break;
+                            }
                             let reason = format!(
                                 "Circuit breaker: {} consecutive malformed JSON lines from subprocess stdout",
                                 consecutive_parse_failures
@@ -579,9 +618,9 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                 ctx.dispatcher.enqueue(AcpUiEvent::session_update(update));
                             }
                             drain_prompt_sessions_as_turn_errors(
-                                &ctx.prompt_sessions, &mut streaming_batcher, &ctx.dispatcher, &reason
+                                &ctx.prompt_sessions, ctx.process_generation, &mut streaming_batcher, &ctx.dispatcher, &reason
                             ).await;
-                            fail_pending_requests(&ctx.pending, &reason).await;
+                            fail_pending_requests(&ctx.pending, ctx.process_generation, &reason).await;
                             drain_permissions_as_failed(&ctx.permission_tracker, &ctx.dispatcher);
                             if let Ok(mut dedup) = ctx.web_search_dedup.lock() {
                                 dedup.drain_all();
@@ -610,7 +649,8 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
 
 pub(crate) fn spawn_death_monitor(
     child_monitor: StdArc<std::sync::Mutex<Option<Child>>>,
-    pending_requests: StdArc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    process_generation: u64,
+    pending_requests: StdArc<Mutex<HashMap<u64, PendingRequestEntry>>>,
     permission_tracker: StdArc<std::sync::Mutex<PermissionTracker>>,
     web_search_dedup: StdArc<std::sync::Mutex<WebSearchDedup>>,
     dispatcher: AcpUiEventDispatcher,
@@ -656,7 +696,7 @@ pub(crate) fn spawn_death_monitor(
                     Some(stderr) => format!("Agent process exited unexpectedly:\n{stderr}"),
                     None => base_reason.clone(),
                 };
-                fail_pending_requests(&pending_requests, &reason).await;
+                fail_pending_requests(&pending_requests, process_generation, &reason).await;
                 drain_permissions_as_failed(&permission_tracker, &dispatcher);
                 if let Ok(mut dedup) = web_search_dedup.lock() {
                     dedup.drain_all();
@@ -673,4 +713,103 @@ pub(crate) fn spawn_death_monitor(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::acp::parsers::AgentType;
+    use crate::acp::ui_event_dispatcher::AcpUiEventDispatcher;
+    use std::collections::HashMap;
+    use std::sync::atomic::AtomicBool;
+    use tokio::process::Command;
+    use tokio::sync::{oneshot, Mutex};
+    use tokio::time::{sleep, Duration};
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn cancelled_stdout_reader_does_not_drain_pending_requests_on_eof() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "sleep 0.05"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("child should spawn");
+        let stdout = child.stdout.take().expect("stdout should be piped");
+
+        let pending = StdArc::new(Mutex::new(HashMap::new()));
+        let (tx, _rx) = oneshot::channel();
+        pending.lock().await.insert(
+            1,
+            PendingRequestEntry {
+                generation: 1,
+                sender: tx,
+            },
+        );
+
+        let (dispatcher, _captured) = AcpUiEventDispatcher::test_sink();
+        let cancel = CancellationToken::new();
+
+        spawn_stdout_reader(
+            stdout,
+            StdoutLoopContext {
+                process_generation: 1,
+                pending: pending.clone(),
+                stdin_writer: StdArc::new(Mutex::new(None)),
+                prompt_sessions: StdArc::new(Mutex::new(HashMap::new())),
+                app_handle: None,
+                dispatcher,
+                permission_tracker: StdArc::new(std::sync::Mutex::new(PermissionTracker::new())),
+                web_search_dedup: StdArc::new(std::sync::Mutex::new(WebSearchDedup::new())),
+                active_session_id: StdArc::new(std::sync::Mutex::new(None)),
+                inbound_response_adapters: StdArc::new(std::sync::Mutex::new(HashMap::new())),
+                is_replay_active: StdArc::new(AtomicBool::new(false)),
+                provider: None,
+                agent_type: AgentType::ClaudeCode,
+                max_logged_line_bytes: 512,
+                stderr_buffer: new_stderr_buffer(),
+                cancel: cancel.clone(),
+            },
+        );
+
+        cancel.cancel();
+        child.wait().await.expect("child should exit cleanly");
+        sleep(Duration::from_millis(50)).await;
+
+        assert_eq!(pending.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fail_pending_requests_only_drains_matching_generation() {
+        let pending = StdArc::new(Mutex::new(HashMap::new()));
+        let (old_tx, old_rx) = oneshot::channel();
+        let (new_tx, mut new_rx) = oneshot::channel();
+
+        pending.lock().await.insert(
+            1,
+            PendingRequestEntry {
+                generation: 1,
+                sender: old_tx,
+            },
+        );
+        pending.lock().await.insert(
+            2,
+            PendingRequestEntry {
+                generation: 2,
+                sender: new_tx,
+            },
+        );
+
+        fail_pending_requests(&pending, 1, "old process exited").await;
+
+        let old_response = old_rx.await.expect("old generation request should be failed");
+        let old_error = old_response
+            .get("error")
+            .and_then(|value| value.get("message"))
+            .and_then(|value| value.as_str());
+        assert_eq!(old_error, Some("old process exited"));
+
+        assert!(new_rx.try_recv().is_err());
+        assert!(pending.lock().await.contains_key(&2));
+        assert!(!pending.lock().await.contains_key(&1));
+    }
 }

@@ -7,6 +7,7 @@ impl AcpClient {
             &self.request_id,
             &self.pending_requests,
             &self.stdin_writer,
+            self.process_generation,
             method,
             params,
             REQUEST_TIMEOUT_SECS,

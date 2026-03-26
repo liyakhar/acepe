@@ -40,8 +40,9 @@ fn is_method_not_found_jsonrpc_error(error: &Value) -> bool {
 
 pub(crate) async fn send_request(
     request_id: &StdArc<std::sync::Mutex<u64>>,
-    pending_requests: &StdArc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    pending_requests: &StdArc<Mutex<HashMap<u64, crate::acp::client::PendingRequestEntry>>>,
     stdin_writer: &StdArc<Mutex<Option<ChildStdin>>>,
+    process_generation: u64,
     method: &str,
     params: Value,
     request_timeout_secs: u64,
@@ -61,7 +62,13 @@ pub(crate) async fn send_request(
 
     {
         let mut pending = pending_requests.lock().await;
-        pending.insert(id, tx);
+        pending.insert(
+            id,
+            crate::acp::client::PendingRequestEntry {
+                generation: process_generation,
+                sender: tx,
+            },
+        );
     }
 
     tracing::debug!(request = %request_str, "Writing request to stdin");
@@ -135,7 +142,10 @@ pub(crate) async fn respond(
 pub(crate) async fn send_prompt_fire_and_forget(
     stdin_writer: &StdArc<Mutex<Option<ChildStdin>>>,
     request_id: &StdArc<std::sync::Mutex<u64>>,
-    prompt_request_sessions: &StdArc<Mutex<HashMap<u64, String>>>,
+    prompt_request_sessions: &StdArc<
+        Mutex<HashMap<u64, crate::acp::client::PromptRequestSession>>,
+    >,
+    process_generation: u64,
     session_id: String,
     method: &str,
     params: Value,
@@ -153,7 +163,13 @@ pub(crate) async fn send_prompt_fire_and_forget(
 
     {
         let mut prompt_sessions = prompt_request_sessions.lock().await;
-        prompt_sessions.insert(id, session_id.clone());
+        prompt_sessions.insert(
+            id,
+            crate::acp::client::PromptRequestSession {
+                generation: process_generation,
+                session_id: session_id.clone(),
+            },
+        );
         tracing::debug!(id = id, session_id = %session_id, "Tracking prompt request for TurnComplete");
     }
 

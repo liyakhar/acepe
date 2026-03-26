@@ -14,15 +14,16 @@ pub struct AcpClient {
     /// Killing the negative PGID sends SIGKILL to all processes in the group.
     #[cfg(unix)]
     pub(super) pgid: Option<u32>,
+    pub(super) process_generation: u64,
     pub(super) spawn_config_index: usize,
     pub(super) request_id: StdArc<std::sync::Mutex<u64>>,
-    pub(super) pending_requests: StdArc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    pub(super) pending_requests: StdArc<Mutex<HashMap<u64, PendingRequestEntry>>>,
     pub(super) app_handle: Option<AppHandle>,
     /// Stdin writer for sending responses to inbound requests (async)
     pub(super) stdin_writer: StdArc<Mutex<Option<ChildStdin>>>,
     /// Maps request IDs to session IDs for prompt requests.
     /// When a response comes in for one of these IDs, we emit a TurnComplete event.
-    pub(super) prompt_request_sessions: StdArc<Mutex<HashMap<u64, String>>>,
+    pub(super) prompt_request_sessions: StdArc<Mutex<HashMap<u64, PromptRequestSession>>>,
     /// Working directory for the subprocess.
     /// Set at construction, used when spawning to ensure subprocess runs in correct directory.
     pub(super) cwd: PathBuf,
@@ -46,6 +47,9 @@ pub struct AcpClient {
     /// Cancels the death monitor task when `stop()` is called, preventing it from
     /// racing with a subsequent `start()` by draining newly-inserted pending requests.
     pub(super) death_monitor_cancel: CancellationToken,
+    /// Cancels the stdout reader task when `stop()` is called so the old process
+    /// cannot drain pending requests after a fallback restart.
+    pub(super) stdout_reader_cancel: CancellationToken,
 }
 
 impl Clone for AcpClient {
@@ -55,6 +59,7 @@ impl Clone for AcpClient {
             child: None,
             #[cfg(unix)]
             pgid: None,
+            process_generation: 0,
             spawn_config_index: 0,
             request_id: StdArc::new(std::sync::Mutex::new(1)),
             pending_requests: StdArc::new(Mutex::new(HashMap::new())),
@@ -70,6 +75,7 @@ impl Clone for AcpClient {
             inbound_response_adapters: self.inbound_response_adapters.clone(),
             is_replay_active: self.is_replay_active.clone(),
             death_monitor_cancel: CancellationToken::new(),
+            stdout_reader_cancel: CancellationToken::new(),
         }
     }
 }
@@ -92,6 +98,7 @@ impl AcpClient {
             child: None,
             #[cfg(unix)]
             pgid: None,
+            process_generation: 0,
             spawn_config_index: 0,
             request_id: StdArc::new(std::sync::Mutex::new(1)),
             pending_requests: StdArc::new(Mutex::new(HashMap::new())),
@@ -107,6 +114,7 @@ impl AcpClient {
             inbound_response_adapters: StdArc::new(std::sync::Mutex::new(HashMap::new())),
             is_replay_active: StdArc::new(std::sync::atomic::AtomicBool::new(false)),
             death_monitor_cancel: CancellationToken::new(),
+            stdout_reader_cancel: CancellationToken::new(),
         })
     }
 
