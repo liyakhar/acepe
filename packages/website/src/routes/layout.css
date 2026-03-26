@@ -1,3 +1,7 @@
+@import '@acepe/ui/design-tokens.css';
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
 /* Acepe custom font - font files in static/fonts/ */
 @font-face {
 	font-family: 'Acepe';
@@ -7,13 +11,9 @@
 	font-display: swap;
 }
 
-@import '@acepe/ui/design-tokens.css';
-@import 'tailwindcss';
 @source '../**/*.{html,js,svelte,ts}';
 @source '../../../ui/src/**/*.{html,js,svelte,ts}';
 @source inline('text-success');
-
-@import 'tw-animate-css';
 
 :root {
 	--radius: 0.625rem;

@@ -44,9 +44,9 @@ jobs:
       - name: Lint + Typecheck + Test
         run: |
           # Lint (desktop + website in parallel)
-          (cd packages/desktop && bunx @biomejs/biome check .) &
+          (cd packages/desktop && bunx @biomejs/biome lint .) &
           LINT_DESKTOP=$!
-          (cd packages/website && bunx @biomejs/biome check .) &
+          (cd packages/website && bunx @biomejs/biome lint .) &
           LINT_WEBSITE=$!
 
           # Typecheck desktop (tsgo)
