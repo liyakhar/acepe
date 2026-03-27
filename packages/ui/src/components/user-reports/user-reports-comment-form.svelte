@@ -3,7 +3,7 @@
 		placeholder?: string;
 		submitLabel?: string;
 		autofocus?: boolean;
-		onSubmit: (body: string) => Promise<void>;
+		onSubmit: (body: string) => void;
 		onCancel?: () => void;
 	}
 
@@ -16,20 +16,14 @@
 	}: Props = $props();
 
 	let body = $state('');
-	let submitting = $state(false);
 
-	const canSubmit = $derived(body.trim().length > 0 && !submitting);
+	const canSubmit = $derived(body.trim().length > 0);
 
-	async function handleSubmit() {
+	function handleSubmit() {
 		if (!canSubmit) return;
-		submitting = true;
-		await onSubmit(body.trim())
-			.then(() => {
-				body = '';
-			})
-			.finally(() => {
-				submitting = false;
-			});
+		const trimmed = body.trim();
+		body = '';
+		onSubmit(trimmed);
 	}
 </script>
 
@@ -59,7 +53,7 @@
 			disabled={!canSubmit}
 			onclick={handleSubmit}
 		>
-			{submitting ? 'posting...' : submitLabel}
+			{submitLabel}
 		</button>
 	</div>
 </div>

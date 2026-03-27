@@ -1,21 +1,26 @@
 <script lang="ts">
-	import type { GitHubComment, GitHubService } from './types.js';
+	import type { CommentRow, GitHubService } from './types.js';
+	import { isOptimisticComment } from './types.js';
 	import UserReportsComment from './user-reports-comment.svelte';
 	import UserReportsCommentForm from './user-reports-comment-form.svelte';
 
 	interface Props {
-		comments: GitHubComment[];
+		comments: CommentRow[];
 		service: GitHubService;
-		onNewComment: (body: string) => Promise<void>;
+		commentError: string | null;
+		onNewComment: (body: string) => void;
 	}
 
-	let { comments, service, onNewComment }: Props = $props();
+	let { comments, service, commentError, onNewComment }: Props = $props();
+
+	// Count only real comments for the header label
+	const realCount = $derived(comments.filter((c) => !isOptimisticComment(c)).length);
 </script>
 
 <div class="flex flex-col">
 	<div class="h-7 flex items-center px-4 border-b border-border/15">
 		<span class="text-[10px] font-mono text-muted-foreground/40">
-			{comments.length} comment{comments.length !== 1 ? 's' : ''}
+			{realCount} comment{realCount !== 1 ? 's' : ''}
 		</span>
 	</div>
 
@@ -29,7 +34,10 @@
 		</div>
 	{/if}
 
-	<div class="px-4 py-3">
+	<div class="px-4 py-3 flex flex-col gap-2">
+		{#if commentError}
+			<p class="text-[10px] font-mono text-destructive/80">{commentError}</p>
+		{/if}
 		<UserReportsCommentForm onSubmit={onNewComment} />
 	</div>
 </div>

@@ -2,8 +2,15 @@
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { ArrowSquareOut, Circle, Clock } from 'phosphor-svelte';
 	import { cn } from '../../lib/utils.js';
-	import type { GitHubService } from './types.js';
-	import { formatTimeAgo, getIssueCategory, unwrapResult } from './types.js';
+	import type { CommentRow, GitHubComment, GitHubIssue, GitHubService } from './types.js';
+	import {
+		applyReactionToggle,
+		buildOptimisticComment,
+		formatTimeAgo,
+		getIssueCategory,
+		REACTION_CONFIG,
+		unwrapResult
+	} from './types.js';
 	import UserReportsCategoryBadge from './user-reports-category-badge.svelte';
 	import UserReportsCommentList from './user-reports-comment-list.svelte';
 
@@ -29,9 +36,41 @@
 		queryFn: () => unwrapResult(service.listComments(issueNumber))
 	});
 
+	let commentError = $state<string | null>(null);
+
 	const reactionMutation = createMutation({
-		mutationFn: (content: string) => unwrapResult(service.toggleIssueReaction(issueNumber, content)),
-		onSuccess: () => {
+		mutationFn: ({ content }: { content: string }) =>
+			unwrapResult(service.toggleIssueReaction(issueNumber, content)),
+		onMutate: async ({ content }) => {
+			await queryClient.cancelQueries({ queryKey: ['issue', issueNumber] });
+			const previous = queryClient.getQueryData<GitHubIssue>(['issue', issueNumber]);
+			if (previous) {
+				const cfg = REACTION_CONFIG.find((r) => r.content === content);
+				if (cfg) {
+					const optimistic: GitHubIssue = {
+						number: previous.number,
+						title: previous.title,
+						body: previous.body,
+						state: previous.state,
+						labels: previous.labels,
+						author: previous.author,
+						commentsCount: previous.commentsCount,
+						reactions: applyReactionToggle(previous.reactions, cfg.key, true),
+						createdAt: previous.createdAt,
+						updatedAt: previous.updatedAt,
+						htmlUrl: previous.htmlUrl
+					};
+					queryClient.setQueryData(['issue', issueNumber], optimistic);
+				}
+			}
+			return { previous };
+		},
+		onError: (_err, _vars, context) => {
+			if (context?.previous) {
+				queryClient.setQueryData(['issue', issueNumber], context.previous);
+			}
+		},
+		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: ['issue', issueNumber] });
 			queryClient.invalidateQueries({ queryKey: ['issues'] });
 		}
@@ -39,18 +78,30 @@
 
 	const commentMutation = createMutation({
 		mutationFn: (body: string) => unwrapResult(service.createComment(issueNumber, body)),
-		onSuccess: () => {
+		onMutate: async (body) => {
+			await queryClient.cancelQueries({ queryKey: ['comments', issueNumber] });
+			const previous = queryClient.getQueryData<GitHubComment[]>(['comments', issueNumber]);
+			const authQuery = queryClient.getQueryData<{ authenticated: boolean; username?: string }>(['auth']);
+			const authorLogin = authQuery?.username ? authQuery.username : 'you';
+			const optimistic = buildOptimisticComment(body, authorLogin);
+			if (previous) {
+				const updated: CommentRow[] = [...previous, optimistic];
+				queryClient.setQueryData(['comments', issueNumber], updated);
+			}
+			commentError = null;
+			return { previous };
+		},
+		onError: (_err, _vars, context) => {
+			if (context?.previous) {
+				queryClient.setQueryData(['comments', issueNumber], context.previous);
+			}
+			commentError = 'Failed to post comment. Please try again.';
+		},
+		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: ['comments', issueNumber] });
 			queryClient.invalidateQueries({ queryKey: ['issue', issueNumber] });
 		}
 	});
-
-	const REACTIONS = [
-		{ content: '+1', emoji: '+1', key: 'plus1' as const },
-		{ content: 'heart', emoji: 'heart', key: 'heart' as const },
-		{ content: 'rocket', emoji: 'rocket', key: 'rocket' as const },
-		{ content: 'eyes', emoji: 'eyes', key: 'eyes' as const }
-	];
 </script>
 
 {#if $issueQuery.data}
@@ -95,8 +146,9 @@
 
 		<!-- Reactions -->
 		<div class="flex items-center gap-1 px-4 pb-3">
-			{#each REACTIONS as r}
+			{#each REACTION_CONFIG as r}
 				{@const count = issue.reactions[r.key]}
+				{@const Icon = r.icon}
 				<button
 					type="button"
 					class={cn(
@@ -106,9 +158,9 @@
 							: 'text-muted-foreground/25 hover:bg-accent/25 hover:text-muted-foreground'
 					)}
 					disabled={$reactionMutation.isPending}
-					onclick={() => $reactionMutation.mutate(r.content)}
+					onclick={() => $reactionMutation.mutate({ content: r.content })}
 				>
-					<span>{r.emoji}</span>
+					<Icon size={11} weight="fill" />
 					{#if count > 0}
 						<span class="tabular-nums">{count}</span>
 					{/if}
@@ -124,8 +176,9 @@
 			<UserReportsCommentList
 				comments={$commentsQuery.data}
 				{service}
-				onNewComment={async (body) => {
-					await $commentMutation.mutateAsync(body);
+				{commentError}
+				onNewComment={(body) => {
+					$commentMutation.mutate(body);
 				}}
 			/>
 		{/if}

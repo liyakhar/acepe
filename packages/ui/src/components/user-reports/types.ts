@@ -1,6 +1,6 @@
 import type { Component } from 'svelte';
 import type { ResultAsync } from 'neverthrow';
-import { Bug, ChatCircle, Circle, Lightbulb, Question, Tag, XCircle } from 'phosphor-svelte';
+import { Bug, ChatCircle, Circle, Eye, Heart, Lightbulb, Question, Rocket, Tag, ThumbsUp, XCircle } from 'phosphor-svelte';
 
 // ─── GitHub data types (from Tauri invoke) ─────────────────────────
 
@@ -190,4 +190,76 @@ export function getIssueCategory(labels: GitHubLabel[]): IssueCategory | null {
 		if (cat) return cat;
 	}
 	return null;
+}
+
+// ─── Reaction config ───────────────────────────────────────────────
+
+export type ReactionKey = 'plus1' | 'heart' | 'rocket' | 'eyes';
+
+export interface ReactionConfig {
+	content: string;
+	key: ReactionKey;
+	icon: Component;
+}
+
+export const REACTION_CONFIG: ReactionConfig[] = [
+	{ content: '+1', key: 'plus1', icon: ThumbsUp },
+	{ content: 'heart', key: 'heart', icon: Heart },
+	{ content: 'rocket', key: 'rocket', icon: Rocket },
+	{ content: 'eyes', key: 'eyes', icon: Eye }
+];
+
+// ─── Optimistic comment ────────────────────────────────────────────
+
+/** A comment that has been submitted but not yet confirmed by the server */
+export interface OptimisticComment {
+	_optimistic: true;
+	/** Unique ID for keying — negative to avoid collisions with real IDs */
+	id: number;
+	body: string;
+	authorLogin: string;
+	createdAt: string;
+}
+
+/** Union of server comment and optimistic comment for rendering */
+export type CommentRow = GitHubComment | OptimisticComment;
+
+export function isOptimisticComment(row: CommentRow): row is OptimisticComment {
+	return '_optimistic' in row && row._optimistic === true;
+}
+
+/**
+ * Build an optimistic comment to prepend to the cache while awaiting the server.
+ * Uses a negative timestamp-based ID to avoid collisions with real GitHub IDs.
+ */
+export function buildOptimisticComment(body: string, authorLogin: string): OptimisticComment {
+	return {
+		_optimistic: true,
+		id: -Date.now(),
+		body,
+		authorLogin,
+		createdAt: new Date().toISOString()
+	};
+}
+
+/**
+ * Apply a reaction toggle to a `GitHubReactions` object, returning a new object.
+ * `added` = true means the reaction was added, false means removed.
+ */
+export function applyReactionToggle(
+	reactions: GitHubReactions,
+	key: ReactionKey,
+	added: boolean
+): GitHubReactions {
+	const delta = added ? 1 : -1;
+	const newCount = Math.max(0, reactions[key] + delta);
+	const newTotal = Math.max(0, reactions.totalCount + delta);
+	return {
+		plus1: key === 'plus1' ? newCount : reactions.plus1,
+		minus1: reactions.minus1,
+		heart: key === 'heart' ? newCount : reactions.heart,
+		rocket: key === 'rocket' ? newCount : reactions.rocket,
+		eyes: key === 'eyes' ? newCount : reactions.eyes,
+		totalCount: newTotal
+	};
 }
