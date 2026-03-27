@@ -18,6 +18,8 @@ describe("workspace panel persistence", () => {
 				pendingProjectSelection: false,
 				selectedAgentId: "claude-code",
 				agentId: "claude-code",
+				sourcePath: "/tmp/project/.cursor/sessions/session-1.json",
+				worktreePath: "/tmp/project/.git/worktrees/feature-a",
 				sessionTitle: "Thread",
 			},
 			{
@@ -60,6 +62,8 @@ describe("workspace panel persistence", () => {
 				pendingProjectSelection: false,
 				selectedAgentId: "claude-code",
 				agentId: "claude-code",
+				sourcePath: "/tmp/project/.cursor/sessions/session-1.json",
+				worktreePath: "/tmp/project/.git/worktrees/feature-a",
 				sessionTitle: "Thread",
 			},
 			{
@@ -112,6 +116,42 @@ describe("workspace panel persistence", () => {
 				width: 500,
 				ownerPanelId: null,
 				groupId: "group-1",
+			},
+		]);
+	});
+
+	it("hydrates persisted worktree session context for agent panels", () => {
+		const panels = hydratePersistedWorkspacePanels([
+			{
+				id: "agent-1",
+				kind: "agent",
+				projectPath: "/tmp/project",
+				width: 500,
+				ownerPanelId: null,
+				sessionId: "session-1",
+				pendingProjectSelection: false,
+				selectedAgentId: "claude-code",
+				agentId: "claude-code",
+				sourcePath: "/tmp/project/.cursor/sessions/session-1.json",
+				worktreePath: "/tmp/project/.git/worktrees/feature-a",
+				sessionTitle: "Thread",
+			},
+		]);
+
+		expect(panels).toEqual([
+			{
+				id: "agent-1",
+				kind: "agent",
+				projectPath: "/tmp/project",
+				width: 500,
+				ownerPanelId: null,
+				sessionId: "session-1",
+				pendingProjectSelection: false,
+				selectedAgentId: "claude-code",
+				agentId: "claude-code",
+				sourcePath: "/tmp/project/.cursor/sessions/session-1.json",
+				worktreePath: "/tmp/project/.git/worktrees/feature-a",
+				sessionTitle: "Thread",
 			},
 		]);
 	});

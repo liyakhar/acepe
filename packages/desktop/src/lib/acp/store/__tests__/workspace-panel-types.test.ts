@@ -24,6 +24,8 @@ describe("workspace panel types", () => {
 			pendingProjectSelection: false,
 			selectedAgentId: "claude-code",
 			agentId: "claude-code",
+			sourcePath: "/tmp/project/.cursor/sessions/session-1.json",
+			worktreePath: "/tmp/project/.git/worktrees/feature-a",
 			sessionTitle: "Thread",
 		};
 
@@ -86,6 +88,8 @@ describe("workspace panel types", () => {
 				pendingProjectSelection: false,
 				selectedAgentId: "claude-code",
 				agentId: "claude-code",
+				sourcePath: "/tmp/project/.cursor/sessions/session-1.json",
+				worktreePath: "/tmp/project/.git/worktrees/feature-a",
 				sessionTitle: "Thread",
 			},
 			{
