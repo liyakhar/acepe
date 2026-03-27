@@ -14,10 +14,10 @@ function createKeyboardEventLike(
 	}> = {},
 ) {
 	return {
-		altKey: false,
-		code: "Space",
+		altKey: true,
+		code: "AltRight",
 		ctrlKey: false,
-		key: " ",
+		key: "Alt",
 		metaKey: false,
 		repeat: false,
 		shiftKey: false,
@@ -26,13 +26,28 @@ function createKeyboardEventLike(
 }
 
 describe("voice-keyboard", () => {
-	it("starts hold only for a fresh bare space press", () => {
+	it("starts hold only for a fresh right option press", () => {
 		expect(shouldStartVoiceHold(createKeyboardEventLike())).toBe(true);
 		expect(shouldStartVoiceHold(createKeyboardEventLike({ repeat: true }))).toBe(false);
 		expect(shouldStartVoiceHold(createKeyboardEventLike({ shiftKey: true }))).toBe(false);
 	});
 
-	it("stops hold on bare space release when active", () => {
+	it("does not start hold for left option or space", () => {
+		expect(shouldStartVoiceHold(createKeyboardEventLike({ code: "AltLeft" }))).toBe(false);
+		expect(
+			shouldStartVoiceHold({
+				altKey: false,
+				code: "Space",
+				ctrlKey: false,
+				key: " ",
+				metaKey: false,
+				repeat: false,
+				shiftKey: false,
+			}),
+		).toBe(false);
+	});
+
+	it("stops hold on right option release when active", () => {
 		expect(shouldStopVoiceHold(createKeyboardEventLike(), true)).toBe(true);
 		expect(shouldStopVoiceHold(createKeyboardEventLike({ ctrlKey: true }), true)).toBe(false);
 		expect(shouldStopVoiceHold(createKeyboardEventLike(), false)).toBe(false);

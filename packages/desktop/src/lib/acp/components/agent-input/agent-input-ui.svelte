@@ -971,7 +971,7 @@ function cycleModeOnTab(event: KeyboardEvent): boolean {
 	return true;
 }
 
-function shouldUseSpaceForVoiceHold(event: KeyboardEvent): boolean {
+function shouldUseVoiceHoldKey(event: KeyboardEvent): boolean {
 	const currentVoiceState = voiceState;
 	if (!shouldStartVoiceHold(event)) {
 		return false;
@@ -979,32 +979,7 @@ function shouldUseSpaceForVoiceHold(event: KeyboardEvent): boolean {
 	if (!voiceEnabled || currentVoiceState === null || isSending || isStreaming) {
 		return false;
 	}
-	if (inputState.showFileDropdown || inputState.showSlashDropdown) {
-		return false;
-	}
-	const liveMessage = editorRef ? serializeInlineComposerMessage(editorRef) : inputState.message;
-	if (liveMessage.trim().length > 0) {
-		return false;
-	}
 	return currentVoiceState.phase === "idle";
-}
-
-function shouldBlockSpaceBeforeInput(event: InputEvent): boolean {
-	const currentVoiceState = voiceState;
-	if (event.data !== " ") {
-		return false;
-	}
-	if (!voiceEnabled || currentVoiceState === null || isSending || isStreaming) {
-		return false;
-	}
-	if (inputState.showFileDropdown || inputState.showSlashDropdown) {
-		return false;
-	}
-	const liveMessage = editorRef ? serializeInlineComposerMessage(editorRef) : inputState.message;
-	if (liveMessage.trim().length > 0) {
-		return false;
-	}
-	return currentVoiceState.phase === "idle" || currentVoiceState.isPressAndHold;
 }
 
 function handleEditorKeyDown(event: KeyboardEvent): void {
@@ -1016,7 +991,7 @@ function handleEditorKeyDown(event: KeyboardEvent): void {
 	}
 
 	const currentVoiceState = voiceState;
-	if (currentVoiceState !== null && shouldUseSpaceForVoiceHold(event)) {
+	if (currentVoiceState !== null && shouldUseVoiceHoldKey(event)) {
 		event.preventDefault();
 		currentVoiceState.onKeyboardHoldStart();
 		return;
@@ -1128,11 +1103,8 @@ function handleEditorKeyUp(event: KeyboardEvent): void {
 	}
 }
 
-function handleEditorBeforeInput(event: InputEvent): void {
-	if (!shouldBlockSpaceBeforeInput(event)) {
-		return;
-	}
-	event.preventDefault();
+function handleEditorBeforeInput(_event: InputEvent): void {
+	// No-op: voice hold key (Right Option) does not produce text input.
 }
 
 function handleEditorCut(event: ClipboardEvent): void {

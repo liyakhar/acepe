@@ -81,7 +81,7 @@ const title = $derived(
 );
 
 const hoverTitle = $derived(
-	visualState === "mic" ? "Hold Space to talk" : title
+	visualState === "mic" ? "Hold Right ⌥ to talk" : title
 );
 
 /** Red color from design system */

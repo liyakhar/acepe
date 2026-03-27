@@ -8,17 +8,12 @@ export interface VoiceKeyboardEventLike {
 	shiftKey: boolean;
 }
 
-function isBareSpace(event: VoiceKeyboardEventLike): boolean {
-	const isSpaceKey = event.code === "Space" || event.key === " " || event.key === "Spacebar";
-	if (!isSpaceKey) {
-		return false;
-	}
-
-	return !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+function isRightOption(event: VoiceKeyboardEventLike): boolean {
+	return event.code === "AltRight" && !event.shiftKey && !event.metaKey && !event.ctrlKey;
 }
 
 export function shouldStartVoiceHold(event: VoiceKeyboardEventLike): boolean {
-	if (!isBareSpace(event)) {
+	if (!isRightOption(event)) {
 		return false;
 	}
 
@@ -30,5 +25,5 @@ export function shouldStopVoiceHold(event: VoiceKeyboardEventLike, isPressAndHol
 		return false;
 	}
 
-	return isBareSpace(event);
+	return isRightOption(event);
 }
