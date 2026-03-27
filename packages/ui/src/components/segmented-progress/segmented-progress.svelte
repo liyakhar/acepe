@@ -10,9 +10,10 @@ interface Props {
 let {
 	current,
 	total,
-	segmentClass = "h-1 w-3 rounded-full transition-colors duration-200",
-	filledClass = "bg-primary",
-	emptyClass = "bg-muted-foreground/25",
+	segmentClass =
+		"w-[3px] h-[10px] rounded-full transition-[background-color,opacity,transform] duration-150 opacity-[0.55]",
+	filledClass = "bg-[#f9c396] opacity-100",
+	emptyClass = "bg-border/55 h-[5px]",
 }: Props = $props();
 
 const segments = $derived.by(() => {
