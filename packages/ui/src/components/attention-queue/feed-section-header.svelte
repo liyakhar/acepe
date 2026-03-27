@@ -1,5 +1,6 @@
 <script lang="ts">
 	import CheckCircle from "phosphor-svelte/lib/CheckCircle";
+import Bulldozer from "phosphor-svelte/lib/Bulldozer";
 	import Keyboard from "phosphor-svelte/lib/Keyboard";
 	import Warning from "phosphor-svelte/lib/Warning";
 	import IconHammer from "@tabler/icons-svelte/icons/hammer";
@@ -22,8 +23,8 @@
 		{#if sectionId === "answer_needed"}
 			<Keyboard class="size-3 shrink-0" weight="fill" style="color: {color}" />
 		{:else if sectionId === "working"}
-			<span class="shrink-0 hammering">
-				<IconHammer class="size-3" style="fill: {color};" />
+			<span class="shrink-0 bulldozing">
+				<Bulldozer class="size-3" weight="fill" style="color: {color};" />
 			</span>
 		{:else if sectionId === "planning"}
 			<IconHammer class="size-3 shrink-0" style="fill: {color};" />
@@ -38,24 +39,26 @@
 </div>
 
 <style>
-	@keyframes hammer {
+	@keyframes bulldozer-motion {
 		0%, 100% {
-			transform: rotate(0deg);
+			transform: translateX(0) translateY(0);
 		}
-		30% {
-			transform: rotate(-20deg);
+		20% {
+			transform: translateX(0.5px) translateY(-0.5px);
 		}
-		50% {
-			transform: rotate(25deg);
+		40% {
+			transform: translateX(-0.5px) translateY(0.5px);
 		}
 		60% {
-			transform: rotate(25deg);
+			transform: translateX(0.5px) translateY(0);
+		}
+		80% {
+			transform: translateX(-0.5px) translateY(0.5px);
 		}
 	}
 
-	.hammering {
+	.bulldozing {
 		display: inline-flex;
-		transform-origin: 35% 65%;
-		animation: hammer 1s ease-in-out infinite;
+		animation: bulldozer-motion 0.85s linear infinite;
 	}
 </style>

@@ -11,9 +11,9 @@ let {
 	current,
 	total,
 	segmentClass =
-		"w-[3px] h-[10px] rounded-full transition-[background-color,opacity,transform] duration-150 opacity-[0.55]",
-	filledClass = "bg-[#f9c396] opacity-100",
-	emptyClass = "bg-border/55 h-[5px]",
+		"w-[3px] h-[10px] rounded-full transition-[background-color,opacity,transform] duration-150",
+	filledClass = "opacity-100",
+	emptyClass = "bg-border/55 h-[5px] opacity-[0.55]",
 }: Props = $props();
 
 const segments = $derived.by(() => {
@@ -30,6 +30,7 @@ const segments = $derived.by(() => {
 			data-testid="todo-progress-segment"
 			data-filled={isFilled ? "true" : "false"}
 			class="{segmentClass} {isFilled ? filledClass : emptyClass}"
+			style={isFilled ? "background-color: var(--success);" : undefined}
 		></div>
 	{/each}
 </div>

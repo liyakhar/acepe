@@ -783,7 +783,7 @@ onDestroy(() => {
 					</div>
 				{/if}
 				<main
-					class="flex-1 flex min-h-0 flex-col overflow-hidden rounded-lg transition-[border-radius,background-color] duration-200 ease-out {hasAnyPanel
+					class="flex-1 flex min-h-0 flex-col gap-0.5 overflow-hidden rounded-lg transition-[border-radius,background-color] duration-200 ease-out {hasAnyPanel
 						? ''
 						: 'justify-center items-center overflow-x-auto'}"
 				>
