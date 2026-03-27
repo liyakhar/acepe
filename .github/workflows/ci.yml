@@ -40,7 +40,7 @@ jobs:
           bunx paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide
           bunx svelte-kit sync
           cd ../website
-          bun run build
+          NODE_OPTIONS='--max-old-space-size=8192' bun run build
 
       # All three run in parallel via background processes
       - name: Lint + Typecheck + Test
