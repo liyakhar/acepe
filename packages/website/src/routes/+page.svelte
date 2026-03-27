@@ -344,7 +344,7 @@ const features = [
 					preload="metadata"
 					poster="/images/landing/hero-demo-screenshot.png"
 				>
-					<source src="/videos/acepe-side-by-side.mp4" type="video/mp4" />
+					<source src="/videos/acepe-presentation.mp4" type="video/mp4" />
 					<!-- Fallback to screenshot -->
 					<img
 						src="/images/landing/hero-demo-screenshot.png"
