@@ -33,7 +33,6 @@ import type {
 import type { WorkspaceStore } from "$lib/acp/store/workspace-store.svelte.js";
 import { CHANGELOG, type ChangelogEntry } from "$lib/changelog/index.js";
 import type { KeybindingsService } from "$lib/keybindings/service.svelte.js";
-import type { PreconnectionAgentSkillsStore } from "$lib/skills/store/preconnection-agent-skills-store.svelte.js";
 import { getSqlStudioStore } from "$lib/sql-studio/index.js";
 import type { MainAppViewError } from "../errors/main-app-view-error.js";
 import type { CreateSessionOptions } from "../types/create-session-options.js";
@@ -254,7 +253,6 @@ export class MainAppViewState {
 	 * @param keybindingsService - The keybindings service
 	 * @param selectorRegistry - The selector registry
 	 * @param worktreeDefaultStore - Single source for "use worktrees by default" (reactive)
-	 * @param preconnectionAgentSkillsStore - Startup-loaded agent skills for pre-connect slash commands
 	 */
 	constructor(
 		private readonly sessionStore: SessionStore,
@@ -266,8 +264,7 @@ export class MainAppViewState {
 		private readonly agentPreferencesStore: AgentPreferencesStore,
 		private readonly keybindingsService: KeybindingsService,
 		private readonly selectorRegistry: SelectorRegistry,
-		private readonly worktreeDefaultStore: WorktreeDefaultStore,
-		private readonly preconnectionAgentSkillsStore: PreconnectionAgentSkillsStore
+		private readonly worktreeDefaultStore: WorktreeDefaultStore
 	) {
 		// Initialize managers
 		this.initializationManager = new InitializationManager(
@@ -278,8 +275,7 @@ export class MainAppViewState {
 			this.workspaceStore,
 			this.projectManager,
 			this.agentPreferencesStore,
-			this.keybindingsService,
-			this.preconnectionAgentSkillsStore
+			this.keybindingsService
 		);
 		this.sessionHandler = new SessionHandler(
 			this,

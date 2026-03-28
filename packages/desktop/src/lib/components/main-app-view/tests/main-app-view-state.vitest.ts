@@ -20,7 +20,6 @@ import type { WorkspaceStore } from "$lib/acp/store/workspace-store.svelte.js";
 import type { KeybindingsService } from "$lib/keybindings/service.svelte.js";
 import type { SelectorRegistry } from "$lib/acp/logic/selector-registry.svelte.js";
 import type { WorktreeDefaultStore } from "$lib/acp/components/worktree-toggle/worktree-default-store.svelte.js";
-import type { PreconnectionAgentSkillsStore } from "$lib/skills/store/preconnection-agent-skills-store.svelte.js";
 import { MainAppViewState } from "../logic/main-app-view-state.svelte.js";
 
 function createState(options?: {
@@ -66,8 +65,7 @@ function createState(options?: {
 			toggleFocused: vi.fn(),
 			cycleFocused: vi.fn(),
 		} as unknown as SelectorRegistry,
-		{} as WorktreeDefaultStore,
-		{} as PreconnectionAgentSkillsStore
+		{} as WorktreeDefaultStore
 	);
 
 	return { state, workspaceStore, panelStore, projectManager };
