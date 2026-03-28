@@ -1,0 +1,82 @@
+name: Frontend CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Frontend Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-frontend-ci
+        with:
+          prepare-website-env: "false"
+          generate-artifacts: "false"
+
+      - name: Run frontend lint
+        run: |
+          (cd packages/desktop && bunx @biomejs/biome lint .) &
+          LINT_DESKTOP=$!
+          (cd packages/website && bunx @biomejs/biome lint .) &
+          LINT_WEBSITE=$!
+
+          FAIL=0
+          wait $LINT_DESKTOP || FAIL=1
+          wait $LINT_WEBSITE || FAIL=1
+          exit $FAIL
+
+  typecheck:
+    name: Frontend Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-frontend-ci
+        with:
+          prepare-website-env: "true"
+          generate-artifacts: "true"
+
+      - name: Run frontend typecheck
+        run: |
+          (cd packages/desktop && bun run check) &
+          CHECK_DESKTOP=$!
+          (cd packages/website && bun run check) &
+          CHECK_WEBSITE=$!
+
+          FAIL=0
+          wait $CHECK_DESKTOP || FAIL=1
+          wait $CHECK_WEBSITE || FAIL=1
+          exit $FAIL
+
+  test:
+    name: Frontend Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-frontend-ci
+        with:
+          prepare-website-env: "true"
+          generate-artifacts: "true"
+
+      - name: Run frontend tests
+        run: |
+          (cd packages/desktop && bun run test) &
+          TEST_DESKTOP=$!
+          (cd packages/website && bun run test) &
+          TEST_WEBSITE=$!
+
+          FAIL=0
+          wait $TEST_DESKTOP || FAIL=1
+          wait $TEST_WEBSITE || FAIL=1
+          exit $FAIL

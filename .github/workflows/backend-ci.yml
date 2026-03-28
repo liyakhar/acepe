@@ -1,0 +1,61 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTFLAGS: -D warnings
+  RUST_BACKTRACE: short
+
+jobs:
+  check:
+    name: Backend Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-backend-ci
+        with:
+          install-clippy: "false"
+
+      - name: Run cargo check
+        working-directory: packages/desktop/src-tauri
+        run: cargo check --all-targets
+
+  clippy:
+    name: Backend Clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-backend-ci
+        with:
+          install-clippy: "true"
+
+      - name: Run cargo clippy
+        working-directory: packages/desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: Backend Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-backend-ci
+        with:
+          install-clippy: "false"
+
+      - name: Run cargo test
+        working-directory: packages/desktop/src-tauri
+        run: cargo test -- --skip claude_history::export_types

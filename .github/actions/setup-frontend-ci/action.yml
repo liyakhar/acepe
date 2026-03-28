@@ -1,0 +1,39 @@
+name: Setup Frontend CI
+description: Install Bun dependencies and optionally prepare generated frontend inputs.
+
+inputs:
+  prepare-website-env:
+    description: Copy the website example env file into place.
+    required: false
+    default: "false"
+  generate-artifacts:
+    description: Generate frontend i18n artifacts before checks or tests.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.3.10
+        cache: true
+        cache-dependency-path: bun.lock
+
+    - name: Install Bun dependencies
+      shell: bash
+      run: bun install --frozen-lockfile
+
+    - name: Prepare website env
+      if: ${{ inputs.prepare-website-env == 'true' }}
+      shell: bash
+      run: cp packages/website/.env.example packages/website/.env
+
+    - name: Generate frontend artifacts
+      if: ${{ inputs.generate-artifacts == 'true' }}
+      shell: bash
+      run: |
+        cd packages/desktop
+        bun run i18n:generate
+        cd ../website
+        bun run i18n:generate
