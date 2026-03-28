@@ -720,9 +720,10 @@ const hasAnyPanel = $derived(
 // The open state now controls width/content density instead of removing it entirely.
 const showSidebar = $derived(projectManager.projectCount !== null && projectManager.projectCount > 0);
 
-/** Tab bar above main/panel column (hidden when only one tab — nothing to switch) */
+/** Tab bar above main/panel column (only shown in session fullscreen when there is something to switch) */
 const showTabBarStrip = $derived(
 	!viewState.reviewFullscreenOpen &&
+		viewState.isFullscreen &&
 		tabBarStore.tabs.length > 1 &&
 		viewState.topBarVisible
 );
