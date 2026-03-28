@@ -17,7 +17,7 @@ use crate::history::scan_cache::ScanCache;
 use crate::opencode_history::parser as opencode_parser;
 use crate::session_jsonl::parser as session_jsonl_parser;
 use crate::session_jsonl::plan_loader as session_jsonl_plan_loader;
-use crate::session_jsonl::types::{HistoryEntry, SessionPlanResponse};
+use crate::session_jsonl::types::{ConvertedSession, HistoryEntry, SessionPlanResponse};
 use sea_orm::DbConn;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
