@@ -39,11 +39,25 @@ export class PermissionStore {
 		};
 	}
 
-	private buildStorageKey(permission: PermissionRequest): string {
-		if (permission.jsonRpcRequestId !== undefined) {
-			return `${permission.id}::${permission.jsonRpcRequestId}`;
+	private getToolCallId(permission: PermissionRequest): string {
+		return permission.tool?.callID ? permission.tool.callID : permission.id;
+	}
+
+	private shouldPreferPermission(
+		candidate: PermissionRequest,
+		current: PermissionRequest | undefined
+	): boolean {
+		if (!current) {
+			return true;
 		}
-		return permission.id;
+
+		const candidateRequestId = candidate.jsonRpcRequestId;
+		const currentRequestId = current.jsonRpcRequestId;
+		if (candidateRequestId !== undefined && currentRequestId !== undefined) {
+			return candidateRequestId > currentRequestId;
+		}
+
+		return true;
 	}
 
 	/**
@@ -53,19 +67,15 @@ export class PermissionStore {
 	 * when an `isChildSession` check is configured via `setChildSessionCheck()`.
 	 */
 	add(permission: PermissionRequest): void {
-		const storageKey = this.buildStorageKey(permission);
-		const normalized: PermissionRequest =
-			storageKey === permission.id ? permission : { ...permission, id: storageKey };
-
-		this.pending.set(storageKey, normalized);
+		this.pending.set(permission.id, permission);
 
 		if (this.shouldAutoAccept?.(permission)) {
 			logger.info("Auto-accepting permission", {
-				permissionId: normalized.id,
+				permissionId: permission.id,
 				sessionId: permission.sessionId,
 				tool: permission.permission,
 			});
-			void this.reply(storageKey, "once").match(
+			void this.reply(permission.id, "once").match(
 				() => {},
 				(err) => logger.error("Failed to auto-accept permission", { error: err })
 			);
@@ -73,20 +83,30 @@ export class PermissionStore {
 		}
 
 		logger.debug("Permission request added", {
-			permissionId: normalized.id,
-			toolCallId: normalized.tool?.callID,
-			jsonRpcRequestId: normalized.jsonRpcRequestId,
+			permissionId: permission.id,
+			toolCallId: permission.tool?.callID,
+			jsonRpcRequestId: permission.jsonRpcRequestId,
 		});
 	}
 
 	/**
-	 * Get the most recent pending permission for a given tool call.
+	 * Get the most recent pending permission for a given session-scoped tool call.
 	 */
-	getForToolCall(toolCallId: string): PermissionRequest | undefined {
+	getForToolCall(sessionId: string | undefined, toolCallId: string): PermissionRequest | undefined {
+		if (!sessionId) {
+			return undefined;
+		}
+
 		let latest: PermissionRequest | undefined;
 		for (const permission of this.pending.values()) {
-			const permissionToolCallId = permission.tool?.callID ?? permission.id;
-			if (permissionToolCallId === toolCallId) {
+			const permissionToolCallId = this.getToolCallId(permission);
+			if (permission.sessionId !== sessionId) {
+				continue;
+			}
+			if (permissionToolCallId !== toolCallId) {
+				continue;
+			}
+			if (this.shouldPreferPermission(permission, latest)) {
 				latest = permission;
 			}
 		}
@@ -122,11 +142,9 @@ export class PermissionStore {
 		reply: "once" | "always" | "reject"
 	): string {
 		// Try to find matching option from the stored options
-		const options = permission.metadata?.options as
-			| Array<{ kind: string; optionId: string }>
-			| undefined;
+		const options = permission.metadata.options;
 
-		if (options?.length) {
+		if (options && options.length > 0) {
 			const kindToMatch =
 				reply === "always" ? "allow_always" : reply === "once" ? "allow_once" : "reject_once";
 			const matchingOption = options.find((o) => o.kind === kindToMatch);
