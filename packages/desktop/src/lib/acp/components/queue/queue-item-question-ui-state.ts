@@ -9,6 +9,7 @@ export interface QuestionSelectionReader {
 
 export interface QueueItemQuestionOption {
 	readonly label: string;
+	readonly description?: string;
 	readonly selected: boolean;
 	readonly color: string;
 }
@@ -63,6 +64,7 @@ export function buildQueueItemQuestionUiState(
 	const currentQuestionOptions = currentQuestion
 		? currentQuestion.options.map((option, index) => ({
 				label: option.label,
+				description: option.description,
 				selected:
 					questionId.length > 0 &&
 					selectionReader.isOptionSelected(questionId, currentQuestionIndex, option.label),

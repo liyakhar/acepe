@@ -54,3 +54,29 @@ export function getQuestionToolCallBackfill(
 		awaitingPlanApproval: false,
 	};
 }
+
+export function getStaleQuestionIdsForTurnComplete(
+	questions: readonly QuestionRequest[],
+	entries: readonly SessionEntry[]
+): string[] {
+	const staleIds: string[] = [];
+
+	for (const question of questions) {
+		const toolCallId = getQuestionToolCallId(question);
+		const existingEntry = entries.find(
+			(entry): entry is Extract<SessionEntry, { type: "tool_call" }> =>
+				isToolCallEntry(entry) && entry.message.id === toolCallId
+		);
+
+		if (!existingEntry) {
+			continue;
+		}
+
+		const status = existingEntry.message.status;
+		if (status !== "pending" && status !== "in_progress") {
+			staleIds.push(question.id);
+		}
+	}
+
+	return staleIds;
+}

@@ -31,6 +31,7 @@ export interface ActivityEntryQuestion {
 
 export interface ActivityEntryQuestionOption {
   readonly label: string;
+  readonly description?: string;
   readonly selected: boolean;
   readonly color: string;
 }
