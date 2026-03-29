@@ -169,12 +169,6 @@ const sessionAgentId = $derived(sessionIdentity?.agentId ?? null);
 const sessionWorktreePath = $derived(sessionIdentity?.worktreePath ?? null);
 const sessionTitle = $derived(sessionMetadata?.title ?? null);
 
-// Cached models for the active agent (used by PR generation popover)
-const prAgentId = $derived(sessionAgentId || selectedAgentId);
-const prCachedModels = $derived(
-	prAgentId ? agentModelPrefs.getCachedModels(prAgentId) : []
-);
-
 // Current model from session hot state (for PR popover default)
 const sessionCurrentModelId = $derived(
 	sessionId ? sessionStore.getHotState(sessionId)?.currentModel?.id ?? null : null
@@ -570,6 +564,8 @@ let createPrLabel = $state<string | null>(null);
 let mergePrRunning = $state(false);
 let prDetails = $state<import("$lib/utils/tauri-client/git.js").PrDetails | null>(null);
 let prFetchError = $state<string | null>(null);
+let streamingShipData = $state<import("../../ship-card/ship-card-parser.js").ShipCardData | null>(null);
+let prCardRenderKey = $state(0);
 let worktreeSetupState = $state<WorktreeSetupState | null>(null);
 /** Derived: is the selected agent currently being installed? */
 const agentInstallState = $derived.by(() => {
@@ -588,6 +584,13 @@ const agentInstallState = $derived.by(() => {
 // Derived from session store — populated from DB on startup, updated in-session after PR creation
 // Also auto-populated when Claude creates a PR autonomously (handleStreamComplete extracts PR# from messages)
 const createdPr = $derived(sessionMetadata?.prNumber ?? null);
+
+function hasStreamingPreviewContent(
+	data: import("../../ship-card/ship-card-parser.js").ShipCardData | null
+): boolean {
+	return Boolean(data && (data.prTitle !== null || data.prDescription !== null));
+}
+
 const prFetchTarget = $derived.by(() => {
 	if (!sessionId || !sessionProjectPath || createdPr == null) {
 		return null;
@@ -1038,22 +1041,34 @@ async function handleCreatePr(config?: PrGenerationConfig) {
 
 	// Generate commit message + PR content via AI (falls back to default if generation fails)
 	createPrLabel = m.git_generating();
+	streamingShipData = null;
 	let commitMsg = m.agent_panel_default_commit_message();
 	let prTitle: string | undefined;
 	let prBody: string | undefined;
 
-	const shipCtxResult = await tauriClient.git.collectShipContext(path);
+	const shipCtxResult = await tauriClient.git.collectShipContext(
+		path,
+		config?.customPrompt ? config.customPrompt : undefined,
+	);
 	if (shipCtxResult.isOk() && shipCtxResult.value) {
 		const ctx = shipCtxResult.value;
 		logger.info("handleCreatePr: generating commit/PR content via AI", { branch: ctx.branch });
 
-		// Use the ephemeral text generation service to get AI-generated content
-		const { generateShipContent } = await import("../../ship-card/ship-card-generation.js");
-		const genResult = await generateShipContent(
+		// Use the streaming text generation service — updates the PR card live
+		const { generateShipContentStreaming } = await import("../../ship-card/ship-card-generation.js");
+		const genResult = await generateShipContentStreaming(
 			ctx.prompt,
 			path,
-			config?.agentId || sessionAgentId || selectedAgentId || undefined,
-			config?.modelId || undefined,
+			(data) => {
+				const hadPreviewContent = hasStreamingPreviewContent(streamingShipData);
+				const hasPreviewContent = hasStreamingPreviewContent(data);
+				if (!hadPreviewContent && hasPreviewContent) {
+					prCardRenderKey += 1;
+				}
+				streamingShipData = data;
+			},
+			config?.agentId ? config.agentId : (sessionAgentId ? sessionAgentId : (selectedAgentId ? selectedAgentId : undefined)),
+			config?.modelId ? config.modelId : undefined,
 		);
 		if (genResult.isOk()) {
 			const gen = genResult.value;
@@ -1065,6 +1080,7 @@ async function handleCreatePr(config?: PrGenerationConfig) {
 			logger.warn("handleCreatePr: AI generation failed, using defaults", {
 				error: genResult.error.message,
 			});
+			streamingShipData = null;
 		}
 	}
 
@@ -1080,6 +1096,7 @@ async function handleCreatePr(config?: PrGenerationConfig) {
 		(ok) => {
 			createPrRunning = false;
 			createPrLabel = null;
+			streamingShipData = null;
 			logger.info("handleCreatePr: success", {
 				action: ok.action,
 				commitStatus: ok.commit.status,
@@ -1113,6 +1130,7 @@ async function handleCreatePr(config?: PrGenerationConfig) {
 		(err) => {
 			createPrRunning = false;
 			createPrLabel = null;
+			streamingShipData = null;
 			const details = getErrorCauseDetails(err);
 			logger.error("handleCreatePr: failed", {
 				message: err.message,
@@ -1643,18 +1661,21 @@ function handleCheckpointRevertComplete() {
 							</div>
 						</div>
 					{/if}
-					{#if effectivePathForGit && (createdPr || createPrRunning)}
+					{#if effectivePathForGit && (createdPr || createPrRunning || streamingShipData)}
 						<div class={isFullscreen ? "flex justify-center" : ""}>
 							<div class={isFullscreen ? "w-full max-w-[60%]" : ""}>
-								<PrStatusCard
-									projectPath={effectivePathForGit}
-									prNumber={createdPr}
-									isCreating={createPrRunning}
-									prDetails={prDetails}
-									fetchError={prFetchError}
-									onMerge={(strategy) => void handleMergePr(strategy)}
-									merging={mergePrRunning}
-								/>
+								{#key prCardRenderKey}
+									<PrStatusCard
+										projectPath={effectivePathForGit}
+										prNumber={createdPr}
+										isCreating={createPrRunning}
+										prDetails={prDetails}
+										fetchError={prFetchError}
+										onMerge={(strategy) => void handleMergePr(strategy)}
+										merging={mergePrRunning}
+										streamingData={streamingShipData}
+									/>
+								{/key}
 							</div>
 						</div>
 					{/if}
@@ -1672,8 +1693,7 @@ function handleCheckpointRevertComplete() {
 									createPrLoading={createPrRunning}
 									{createPrLabel}
 									{availableAgents}
-									currentAgentId={sessionAgentId || selectedAgentId}
-									availableModels={prCachedModels}
+									currentAgentId={sessionAgentId ? sessionAgentId : selectedAgentId}
 									currentModelId={sessionCurrentModelId}
 									{effectiveTheme}
 								/>

@@ -20,10 +20,19 @@ vi.mock("@acepe/ui", async () => {
 	return {
 		DiffPill: Stub,
 		GitHubBadge: Stub,
+		LoadingIcon: Stub,
 	};
 });
 
 vi.mock("phosphor-svelte/lib/GitMerge", async () => {
+	const Stub = (await import("./test-component-stub.svelte")).default;
+
+	return {
+		default: Stub,
+	};
+});
+
+vi.mock("phosphor-svelte/lib/GitPullRequest", async () => {
 	const Stub = (await import("./test-component-stub.svelte")).default;
 
 	return {
@@ -83,5 +92,50 @@ describe("PrStatusCard", () => {
 		expect(markdownRoot).not.toBeNull();
 		expect(markdownRoot?.querySelector("h2")?.textContent).toBe("Summary");
 		expect(markdownRoot?.querySelectorAll("li")).toHaveLength(2);
+	});
+
+	it("keeps streamed content collapsed after the user closes the card", async () => {
+		const streamingData = {
+			commitMessage: null,
+			prTitle: "Streaming title",
+			prDescription: "## Summary\n- First item",
+			activeField: "pr-description",
+			started: true,
+			complete: false,
+		} as const;
+
+		const view = render(PrStatusCard, {
+			projectPath: "/repo",
+			prNumber: null,
+			isCreating: true,
+			prDetails: null,
+			fetchError: null,
+			streamingData,
+		});
+
+		const header = view.container.querySelector("div[role='button'][tabindex='0']");
+		expect(header).not.toBeNull();
+		expect(view.container.querySelector(".markdown-content")).not.toBeNull();
+
+		await fireEvent.click(header as HTMLElement);
+		expect(view.container.querySelector(".markdown-content")).toBeNull();
+
+		await view.rerender({
+			projectPath: "/repo",
+			prNumber: null,
+			isCreating: true,
+			prDetails: null,
+			fetchError: null,
+			streamingData: {
+				commitMessage: null,
+				prTitle: "Streaming title",
+				prDescription: "## Summary\n- First item\n- Second item",
+				activeField: "pr-description",
+				started: true,
+				complete: false,
+			},
+		});
+
+		expect(view.container.querySelector(".markdown-content")).toBeNull();
 	});
 });
