@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldStartVoiceHold, shouldStopVoiceHold } from "../voice-keyboard.js";
+import {
+	shouldRouteWindowVoiceHold,
+	shouldStartVoiceHold,
+	shouldStopVoiceHold,
+} from "../voice-keyboard.js";
 
 function createKeyboardEventLike(
 	overrides: Partial<{
@@ -51,5 +55,35 @@ describe("voice-keyboard", () => {
 		expect(shouldStopVoiceHold(createKeyboardEventLike(), true)).toBe(true);
 		expect(shouldStopVoiceHold(createKeyboardEventLike({ ctrlKey: true }), true)).toBe(false);
 		expect(shouldStopVoiceHold(createKeyboardEventLike(), false)).toBe(false);
+	});
+
+	it("routes window voice hold only to the focused panel", () => {
+		expect(
+			shouldRouteWindowVoiceHold({
+				editorHasFocus: false,
+				focusedPanelId: "panel-a",
+				panelId: "panel-a",
+			}),
+		).toBe(true);
+		expect(
+			shouldRouteWindowVoiceHold({
+				editorHasFocus: false,
+				focusedPanelId: "panel-a",
+				panelId: "panel-b",
+			}),
+		).toBe(false);
+		expect(
+			shouldRouteWindowVoiceHold({
+				editorHasFocus: true,
+				focusedPanelId: "panel-a",
+				panelId: "panel-a",
+			}),
+		).toBe(false);
+		expect(
+			shouldRouteWindowVoiceHold({
+				editorHasFocus: false,
+				focusedPanelId: null,
+			}),
+		).toBe(true);
 	});
 });
