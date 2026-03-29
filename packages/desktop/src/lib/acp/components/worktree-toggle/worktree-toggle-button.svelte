@@ -143,7 +143,7 @@ function handleRenameKeydown(event: KeyboardEvent): void {
 					<button
 						type="button"
 						{...triggerProps}
-						class="inline-flex h-full min-w-0 items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed {variant ===
+						class="inline-flex h-full min-w-0 items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 {variant ===
 							'minimal' && !active
 							? 'rounded-md hover:rounded-full'
 							: ''}"

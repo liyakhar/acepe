@@ -39,6 +39,9 @@ pub struct Model {
     /// File size in bytes (additional validation)
     pub file_size: i64,
 
+    /// Provider-owned persisted session ID when it differs from the app session ID.
+    pub provider_session_id: Option<String>,
+
     /// Optional worktree path when session operates in a git worktree
     pub worktree_path: Option<String>,
 

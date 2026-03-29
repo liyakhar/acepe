@@ -17,11 +17,7 @@ import type { WorktreeInfo } from "../../types/worktree-info.js";
 import BranchPicker from "./branch-picker.svelte";
 import type { OnWorktreeCreatedCallback, OnWorktreeRenamedCallback } from "./types.js";
 import WorktreeToggleButton from "./worktree-toggle-button.svelte";
-import {
-	computeIsDisabled,
-	computeIsPending,
-	computeTooltipText,
-} from "./worktree-toggle-logic.js";
+import { computeTooltipText } from "./worktree-toggle-logic.js";
 import { getWorktreeDefaultStore } from "./worktree-default-store.svelte.js";
 import { WorktreeToggleState } from "./worktree-toggle-state.svelte.js";
 
@@ -192,7 +188,8 @@ const isPending = $derived(
 		toggleState.isGitRepo === true
 );
 const isDisabled = $derived(
-	// Never disable when pending (user needs to be able to untoggle)
+	// Global auto-worktree locks the primary toggle on, but manual pending should remain untoggleable.
+	(props.globalWorktreeDefault ? props.globalWorktreeDefault : false) ||
 	props.hasMessages ||
 		props.hasEdits ||
 		toggleState.loading ||

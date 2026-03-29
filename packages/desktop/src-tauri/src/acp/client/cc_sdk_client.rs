@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
+use sea_orm::DbConn;
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
@@ -234,6 +235,8 @@ pub struct CcSdkClaudeClient {
     bridge_task: Option<tauri::async_runtime::JoinHandle<()>>,
     /// Dispatcher for UI events.
     dispatcher: AcpUiEventDispatcher,
+    /// Database connection for resolving provider-backed session IDs.
+    db: Option<DbConn>,
     /// Deferred options: stored by new_session, consumed by the first send_prompt.
     pending_options: Option<cc_sdk::ClaudeCodeOptions>,
     pending_mode_id: Option<String>,
@@ -247,6 +250,9 @@ impl CcSdkClaudeClient {
         cwd: PathBuf,
     ) -> AcpResult<Self> {
         let _ = cwd; // stored implicitly via the options built at session creation time
+        let db = app_handle
+            .try_state::<DbConn>()
+            .map(|state| state.inner().clone());
         let dispatcher =
             AcpUiEventDispatcher::new(Some(app_handle), DispatchPolicy::default());
         Ok(Self {
@@ -258,6 +264,7 @@ impl CcSdkClaudeClient {
             task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
             bridge_task: None,
             dispatcher,
+            db,
             pending_options: None,
             pending_mode_id: None,
             pending_model_id: None,
@@ -356,10 +363,18 @@ impl CcSdkClaudeClient {
         let task_reconciler = self.task_reconciler.clone();
         let provider = self.provider.clone();
         let sid = session_id.clone();
+        let db = self.db.clone();
+        let context = StreamingBridgeContext {
+            dispatcher,
+            bridge,
+            tool_call_tracker: tracker,
+            task_reconciler,
+            provider,
+            db,
+        };
 
         let handle = tauri::async_runtime::spawn(async move {
-            run_streaming_bridge(stream, sid, dispatcher, bridge, tracker, task_reconciler, provider)
-                .await;
+            run_streaming_bridge(stream, sid, context).await;
         });
 
         self.bridge_task = Some(handle);
@@ -372,8 +387,21 @@ impl CcSdkClaudeClient {
         }
     }
 
+    async fn history_session_id_for_app_session(&self, session_id: &str) -> String {
+        match &self.db {
+            Some(db) => crate::db::repository::SessionMetadataRepository::get_by_id(db, session_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|row| row.history_session_id().to_string())
+                .unwrap_or_else(|| session_id.to_string()),
+            None => session_id.to_string(),
+        }
+    }
+
     async fn session_has_persisted_history(&self, session_id: &str, cwd: &str) -> bool {
-        crate::session_jsonl::parser::find_session_file(session_id, cwd)
+        let history_session_id = self.history_session_id_for_app_session(session_id).await;
+        crate::session_jsonl::parser::find_session_file(&history_session_id, cwd)
             .await
             .is_ok()
     }
@@ -553,23 +581,52 @@ fn claude_permission_mode_name(mode: cc_sdk::PermissionMode) -> &'static str {
 // Streaming bridge
 // ---------------------------------------------------------------------------
 
-async fn run_streaming_bridge(
-    mut stream: impl futures::Stream<Item = cc_sdk::Result<cc_sdk::Message>> + Unpin,
-    session_id: String,
+struct StreamingBridgeContext {
     dispatcher: AcpUiEventDispatcher,
     bridge: Arc<PermissionBridge>,
     tool_call_tracker: Arc<ToolCallIdTracker>,
     task_reconciler: Arc<std::sync::Mutex<TaskReconciler>>,
     provider: Arc<dyn AgentProvider>,
+    db: Option<DbConn>,
+}
+
+async fn run_streaming_bridge(
+    mut stream: impl futures::Stream<Item = cc_sdk::Result<cc_sdk::Message>> + Unpin,
+    session_id: String,
+    context: StreamingBridgeContext,
 ) {
+    let StreamingBridgeContext {
+        dispatcher,
+        bridge,
+        tool_call_tracker,
+        task_reconciler,
+        provider,
+        db,
+    } = context;
+
     tracing::info!(session_id = %session_id, "cc-sdk bridge: started, waiting for messages...");
     let mut message_count: u64 = 0;
     let mut turn_stream_state = crate::acp::parsers::cc_sdk_bridge::CcSdkTurnStreamState::default();
     let mut stream_tool_blocks: HashMap<u64, (String, String)> = HashMap::new();
+    let mut observed_provider_session_id: Option<String> = None;
 
     while let Some(result) = stream.next().await {
         match result {
             Ok(msg) => {
+                if let Some(provider_session_id) = provider_session_id_from_message(&msg) {
+                    if provider_session_id != session_id
+                        && observed_provider_session_id.as_deref() != Some(provider_session_id)
+                    {
+                        persist_provider_session_id_alias(
+                            db.as_ref(),
+                            &session_id,
+                            provider_session_id,
+                        )
+                        .await;
+                        observed_provider_session_id = Some(provider_session_id.to_string());
+                    }
+                }
+
                 message_count += 1;
                 if let Ok(raw_json) = serde_json::to_value(&msg) {
                     log_streaming_event(&session_id, &raw_json);
@@ -776,6 +833,44 @@ async fn run_streaming_bridge(
     bridge.drain_all_as_denied().await;
 }
 
+fn provider_session_id_from_message(msg: &cc_sdk::Message) -> Option<&str> {
+    match msg {
+        cc_sdk::Message::StreamEvent { session_id, .. }
+        | cc_sdk::Message::Result { session_id, .. }
+        | cc_sdk::Message::RateLimit { session_id, .. } => Some(session_id.as_str()),
+        cc_sdk::Message::System { data, .. } => data
+            .get("sessionId")
+            .or_else(|| data.get("session_id"))
+            .and_then(|value| value.as_str()),
+        _ => None,
+    }
+}
+
+async fn persist_provider_session_id_alias(
+    db: Option<&DbConn>,
+    session_id: &str,
+    provider_session_id: &str,
+) {
+    let Some(db) = db else {
+        return;
+    };
+
+    if let Err(error) = crate::db::repository::SessionMetadataRepository::set_provider_session_id(
+        db,
+        session_id,
+        provider_session_id,
+    )
+    .await
+    {
+        tracing::warn!(
+            session_id = %session_id,
+            provider_session_id = %provider_session_id,
+            error = %error,
+            "Failed to persist provider session ID alias"
+        );
+    }
+}
+
 fn collect_cc_sdk_updates_for_dispatch(
     update: &SessionUpdate,
     task_reconciler: &Arc<std::sync::Mutex<TaskReconciler>>,
@@ -861,6 +956,7 @@ impl AgentClient for CcSdkClaudeClient {
         cwd: String,
     ) -> AcpResult<ResumeSessionResponse> {
         self.reset_stream_runtime_state();
+        let history_session_id = self.history_session_id_for_app_session(&session_id).await;
         if !self.session_has_persisted_history(&session_id, &cwd).await {
             let options = self.build_options(&cwd, &session_id, None, false);
             self.pending_options = Some(options);
@@ -884,7 +980,12 @@ impl AgentClient for CcSdkClaudeClient {
             });
         }
 
-        self.pending_options = Some(self.build_options(&cwd, &session_id, Some(session_id.clone()), false));
+        self.pending_options = Some(self.build_options(
+            &cwd,
+            &session_id,
+            Some(history_session_id.clone()),
+            false,
+        ));
         let models = self.hydrated_session_model_state().await;
         self.pending_options = None;
         tracing::info!(
@@ -897,7 +998,7 @@ impl AgentClient for CcSdkClaudeClient {
                 .collect::<Vec<_>>(),
             "cc-sdk resume_session returning models"
         );
-        let options = self.build_options(&cwd, &session_id, Some(session_id.clone()), false);
+        let options = self.build_options(&cwd, &session_id, Some(history_session_id), false);
         self.connect_and_start_bridge(options, session_id, None).await?;
         Ok(ResumeSessionResponse {
             models,
@@ -1170,6 +1271,7 @@ mod tests {
             )),
             bridge_task: None,
             dispatcher: AcpUiEventDispatcher::new(None, DispatchPolicy::default()),
+            db: None,
             pending_options: None,
             pending_mode_id: None,
             pending_model_id: None,
@@ -1208,6 +1310,34 @@ mod tests {
 
         assert_eq!(options.resume.as_deref(), Some("resume-1"));
         assert!(options.fork_session);
+    }
+
+    #[test]
+    fn provider_session_id_from_stream_event_uses_provider_owned_id() {
+        let message = cc_sdk::Message::StreamEvent {
+            uuid: "msg-1".to_string(),
+            session_id: "provider-session".to_string(),
+            event: serde_json::json!({ "type": "message_stop" }),
+            parent_tool_use_id: None,
+        };
+
+        assert_eq!(
+            provider_session_id_from_message(&message),
+            Some("provider-session")
+        );
+    }
+
+    #[test]
+    fn provider_session_id_from_system_message_reads_nested_session_id() {
+        let message = cc_sdk::Message::System {
+            subtype: "usage_update".to_string(),
+            data: serde_json::json!({ "sessionId": "provider-session" }),
+        };
+
+        assert_eq!(
+            provider_session_id_from_message(&message),
+            Some("provider-session")
+        );
     }
 
     // --- PermissionBridge tests ---

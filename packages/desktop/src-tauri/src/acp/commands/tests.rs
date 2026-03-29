@@ -387,6 +387,7 @@ fn session_metadata_created_rows_are_detected_as_pending_transcript() {
         file_path: "__worktree__/session-placeholder".to_string(),
         file_mtime: 0,
         file_size: 0,
+        provider_session_id: None,
         worktree_path: None,
         pr_number: None,
     };
@@ -405,6 +406,7 @@ fn session_metadata_real_rows_are_resumable() {
         file_path: "/project/session-real.jsonl".to_string(),
         file_mtime: 1704067200,
         file_size: 1024,
+        provider_session_id: None,
         worktree_path: None,
         pr_number: None,
     };
@@ -426,6 +428,7 @@ fn session_metadata_created_rows_with_worktree_context_are_resumable() {
 		file_path: "__session_registry__/session-worktree-placeholder".to_string(),
 		file_mtime: 0,
 		file_size: 0,
+        provider_session_id: None,
 		worktree_path: Some(worktree_path),
 		pr_number: None,
 	};

@@ -59,7 +59,7 @@ pub async fn get_unified_session(
     let result = match canonical_agent {
         CanonicalAgentId::ClaudeCode => {
             match crate::session_jsonl::parser::parse_full_session(
-                &session_id,
+                &context.history_session_id,
                 &context.effective_project_path,
             )
             .await {
@@ -73,7 +73,7 @@ pub async fn get_unified_session(
                 // Worktree slug failed — try the project slug before giving up
                 Err(_) if context.effective_project_path != context.project_path => {
                     match crate::session_jsonl::parser::parse_full_session(
-                        &session_id,
+                        &context.history_session_id,
                         &context.project_path,
                     )
                     .await

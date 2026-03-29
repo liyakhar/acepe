@@ -3,6 +3,7 @@ use sea_orm::DbConn;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionContext {
+    pub history_session_id: String,
     pub project_path: String,
     pub worktree_path: Option<String>,
     pub effective_project_path: String,
@@ -31,6 +32,11 @@ pub async fn resolve_session_context(
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| fallback_project_path.to_string());
 
+    let history_session_id = metadata
+        .as_ref()
+        .map(|row| row.history_session_id().to_string())
+        .unwrap_or_else(|| session_id.to_string());
+
     let worktree_path = metadata.as_ref().and_then(|row| row.worktree_path.clone());
 
     let effective_project_path = worktree_path
@@ -49,6 +55,7 @@ pub async fn resolve_session_context(
         .unwrap_or_else(|| fallback_agent_id.to_string());
 
     SessionContext {
+        history_session_id,
         project_path,
         worktree_path,
         effective_project_path,
@@ -101,6 +108,7 @@ mod tests {
         )
         .await;
 
+        assert_eq!(context.history_session_id, "session-worktree");
         assert_eq!(context.project_path, "/repo");
         assert_eq!(
             context.worktree_path.as_deref(),
@@ -149,6 +157,7 @@ mod tests {
         )
         .await;
 
+        assert_eq!(context.history_session_id, "session-worktree");
         assert_eq!(context.project_path, repo_path.to_string_lossy());
         assert_eq!(
             context.worktree_path.as_deref(),
@@ -173,10 +182,44 @@ mod tests {
         )
         .await;
 
+        assert_eq!(context.history_session_id, "session-id");
         assert_eq!(context.project_path, "/repo");
         assert_eq!(context.worktree_path, None);
         assert_eq!(context.effective_project_path, "/repo");
         assert_eq!(context.source_path.as_deref(), Some("/tmp/source.json"));
         assert_eq!(context.agent_id, "opencode");
+    }
+
+    #[tokio::test]
+    async fn resolve_session_context_prefers_provider_session_id_for_history_loading() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-app-id",
+            "/repo",
+            "claude-code",
+            Some("/repo/.worktrees/feature-a"),
+        )
+        .await
+        .expect("ensure exists");
+        SessionMetadataRepository::set_provider_session_id(
+            &db,
+            "session-app-id",
+            "session-provider-id",
+        )
+        .await
+        .expect("set provider session id");
+
+        let context = resolve_session_context(
+            Some(&db),
+            "session-app-id",
+            "/fallback-repo",
+            "claude-code",
+            None,
+        )
+        .await;
+
+        assert_eq!(context.history_session_id, "session-provider-id");
     }
 }

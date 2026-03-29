@@ -3,8 +3,8 @@ use anyhow::Result;
 use chrono::Utc;
 use rand::Rng;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbConn, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, DbConn, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -583,11 +583,16 @@ pub struct SessionMetadataRow {
     pub file_path: String,
     pub file_mtime: i64,
     pub file_size: i64,
+    pub provider_session_id: Option<String>,
     pub worktree_path: Option<String>,
     pub pr_number: Option<i32>,
 }
 
 impl SessionMetadataRow {
+    pub fn history_session_id(&self) -> &str {
+        self.provider_session_id.as_deref().unwrap_or(&self.id)
+    }
+
     pub fn lifecycle_state(&self) -> SessionLifecycleState {
         if self.file_mtime == 0
             && self.file_size == 0
@@ -615,6 +620,41 @@ pub type SessionMetadataRecord = (String, String, i64, String, String, String, i
 pub struct SessionMetadataRepository;
 
 impl SessionMetadataRepository {
+    fn dedupe_records_by_session_id(
+        records: Vec<SessionMetadataRecord>,
+    ) -> Vec<SessionMetadataRecord> {
+        fn should_replace_record(
+            current: &SessionMetadataRecord,
+            candidate: &SessionMetadataRecord,
+        ) -> bool {
+            (candidate.6, candidate.7, candidate.2) > (current.6, current.7, current.2)
+        }
+
+        let original_count = records.len();
+        let mut deduped: std::collections::HashMap<String, SessionMetadataRecord> =
+            std::collections::HashMap::with_capacity(original_count);
+
+        for record in records {
+            let session_id = record.0.clone();
+            match deduped.get(&session_id) {
+                Some(existing) if !should_replace_record(existing, &record) => {}
+                _ => {
+                    deduped.insert(session_id, record);
+                }
+            }
+        }
+
+        if deduped.len() < original_count {
+            tracing::debug!(
+                original_count,
+                deduped_count = deduped.len(),
+                "Deduplicated session metadata batch by session ID"
+            );
+        }
+
+        deduped.into_values().collect()
+    }
+
     fn created_session_file_path(session_id: &str) -> String {
         format!("__session_registry__/{session_id}")
     }
@@ -689,6 +729,27 @@ impl SessionMetadataRepository {
         }
     }
 
+    fn provider_session_id_for_existing_model(
+        existing_model: &session_metadata::Model,
+        incoming_agent_id: &str,
+        incoming_session_id: &str,
+    ) -> Option<String> {
+        if incoming_agent_id == "claude-code" && incoming_session_id != existing_model.id {
+            return Some(incoming_session_id.to_string());
+        }
+
+        existing_model
+            .provider_session_id
+            .clone()
+            .filter(|provider_session_id| provider_session_id != &existing_model.id)
+    }
+
+    fn query_existing_session_by_id_or_provider_session_id(session_id: &str) -> Condition {
+        Condition::any()
+            .add(session_metadata::Column::Id.eq(session_id))
+            .add(session_metadata::Column::ProviderSessionId.eq(session_id))
+    }
+
     async fn insert_created_session(
         db: &DbConn,
         session_id: &str,
@@ -709,6 +770,7 @@ impl SessionMetadataRepository {
             file_path: Set(Self::created_session_file_path(session_id)),
             file_mtime: Set(0),
             file_size: Set(0),
+            provider_session_id: Set(None),
             worktree_path: Set(worktree_path.map(|path| path.to_string())),
             pr_number: sea_orm::ActiveValue::NotSet,
             created_at: Set(now),
@@ -793,7 +855,10 @@ impl SessionMetadataRepository {
     ) -> Result<bool> {
         let now = Utc::now();
 
-        let existing = SessionMetadata::find_by_id(&session_id).one(db).await?;
+        let existing = SessionMetadata::find()
+            .filter(Self::query_existing_session_by_id_or_provider_session_id(&session_id))
+            .one(db)
+            .await?;
 
         if let Some(existing_model) = existing {
             let project_path = Self::project_path_for_update(&existing_model, project_path);
@@ -807,6 +872,11 @@ impl SessionMetadataRepository {
             }
 
             // Update existing record
+            let provider_session_id = Self::provider_session_id_for_existing_model(
+                &existing_model,
+                &agent_id,
+                &session_id,
+            );
             let mut active: session_metadata::ActiveModel = existing_model.into();
             active.display = Set(display);
             active.timestamp = Set(timestamp);
@@ -815,6 +885,7 @@ impl SessionMetadataRepository {
             active.file_path = Set(file_path);
             active.file_mtime = Set(file_mtime);
             active.file_size = Set(file_size);
+            active.provider_session_id = Set(provider_session_id);
             active.updated_at = Set(now);
             active.update(db).await?;
         } else {
@@ -828,6 +899,7 @@ impl SessionMetadataRepository {
                 file_path: Set(file_path),
                 file_mtime: Set(file_mtime),
                 file_size: Set(file_size),
+                provider_session_id: Set(None),
                 worktree_path: sea_orm::ActiveValue::NotSet,
                 pr_number: sea_orm::ActiveValue::NotSet,
                 created_at: Set(now),
@@ -848,6 +920,8 @@ impl SessionMetadataRepository {
             return Ok(0);
         }
 
+        let records = Self::dedupe_records_by_session_id(records);
+
         let count = records.len();
         tracing::debug!(count = count, "Batch upserting session metadata");
 
@@ -863,16 +937,23 @@ impl SessionMetadataRepository {
 
         // Single bulk SELECT to get all existing records at once (O(n) instead of N queries)
         let existing_records: Vec<session_metadata::Model> = SessionMetadata::find()
-            .filter(session_metadata::Column::Id.is_in(session_ids.clone()))
+            .filter(
+                Condition::any()
+                    .add(session_metadata::Column::Id.is_in(session_ids.clone()))
+                    .add(session_metadata::Column::ProviderSessionId.is_in(session_ids.clone())),
+            )
             .all(&txn)
             .await?;
 
         // Build a HashMap for O(1) lookup during iteration
-        let existing_map: std::collections::HashMap<String, session_metadata::Model> =
-            existing_records
-                .into_iter()
-                .map(|m| (m.id.clone(), m))
-                .collect();
+        let mut existing_map: std::collections::HashMap<String, session_metadata::Model> =
+            std::collections::HashMap::new();
+        for model in existing_records {
+            if let Some(provider_session_id) = model.provider_session_id.clone() {
+                existing_map.insert(provider_session_id, model.clone());
+            }
+            existing_map.insert(model.id.clone(), model);
+        }
 
         // Now iterate through records, using the HashMap for existence check
         for (
@@ -908,6 +989,11 @@ impl SessionMetadataRepository {
                 active.file_path = Set(file_path);
                 active.file_mtime = Set(file_mtime);
                 active.file_size = Set(file_size);
+                active.provider_session_id = Set(Self::provider_session_id_for_existing_model(
+                    existing_model,
+                    active.agent_id.as_ref(),
+                    &session_id,
+                ));
                 active.updated_at = Set(now);
                 active.update(&txn).await?;
                 updated_count += 1;
@@ -922,6 +1008,7 @@ impl SessionMetadataRepository {
                     file_path: Set(file_path),
                     file_mtime: Set(file_mtime),
                     file_size: Set(file_size),
+                    provider_session_id: Set(None),
                     worktree_path: sea_orm::ActiveValue::NotSet,
                     pr_number: sea_orm::ActiveValue::NotSet,
                     created_at: Set(now),
@@ -999,6 +1086,46 @@ impl SessionMetadataRepository {
         Ok(())
     }
 
+    pub async fn set_provider_session_id(
+        db: &DbConn,
+        session_id: &str,
+        provider_session_id: &str,
+    ) -> Result<()> {
+        tracing::debug!(
+            session_id = %session_id,
+            provider_session_id = %provider_session_id,
+            "Setting provider session ID"
+        );
+
+        let model = SessionMetadata::find_by_id(session_id).one(db).await?;
+        let Some(model) = model else {
+            return Ok(());
+        };
+
+        let normalized_provider_session_id = if provider_session_id == session_id {
+            None
+        } else {
+            Some(provider_session_id.to_string())
+        };
+
+        if model.provider_session_id == normalized_provider_session_id {
+            return Ok(());
+        }
+
+        let mut active: session_metadata::ActiveModel = model.into();
+        active.provider_session_id = Set(normalized_provider_session_id);
+        active.updated_at = Set(Utc::now());
+        active.update(db).await?;
+
+        tracing::info!(
+            session_id = %session_id,
+            provider_session_id = %provider_session_id,
+            "Provider session ID set"
+        );
+
+        Ok(())
+    }
+
     /// Delete session by session_id.
     pub async fn delete(db: &DbConn, session_id: &str) -> Result<()> {
         tracing::debug!(session_id = %session_id, "Deleting session metadata");
@@ -1034,19 +1161,36 @@ impl SessionMetadataRepository {
             return Ok(0);
         }
 
-        let mut query = SessionMetadata::delete_many()
+        let candidates = SessionMetadata::find()
             .filter(session_metadata::Column::AgentId.eq(agent_id))
             .filter(session_metadata::Column::ProjectPath.is_in(project_paths.to_vec()))
-            .filter(session_metadata::Column::WorktreePath.is_null());
+            .filter(session_metadata::Column::WorktreePath.is_null())
+            .all(db)
+            .await?;
 
-        if !live_session_ids.is_empty() {
-            query = query.filter(
-                session_metadata::Column::Id
-                    .is_not_in(live_session_ids.iter().cloned().collect::<Vec<_>>()),
-            );
+        let ids_to_delete: Vec<String> = candidates
+            .into_iter()
+            .filter(|model| {
+                !live_session_ids.contains(&model.id)
+                    && model
+                        .provider_session_id
+                        .as_ref()
+                        .is_none_or(|provider_session_id| {
+                            !live_session_ids.contains(provider_session_id)
+                        })
+            })
+            .map(|model| model.id)
+            .collect();
+
+        if ids_to_delete.is_empty() {
+            tracing::info!(agent_id = %agent_id, deleted = 0, "Deleted stale provider sessions");
+            return Ok(0);
         }
 
-        let result = query.exec(db).await?;
+        let result = SessionMetadata::delete_many()
+            .filter(session_metadata::Column::Id.is_in(ids_to_delete))
+            .exec(db)
+            .await?;
         tracing::info!(
             agent_id = %agent_id,
             deleted = result.rows_affected,
@@ -1078,16 +1222,20 @@ impl SessionMetadataRepository {
         db: &DbConn,
     ) -> Result<Vec<(String, String, i64, i64)>> {
         let models = SessionMetadata::find()
-            .select_only()
-            .column(session_metadata::Column::Id)
-            .column(session_metadata::Column::FilePath)
-            .column(session_metadata::Column::FileMtime)
-            .column(session_metadata::Column::FileSize)
-            .into_tuple::<(String, String, i64, i64)>()
             .all(db)
             .await?;
 
-        Ok(models)
+        Ok(models
+            .into_iter()
+            .map(|model| {
+                (
+                    model.provider_session_id.unwrap_or_else(|| model.id.clone()),
+                    model.file_path,
+                    model.file_mtime,
+                    model.file_size,
+                )
+            })
+            .collect())
     }
 
     /// Check if index is empty (first run detection).
@@ -1111,6 +1259,7 @@ impl SessionMetadataRepository {
             file_path: m.file_path,
             file_mtime: m.file_mtime,
             file_size: m.file_size,
+            provider_session_id: m.provider_session_id,
             worktree_path: m.worktree_path,
             pr_number: m.pr_number,
         }

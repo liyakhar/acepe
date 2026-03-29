@@ -5,6 +5,7 @@
 	import { TextShimmer } from "../text-shimmer/index.js";
 	import type { AgentToolStatus, AnyAgentEntry, AgentToolEntry } from "./types.js";
 	import AgentToolCard from "./agent-tool-card.svelte";
+	import AgentToolRow from "./agent-tool-row.svelte";
 	import ToolTally from "./tool-tally.svelte";
 
 	interface Props {
@@ -44,6 +45,10 @@
 	/** Child tool entries only (tool_call type) for the Tool calls section. */
 	const toolCallChildren = $derived(
 		taskChildren.filter((e): e is AgentToolEntry => e.type === "tool_call"),
+	);
+
+	const lastToolCall = $derived(
+		toolCallChildren.length > 0 ? toolCallChildren[toolCallChildren.length - 1] : null,
 	);
 
 	const hasPrompt = $derived(Boolean(prompt));
@@ -134,8 +139,18 @@
 		</div>
 	{/if}
 
-	<!-- Tool calls footer: one embedded bar per child tool call -->
-	{#if hasChildren}
+	<!-- Last tool used + tool tally strip -->
+	{#if hasChildren && lastToolCall}
+		<div class="border-t border-border py-1.5">
+			<AgentToolRow
+				title={lastToolCall.title}
+				subtitle={lastToolCall.subtitle}
+				filePath={lastToolCall.filePath}
+				status={lastToolCall.status}
+				kind={lastToolCall.kind}
+				{iconBasePath}
+			/>
+		</div>
 		<ToolTally toolCalls={toolCallChildren} />
 	{/if}
 

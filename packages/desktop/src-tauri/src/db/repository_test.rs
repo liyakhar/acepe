@@ -740,6 +740,99 @@ mod session_metadata_tests {
     }
 
     #[tokio::test]
+    async fn test_set_provider_session_id_allows_batch_upsert_to_update_alias_row() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "acepe-session",
+            "/project",
+            "claude-code",
+            Some("/project/.worktrees/feature-a"),
+        )
+        .await
+        .unwrap();
+        SessionMetadataRepository::set_provider_session_id(
+            &db,
+            "acepe-session",
+            "claude-session",
+        )
+        .await
+        .unwrap();
+
+        let updated = SessionMetadataRepository::batch_upsert(
+            &db,
+            vec![(
+                "claude-session".to_string(),
+                "Real transcript title".to_string(),
+                1704067300000,
+                "/project/.worktrees/feature-a".to_string(),
+                "claude-code".to_string(),
+                "-project-worktrees-feature-a/claude-session.jsonl".to_string(),
+                1704067300,
+                2048,
+            )],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updated, 1);
+
+        let aliased = SessionMetadataRepository::get_by_id(&db, "acepe-session")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(aliased.history_session_id(), "claude-session");
+        assert_eq!(aliased.display, "Real transcript title");
+        assert_eq!(
+            aliased.file_path,
+            "-project-worktrees-feature-a/claude-session.jsonl"
+        );
+
+        assert!(SessionMetadataRepository::get_by_id(&db, "claude-session")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_by_agent_for_projects_excluding_ids_respects_provider_session_id() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "acepe-session",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+        SessionMetadataRepository::set_provider_session_id(
+            &db,
+            "acepe-session",
+            "claude-session",
+        )
+        .await
+        .unwrap();
+
+        let deleted = SessionMetadataRepository::delete_by_agent_for_projects_excluding_ids(
+            &db,
+            "claude-code",
+            &["/project".to_string()],
+            &std::collections::HashSet::from(["claude-session".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(deleted, 0);
+        assert!(SessionMetadataRepository::get_by_id(&db, "acepe-session")
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
     async fn test_upsert_preserves_base_project_for_generic_git_worktree_session() {
         let db = setup_test_db().await;
 

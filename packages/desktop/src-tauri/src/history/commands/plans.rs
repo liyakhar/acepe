@@ -39,7 +39,7 @@ pub async fn get_unified_plan(
     match canonical_agent {
         CanonicalAgentId::ClaudeCode => {
             session_jsonl_plan_loader::extract_plan_from_claude_session(
-                &session_id,
+                &context.history_session_id,
                 &plan_project_path_for_context(
                     &context.project_path,
                     &context.effective_project_path,

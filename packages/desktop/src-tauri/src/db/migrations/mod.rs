@@ -14,6 +14,7 @@ mod m20260227_000001_add_sql_connection_config_fields;
 mod m20260305_000001_create_session_review_state;
 mod m20260318_000001_drop_worktree_dead_columns;
 mod m20260318_000002_add_pr_number_to_session_metadata;
+mod m20260329_000001_add_provider_session_id_to_session_metadata;
 
 pub struct Migrator;
 
@@ -35,6 +36,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260305_000001_create_session_review_state::Migration),
             Box::new(m20260318_000001_drop_worktree_dead_columns::Migration),
             Box::new(m20260318_000002_add_pr_number_to_session_metadata::Migration),
+            Box::new(m20260329_000001_add_provider_session_id_to_session_metadata::Migration),
         ]
     }
 }
