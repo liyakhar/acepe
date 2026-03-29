@@ -1,5 +1,4 @@
 export enum SoundEffect {
-	AppStartFinish = "app-start-finish.wav",
 	AppStart = "app-start.wav",
 	SoundDown = "sound-down.mp3",
 	SoundUp = "sound-up-2.mp3",

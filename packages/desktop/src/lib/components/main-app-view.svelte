@@ -574,7 +574,6 @@ async function checkForAppUpdate(): Promise<void> {
 			updaterState = createIdleUpdaterState();
 			showUpdateAvailable = false;
 		}
-		playSound(SoundEffect.AppStartFinish);
 		return;
 	}
 
@@ -628,7 +627,6 @@ onMount(async () => {
 
 	if (import.meta.env.DEV) {
 		updaterState = createAvailableUpdaterState(DEV_UPDATE_VERSION);
-		playSound(SoundEffect.AppStartFinish);
 	} else {
 		await checkForAppUpdate();
 		updatePollTimer = setInterval(() => {
