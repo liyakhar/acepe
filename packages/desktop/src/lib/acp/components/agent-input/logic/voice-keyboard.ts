@@ -27,3 +27,19 @@ export function shouldStopVoiceHold(event: VoiceKeyboardEventLike, isPressAndHol
 
 	return isRightOption(event);
 }
+
+export function shouldRouteWindowVoiceHold(params: {
+	editorHasFocus: boolean;
+	focusedPanelId: string | null;
+	panelId?: string;
+}): boolean {
+	if (params.editorHasFocus) {
+		return false;
+	}
+
+	if (!params.panelId) {
+		return true;
+	}
+
+	return params.panelId === params.focusedPanelId;
+}

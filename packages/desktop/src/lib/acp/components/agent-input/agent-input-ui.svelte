@@ -74,7 +74,11 @@ import {
 	shouldRestoreInitialDraft,
 } from "$lib/components/main-app-view/components/content/logic/empty-state-send-state.js";
 import { normalizeVoiceInputText } from "./logic/voice-input-text.js";
-import { shouldStartVoiceHold, shouldStopVoiceHold } from "./logic/voice-keyboard.js";
+import {
+	shouldRouteWindowVoiceHold,
+	shouldStartVoiceHold,
+	shouldStopVoiceHold,
+} from "./logic/voice-keyboard.js";
 import { resolveVoiceStateLifecycle } from "./logic/voice-state-lifecycle.js";
 import { AgentInputState } from "./state/agent-input-state.svelte.js";
 import type { AgentInputProps } from "./types/agent-input-props.js";
@@ -619,7 +623,15 @@ onMount(() => {
 		if (event.key === "Shift") {
 			isShiftPressed = true;
 		}
-		if (document.activeElement !== editorRef && voiceState && shouldUseVoiceHoldKey(event)) {
+		if (
+			voiceState &&
+			shouldUseVoiceHoldKey(event) &&
+			shouldRouteWindowVoiceHold({
+				editorHasFocus: document.activeElement === editorRef,
+				focusedPanelId: panelStore.focusedPanelId,
+				panelId: props.panelId,
+			})
+		) {
 			event.preventDefault();
 			voiceState.onKeyboardHoldStart();
 		}
