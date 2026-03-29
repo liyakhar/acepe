@@ -1306,22 +1306,6 @@ async function handleOpenInAcepe() {
 	);
 }
 
-async function handleDeleteSession() {
-	if (!sessionId || !sessionProjectPath) return;
-	if (!confirm(m.session_menu_delete_confirm())) return;
-	await tauriClient.shell
-		.deleteSession(sessionId, sessionProjectPath)
-		.mapErr((e) => new Error(String(e)))
-		.match(
-			() => {
-				panelStore.closePanelBySessionId(sessionId!);
-				sessionStore.removeSession(sessionId!);
-				toast.success(m.session_menu_delete_success());
-			},
-			(err) => toast.error(m.session_menu_delete_error({ error: err.message }))
-		);
-}
-
 async function handleExportMarkdown(): Promise<void> {
 	if (!sessionId) return;
 	const entries = sessionStore.getEntries(sessionId);
@@ -1502,7 +1486,6 @@ function handleCheckpointRevertComplete() {
 			updatedAt={sessionUpdatedAt}
 			onOpenRawFile={sessionId && sessionProjectPath ? handleOpenRawFile : undefined}
 			onOpenInAcepe={sessionId && sessionProjectPath ? handleOpenInAcepe : undefined}
-			onDeleteSession={sessionId && sessionProjectPath ? handleDeleteSession : undefined}
 			onExportMarkdown={sessionId ? handleExportMarkdown : undefined}
 			onExportJson={sessionId ? handleExportJson : undefined}
 		/>

@@ -44,12 +44,6 @@ function handleView(sessionId: string) {
 	panelStore.openSession(sessionId, DEFAULT_PANEL_WIDTH);
 }
 
-function handleDelete(_sessionId: string) {
-	if (confirm("Are you sure you want to delete this session?")) {
-		console.warn("deleteSession not yet implemented in UnifiedStore");
-	}
-}
-
 function handleOpenInFinder(_sessionId: string, _projectPath: string) {
 	console.warn("open_session_in_finder not yet implemented");
 }
@@ -85,7 +79,6 @@ function handleArchive(session: { id: string; projectPath: string; agentId: stri
 			{projects}
 			{loading}
 			onView={handleView}
-			onDelete={handleDelete}
 			onOpenInFinder={handleOpenInFinder}
 			onArchive={handleArchive}
 		/>

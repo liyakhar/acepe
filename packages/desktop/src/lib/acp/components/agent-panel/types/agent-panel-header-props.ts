@@ -26,7 +26,6 @@ import type { SessionStatusUI } from "./session-status-ui";
  * @property updatedAt - Session updated date for View stats
  * @property onOpenRawFile - Callback when open raw session file is selected
  * @property onOpenInAcepe - Callback when open raw session in Acepe is selected
- * @property onDeleteSession - Callback when delete session is selected (confirm in parent)
  * @property onExportMarkdown - Callback when export as Markdown is selected
  * @property onExportJson - Callback when export as JSON is selected
  */
@@ -59,7 +58,6 @@ export interface AgentPanelHeaderProps {
 	readonly updatedAt?: Date | null;
 	readonly onOpenRawFile?: () => Promise<void>;
 	readonly onOpenInAcepe?: () => Promise<void>;
-	readonly onDeleteSession?: () => Promise<void>;
 	readonly onExportMarkdown?: () => Promise<void>;
 	readonly onExportJson?: () => Promise<void>;
 	readonly onScrollToTop?: () => void;

@@ -14,12 +14,10 @@ import {
 	getSessionStore,
 } from "$lib/acp/store/index.js";
 import { getSessionArchiveStore } from "$lib/acp/store/session-archive-store.svelte.js";
-import type { SessionDisplayItem } from "$lib/acp/types/thread-display-item.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
 import { sessionEntriesToMarkdown } from "$lib/acp/utils/session-to-markdown.js";
 import { useTheme } from "$lib/components/theme/index.js";
 import * as m from "$lib/paraglide/messages.js";
-import { tauriClient } from "$lib/utils/tauri-client/index.js";
 
 import type { MainAppViewState } from "../../logic/main-app-view-state.svelte.js";
 
@@ -122,23 +120,6 @@ function handleOpenPr(sessionInfo: SessionListItem) {
 		section: "prs",
 		prNumber: sessionInfo.prNumber,
 	});
-}
-
-async function handleDeleteSession(session: SessionDisplayItem) {
-	tauriClient.shell
-		.deleteSession(session.id, session.projectPath)
-		.mapErr((e) => new Error(String(e)))
-		.match(
-			() => {
-				panelStore.closePanelBySessionId(session.id);
-				sessionStore.removeSession(session.id);
-				toast.success(m.session_menu_delete_success());
-			},
-			(err) => {
-				toast.error(m.session_menu_delete_error({ error: err.message }));
-				logger.error("[DeleteSession] Failed", { sessionId: session.id, error: err });
-			}
-		);
 }
 
 function handleExportMarkdown(sessionId: string) {
@@ -251,7 +232,6 @@ const visibleSessions = $derived.by(() => {
 			onOpenBrowser={handleOpenBrowser}
 			onOpenGitPanel={handleOpenGitPanel}
 			onOpenPr={handleOpenPr}
-			onDeleteSession={handleDeleteSession}
 			onArchiveSession={handleArchiveSession}
 			onExportMarkdown={handleExportMarkdown}
 			onExportJson={handleExportJson}
