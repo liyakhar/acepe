@@ -5,7 +5,6 @@
 	import { TextShimmer } from "../text-shimmer/index.js";
 	import type { AgentToolStatus, AnyAgentEntry, AgentToolEntry } from "./types.js";
 	import AgentToolCard from "./agent-tool-card.svelte";
-	import AgentToolRow from "./agent-tool-row.svelte";
 	import ToolTally from "./tool-tally.svelte";
 
 	interface Props {
@@ -47,11 +46,6 @@
 		taskChildren.filter((e): e is AgentToolEntry => e.type === "tool_call"),
 	);
 
-	/** Only the last tool call is shown in the sub-agent task (single row). */
-	const visibleToolCalls = $derived(
-		toolCallChildren.length > 0 ? toolCallChildren.slice(-1) : [],
-	);
-
 	const hasPrompt = $derived(Boolean(prompt));
 	const hasResult = $derived(isDone && Boolean(resultText));
 	const hasChildren = $derived(toolCallChildren.length > 0);
@@ -77,9 +71,6 @@
 					<span class="font-medium text-muted-foreground">{description ?? doneFallback}</span>
 				{/if}
 			</span>
-			{#if hasChildren}
-				<ToolTally count={toolCallChildren.length} />
-			{/if}
 		</div>
 		{#if durationLabel}
 			<span class="shrink-0 font-mono text-[10px] text-muted-foreground/70">{durationLabel}</span>
@@ -143,22 +134,9 @@
 		</div>
 	{/if}
 
-	<!-- Tool calls (third section): only the last tool is shown -->
-	{#if hasChildren && visibleToolCalls.length > 0}
-		<div class="border-t border-border px-2 py-1.5">
-			<div class="flex flex-col gap-1">
-				{#each visibleToolCalls as child (child.id)}
-					<AgentToolRow
-						title={child.title}
-						subtitle={child.subtitle}
-						filePath={child.filePath}
-						status={child.status}
-						kind={child.kind}
-						{iconBasePath}
-					/>
-				{/each}
-			</div>
-		</div>
+	<!-- Tool calls footer: one embedded bar per child tool call -->
+	{#if hasChildren}
+		<ToolTally toolCalls={toolCallChildren} />
 	{/if}
 
 </AgentToolCard>
