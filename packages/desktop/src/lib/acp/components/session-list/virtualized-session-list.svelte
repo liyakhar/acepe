@@ -18,7 +18,6 @@ type SessionListItem = BaseSessionListItem & {
 		selectedSessionId: string | null;
 		onSelectSession: (item: SessionListItem) => void;
 		onOpenPr?: (item: SessionListItem) => void;
-	onDelete?: (session: SessionDisplayItem) => void | Promise<void>;
 	onArchive?: (session: SessionDisplayItem) => void | Promise<void>;
 	onExportMarkdown?: (sessionId: string) => void | Promise<void>;
 	onExportJson?: (sessionId: string) => void | Promise<void>;
@@ -29,7 +28,6 @@ let {
 	selectedSessionId,
 	onSelectSession,
 	onOpenPr,
-	onDelete,
 	onArchive,
 		onExportMarkdown,
 		onExportJson,
@@ -168,7 +166,6 @@ setSessionListHighlightContext(highlightContext);
 			onSelect={() => handleSessionSelect(row.item)}
 			onToggleExpand={() => handleToggleExpand(row.item.id)}
 			onOpenPr={onOpenPr ? () => onOpenPr(row.item) : undefined}
-			{onDelete}
 			{onArchive}
 			{onExportMarkdown}
 			{onExportJson}

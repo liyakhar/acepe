@@ -91,8 +91,6 @@ interface Props {
 	onOpenGitPanel?: (projectPath: string) => void;
 	/** Called when PR badge is clicked on a session row */
 	onOpenPr?: (item: SessionListItem) => void;
-	/** Called when user confirms delete from session item dropdown */
-	onDeleteSession?: (session: SessionDisplayItem) => void | Promise<void>;
 	/** Called when user archives a session from the sidebar */
 	onArchiveSession?: (session: SessionDisplayItem) => void | Promise<void>;
 	/** Called when user exports session as markdown */
@@ -129,7 +127,6 @@ let {
 	onOpenBrowser,
 	onOpenGitPanel,
 	onOpenPr,
-	onDeleteSession,
 	onArchiveSession,
 	onExportMarkdown,
 	onExportJson,
@@ -980,7 +977,6 @@ function openCreateBranchDialog(projectPath: string): void {
 										{selectedSessionId}
 										onSelectSession={handleSessionSelect}
 										{onOpenPr}
-										onDelete={onDeleteSession}
 										onArchive={onArchiveSession}
 										{onExportMarkdown}
 										{onExportJson}

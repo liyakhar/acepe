@@ -47,7 +47,6 @@ describe("AgentPanelHeader project-header style", () => {
 			updatedAt: null,
 			onOpenRawFile: undefined,
 			onOpenInAcepe: undefined,
-			onDeleteSession: undefined,
 			onExportMarkdown: undefined,
 			onExportJson: undefined,
 			onScrollToTop: undefined,

@@ -1,8 +1,3 @@
-use crate::db::repository::SessionMetadataRepository;
-use tauri::AppHandle;
-
-use super::shared::get_db;
-
 use crate::session_jsonl::parser::path_to_slug;
 
 fn get_session_jsonl_root() -> Result<std::path::PathBuf, String> {
@@ -140,53 +135,6 @@ pub async fn get_session_file_path(
 
     Ok(file_path.to_string_lossy().to_string())
 }
-
-/// Delete a session: remove the JSONL file and DB metadata.
-#[tauri::command]
-#[specta::specta]
-pub async fn delete_session(
-    app: AppHandle,
-    session_id: String,
-    project_path: String,
-) -> Result<(), String> {
-    crate::path_safety::validate_path_segment(&session_id, "session_id")
-        .map_err(|e| e.to_string())?;
-
-    tracing::info!(
-        session_id = %session_id,
-        project_path = %project_path,
-        "Deleting session"
-    );
-
-    let jsonl_root = get_session_jsonl_root()?;
-    let slug = path_to_slug(&project_path);
-    let project_dir = jsonl_root.join("projects").join(&slug);
-    let file_path = project_dir.join(format!("{}.jsonl", session_id));
-
-    // Delete file from disk
-    if file_path.exists() {
-        std::fs::remove_file(&file_path).map_err(|e| {
-            tracing::error!(error = %e, path = ?file_path, "Failed to delete session file");
-            format!("Failed to delete session file: {}", e)
-        })?;
-        tracing::debug!(path = ?file_path, "Session file deleted");
-    } else {
-        tracing::warn!(path = ?file_path, "Session file not found, deleting metadata only");
-    }
-
-    // Delete from DB
-    let db = get_db(&app);
-    SessionMetadataRepository::delete(&db, &session_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to delete session metadata");
-            e.to_string()
-        })?;
-
-    tracing::info!(session_id = %session_id, "Session deleted");
-    Ok(())
-}
-
 /// Get the streaming log file path for a session.
 /// Dev-only: Returns an error in release builds.
 #[tauri::command]

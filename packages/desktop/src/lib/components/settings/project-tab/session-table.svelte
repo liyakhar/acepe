@@ -21,7 +21,6 @@ interface Props {
 	projects: readonly Project[];
 	loading: boolean;
 	onView?: (id: string) => void;
-	onDelete?: (id: string) => void;
 	onOpenInFinder?: (id: string, projectPath: string) => void;
 	onArchive?: (session: SessionTableActionTarget) => void;
 	onUnarchive?: (session: SessionTableActionTarget) => void;
@@ -34,7 +33,6 @@ let {
 	projects,
 	loading,
 	onView,
-	onDelete,
 	onOpenInFinder,
 	onArchive,
 	onUnarchive,
@@ -202,7 +200,6 @@ function titleCase(s: string): string {
 							projectPath={row.projectPath}
 							agentId={row.agentId}
 							{onView}
-							{onDelete}
 							{onOpenInFinder}
 							{onArchive}
 							{onUnarchive}

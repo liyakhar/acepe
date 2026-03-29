@@ -44,7 +44,6 @@ type SessionDisplayItem = BaseSessionDisplayItem & {
 		hasChildren?: boolean;
 		isExpanded?: boolean;
 		onToggleExpand?: () => void;
-		onDelete?: (session: SessionDisplayItem) => void | Promise<void>;
 		onArchive?: (session: SessionDisplayItem) => void | Promise<void>;
 	onExportMarkdown?: (sessionId: string) => void | Promise<void>;
 	onExportJson?: (sessionId: string) => void | Promise<void>;
@@ -60,7 +59,6 @@ let {
 	hasChildren = false,
 	isExpanded = false,
 	onToggleExpand,
-	onDelete,
 	onArchive,
 	onExportMarkdown,
 	onExportJson,
@@ -141,11 +139,6 @@ async function handleOpenInAcepe() {
 		},
 		(err) => toast.error(m.session_menu_open_raw_error({ error: err.message }))
 	);
-}
-
-async function handleDelete() {
-	if (!confirm(m.session_menu_delete_confirm())) return;
-	await onDelete?.(session);
 }
 
 async function handleArchive() {
@@ -346,17 +339,6 @@ const highlightCtx = getSessionListHighlightContext();
 								<DropdownMenu.Item onSelect={handleOpenInAcepe} class="cursor-pointer">
 									{m.session_menu_open_in_acepe()}
 								</DropdownMenu.Item>
-								{#if onDelete}
-									<DropdownMenu.Separator />
-								{/if}
-								{#if onDelete}
-									<DropdownMenu.Item
-										onSelect={handleDelete}
-										class="cursor-pointer text-destructive focus:text-destructive"
-									>
-										{m.session_menu_delete()}
-									</DropdownMenu.Item>
-								{/if}
 								{#if onExportMarkdown || onExportJson}
 									<DropdownMenu.Separator />
 									<DropdownMenu.Sub>

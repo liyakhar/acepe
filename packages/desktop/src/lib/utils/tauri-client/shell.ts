@@ -21,10 +21,6 @@ export const shell = {
 		return invokeAsync(CMD.shell.get_session_file_path, { sessionId, projectPath });
 	},
 
-	deleteSession: (sessionId: string, projectPath: string): ResultAsync<void, AppError> => {
-		return invokeAsync(CMD.shell.delete_session, { sessionId, projectPath });
-	},
-
 	getDefaultShell: (): ResultAsync<string, AppError> => {
 		return invokeAsync(CMD.shell.get_default_shell);
 	},
