@@ -491,7 +491,10 @@ function startDevUpdateSimulation(): void {
 			};
 
 			if (nextDownloadedBytes >= DEV_UPDATE_TOTAL_BYTES) {
-				clearInterval(devUpdateStepTimer);
+				const timer = devUpdateStepTimer;
+				if (timer !== null) {
+					clearInterval(timer);
+				}
 				devUpdateStepTimer = null;
 			}
 		}, DEV_UPDATE_STEP_DELAY_MS);
