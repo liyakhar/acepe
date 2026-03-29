@@ -1,9 +1,7 @@
 <script lang="ts">
 	import type { AgentToolEntry } from "./types.js";
 
-	/** Voice-download progress bar color */
 	const BAR_COLOR = "#f9c396";
-	const BAR_COLOR_DIM = "color-mix(in oklab, var(--foreground) 10%, transparent)";
 
 	interface Props {
 		toolCalls: AgentToolEntry[];
@@ -13,11 +11,7 @@
 
 	const bars = $derived.by(() => {
 		return toolCalls.map((toolCall) => {
-			const filled = toolCall.status === "done" || toolCall.status === "error";
-			return {
-				filled,
-				label: `${toolCall.title}: ${toolCall.status}`,
-			};
+			return { label: `${toolCall.title}: ${toolCall.status}` };
 		});
 	});
 
@@ -35,7 +29,7 @@
 		{#each bars as bar, index (toolCalls[index]?.id ?? `${bar.label}-${index}`)}
 			<div
 				class="h-2 w-[3px] rounded-full"
-				style="background-color: {bar.filled ? BAR_COLOR : BAR_COLOR_DIM}; opacity: {bar.filled ? 1 : 0.55}"
+				style="background-color: {BAR_COLOR}"
 				title={bar.label}
 			></div>
 		{/each}
