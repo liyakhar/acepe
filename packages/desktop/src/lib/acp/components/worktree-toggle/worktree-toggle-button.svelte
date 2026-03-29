@@ -51,7 +51,11 @@ let {
 
 const hasWorktree = $derived(worktreeName !== null);
 const active = $derived(hasWorktree || pending);
-const buttonLabel = $derived(hasWorktree ? worktreeName : m.worktree_toggle_label());
+const buttonLabel = $derived.by(() => {
+	if (hasWorktree) return worktreeName;
+	if (pending || autoWorktree) return m.worktree_toggle_pending_label();
+	return m.worktree_toggle_label();
+});
 const canRename = $derived(hasWorktree && loading === false && deleted === false && Boolean(onRename));
 const showMenu = $derived(canRename || Boolean(onOpenSettings));
 
@@ -170,7 +174,7 @@ function handleRenameKeydown(event: KeyboardEvent): void {
 										{...menuProps}
 										ariaLabel="Worktree menu"
 										title="Worktree menu"
-										class="shrink-0"
+										class="shrink-0 {variant === 'minimal' ? '!w-5 rounded-md hover:rounded-full' : ''}"
 									>
 										<DotsThreeVertical class="size-3" weight="bold" />
 									</EmbeddedIconButton>
@@ -207,7 +211,11 @@ function handleRenameKeydown(event: KeyboardEvent): void {
 								>
 									<div class="flex w-full items-center justify-between gap-3">
 										<div class="flex min-w-0 items-center gap-2">
-											<Tree class="size-3.5 shrink-0" weight="regular" />
+											<Tree
+												class="size-3.5 shrink-0"
+												style={autoWorktree ? 'color: var(--success);' : undefined}
+												weight={autoWorktree ? 'fill' : 'regular'}
+											/>
 											<span class="truncate">Auto worktree</span>
 										</div>
 									<Switch
