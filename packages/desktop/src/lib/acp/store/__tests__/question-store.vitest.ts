@@ -320,7 +320,7 @@ describe("QuestionStore", () => {
 			expect(store.pending.size).toBe(0);
 		});
 
-		it("should just remove from store for questions without jsonRpcRequestId", async () => {
+		it("should use replyQuestion fallback for questions without jsonRpcRequestId", async () => {
 			const question: QuestionRequest = {
 				id: "q-cancel-http",
 				sessionId: "session-cancel-http",
@@ -332,6 +332,11 @@ describe("QuestionStore", () => {
 			await store.cancel("q-cancel-http");
 
 			expect(mockCancelQuestion).not.toHaveBeenCalled();
+			expect(mockReplyQuestion).toHaveBeenCalledWith(
+				"session-cancel-http",
+				"q-cancel-http",
+				[]
+			);
 			expect(store.pending.size).toBe(0);
 		});
 

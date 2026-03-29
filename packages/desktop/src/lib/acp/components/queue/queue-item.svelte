@@ -411,7 +411,7 @@ function handleNextQuestion() {
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="plan-queue-card {isSelected ? 'selected' : ''}"
+		class="flex flex-col rounded-md border border-border/50 bg-accent/20 overflow-hidden cursor-pointer transition-colors hover:bg-accent/40 {isSelected ? '!bg-accent/40' : ''}"
 		onclick={handleSelect}
 		role="button"
 		tabindex="0"
@@ -495,25 +495,6 @@ function handleNextQuestion() {
 {/if}
 
 <style>
-	.plan-queue-card {
-		display: flex;
-		flex-direction: column;
-		border-radius: 8px;
-		border: 1px solid var(--border);
-		background: color-mix(in srgb, var(--accent) 20%, transparent);
-		overflow: hidden;
-		cursor: pointer;
-		transition: background 0.15s ease;
-	}
-
-	.plan-queue-card:hover {
-		background: color-mix(in srgb, var(--accent) 50%, transparent);
-	}
-
-	.plan-queue-card.selected {
-		background: color-mix(in srgb, var(--accent) 40%, transparent);
-	}
-
 	.plan-queue-action {
 		display: inline-flex;
 		align-items: center;

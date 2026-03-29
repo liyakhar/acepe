@@ -85,8 +85,8 @@ describe("buildQueueItemQuestionUiState", () => {
 			{ questionIndex: 1, answered: true },
 		]);
 		expect(state.currentQuestionOptions).toEqual([
-			{ label: "A", selected: true, color: "#1" },
-			{ label: "B", selected: false, color: "#2" },
+			{ label: "A", description: "desc", selected: true, color: "#1" },
+			{ label: "B", description: "desc", selected: false, color: "#2" },
 		]);
 		expect(state.canSubmit).toBe(true);
 		expect(state.showSubmitButton).toBe(true);

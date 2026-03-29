@@ -11,7 +11,7 @@
  * and responses are sent via HTTP endpoints.
  */
 
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { errAsync, type ResultAsync } from "neverthrow";
 import { getContext, setContext } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { AppError } from "../errors/app-error.js";
@@ -206,8 +206,11 @@ export class QuestionStore {
 				.mapErr((err) => new AgentError("cancelQuestion", new Error(err.message)) as AppError);
 		}
 
-		// Otherwise, nothing more to do (OpenCode mode - no cancellation endpoint)
-		return okAsync(undefined);
+		// Stream-only ACP questions reuse the reply endpoint with an empty answer set.
+		// This lets the backend resolve the synthetic question state and release the turn.
+		return api.replyQuestion(question.sessionId, questionId, []).map(() => {
+			logger.debug("Question cancelled via replyQuestion fallback", { questionId });
+		});
 	}
 }
 

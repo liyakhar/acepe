@@ -4,7 +4,10 @@ import type { SessionEntry } from "../../acp/application/dto/session-entry.js";
 import type { QuestionRequest } from "../../acp/types/question.js";
 import type { ToolCallData } from "../../acp/types/tool-call.js";
 
-import { getQuestionToolCallBackfill } from "./question-tool-sync.js";
+import {
+	getQuestionToolCallBackfill,
+	getStaleQuestionIdsForTurnComplete,
+} from "./question-tool-sync.js";
 
 function createQuestionRequest(toolCallId: string): QuestionRequest {
 	return {
@@ -114,5 +117,43 @@ describe("getQuestionToolCallBackfill", () => {
 		];
 
 		expect(getQuestionToolCallBackfill(question, entries)).toBeNull();
+	});
+
+	it("keeps pending question tools after turn completion", () => {
+		const question = createQuestionRequest("tool-question-pending");
+		const entries: SessionEntry[] = [
+			createToolCallEntry({
+				id: "tool-question-pending",
+				name: "AskUserQuestion",
+				arguments: { kind: "other", raw: {} },
+				status: "pending",
+				kind: "question",
+				title: "Question",
+				normalizedQuestions: question.questions,
+				awaitingPlanApproval: false,
+			}),
+		];
+
+		expect(getStaleQuestionIdsForTurnComplete([question], entries)).toEqual([]);
+	});
+
+	it("removes completed question tools after turn completion", () => {
+		const question = createQuestionRequest("tool-question-done");
+		const entries: SessionEntry[] = [
+			createToolCallEntry({
+				id: "tool-question-done",
+				name: "AskUserQuestion",
+				arguments: { kind: "other", raw: {} },
+				status: "completed",
+				kind: "question",
+				title: "Question",
+				normalizedQuestions: question.questions,
+				awaitingPlanApproval: false,
+			}),
+		];
+
+		expect(getStaleQuestionIdsForTurnComplete([question], entries)).toEqual([
+			"tool-question-done-question",
+		]);
 	});
 });
