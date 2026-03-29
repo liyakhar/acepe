@@ -1,15 +1,15 @@
 <p align="center">
-  <video src="https://github.com/flazouh/acepe/raw/main/assets/acepe-preview.mp4" width="720" autoplay loop muted playsinline controls></video>
+  <img src="packages/website/static/images/landing/hero-demo-screenshot.png" width="1200" alt="Acepe working view" />
 </p>
 
 <div align="center">
 
 # Acepe
 
-**The Agentic Developer Environment.**
+**The next-generation Agentic Developer Environment.**
 
-A native desktop app built from the ground up for AI agent workflows,<br/>
-powered by the [Agent Client Protocol](https://agentclientprotocol.com).
+A native desktop app for running, coordinating, and supervising AI agents across real software projects.<br/>
+Use Acepe to orchestrate agents, review their work, manage git flows, and ship pull requests without losing control of what changed.
 
 <br/>
 
@@ -34,42 +34,42 @@ powered by the [Agent Client Protocol](https://agentclientprotocol.com).
 
 ## What is Acepe?
 
-Acepe is an **Agentic Developer Environment (ADE)** — a new kind of IDE where AI agents are first-class citizens, not plugins bolted onto an editor.
+Acepe is an **Agentic Developer Environment (ADE)** built for teams and developers who want AI agents to do real work inside a controlled engineering workflow.
 
-Connect to any [ACP-compatible agent](https://agentclientprotocol.com) through a native desktop app that gives you full visibility and control over agent sessions, tool calls, file changes, and conversations.
+Instead of treating agents like chat tabs or editor plugins, Acepe gives you a workspace to run multiple agents in parallel, inspect every tool call, review every file change, manage branches and worktrees, and turn useful output into commits and pull requests.
 
 ### Why Acepe?
 
-- **Protocol-native** — Built on ACP from day one. Agents aren't a plugin bolted onto an editor.
-- **Multi-agent** — Run Claude Code, Cursor, Codex, OpenCode, or your own agent side by side.
-- **Full visibility** — See every tool call, file diff, and decision. Approve or deny with granular permissions.
-- **Native performance** — Tauri + Rust backend. Not an Electron wrapper.
+- **Orchestrate agents, don't just chat with them** — Run multiple agents side by side across multiple repos and tasks.
+- **Review before you trust** — Inspect diffs, tool calls, checkpoints, and generated changes before they land.
+- **Ship from one place** — Manage branches, commits, and pull requests without bouncing across tools.
+- **Built for serious project work** — Native desktop app, worktree-aware, and designed for long-running agent sessions.
 
 ## Features
 
-### Agent Management
+### Agent Orchestration
 - **Multi-agent sessions** — Run multiple agents across multiple projects simultaneously
 - **Agent marketplace** — Install agents (Claude Code, Cursor, Codex, OpenCode) or register custom ones
 - **Model selection** — Switch models and modes per session
 - **Session history** — Full conversation history with search, forking, and resuming
 
-### Code Review & Changes
+### Review & Change Control
 - **Diff viewer** — Side-by-side and unified diffs with syntax highlighting
 - **Checkpoints** — Snapshot file state, compare across checkpoints, revert individual files or entire checkpoints
 - **Modified files panel** — Track all agent changes with +/- stats and file tree navigation
 - **Git integration** — Branch management, staging, commits, push/pull — all from the UI
 
-### Tool Call Control
+### Guardrails & Visibility
 - **Granular permissions** — Approve, deny, or auto-approve tool calls per type (read, write, terminal, web)
 - **Permission queue** — Batch-review pending tool requests
 - **Execution history** — See every tool call with inputs, outputs, and timing
 
-### GitHub Integration
-- **PR workflow** — Create, view, and merge pull requests
+### Shipping Workflow
+- **PR workflow** — Create, review, and merge pull requests
 - **Commit badges** — SHAs and PR references render as interactive badges in conversations
 - **Diff stats** — Inline +X -Y change counts on badges, click to open full diff viewer
 
-### Workspace
+### Workspace for Agentic Work
 - **Multi-project** — Work across multiple repositories in a single window
 - **Multi-panel layout** — Resizable panels with per-panel agent sessions
 - **Built-in terminal** — Native PTY terminal embedded per agent panel
@@ -77,7 +77,7 @@ Connect to any [ACP-compatible agent](https://agentclientprotocol.com) through a
 - **SQL Studio** — Connect to SQLite, PostgreSQL, MySQL, or browse S3 buckets
 - **@-mentions** — Reference files, code, and images in messages
 
-### More
+### Built for Real Teams
 - **Worktree support** — Isolated git worktrees for parallel agent work
 - **Keyboard shortcuts** — Customizable keybindings and command palette
 - **Dark / light mode** — System-aware theming
@@ -87,6 +87,8 @@ Connect to any [ACP-compatible agent](https://agentclientprotocol.com) through a
 
 ## Supported Agents
 
+Acepe is designed to be the place where you manage agent work, regardless of which coding agent you prefer.
+
 | Agent | Provider | Protocol |
 |-------|----------|----------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Anthropic | JSON-RPC / stdio |
@@ -95,6 +97,8 @@ Connect to any [ACP-compatible agent](https://agentclientprotocol.com) through a
 | [OpenCode](https://github.com/nichochar/opencode) | Community | HTTP / SSE |
 
 ## Quick Start
+
+Use Acepe when you want AI agents to operate inside a workflow that still feels like disciplined software engineering: parallel sessions, visible changes, review checkpoints, and a clean path to a PR.
 
 ### Download
 
@@ -112,19 +116,21 @@ cd packages/desktop && bun run tauri
 
 ## Architecture
 
+Acepe combines a native desktop shell with agent integrations, local project context, review tooling, and git workflows so you can keep the entire loop, from prompt to PR, in one place.
+
 ```
 ┌──────────────────────────────────┐
 │  Frontend (SvelteKit + Svelte 5) │
-│  UI, state management, ACP client│
+│  Agent workspace, review UI      │
 └───────────────┬──────────────────┘
                 │ Tauri IPC
 ┌───────────────▼──────────────────┐
 │  Backend (Tauri + Rust)          │
-│  Process mgmt, DB, file indexing │
+│  Sessions, git, indexing, state  │
 └───────────────┬──────────────────┘
-                │ JSON-RPC / HTTP+SSE
+                │ Agent runtimes
 ┌───────────────▼──────────────────┐
-│  ACP Agents                      │
+│  Coding agents                   │
 │  Claude, Cursor, Codex, OpenCode │
 └──────────────────────────────────┘
 ```
@@ -141,7 +147,7 @@ If you're looking for something to work on, check issues tagged [`good first iss
 
 ## Acknowledgments
 
-Built with [Tauri](https://tauri.app/), [Svelte](https://svelte.dev/), [shadcn-svelte](https://www.shadcn-svelte.com/), and the [Agent Client Protocol](https://agentclientprotocol.com).
+Built with [Tauri](https://tauri.app/), [Svelte](https://svelte.dev/), and [shadcn-svelte](https://www.shadcn-svelte.com/).
 
 ---
 
