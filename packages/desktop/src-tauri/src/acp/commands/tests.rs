@@ -409,11 +409,11 @@ fn session_metadata_real_rows_are_resumable() {
         pr_number: None,
     };
 
-	assert!(!row.is_placeholder());
+    assert!(!row.is_transcript_pending());
 }
 
 #[test]
-fn session_metadata_placeholder_rows_with_worktree_context_are_resumable() {
+fn session_metadata_created_rows_with_worktree_context_are_resumable() {
 	let temp = tempdir().expect("temp dir");
 	let worktree_path = temp.path().to_string_lossy().to_string();
 
