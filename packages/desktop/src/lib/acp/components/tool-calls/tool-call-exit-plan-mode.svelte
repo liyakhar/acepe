@@ -16,6 +16,7 @@ import {
 import { AgentToolCard } from "@acepe/ui/agent-panel";
 import type { PlanCardStatus } from "@acepe/ui/plan-card";
 import { PlanCard } from "@acepe/ui/plan-card";
+import XCircle from "phosphor-svelte/lib/XCircle";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { usePlanInline } from "../../hooks/use-plan-inline.svelte.js";
@@ -26,6 +27,7 @@ import { getPlanPreferenceStore } from "../../store/plan-preference-store.svelte
 import { getSessionStore } from "../../store/session-store.svelte.js";
 import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";
+import { findExitPlanPermission, getExitPlanDisplayPlan } from "./exit-plan-helpers.js";
 import PlanDialog from "../plan-dialog.svelte";
 
 interface Props {
@@ -37,7 +39,7 @@ interface Props {
 
 let { toolCall, turnState, elapsedLabel }: Props = $props();
 
-let isBuilding = $state(false);
+let localOutcome = $state<"building" | "rejected" | null>(null);
 
 const permissionStore = getPermissionStore();
 const panelStore = getPanelStore();
@@ -57,14 +59,54 @@ const inline = usePlanInline({
 	getAwaitingPlanApproval: () => false,
 });
 
-const pendingPermission = $derived(
-	permissionStore.getForToolCall(sessionContext?.sessionId, toolCall.id)
-);
+const pendingPermission = $derived.by(() => {
+	const sessionId = sessionContext?.sessionId;
+	if (!sessionId) {
+		return null;
+	}
+
+	return findExitPlanPermission(toolCall, permissionStore.getForSession(sessionId));
+});
+
+const displayPlan = $derived.by(() => {
+	return getExitPlanDisplayPlan(toolCall, pendingPermission, inline.plan);
+});
+
+const displayContent = $derived.by(() => {
+	if (displayPlan !== null) {
+		return displayPlan.content;
+	}
+
+	return "";
+});
+
+const previewContent = $derived.by(() => {
+	if (inline.debouncedContent.length > 0) {
+		return inline.debouncedContent;
+	}
+
+	return displayContent;
+});
+
+const displayTitle = $derived.by(() => {
+	if (displayPlan !== null) {
+		return displayPlan.title;
+	}
+
+	return "Plan";
+});
 
 function handleBuildManual() {
 	if (pendingPermission) {
-		isBuilding = true;
+		localOutcome = "building";
 		permissionStore.reply(pendingPermission.id, "once");
+	}
+}
+
+function handleCancelManual() {
+	if (pendingPermission) {
+		localOutcome = "rejected";
+		permissionStore.reply(pendingPermission.id, "reject");
 	}
 }
 
@@ -104,23 +146,26 @@ $effect(() => {
 
 // PlanCard status derivation
 const cardStatus = $derived.by((): PlanCardStatus => {
+	if (toolCall.status === "failed") return "rejected";
+	if (localOutcome === "rejected") return "rejected";
 	if (inline.isStreaming) return "streaming";
-	if (isBuilding) return "building";
+	if (localOutcome === "building") return "building";
 	if (pendingPermission) return "interactive";
-	return "approved"; // permission resolved = approved (exit_plan_mode has no reject)
+	return "approved";
 });
 </script>
 
-{#if inline.useInline}
+{#if inline.useInline && (previewContent.length > 0 || inline.isStreaming || pendingPermission !== null)}
 	<!-- Inline mode: PlanCard with preview -->
 	<PlanCard
-		content={inline.debouncedContent}
-		title={inline.plan?.title || "Plan"}
+		content={previewContent}
+		title={displayTitle}
 		status={cardStatus}
 		actionsDisabled={!inline.canAct}
 		skillsMissing={inline.planSkills.loaded && (!inline.planSkills.hasReview || !inline.planSkills.hasDeepen)}
 		onViewFull={inline.handleViewFull}
 		onBuild={pendingPermission ? handleBuildManual : undefined}
+		onCancel={pendingPermission ? handleCancelManual : undefined}
 		onReview={inline.handleReview}
 		onDeepen={inline.handleDeepen}
 	>
@@ -135,9 +180,9 @@ const cardStatus = $derived.by((): PlanCardStatus => {
 		{/snippet}
 	</PlanCard>
 
-	{#if inline.plan}
+	{#if displayPlan}
 		<PlanDialog
-			plan={inline.plan}
+			plan={displayPlan}
 			open={inline.showPlanDialog}
 			onOpenChange={(open) => (inline.showPlanDialog = open)}
 		/>
@@ -157,10 +202,21 @@ const cardStatus = $derived.by((): PlanCardStatus => {
 					<button
 						type="button"
 						class="plan-action-btn"
-						onclick={handleBuildManual}
-						disabled={isBuilding}
+						onclick={handleCancelManual}
+						disabled={localOutcome === "building"}
 					>
-					{#if isBuilding}
+						<XCircle weight="fill" class="size-3 shrink-0" />
+						Cancel
+					</button>
+				</HeaderActionCell>
+				<HeaderActionCell>
+					<button
+						type="button"
+						class="plan-action-btn"
+						onclick={handleBuildManual}
+						disabled={localOutcome === "building"}
+					>
+					{#if localOutcome === "building"}
 						<Spinner class="size-3 shrink-0" />
 						{m.plan_sidebar_building()}
 					{:else}

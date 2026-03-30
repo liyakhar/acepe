@@ -77,6 +77,11 @@ import AgentPanelReviewContent from "./agent-panel-review-content.svelte";
 import AgentPanelTerminalDrawer from "./agent-panel-terminal-drawer.svelte";
 import ScrollToBottomButton from "./scroll-to-bottom-button.svelte";
 import AgentInstallCard from "./agent-install-card.svelte";
+import {
+	resolveAgentContentColumnStyle,
+	resolveAgentPanelWidthStyle,
+	shouldUseCenteredFullscreenContent,
+} from "./agent-panel-layout.js";
 import WorktreeSetupCard from "./worktree-setup-card.svelte";
 import AgentErrorCard from "./agent-error-card.svelte";
 import { buildAgentErrorIssueDraft } from "../logic/issue-report-draft.js";
@@ -667,10 +672,18 @@ const requiredSplitWidth = $derived(
 	hasAttachedPane ? ATTACHED_COLUMN_WIDTH * 2 + ATTACHED_COLUMN_GAP_WIDTH : 0
 );
 const panelRenderWidth = $derived(hasAttachedPane ? requiredSplitWidth : width);
-const agentContentColumnStyle = $derived(
-	hasAttachedPane
-		? `min-width: ${ATTACHED_COLUMN_WIDTH}px; width: ${ATTACHED_COLUMN_WIDTH}px; max-width: ${ATTACHED_COLUMN_WIDTH}px; flex: 0 0 ${ATTACHED_COLUMN_WIDTH}px;`
-		: ""
+const centeredFullscreenContent = $derived.by(() =>
+	shouldUseCenteredFullscreenContent({
+		hasAttachedPane,
+		isFullscreen,
+	})
+);
+const agentContentColumnStyle = $derived.by(() =>
+	resolveAgentContentColumnStyle({
+		hasAttachedPane,
+		isFullscreen,
+		attachedColumnWidth: ATTACHED_COLUMN_WIDTH,
+	})
 );
 
 // Ensure panel is never narrower than the toolbar's natural content width
@@ -687,10 +700,11 @@ const effectiveWidth = $derived.by(() => {
 
 // In fullscreen mode, always use 100% width (sidebar shares space within the panel)
 // In non-fullscreen mode, double the width when sidebar is open so both halves fit
-const widthStyle = $derived(
-	isFullscreen
-		? "width: 100%; min-width: 100%; max-width: 100%;"
-		: `min-width: ${effectiveWidth}px; width: ${effectiveWidth}px; max-width: ${effectiveWidth}px;`
+const widthStyle = $derived.by(() =>
+	resolveAgentPanelWidthStyle({
+		effectiveWidth,
+		isFullscreen,
+	})
 );
 
 // Debug state for panel debugging (inert in production — deps behind early return are not tracked)
@@ -1586,7 +1600,7 @@ function handleCheckpointRevertComplete() {
 								onRetryConnection={handleRetryConnection}
 								onCancelConnection={handleCancelConnection}
 								{agentIconSrc}
-								{isFullscreen}
+								isFullscreen={centeredFullscreenContent}
 								{availableAgents}
 								{effectiveTheme}
 								{modifiedFilesState}
@@ -1614,8 +1628,8 @@ function handleCheckpointRevertComplete() {
 				<!-- Input Area - show for conversation, ready, or error (inline error card replaces full-panel takeover) -->
 				{#if viewState.kind === "conversation" || viewState.kind === "ready" || viewState.kind === "error"}
 					{#if worktreeDeleted}
-						<div class="{isFullscreen ? 'flex justify-center' : ''} px-5 mb-2">
-							<div class="flex justify-center {isFullscreen ? 'w-full max-w-4xl' : ''}">
+						<div class="{centeredFullscreenContent ? 'flex justify-center' : ''} px-5 mb-2">
+							<div class="flex justify-center {centeredFullscreenContent ? 'w-full max-w-4xl' : ''}">
 								<div class="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-accent">
 									<Tree class="size-3 shrink-0 text-destructive" weight="fill" />
 									<span class="text-[0.6875rem] text-muted-foreground">
@@ -1626,8 +1640,8 @@ function handleCheckpointRevertComplete() {
 						</div>
 					{/if}
 					{#if showInlineErrorCard}
-						<div class={isFullscreen ? "flex justify-center" : ""}>
-							<div class={isFullscreen ? "w-full max-w-4xl" : ""}>
+						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+							<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
 								<AgentErrorCard
 									title="Connection error"
 									summary={errorInfo.details?.split("\n")[0]?.slice(0, 80) ?? "Failed to connect to agent"}
@@ -1640,15 +1654,15 @@ function handleCheckpointRevertComplete() {
 						</div>
 					{/if}
 					{#if worktreeSetupState?.isVisible}
-						<div class={isFullscreen ? "flex justify-center" : ""}>
-							<div class={isFullscreen ? "w-full max-w-4xl" : ""}>
+						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+							<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
 								<WorktreeSetupCard state={worktreeSetupState} />
 							</div>
 						</div>
 					{/if}
 					{#if agentInstallState}
-						<div class={isFullscreen ? "flex justify-center" : ""}>
-							<div class={isFullscreen ? "w-full max-w-4xl" : ""}>
+						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+							<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
 								<AgentInstallCard
 									agentId={agentInstallState.agentId}
 									agentName={agentInstallState.agentName}
@@ -1659,8 +1673,8 @@ function handleCheckpointRevertComplete() {
 						</div>
 					{/if}
 					{#if effectivePathForGit && (createdPr || createPrRunning || streamingShipData)}
-						<div class={isFullscreen ? "flex justify-center" : ""}>
-							<div class={isFullscreen ? "w-full max-w-[60%]" : ""}>
+						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+							<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
 								{#key prCardRenderKey}
 									<PrStatusCard
 										projectPath={effectivePathForGit}
@@ -1677,8 +1691,8 @@ function handleCheckpointRevertComplete() {
 						</div>
 					{/if}
 					{#if modifiedFilesState}
-						<div class={isFullscreen ? "flex justify-center" : ""}>
-							<div class={isFullscreen ? "w-full max-w-[60%]" : ""}>
+						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+							<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
 								<ModifiedFilesHeader
 									{modifiedFilesState}
 									{sessionId}
@@ -1697,8 +1711,8 @@ function handleCheckpointRevertComplete() {
 							</div>
 						</div>
 					{/if}
-					<div class={isFullscreen ? "flex justify-center" : ""}>
-						<div class={isFullscreen ? "w-full max-w-[60%]" : ""}>
+					<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+						<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
 							<TodoHeader
 								{sessionId}
 								entries={sessionEntries}
@@ -1709,15 +1723,15 @@ function handleCheckpointRevertComplete() {
 						</div>
 					</div>
 					{#if sessionId}
-						<div class={isFullscreen ? "flex justify-center" : ""}>
-							<div class={isFullscreen ? "w-full max-w-[60%]" : ""}>
+						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+							<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
 								<QueueCardStrip {sessionId} />
 							</div>
 						</div>
 					{/if}
 					{#if sessionId}
-						<div class={isFullscreen ? "flex justify-center" : ""}>
-							<div class={isFullscreen ? "w-full max-w-[60%]" : ""}>
+						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+							<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
 								<PermissionBar
 									sessionId={sessionId}
 									projectPath={effectiveProjectPath ?? sessionProjectPath}
@@ -1726,10 +1740,10 @@ function handleCheckpointRevertComplete() {
 						</div>
 					{/if}
 					<div
-						class="shrink-0 px-2 pt-0.5 pb-2 {isFullscreen ? 'flex justify-center' : ''}"
+						class="shrink-0 px-2 pt-0.5 pb-2 {centeredFullscreenContent ? 'flex justify-center' : ''}"
 						data-input-area
 					>
-						<div class={isFullscreen ? "w-full max-w-[60%]" : ""}>
+						<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
 							{#key panelId}
 								<AgentInput
 									sessionId={sessionId ?? undefined}

@@ -20,14 +20,6 @@ export function resolveSlashCommandSource(input: {
 		};
 	}
 
-	if (input.hasConnectedSession) {
-		return {
-			source: "none",
-			commands: [],
-			tokenType: "command",
-		};
-	}
-
 	if (input.selectedAgentId && input.preconnectionCommands.length > 0) {
 		return {
 			source: "preconnection",

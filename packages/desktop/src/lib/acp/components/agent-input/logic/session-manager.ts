@@ -14,6 +14,16 @@ export interface CreateSessionOptions {
 	readonly agentId: string;
 
 	/**
+	 * Explicit mode selection captured before the session exists.
+	 */
+	readonly initialModeId?: string | null;
+
+	/**
+	 * Explicit model selection captured before the session exists.
+	 */
+	readonly initialModelId?: string | null;
+
+	/**
 	 * Project path for the session.
 	 */
 	readonly projectPath: string;
@@ -56,6 +66,8 @@ export function createSession(
 	return store
 		.createSession({
 			agentId: options.agentId,
+			initialModeId: options.initialModeId ?? undefined,
+			initialModelId: options.initialModelId ?? undefined,
 			projectPath: options.projectPath,
 			worktreePath: options.worktreePath,
 		})

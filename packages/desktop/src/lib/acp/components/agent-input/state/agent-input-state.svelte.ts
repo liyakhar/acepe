@@ -147,6 +147,11 @@ export class AgentInputState {
 	filesLoaded = $state(false);
 
 	/**
+	 * Project path associated with the current file picker cache.
+	 */
+	loadedProjectPath = $state<string | null>(null);
+
+	/**
 	 * Whether project files are currently being loaded.
 	 */
 	filesLoading = $state(false);
@@ -207,7 +212,7 @@ export class AgentInputState {
 	 *
 	 * @param store - Session store for managing sessions
 	 * @param panelStore - Panel store for optimistic pending entry management
-	 * @param projectPathGetter - Getter function that returns the current project path.
+	 * @param projectPathGetter - Getter function that returns the current file picker root.
 	 *                            Called on-demand when files need to be loaded.
 	 */
 	constructor(
@@ -221,7 +226,7 @@ export class AgentInputState {
 	}
 
 	/**
-	 * Current project path for lazy file loading.
+	 * Current file picker root path for lazy file loading.
 	 * Delegates to the getter function passed to constructor.
 	 */
 	get projectPath(): string | null {
@@ -355,26 +360,61 @@ export class AgentInputState {
 	 * Loads project files from the backend.
 	 *
 	 * @param projectPath - Path to the project
+	 * @param options - Loading options
 	 * @returns ResultAsync containing void on success
 	 */
-	loadProjectFiles(projectPath: string): ResultAsync<void, FileLoadError> {
+	loadProjectFiles(
+		projectPath: string,
+		options?: { refresh?: boolean }
+	): ResultAsync<void, FileLoadError> {
+		const refresh = Boolean(options?.refresh);
+		const reuseLoadedFiles = this.filesLoaded && this.loadedProjectPath === projectPath && !refresh;
+
 		this.logger.debug("[loadProjectFiles] Called", {
 			projectPath,
+			refresh,
+			loadedProjectPath: this.loadedProjectPath,
 			filesLoaded: this.filesLoaded,
 			filesLoading: this.filesLoading,
 		});
 
-		if (!projectPath || this.filesLoaded || this.filesLoading) {
-			this.logger.debug("[loadProjectFiles] Skipping - no path, already loaded, or loading");
+		if (!projectPath || this.filesLoading || reuseLoadedFiles) {
+			this.logger.debug(
+				"[loadProjectFiles] Skipping - no path, already loaded for this root, or loading"
+			);
 			return okAsync(undefined);
 		}
 
-		this.filesLoading = true;
+		if (refresh || this.loadedProjectPath !== projectPath) {
+			this.availableFiles = [];
+			this.filesLoaded = false;
+		}
 
-		return ResultAsync.fromPromise(
-			invoke<ProjectIndex>("get_project_files", { projectPath }),
-			(err) => new FileLoadError(projectPath, err instanceof Error ? err : new Error(String(err)))
-		)
+		this.filesLoading = true;
+		this.loadedProjectPath = projectPath;
+
+		const invalidateCachedFiles = refresh
+			? ResultAsync.fromPromise(
+					invoke("invalidate_project_files", { projectPath }),
+					(err) =>
+						new FileLoadError(projectPath, err instanceof Error ? err : new Error(String(err)))
+				).orElse((error) => {
+					this.logger.warn("[loadProjectFiles] Failed to invalidate cached project files", {
+						projectPath,
+						error,
+					});
+					return okAsync(undefined);
+				})
+			: okAsync(undefined);
+
+		return invalidateCachedFiles
+			.andThen(() =>
+				ResultAsync.fromPromise(
+					invoke<ProjectIndex>("get_project_files", { projectPath }),
+					(err) =>
+						new FileLoadError(projectPath, err instanceof Error ? err : new Error(String(err)))
+				)
+			)
 			.map((index) => {
 				// Files arrive pre-sorted from Rust (modified files first, then alphabetically)
 				// with gitStatus already merged into each file object
@@ -415,6 +455,8 @@ export class AgentInputState {
 		content: string;
 		panelId?: string;
 		sessionId?: string | null;
+		initialModeId?: string | null;
+		initialModelId?: string | null;
 		selectedAgentId?: string | null;
 		projectPath?: string | null;
 		projectName?: string | null;
@@ -426,6 +468,8 @@ export class AgentInputState {
 			content,
 			panelId,
 			sessionId,
+			initialModeId,
+			initialModelId,
 			selectedAgentId,
 			projectPath,
 			projectName,
@@ -436,6 +480,8 @@ export class AgentInputState {
 		this.logger.info("[first-send-trace] sendPreparedMessage entered", {
 			panelId: panelId ?? null,
 			sessionId: sessionId ?? null,
+			initialModeId: initialModeId ?? null,
+			initialModelId: initialModelId ?? null,
 			projectPath: projectPath ?? null,
 			worktreePath: worktreePath ?? null,
 			selectedAgentId: selectedAgentId ?? null,
@@ -507,6 +553,8 @@ export class AgentInputState {
 
 		return createSession(this.store, {
 			agentId: selectedAgentId,
+			initialModeId,
+			initialModelId,
 			projectPath: effectiveProjectPath,
 			projectName: effectiveProjectName,
 			worktreePath: worktreePath ?? undefined,
@@ -589,9 +637,10 @@ export class AgentInputState {
 			const positionResult = calculateDropdownPosition(this.textareaRef, trigger.startIndex);
 
 			if (positionResult.isOk()) {
-				// Lazy load files when @ is triggered and files aren't loaded yet
-				if (!this.filesLoaded && !this.filesLoading && this.projectPath) {
-					this.loadProjectFiles(this.projectPath).mapErr(() => {
+				if (this.projectPath) {
+					this.loadProjectFiles(this.projectPath, {
+						refresh: !this.showFileDropdown,
+					}).mapErr(() => {
 						// Error is logged in loadProjectFiles
 					});
 				}
@@ -847,9 +896,8 @@ export class AgentInputState {
 			return;
 		}
 
-		// Lazy load files if not already loaded
-		if (!this.filesLoaded && !this.filesLoading && this.projectPath) {
-			this.loadProjectFiles(this.projectPath).mapErr(() => {
+		if (this.projectPath) {
+			this.loadProjectFiles(this.projectPath, { refresh: true }).mapErr(() => {
 				// Error is logged in loadProjectFiles
 			});
 		}

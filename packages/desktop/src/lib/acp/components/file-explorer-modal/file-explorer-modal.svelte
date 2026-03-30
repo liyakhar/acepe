@@ -27,12 +27,28 @@ interface Props {
 const props: Props = $props();
 const { onClose, onInsert, projectInfoByPath } = props;
 
+function getPreviewFallbackFileName(filePath: string): string {
+	const segments = filePath.split("/");
+	const fileName = segments[segments.length - 1];
+	return fileName ? fileName : filePath;
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 const explorerState = new FileExplorerModalState({
 	projectPaths: props.projectPaths,
+	refreshFn: async (projectPaths) => {
+		await Promise.all(
+			projectPaths.map((projectPath) =>
+				tauriClient.fileIndex.invalidateProjectFiles(projectPath).match(
+					() => undefined,
+					() => undefined
+				)
+			)
+		);
+	},
 	searchFn: async (projectPaths, query, limit, offset) => {
 		const settled = await Promise.all(
 			projectPaths.map((projectPath) =>
@@ -79,22 +95,18 @@ const explorerState = new FileExplorerModalState({
 		};
 	},
 	previewFn: (path, filePath) =>
-		tauriClient.fileIndex
-			.getFileExplorerPreview(path, filePath)
-			.match(
-				(r) => r,
-				(_e) => ({
-					kind: "fallback" as const,
-					file_path: filePath,
-					file_name: filePath.split("/").pop()
-						? filePath.split("/").pop()!
-						: filePath,
-					reason: "Failed to load preview",
-					size_bytes: null,
-					git_status: null,
-					preview_kind: "text" as const,
-				})
-			),
+		tauriClient.fileIndex.getFileExplorerPreview(path, filePath).match(
+			(r) => r,
+			(_e) => ({
+				kind: "fallback" as const,
+				file_path: filePath,
+				file_name: getPreviewFallbackFileName(filePath),
+				reason: "Failed to load preview",
+				size_bytes: null,
+				git_status: null,
+				preview_kind: "text" as const,
+			})
+		),
 });
 
 // Debounce handle
@@ -108,7 +120,7 @@ let inputRef: HTMLInputElement | null = $state(null);
 // ---------------------------------------------------------------------------
 
 onMount(() => {
-	void explorerState.searchNow();
+	void explorerState.searchNow({ refresh: true });
 	if (inputRef) {
 		inputRef.focus();
 	}

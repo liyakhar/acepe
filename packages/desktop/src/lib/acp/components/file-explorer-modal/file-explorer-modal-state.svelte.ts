@@ -20,6 +20,8 @@ const SEARCH_LIMIT = 50;
 export interface FileExplorerModalStateOptions {
 	/** Project paths to search within. */
 	projectPaths: string[];
+	/** Optional refresh hook for invalidating stale project indexes before a search. */
+	refreshFn?: (projectPaths: string[]) => Promise<void>;
 	/** Function that performs the actual search (injected for testability). */
 	searchFn: (
 		projectPaths: string[],
@@ -28,10 +30,7 @@ export interface FileExplorerModalStateOptions {
 		offset: number
 	) => Promise<FileExplorerSearchResponse>;
 	/** Function that loads the preview (injected for testability). */
-	previewFn: (
-		projectPath: string,
-		filePath: string
-	) => Promise<FileExplorerPreviewResponse>;
+	previewFn: (projectPath: string, filePath: string) => Promise<FileExplorerPreviewResponse>;
 }
 
 export class FileExplorerModalState {
@@ -57,11 +56,13 @@ export class FileExplorerModalState {
 	private previewSeq = 0;
 
 	private readonly projectPaths: string[];
+	private readonly refreshFn: FileExplorerModalStateOptions["refreshFn"];
 	private readonly searchFn: FileExplorerModalStateOptions["searchFn"];
 	private readonly previewFn: FileExplorerModalStateOptions["previewFn"];
 
 	constructor(opts: FileExplorerModalStateOptions) {
 		this.projectPaths = opts.projectPaths;
+		this.refreshFn = opts.refreshFn;
 		this.searchFn = opts.searchFn;
 		this.previewFn = opts.previewFn;
 	}
@@ -102,12 +103,19 @@ export class FileExplorerModalState {
 	 * Executes a search immediately using the current `query`.
 	 * Handles in-flight sequencing so only the most-recent response is applied.
 	 */
-	async searchNow(): Promise<void> {
+	async searchNow(options?: { refresh?: boolean }): Promise<void> {
 		const seq = this.searchSeq + 1;
 		this.searchSeq = seq;
 		this.previewSeq = this.previewSeq + 1;
 		this.isLoading = true;
 		this.preview = null;
+
+		if (options && options.refresh === true && this.refreshFn) {
+			await this.refreshFn(this.projectPaths).then(
+				() => undefined,
+				() => undefined
+			);
+		}
 
 		const response = await this.searchFn(this.projectPaths, this.query, SEARCH_LIMIT, 0);
 
@@ -144,7 +152,11 @@ export class FileExplorerModalState {
 			return;
 		}
 		const activeRow = this.selectedRow;
-		if (activeRow === null || activeRow.path !== filePath || activeRow.projectPath !== selectedRow.projectPath) {
+		if (
+			activeRow === null ||
+			activeRow.path !== filePath ||
+			activeRow.projectPath !== selectedRow.projectPath
+		) {
 			return;
 		}
 		this.preview = response;
@@ -163,8 +175,7 @@ export class FileExplorerModalState {
 	/** Move selection one step up (wraps). No-op if rows is empty. */
 	navigateUp(): void {
 		if (this.rows.length === 0) return;
-		this.selectedIndex =
-			this.selectedIndex <= 0 ? this.rows.length - 1 : this.selectedIndex - 1;
+		this.selectedIndex = this.selectedIndex <= 0 ? this.rows.length - 1 : this.selectedIndex - 1;
 	}
 
 	// ---------------------------------------------------------------------------

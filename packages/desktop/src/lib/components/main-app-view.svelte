@@ -68,6 +68,10 @@ import EmptyStates from "./main-app-view/components/content/empty-states.svelte"
 import PanelsContainer from "./main-app-view/components/content/panels-container.svelte";
 import AppOverlays from "./main-app-view/components/overlays/app-overlays.svelte";
 import AppSidebar from "./main-app-view/components/sidebar/app-sidebar.svelte";
+import {
+	buildFileExplorerProjectInfoByPath,
+	buildFileExplorerProjectPaths,
+} from "./main-app-view/logic/file-explorer-context.js";
 import { MainAppViewState } from "./main-app-view/logic/main-app-view-state.svelte.js";
 import { applyDownloadEventToProgress } from "./main-app-view/logic/update-download-progress.js";
 import {
@@ -629,12 +633,15 @@ onMount(async () => {
 		updaterState = createAvailableUpdaterState(DEV_UPDATE_VERSION);
 	} else {
 		await checkForAppUpdate();
-		updatePollTimer = setInterval(() => {
-			if (updaterState.kind === "downloading" || showUpdateAvailable) {
-				return;
-			}
-			void checkForAppUpdate();
-		}, 10 * 60 * 1000);
+		updatePollTimer = setInterval(
+			() => {
+				if (updaterState.kind === "downloading" || showUpdateAvailable) {
+					return;
+				}
+				void checkForAppUpdate();
+			},
+			10 * 60 * 1000
+		);
 	}
 
 	logger.info("main-app-view onMount: Starting InboundRequestHandler");
@@ -746,33 +753,37 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 	}
 }
 
-const fileExplorerProjectPaths = $derived.by(() => {
-	const focusedProjectPath = panelStore.focusedPanel && panelStore.focusedPanel.projectPath
-		? panelStore.focusedPanel.projectPath
-		: panelStore.focusedViewProjectPath
-			? panelStore.focusedViewProjectPath
-			: null;
-
-	const remainingProjects = projectManager.projects
-		.map((project) => project.path)
-		.filter((projectPath) => (focusedProjectPath ? projectPath !== focusedProjectPath : true));
-
-	if (focusedProjectPath) {
-		return [focusedProjectPath, ...remainingProjects];
+const fileExplorerFocusContext = $derived.by(() => {
+	const focusedPanel = panelStore.focusedPanel;
+	if (focusedPanel) {
+		return {
+			focusedProjectPath: focusedPanel.projectPath ? focusedPanel.projectPath : null,
+			focusedWorktreePath: focusedPanel.worktreePath ? focusedPanel.worktreePath : null,
+		};
 	}
 
-	return remainingProjects;
+	return {
+		focusedProjectPath: panelStore.focusedViewProjectPath
+			? panelStore.focusedViewProjectPath
+			: null,
+		focusedWorktreePath: null,
+	};
+});
+
+const fileExplorerProjectPaths = $derived.by(() => {
+	return buildFileExplorerProjectPaths(
+		projectManager.projects,
+		fileExplorerFocusContext.focusedProjectPath,
+		fileExplorerFocusContext.focusedWorktreePath
+	);
 });
 
 const fileExplorerProjectInfoByPath = $derived.by(() => {
-	const info: Record<string, { name: string; color: string }> = {};
-	for (const project of projectManager.projects) {
-		info[project.path] = {
-			name: project.name,
-			color: project.color,
-		};
-	}
-	return info;
+	return buildFileExplorerProjectInfoByPath(
+		projectManager.projects,
+		fileExplorerFocusContext.focusedProjectPath,
+		fileExplorerFocusContext.focusedWorktreePath
+	);
 });
 
 // Derived: check if any panel is open
@@ -787,7 +798,9 @@ const hasAnyPanel = $derived(
 
 // Derived: keep the sidebar mounted whenever projects exist.
 // The open state now controls width/content density instead of removing it entirely.
-const showSidebar = $derived(projectManager.projectCount !== null && projectManager.projectCount > 0);
+const showSidebar = $derived(
+	projectManager.projectCount !== null && projectManager.projectCount > 0
+);
 
 /** Tab bar above main/panel column (only shown in session fullscreen when there is something to switch) */
 const showTabBarStrip = $derived(

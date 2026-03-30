@@ -4,6 +4,7 @@ import {
 	getToolKindSubtitle,
 	getToolKindTitle,
 } from "../../../../registry/tool-kind-ui-registry.js";
+import type { TurnState } from "../../../../store/types.js";
 import type { ToolCall } from "../../../../types/tool-call.js";
 import type { ToolKind } from "../../../../types/tool-kind.js";
 
@@ -32,21 +33,29 @@ const KIND_MAP: Record<ToolKind, AgentToolKind> = {
 };
 
 /** Map ToolCallStatus to AgentToolStatus. */
-function mapStatus(status: string): AgentToolStatus {
-	switch (status) {
-		case "in_progress":
-			return "running";
-		case "completed":
-			return "done";
-		case "failed":
-			return "error";
-		default:
-			return "pending";
+function mapStatus(child: ToolCall, turnState: TurnState | undefined): AgentToolStatus {
+	if (child.status === "failed") {
+		return "error";
 	}
+
+	if (child.status === "completed") {
+		return "done";
+	}
+
+	const hasResult = child.result !== null && child.result !== undefined;
+	if (hasResult) {
+		return "done";
+	}
+
+	if (child.status === "in_progress" && turnState === "streaming") {
+		return "running";
+	}
+
+	return "pending";
 }
 
 /** Convert a ToolCall child into an AgentToolEntry for display in the task card. */
-function convertChild(child: ToolCall): AgentToolEntry {
+function convertChild(child: ToolCall, turnState: TurnState | undefined): AgentToolEntry {
 	const kind = child.kind ?? "other";
 
 	return {
@@ -56,14 +65,17 @@ function convertChild(child: ToolCall): AgentToolEntry {
 		title: child.title ?? getToolKindTitle(kind, child) ?? child.name,
 		subtitle: getToolKindSubtitle(kind, child) || undefined,
 		filePath: getToolKindFilePath(kind, child) ?? undefined,
-		status: mapStatus(child.status),
+		status: mapStatus(child, turnState),
 	};
 }
 
 /**
  * Convert taskChildren (ToolCall[]) into AnyAgentEntry[] for the AgentToolTask UI.
  */
-export function convertTaskChildren(children: ToolCall[] | null | undefined): AgentToolEntry[] {
+export function convertTaskChildren(
+	children: ToolCall[] | null | undefined,
+	turnState?: TurnState
+): AgentToolEntry[] {
 	if (!children || children.length === 0) return [];
-	return children.map(convertChild);
+	return children.map((child) => convertChild(child, turnState));
 }

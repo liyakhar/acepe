@@ -2,8 +2,10 @@
 	import { FilePathBadge, ToolTally } from "@acepe/ui";
 	import ShieldWarning from "phosphor-svelte/lib/ShieldWarning";
 	import { getPermissionStore } from "../../store/permission-store.svelte.js";
+	import { getSessionStore } from "../../store/session-store.svelte.js";
 	import type { PermissionRequest } from "../../types/permission.js";
 	import { makeWorkspaceRelative } from "../../utils/path-utils.js";
+	import { shouldHidePermissionBarForExitPlan } from "./exit-plan-helpers.js";
 	import PermissionActionBar from "./permission-action-bar.svelte";
 	import { extractPermissionCommand, extractPermissionFilePath } from "./permission-display.js";
 
@@ -16,8 +18,22 @@
 	let { sessionId, isFullscreen = false, projectPath = null }: Props = $props();
 
 	const permissionStore = getPermissionStore();
+	const sessionStore = getSessionStore();
 
-	const pendingPermissions = $derived.by(() => permissionStore.getForSession(sessionId));
+	const pendingPermissions = $derived.by(() => {
+		const entries = sessionStore.getEntries(sessionId);
+		const visiblePermissions: PermissionRequest[] = [];
+
+		for (const permission of permissionStore.getForSession(sessionId)) {
+			if (shouldHidePermissionBarForExitPlan(permission, entries)) {
+				continue;
+			}
+
+			visiblePermissions.push(permission);
+		}
+
+		return visiblePermissions;
+	});
 	const currentPermission = $derived(pendingPermissions.length > 0 ? pendingPermissions[0] : null);
 	const sessionProgress = $derived(permissionStore.getSessionProgress(sessionId));
 	const progressLabel = $derived.by(() => {
@@ -62,57 +78,54 @@
 	{@const filePath = extractFilePath(currentPermission)}
 	{@const verb = extractVerb(currentPermission, filePath, command)}
 	<div class="w-full px-5 mb-1">
-		<div class="flex flex-col gap-1">
-			<div class="permission-bar-item">
-				<div class="flex w-full min-w-0 items-start justify-between gap-3">
-					<div class="flex min-w-0 flex-1 flex-col gap-2">
-						<div class="flex min-w-0 items-start gap-2">
-							<ShieldWarning weight="fill" class="size-3.5 text-primary shrink-0" />
-							<span class="text-xs font-medium text-muted-foreground shrink-0">{verb}</span>
-							{#if filePath}
-								<div class="min-w-0 flex-1">
-									<FilePathBadge {filePath} iconBasePath="/svgs/icons" interactive={false} />
-								</div>
-							{/if}
-						</div>
-						{#if command}
-							<div class="min-w-0 overflow-hidden rounded-md border border-border/60 bg-background/45 px-2.5 py-1.5">
-								<code class="block min-w-0 whitespace-pre-wrap break-all font-mono text-xs text-foreground/80"
-									>$ {command}</code
-								>
-							</div>
-						{/if}
-					</div>
-					{#if sessionProgress}
-						<div class="shrink-0 pt-0.5">
-							<ToolTally
-								mode="progress"
-								totalCount={sessionProgress.total}
-								filledCount={sessionProgress.completed}
-								ariaLabel={progressLabel}
-								inline={true}
-							/>
+		<div class="permission-card">
+			<!-- Header: fixed h-7 embedded row -->
+			<div class="flex h-7 items-center justify-between gap-2 border-b border-border/50 px-2.5">
+				<div class="flex min-w-0 flex-1 items-center gap-1.5">
+					<ShieldWarning weight="fill" class="size-3 text-primary shrink-0" />
+					<span class="text-xs font-medium text-muted-foreground shrink-0">{verb}</span>
+					{#if filePath}
+						<div class="min-w-0 flex-1">
+							<FilePathBadge {filePath} iconBasePath="/svgs/icons" interactive={false} />
 						</div>
 					{/if}
 				</div>
-				<div class="self-start">
-					<PermissionActionBar permission={currentPermission} />
+				{#if sessionProgress}
+					<div class="shrink-0">
+						<ToolTally
+							mode="progress"
+							totalCount={sessionProgress.total}
+							filledCount={sessionProgress.completed}
+							ariaLabel={progressLabel}
+							inline={true}
+						/>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Content: height-limited command display -->
+			{#if command}
+				<div class="max-h-[72px] overflow-y-auto border-b border-border/50 px-2.5 py-1.5">
+					<code class="block min-w-0 whitespace-pre-wrap break-all font-mono text-xs text-foreground/80"
+						>$ {command}</code
+					>
 				</div>
+			{/if}
+
+			<!-- Footer: action buttons right-aligned -->
+			<div class="flex items-center justify-end px-2.5 py-1.5">
+				<PermissionActionBar permission={currentPermission} />
 			</div>
 		</div>
 	</div>
 {/if}
 
 <style>
-	.permission-bar-item {
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
-		gap: 8px;
-		padding: 8px 12px;
-		border-radius: 8px;
-		background: color-mix(in srgb, var(--accent) 72%, var(--card) 28%);
+	.permission-card {
+		overflow: hidden;
+		border-radius: 6px;
 		border: 1px solid var(--border);
+		background: color-mix(in srgb, var(--accent) 50%, var(--card) 50%);
 		animation: slideUp 0.2s ease-out;
 	}
 

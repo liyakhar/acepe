@@ -62,7 +62,7 @@ describe("resolveSlashCommandSource", () => {
 		});
 	});
 
-	it("does not fall back to preconnection skills after connection when live commands are empty", () => {
+	it("falls back to preconnection skills after connection when live commands are empty", () => {
 		const source = resolveSlashCommandSource({
 			liveCommands: [],
 			hasConnectedSession: true,
@@ -71,9 +71,9 @@ describe("resolveSlashCommandSource", () => {
 		});
 
 		expect(source).toEqual({
-			source: "none",
-			commands: [],
-			tokenType: "command",
+			source: "preconnection",
+			commands: [{ name: "ce:brainstorm", description: "Brainstorm" }],
+			tokenType: "skill",
 		});
 	});
 });

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveEnterKeyIntent, resolvePrimaryButtonIntent } from "./submit-intent.js";
+import {
+	isPrimaryButtonDisabled,
+	resolveDefaultSubmitAction,
+	resolveEnterKeyIntent,
+	resolvePrimaryButtonIntent,
+} from "./submit-intent.js";
 
 describe("submit intent", () => {
 	it("queues on Enter while agent is busy", () => {
@@ -70,5 +75,53 @@ describe("submit intent", () => {
 				isShiftPressed: true,
 			})
 		).toBe("steer");
+	});
+
+	it("queues by default while streaming and busy", () => {
+		expect(
+			resolveDefaultSubmitAction({
+				hasDraftInput: true,
+				hasSessionId: true,
+				isAgentBusy: true,
+				isStreaming: true,
+				isSubmitDisabled: true,
+			})
+		).toBe("queue");
+	});
+
+	it("steers only when streaming without a running turn", () => {
+		expect(
+			resolveDefaultSubmitAction({
+				hasDraftInput: true,
+				hasSessionId: true,
+				isAgentBusy: false,
+				isStreaming: true,
+				isSubmitDisabled: true,
+			})
+		).toBe("steer");
+	});
+
+	it("keeps the queue button enabled while busy", () => {
+		expect(
+			isPrimaryButtonDisabled({
+				hasDraftInput: true,
+				isSending: false,
+				isAgentBusy: true,
+				isSubmitDisabled: true,
+				primaryButtonIntent: "send",
+			})
+		).toBe(false);
+	});
+
+	it("keeps the stop button enabled while streaming without a draft", () => {
+		expect(
+			isPrimaryButtonDisabled({
+				hasDraftInput: false,
+				isSending: false,
+				isAgentBusy: true,
+				isSubmitDisabled: true,
+				primaryButtonIntent: "cancel",
+			})
+		).toBe(false);
 	});
 });

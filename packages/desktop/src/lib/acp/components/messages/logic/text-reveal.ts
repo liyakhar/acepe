@@ -58,13 +58,14 @@ export interface TextRevealController {
 export function createTextReveal(container: HTMLElement): TextRevealController {
 	const textNodes: TextNodeEntry[] = [];
 	const hideableElements: HideableEntry[] = [];
+	const originalTextByNode = new WeakMap<Text, string>();
 	let animFrameId: number | null = null;
 	let observer: MutationObserver | null = null;
 	let fadeSpan: HTMLSpanElement | null = null;
 	let fadeAnimation: Animation | null = null;
 	let progress = createRevealProgress(0);
 
-	function indexTextNodes() {
+	function indexTextNodes(dirtyTextNodes?: ReadonlySet<Text>) {
 		textNodes.length = 0;
 		let totalChars = 0;
 		const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
@@ -80,7 +81,15 @@ export function createTextReveal(container: HTMLElement): TextRevealController {
 		let node: Text | null;
 		// biome-ignore lint/suspicious/noAssignInExpressions: standard walker loop
 		while ((node = walker.nextNode() as Text | null)) {
-			const original = node.textContent ? node.textContent : "";
+			const preservedOriginal = dirtyTextNodes?.has(node)
+				? undefined
+				: originalTextByNode.get(node);
+			const original = preservedOriginal !== undefined
+				? preservedOriginal
+				: node.textContent
+					? node.textContent
+					: "";
+			originalTextByNode.set(node, original);
 			textNodes.push({ node, original, startIndex: totalChars });
 			totalChars += original.length;
 		}
@@ -256,6 +265,8 @@ export function createTextReveal(container: HTMLElement): TextRevealController {
 	}
 
 	function onDomMutation(mutations: MutationRecord[]) {
+		const dirtyTextNodes = collectDirtyTextNodes(mutations);
+
 		if (!shouldReindexForMutations(mutations)) {
 			scheduleAnimation();
 			observer?.observe(container, OBSERVER_OPTIONS);
@@ -264,7 +275,7 @@ export function createTextReveal(container: HTMLElement): TextRevealController {
 
 		cleanupFadeSpan();
 
-		indexTextNodes();
+		indexTextNodes(dirtyTextNodes);
 		indexHideableElements();
 
 		if (!progress.isStreaming) {
@@ -365,6 +376,29 @@ function buildRevealStep(
 	}
 
 	return null;
+}
+
+function collectDirtyTextNodes(mutations: MutationRecord[]): Set<Text> {
+	const dirtyTextNodes = new Set<Text>();
+
+	for (const mutation of mutations) {
+		if (mutation.type !== "characterData") {
+			continue;
+		}
+
+		if (!(mutation.target instanceof Text)) {
+			continue;
+		}
+
+		const parent = mutation.target.parentElement;
+		if (parent?.closest("[data-text-reveal-fade]")) {
+			continue;
+		}
+
+		dirtyTextNodes.add(mutation.target);
+	}
+
+	return dirtyTextNodes;
 }
 
 function shouldReindexForMutations(mutations: MutationRecord[]): boolean {

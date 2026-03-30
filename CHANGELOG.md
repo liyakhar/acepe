@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Startup restoration now hydrates only the saved sessions first, then refreshes the wider sidebar history in the background
+- Preconnection skills are now loaded directly from parsed on-disk agent skill directories grouped by agent
+- The global file explorer and inline file picker now prefer the active worktree path and refresh stale indexes when reopened
+- Queued messages now render newest-first with inline editing actions and a persistent compact strip above the composer
+
+### Fixed
+- Claude Code permission prompts now offer an Always allow path when the SDK suggests persistent rules, and session cancellation now resolves matching pending questions cleanly
+- Claude Code sessions now include user, project, and local setting sources when booting the SDK client
+- Restored panels now validate missing sessions before reconnecting so startup does not block on a full history scan
+- Slash command suggestions now fall back to preconnection skills when a connected session has no live commands yet
+- First-send mode and model choices now survive session creation, and busy composer states keep queue and steer actions enabled correctly
+- Tool call UI now preserves exit-plan approvals, task child status mapping, markdown reveal placeholders, and fullscreen attached-pane layout behavior more reliably
+
 ## [2026.3.34] - 2026-03-29
 
 ### Changed

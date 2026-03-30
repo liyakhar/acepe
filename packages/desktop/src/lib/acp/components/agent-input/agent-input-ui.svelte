@@ -31,6 +31,7 @@ import MicButton from "./components/mic-button.svelte";
 import VoiceModelMenu from "./components/voice-model-menu.svelte";
 import PastedTextOverlay from "./components/pasted-text-overlay.svelte";
 import VoiceRecordingOverlay from "./components/voice-recording-overlay.svelte";
+import { getEffectiveFilePickerProjectPath } from "./logic/file-picker-context.js";
 import { VoiceInputState } from "./state/voice-input-state.svelte.js";
 import { canStartVoiceInteraction, shouldShowVoiceOverlay } from "./logic/voice-ui-state.js";
 import { createImageAttachment, isImageMimeType } from "./logic/image-attachment.js";
@@ -59,6 +60,8 @@ import {
 import { resolveSlashCommandSource } from "./logic/slash-command-source.js";
 import { type PreparedMessage, prepareMessageForSend } from "./logic/message-preparation.js";
 import {
+	isPrimaryButtonDisabled,
+	resolveDefaultSubmitAction,
 	type SubmitIntent,
 	resolveEnterKeyIntent,
 	resolvePrimaryButtonIntent,
@@ -94,9 +97,12 @@ const messageQueueStore = getMessageQueueStore();
 const preconnectionAgentSkillsStore = getPreconnectionAgentSkillsStore();
 const voiceSettingsStore = getVoiceSettingsStore();
 const effectiveVoiceSessionId = $derived(props.voiceSessionId ?? props.sessionId ?? null);
+const filePickerProjectPath = $derived(
+	getEffectiveFilePickerProjectPath(props.projectPath, props.worktreePath)
+);
 
 // Create state instance with reactive project path getter
-const inputState = new AgentInputState(sessionStore, panelStore, () => props.projectPath ?? null);
+const inputState = new AgentInputState(sessionStore, panelStore, () => filePickerProjectPath);
 
 let voiceState: VoiceInputState | null = $state(null);
 let voiceStateSessionId: string | null = $state(null);
@@ -224,7 +230,7 @@ const isSlashDropdownVisible = $derived(
 );
 
 // Input is ready when we have a session or project path (loading state no longer blocks input)
-const inputReady = $derived(!!props.sessionId || !!props.projectPath);
+const inputReady = $derived(Boolean(props.sessionId) || Boolean(filePickerProjectPath));
 
 // Submit is controlled by canonical runtime state when a session exists.
 const isSubmitDisabled = $derived(
@@ -326,9 +332,12 @@ const isStreaming = $derived(
 	props.sessionShowStop ?? sessionRuntimeState?.showStop ?? props.sessionIsStreaming ?? false
 );
 
-// Agent is busy when actively streaming/thinking — queue messages instead of sending
-const isAgentBusy = $derived(sessionRuntimeState?.activityPhase === "running");
-const hasDraftInput = $derived(inputState.message.trim().length > 0 || inputState.attachments.length > 0);
+// Queue while the runtime contract still allows cancellation.
+// That covers both streaming and the awaiting-response gap used by OpenCode.
+const isAgentBusy = $derived(sessionRuntimeState?.canCancel ?? false);
+const hasDraftInput = $derived(
+	inputState.message.trim().length > 0 || inputState.attachments.length > 0
+);
 
 // Track previous message for draft change detection
 let lastDraftValue = "";
@@ -355,6 +364,24 @@ const primaryButtonIntent = $derived.by(() =>
 		isAgentBusy,
 		isStreaming,
 		isShiftPressed,
+	})
+);
+const defaultSubmitAction = $derived.by(() =>
+	resolveDefaultSubmitAction({
+		hasDraftInput,
+		hasSessionId: props.sessionId ? true : false,
+		isAgentBusy,
+		isStreaming,
+		isSubmitDisabled,
+	})
+);
+const primaryButtonDisabled = $derived.by(() =>
+	isPrimaryButtonDisabled({
+		hasDraftInput,
+		isSending,
+		isAgentBusy,
+		isSubmitDisabled,
+		primaryButtonIntent,
 	})
 );
 const HOVER_PREVIEW_MAX_CHARS = 500;
@@ -448,10 +475,10 @@ function getCaretDropdownPosition(): { top: number; left: number } | null {
 }
 
 function handleInlineFileChipClick(filePath: string) {
-	if (!props.projectPath) {
+	if (!filePickerProjectPath) {
 		return;
 	}
-	panelStore.openFilePanel(filePath, props.projectPath, {
+	panelStore.openFilePanel(filePath, filePickerProjectPath, {
 		ownerPanelId: props.panelId ?? undefined,
 	});
 }
@@ -488,8 +515,12 @@ function handleEditorInput(options?: { suppressAutocomplete?: boolean }): void {
 				dismissAllDropdowns();
 			} else {
 				const trigger = fileTriggerResult.value;
-				if (!inputState.filesLoaded && !inputState.filesLoading && props.projectPath) {
-					inputState.loadProjectFiles(props.projectPath).mapErr(() => undefined);
+				if (filePickerProjectPath) {
+					inputState
+						.loadProjectFiles(filePickerProjectPath, {
+							refresh: !inputState.showFileDropdown,
+						})
+						.mapErr(() => undefined);
 				}
 
 				inputState.showFileDropdown = true;
@@ -564,7 +595,7 @@ async function initializeVoiceState(): Promise<void> {
 			inputState.insertPlainTextAtOffsets(
 				sep + normalizedText,
 				inputState.message.length,
-				inputState.message.length,
+				inputState.message.length
 			);
 			syncEditorFromMessage(inputState.message.length);
 		},
@@ -602,7 +633,7 @@ $effect(() => {
 	const lifecycle = resolveVoiceStateLifecycle(
 		currentManagedSessionId,
 		effectiveVoiceSessionId,
-		voiceEnabled,
+		voiceEnabled
 	);
 
 	if (lifecycle === "noop") {
@@ -796,30 +827,19 @@ async function handleSend() {
 	const t0 = performance.now();
 	if (isSending) return;
 
-	if (
-		!isStreaming &&
-		!isAgentBusy &&
-		(isSubmitDisabled || (!inputState.message.trim() && inputState.attachments.length === 0))
-	) {
+	if (defaultSubmitAction === "none") {
 		return;
 	}
 
-	// If streaming, cancel first then send (same as steer)
-	if (
-		isStreaming &&
-		props.sessionId &&
-		(inputState.message.trim() || inputState.attachments.length > 0)
-	) {
+	if (defaultSubmitAction === "steer") {
 		handleSteer();
 		return;
 	}
 
-	// Agent is busy — queue instead of sending
-	if (
-		isAgentBusy &&
-		props.sessionId &&
-		(inputState.message.trim() || inputState.attachments.length > 0)
-	) {
+	if (defaultSubmitAction === "queue") {
+		if (!props.sessionId) {
+			return;
+		}
 		const result = prepareMessageForSend(
 			inputState.message,
 			inputState.inlineTextMap,
@@ -970,6 +990,8 @@ async function handleSend() {
 			content: prepared.content,
 			panelId: props.panelId,
 			sessionId: props.sessionId,
+			initialModeId: provisionalModeId,
+			initialModelId: provisionalModelId,
 			selectedAgentId: props.selectedAgentId,
 			projectPath: props.projectPath,
 			projectName: props.projectName,
@@ -1568,10 +1590,7 @@ async function handleCancel() {
 										type="button"
 										size="icon"
 										onclick={handlePrimaryButtonClick}
-										disabled={isSending ||
-											(primaryButtonIntent !== "steer" &&
-												(isSubmitDisabled ||
-													(!inputState.message.trim() && inputState.attachments.length === 0)))}
+										disabled={primaryButtonDisabled}
 										class="h-7 w-7 cursor-pointer shrink-0 rounded-md"
 										style="background-color: {buttonColor};"
 									>
@@ -1586,7 +1605,7 @@ async function handleCancel() {
 									{/snippet}
 								</Tooltip.Trigger>
 								<Tooltip.Content>
-									{#if isAgentBusy && inputState.message.trim()}
+									{#if isAgentBusy && hasDraftInput}
 										<div class="flex items-center gap-3">
 											<div class="flex items-center gap-1.5">
 												<span>{m.agent_input_queue_message()}</span>
@@ -1682,7 +1701,7 @@ async function handleCancel() {
 					isLoading={inputState.filesLoading}
 					query={inputState.fileQuery}
 					position={inputState.filePosition}
-					projectPath={props.projectPath ?? ""}
+					projectPath={filePickerProjectPath ? filePickerProjectPath : ""}
 					onSelect={(file) => handleFileSelect(file)}
 					onClose={() => inputState.handleFileDropdownClose()}
 				/>

@@ -1,8 +1,13 @@
 <script lang="ts">
 import * as m from "$lib/paraglide/messages.js";
+import FloppyDisk from "phosphor-svelte/lib/FloppyDisk";
+import PencilSimple from "phosphor-svelte/lib/PencilSimple";
+import Queue from "phosphor-svelte/lib/Queue";
+import Trash from "phosphor-svelte/lib/Trash";
+import X from "phosphor-svelte/lib/X";
 
 import { getMessageQueueStore } from "../store/message-queue/message-queue-store.svelte.js";
-import AnimatedChevron from "./animated-chevron.svelte";
+import type { QueuedMessage } from "../store/message-queue/types.js";
 
 interface Props {
 	sessionId: string;
@@ -12,30 +17,36 @@ const { sessionId }: Props = $props();
 
 const messageQueueStore = getMessageQueueStore();
 
-const queueVersion = $derived(messageQueueStore.versions.get(sessionId) ?? 0);
+const queueVersion = $derived.by(() => {
+	const version = messageQueueStore.versions.get(sessionId);
+	return version !== undefined ? version : 0;
+});
 const queue = $derived.by(() => {
 	queueVersion;
 	return messageQueueStore.getQueue(sessionId);
 });
 const isPaused = $derived(messageQueueStore.pausedIds.has(sessionId));
 const count = $derived(queue.length);
+const latestMessage = $derived(count > 0 ? queue[count - 1] : null);
+const displayQueue = $derived.by(() => {
+	const ordered: QueuedMessage[] = [];
 
-let isExpanded = $state(false);
+	for (let index = queue.length - 1; index >= 0; index -= 1) {
+		const message = queue[index];
+		if (message) {
+			ordered.push(message);
+		}
+	}
+
+	return ordered;
+});
+
 let editingMessageId = $state<string | null>(null);
 let editingContent = $state("");
-
-function toggleExpanded(): void {
-	isExpanded = !isExpanded;
-	if (!isExpanded) {
-		editingMessageId = null;
-		editingContent = "";
-	}
-}
 
 function handleStartEdit(messageId: string, content: string): void {
 	editingMessageId = messageId;
 	editingContent = content;
-	isExpanded = true;
 }
 
 function handleSaveEdit(): void {
@@ -46,7 +57,7 @@ function handleSaveEdit(): void {
 	if (!updated) return;
 	editingMessageId = null;
 	editingContent = "";
-	}
+}
 
 function handleCancelEdit(): void {
 	editingMessageId = null;
@@ -58,23 +69,20 @@ function handleRemove(messageId: string): void {
 	if (editingMessageId === messageId) {
 		handleCancelEdit();
 	}
-	if (count === 1) {
-		isExpanded = false;
-	}
-	}
-
-function handleClear() {
-	messageQueueStore.clearQueue(sessionId);
-	handleCancelEdit();
-	isExpanded = false;
 }
 
-function handleResume() {
+function handleClear(): void {
+	messageQueueStore.clearQueue(sessionId);
+	handleCancelEdit();
+}
+
+function handleResume(): void {
 	messageQueueStore.resume(sessionId);
 }
 
 function truncate(text: string, maxLength: number): string {
-	const firstLine = text.split("\n")[0] ? text.split("\n")[0] : text;
+	const lines = text.split("\n");
+	const firstLine = lines[0] ? lines[0] : text;
 	if (firstLine.length <= maxLength) return firstLine;
 	return `${firstLine.slice(0, maxLength)}...`;
 }
@@ -82,82 +90,108 @@ function truncate(text: string, maxLength: number): string {
 
 {#if count > 0}
 	<div class="w-full px-5 mb-2">
-		{#if isExpanded}
-			<div class="rounded-t-md bg-muted/30 overflow-hidden border border-b-0 border-border">
-				<div class="flex flex-col p-1 gap-1 max-h-[260px] overflow-y-auto">
-					{#each queue as message (message.id)}
-						<div class="rounded-md border border-border/60 bg-background/60 px-3 py-2">
-							{#if editingMessageId === message.id}
-								<div class="flex flex-col gap-2">
-									<textarea
-										bind:value={editingContent}
-										class="min-h-20 w-full resize-y rounded border border-border bg-background px-2 py-1 text-xs outline-none"
-									></textarea>
-									<div class="flex items-center justify-end gap-2 text-[0.6875rem]">
-										<button type="button" class="hover:text-foreground" onclick={handleCancelEdit}>
-											{m.common_cancel()}
-										</button>
-										<button type="button" class="hover:text-foreground" onclick={handleSaveEdit}>
-											{m.common_save()}
-										</button>
-									</div>
+		<!-- Message rows (always visible, above the bar) -->
+		<div class="rounded-t-lg bg-accent/50 overflow-hidden">
+			<div class="flex flex-col max-h-[260px] overflow-y-auto">
+				{#each displayQueue as message (message.id)}
+					{@const isNewest = latestMessage !== null && latestMessage.id === message.id}
+					<div
+						class="queue-message-row flex items-start gap-2 px-3 py-1.5 text-[0.6875rem] leading-tight border-b border-border/30 last:border-b-0 {isNewest ? 'bg-muted/30' : ''}"
+					>
+						{#if editingMessageId === message.id}
+							<div class="flex-1 flex flex-col gap-1.5 py-0.5">
+								<textarea
+									bind:value={editingContent}
+									class="min-h-[60px] max-h-[120px] w-full resize-y rounded border border-border bg-background px-2 py-1 text-[0.6875rem] outline-none focus:ring-1 focus:ring-primary/40"
+								></textarea>
+								<div class="flex items-center justify-end gap-1">
+									<button
+										type="button"
+										class="h-6 px-2 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer inline-flex items-center gap-1"
+										onclick={handleCancelEdit}
+									>
+										<X size={10} weight="bold" class="shrink-0" />
+										{m.common_cancel()}
+									</button>
+									<button
+										type="button"
+										class="h-6 px-2 text-[10px] font-mono font-medium text-foreground bg-accent/60 hover:bg-accent/80 rounded transition-colors cursor-pointer inline-flex items-center gap-1"
+										onclick={handleSaveEdit}
+									>
+										<FloppyDisk size={10} weight="bold" class="shrink-0" />
+										{m.common_save()}
+									</button>
 								</div>
-							{:else}
-								<div class="flex items-start gap-3">
-									<div class="min-w-0 flex-1">
-										<div class="text-xs text-foreground whitespace-pre-wrap break-words">{message.content}</div>
-										{#if message.attachments.length > 0}
-											<div class="mt-1 text-[0.625rem] text-muted-foreground">
-												+{message.attachments.length}
-											</div>
-										{/if}
-									</div>
-									<div class="flex items-center gap-2 shrink-0 text-[0.6875rem] text-muted-foreground">
-										<button type="button" class="hover:text-foreground" onclick={() => handleStartEdit(message.id, message.content)}>
-											{m.common_edit()}
-										</button>
-										<button type="button" class="hover:text-foreground" onclick={() => handleRemove(message.id)}>
-											{m.common_delete()}
-										</button>
-									</div>
-								</div>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			</div>
-		{/if}
+							</div>
+						{:else}
+							<!-- Message content -->
+							<span class="flex-1 min-w-0 whitespace-pre-wrap break-words text-foreground">
+								{message.content}
+							</span>
 
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
+							{#if message.attachments.length > 0}
+								<span class="shrink-0 text-muted-foreground font-mono text-[0.625rem]">
+									+{message.attachments.length}
+								</span>
+							{/if}
+
+							<!-- Actions -->
+							<div class="flex items-center gap-1 shrink-0" role="none">
+								<button
+									type="button"
+									class="h-6 px-2 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer inline-flex items-center gap-1"
+									onclick={() => handleStartEdit(message.id, message.content)}
+								>
+									<PencilSimple size={10} weight="bold" class="shrink-0" />
+									{m.common_edit()}
+								</button>
+								<button
+									type="button"
+									class="h-6 px-2 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer inline-flex items-center gap-1"
+									onclick={() => handleRemove(message.id)}
+								>
+									<Trash size={10} weight="bold" class="shrink-0" />
+									{m.common_delete()}
+								</button>
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		</div>
+
+		<!-- Footer bar (matches todo-header / modified-files-header style) -->
 		<div
-			role="button"
-			tabindex="0"
-			onclick={toggleExpanded}
-			onkeydown={(event: KeyboardEvent) => {
-				if (event.key === "Enter" || event.key === " ") {
-					event.preventDefault();
-					toggleExpanded();
-				}
-			}}
-			class="w-full flex items-center justify-between px-3 py-1 rounded-md border border-border bg-muted/30 hover:bg-muted/40 transition-colors cursor-pointer {isExpanded ? 'rounded-t-none border-t-0' : ''}"
+			class="w-full flex items-center justify-between px-3 py-1 rounded-b-lg bg-accent"
 		>
 			<div class="flex items-center gap-1.5 text-[0.6875rem] min-w-0">
-				<span class="text-foreground">{m.agent_input_queued_messages()} ({count})</span>
-				{#if count > 0}
-					<span class="truncate text-muted-foreground">{truncate(queue[0].content, 64)}</span>
+				<Queue size={13} weight="fill" class="shrink-0 text-muted-foreground" />
+				<span class="font-medium text-foreground shrink-0">{m.agent_input_queued_messages()} ({count})</span>
+				{#if isPaused}
+					<span class="text-muted-foreground">· {m.agent_input_queue_paused()}</span>
+				{/if}
+				{#if latestMessage}
+					<span class="truncate text-muted-foreground">{truncate(latestMessage.content, 60)}</span>
 				{/if}
 			</div>
 
-			<div class="flex items-center gap-2 shrink-0 text-[0.6875rem]" onclick={(event: MouseEvent) => event.stopPropagation()} role="none">
+			<div class="flex items-center gap-1 shrink-0" role="none">
 				{#if isPaused}
-					<button type="button" class="flex items-center gap-1 hover:text-foreground" onclick={handleResume}>
-						<span>{m.agent_input_queue_resume()}</span>
+					<button
+						type="button"
+						class="h-6 px-2 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer"
+						onclick={handleResume}
+					>
+						{m.agent_input_queue_resume()}
 					</button>
 				{/if}
-				<button type="button" class="hover:text-foreground" onclick={handleClear}>
+				<button
+					type="button"
+					class="h-6 px-2 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer"
+					onclick={handleClear}
+				>
 					{m.agent_input_queue_clear()}
 				</button>
-				<AnimatedChevron isOpen={isExpanded} />
 			</div>
 		</div>
 	</div>

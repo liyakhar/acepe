@@ -15,6 +15,7 @@ let SessionConnectionManager: typeof import("./session-connection-manager.js").S
 const resumeSession = vi.fn();
 const newSession = vi.fn();
 const closeSession = vi.fn();
+const setMode = vi.fn();
 const setModel = vi.fn();
 const stopStreaming = vi.fn();
 
@@ -23,6 +24,7 @@ vi.mock("../api.js", () => ({
 		closeSession,
 		newSession,
 		resumeSession,
+		setMode,
 		setModel,
 		stopStreaming,
 	},
@@ -584,6 +586,8 @@ describe("SessionConnectionManager.createSession", () => {
 		vi.clearAllMocks();
 		ensureLoaded.mockReturnValue(okAsync(undefined));
 		getDefaultModel.mockReturnValue(undefined);
+		setMode.mockReturnValue(okAsync(undefined));
+		setModel.mockReturnValue(okAsync(undefined));
 		newSession.mockReturnValue(
 			okAsync({
 				sessionId,
@@ -671,6 +675,129 @@ describe("SessionConnectionManager.createSession", () => {
 
 		const initUpdate = (hotState.initializeHotState as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
 		expect(initUpdate?.availableCommands).toEqual([{ name: "open", description: "Open file" }]);
+	});
+
+	it("honors an explicit initial mode and model before first send state is hydrated", async () => {
+		newSession.mockReturnValue(
+			okAsync({
+				sessionId,
+				modes: {
+					currentModeId: "build",
+					availableModes: [
+						{ id: "build", name: "Build", description: null },
+						{ id: "plan", name: "Plan", description: null },
+					],
+				},
+				models: {
+					currentModelId: "gpt-5.2-codex",
+					availableModels: [
+						{
+							modelId: "gpt-5.2-codex/high",
+							name: "gpt-5.2-codex (high)",
+							description: null,
+						},
+						{
+							modelId: "gpt-5.2-codex/medium",
+							name: "gpt-5.2-codex (medium)",
+							description: null,
+						},
+					],
+				},
+				availableCommands: [],
+			})
+		);
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.createSession(
+			{
+				projectPath,
+				agentId,
+				initialModeId: "plan",
+				initialModelId: "gpt-5.2-codex/medium",
+			},
+			createMockEventHandler()
+		);
+		result._unsafeUnwrap();
+
+		expect(setMode).toHaveBeenCalledWith(sessionId, "plan");
+		expect(setModel).toHaveBeenCalledWith(sessionId, "gpt-5.2-codex/medium");
+
+		const initUpdate = (hotState.initializeHotState as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+		expect(initUpdate?.currentMode?.id).toBe("plan");
+		expect(initUpdate?.currentModel?.id).toBe("gpt-5.2-codex/medium");
+		expect(setSessionModelForMode).toHaveBeenCalledWith(
+			sessionId,
+			"plan",
+			"gpt-5.2-codex/medium"
+		);
+	});
+
+	it("applies the target mode default model when only the initial mode is explicit", async () => {
+		newSession.mockReturnValue(
+			okAsync({
+				sessionId,
+				modes: {
+					currentModeId: "build",
+					availableModes: [
+						{ id: "build", name: "Build", description: null },
+						{ id: "plan", name: "Plan", description: null },
+					],
+				},
+				models: {
+					currentModelId: "gpt-5.2-codex",
+					availableModels: [
+						{
+							modelId: "gpt-5.2-codex/high",
+							name: "gpt-5.2-codex (high)",
+							description: null,
+						},
+						{
+							modelId: "gpt-5.2-codex/medium",
+							name: "gpt-5.2-codex (medium)",
+							description: null,
+						},
+					],
+				},
+				availableCommands: [],
+			})
+		);
+		getDefaultModel.mockImplementation((_agentId: string, modeType: string) =>
+			modeType === "plan" ? "gpt-5.2-codex/medium" : undefined
+		);
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.createSession(
+			{
+				projectPath,
+				agentId,
+				initialModeId: "plan",
+			},
+			createMockEventHandler()
+		);
+		result._unsafeUnwrap();
+
+		expect(setMode).toHaveBeenCalledWith(sessionId, "plan");
+		expect(setModel).toHaveBeenCalledWith(sessionId, "gpt-5.2-codex/medium");
+
+		const initUpdate = (hotState.initializeHotState as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+		expect(initUpdate?.currentMode?.id).toBe("plan");
+		expect(initUpdate?.currentModel?.id).toBe("gpt-5.2-codex/medium");
 	});
 });
 

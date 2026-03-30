@@ -34,7 +34,6 @@ describe("QueueCardStrip", () => {
 			},
 		});
 
-		await fireEvent.click(screen.getByRole("button", { name: /queued/i }));
 		await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
 
 		const editor = screen.getByRole("textbox") as HTMLTextAreaElement;
@@ -54,9 +53,22 @@ describe("QueueCardStrip", () => {
 			},
 		});
 
-		await fireEvent.click(screen.getByRole("button", { name: /queued/i }));
 		await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
 		expect(requireStore(store).getQueue("session-1")).toEqual([]);
+	});
+
+	it("shows the newest queued message first", () => {
+		const { container } = render(QueueCardStripHarness, {
+			sessionId: "session-1",
+			messages: [
+				{ content: "older queued message", attachments: [] },
+				{ content: "newest queued message", attachments: [] },
+			],
+		});
+
+		const rows = Array.from(container.querySelectorAll(".queue-message-row"));
+		expect(rows[0]?.textContent).toContain("newest queued message");
+		expect(rows[1]?.textContent).toContain("older queued message");
 	});
 });

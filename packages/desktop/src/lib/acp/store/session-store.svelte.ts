@@ -559,6 +559,8 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		projectPath: string;
 		agentId: string;
 		title?: string;
+		initialModeId?: string;
+		initialModelId?: string;
 		worktreePath?: string;
 	}): ResultAsync<SessionCold, AppError> {
 		return this.connectionMgr.createSession(options, this);

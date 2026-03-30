@@ -43,8 +43,27 @@ describe("convertTaskChildren", () => {
 
 		it("maps 'in_progress' to 'running'", () => {
 			const children = [createChild({ id: "t1", kind: "read", status: "in_progress" })];
-			const result = convertTaskChildren(children);
+			const result = convertTaskChildren(children, "streaming");
 			expect(result[0].status).toBe("running");
+		});
+
+		it("maps 'in_progress' to 'pending' when turn is not streaming", () => {
+			const children = [createChild({ id: "t1", kind: "read", status: "in_progress" })];
+			const result = convertTaskChildren(children, "completed");
+			expect(result[0].status).toBe("pending");
+		});
+
+		it("maps non-terminal status to 'done' when result is present", () => {
+			const children = [
+				createChild({
+					id: "t1",
+					kind: "read",
+					status: "in_progress",
+					result: "Finished output",
+				}),
+			];
+			const result = convertTaskChildren(children, "streaming");
+			expect(result[0].status).toBe("done");
 		});
 
 		it("maps 'completed' to 'done'", () => {
@@ -212,7 +231,7 @@ describe("convertTaskChildren", () => {
 				}),
 			];
 
-			const result = convertTaskChildren(children);
+			const result = convertTaskChildren(children, "streaming");
 
 			expect(result).toHaveLength(3);
 			expect(result[0].id).toBe("c1");

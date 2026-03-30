@@ -97,6 +97,19 @@ export class SessionConnectionManager {
 		return modeId === CanonicalModeId.PLAN ? CanonicalModeId.PLAN : CanonicalModeId.BUILD;
 	}
 
+	private resolveDefaultModelForMode(
+		agentId: string,
+		modeId: string | undefined,
+		availableModels: readonly Model[]
+	): Model | null {
+		const defaultModelId = preferencesStore.getDefaultModel(agentId, this.getModeType(modeId));
+		if (!defaultModelId) {
+			return null;
+		}
+
+		return availableModels.find((model) => model.id === defaultModelId) ?? null;
+	}
+
 	/**
 	 * Resolve the current model from ACP response, handling mismatches gracefully.
 	 * Some agents return a base model ID while available models include variant suffixes.
@@ -137,6 +150,8 @@ export class SessionConnectionManager {
 			projectPath: string;
 			agentId: string;
 			title?: string;
+			initialModeId?: string;
+			initialModelId?: string;
 			worktreePath?: string;
 		},
 		eventHandler: SessionEventHandler
@@ -151,7 +166,7 @@ export class SessionConnectionManager {
 		return api
 			.newSession(sessionCwd, options.agentId)
 			.andThen((result) => preferencesStore.ensureLoaded().map(() => result))
-			.map((result) => {
+			.andThen((result) => {
 				const sessionId = result.sessionId;
 				const now = new Date();
 				const {
@@ -174,130 +189,184 @@ export class SessionConnectionManager {
 				const availableCommands = result.availableCommands ?? [];
 				const configOptions = result.configOptions ?? [];
 
-				const currentMode =
+				let currentMode =
 					availableModes.find((m) => m.id === result.modes?.currentModeId) ?? null;
 				let currentModel = this.resolveCurrentModel(availableModels, currentModelId);
+				const explicitInitialMode = options.initialModeId
+					? (availableModes.find((mode) => mode.id === options.initialModeId) ?? null)
+					: null;
+				const explicitInitialModel = options.initialModelId
+					? (availableModels.find((model) => model.id === options.initialModelId) ?? null)
+					: null;
+				const hasExplicitInitialSelection =
+					explicitInitialMode !== null || explicitInitialModel !== null;
+				const targetMode = explicitInitialMode ? explicitInitialMode : currentMode;
+				const targetModeChanged =
+					explicitInitialMode !== null && explicitInitialMode.id !== currentMode?.id;
+				const defaultModelForTargetMode = this.resolveDefaultModelForMode(
+					options.agentId,
+					targetMode ? targetMode.id : undefined,
+					availableModels
+				);
+				const targetModel = explicitInitialModel
+					? explicitInitialModel
+					: (defaultModelForTargetMode ? defaultModelForTargetMode : currentModel);
 
-				// Apply default model for initial mode if available
-				const modeType = this.getModeType(currentMode?.id);
-				const defaultModelId = preferencesStore.getDefaultModel(options.agentId, modeType);
-				if (defaultModelId) {
-					const defaultModel = availableModels.find((m) => m.id === defaultModelId);
-					if (defaultModel) {
-						currentModel = defaultModel;
-						logger.debug("Applied default model on session creation", {
-							sessionId,
-							agentId: options.agentId,
-							modeType,
-							modelId: defaultModelId,
-						});
-						// Inform ACP of the model choice (fire and forget)
-						api.setModel(sessionId, defaultModelId).mapErr((err) => {
-							logger.warn("Failed to set default model on ACP", {
+				const applyInitialSelection = hasExplicitInitialSelection
+					? (targetModeChanged && targetMode
+						? api.setMode(sessionId, targetMode.id)
+						: okAsync(undefined)
+					)
+						.andThen(() => {
+							const shouldApplyExplicitModel =
+								explicitInitialModel !== null &&
+								(targetModeChanged || explicitInitialModel.id !== currentModel?.id);
+							const shouldApplyModeDefaultModel =
+								explicitInitialModel === null &&
+								targetModeChanged &&
+								targetModel !== null &&
+								targetModel.id !== currentModel?.id;
+
+							if ((shouldApplyExplicitModel || shouldApplyModeDefaultModel) && targetModel) {
+								return api.setModel(sessionId, targetModel.id);
+							}
+
+							return okAsync(undefined);
+						})
+						.map(() => ({
+							currentMode: targetMode,
+							currentModel: targetModel,
+						}))
+					: okAsync({
+						currentMode,
+						currentModel,
+					});
+
+				return applyInitialSelection.map((selection) => {
+					currentMode = selection.currentMode;
+					currentModel = selection.currentModel;
+
+					if (!hasExplicitInitialSelection) {
+						const defaultModel = this.resolveDefaultModelForMode(
+							options.agentId,
+							currentMode ? currentMode.id : undefined,
+							availableModels
+						);
+						if (defaultModel) {
+							currentModel = defaultModel;
+							logger.debug("Applied default model on session creation", {
 								sessionId,
-								modelId: defaultModelId,
-								error: err,
+								agentId: options.agentId,
+								modeType: this.getModeType(currentMode ? currentMode.id : undefined),
+								modelId: defaultModel.id,
 							});
-						});
+							api.setModel(sessionId, defaultModel.id).mapErr((err) => {
+								logger.warn("Failed to set default model on ACP", {
+									sessionId,
+									modelId: defaultModel.id,
+									error: err,
+								});
+							});
+						}
 					}
-				}
 
-				// Cache available models and modes for settings/optimistic display
-				preferencesStore.updateModelsCache(options.agentId, availableModels);
-				preferencesStore.updateModelsDisplayCache(options.agentId, modelsDisplay);
-				preferencesStore.updateModesCache(options.agentId, availableModes);
-				logger.info("Claude model capabilities on session creation", {
-					sessionId,
-					agentId: options.agentId,
-					responseCurrentModelId: currentModelId ?? null,
-					availableModelIds: availableModels.map((model) => model.id),
-					cachedModelIds: preferencesStore
-						.getCachedModels(options.agentId)
-						.map((model) => model.id),
-				});
-
-				// Initialize per-mode model memory with current mode choice
-				if (currentMode) {
-					preferencesStore.setSessionModelForMode(
+					// Cache available models and modes for settings/optimistic display
+					preferencesStore.updateModelsCache(options.agentId, availableModels);
+					preferencesStore.updateModelsDisplayCache(options.agentId, modelsDisplay);
+					preferencesStore.updateModesCache(options.agentId, availableModes);
+					logger.info("Claude model capabilities on session creation", {
 						sessionId,
-						currentMode.id,
-						currentModel?.id ?? ""
-					);
-				}
+						agentId: options.agentId,
+						responseCurrentModelId: currentModelId ?? null,
+						availableModelIds: availableModels.map((model) => model.id),
+						cachedModelIds: preferencesStore
+							.getCachedModels(options.agentId)
+							.map((model) => model.id),
+					});
 
-				// Store only cold data (identity + metadata) in the sessions array
-				const sessionCold: SessionCold = {
-					id: sessionId,
-					projectPath: options.projectPath,
-					agentId: options.agentId,
-					worktreePath: options.worktreePath,
-					title: options.title || "New Thread",
-					updatedAt: now,
-					createdAt: now,
-					sessionLifecycleState: "created",
-					parentId: null,
-				};
-
-				// Initialize hot state BEFORE adding the session to the store.
-				// initializeHotState writes synchronously (bypasses RAF batch),
-				// so the event service will see isConnected: true immediately
-				// when it receives streaming events for this session.
-				this.hotStateManager.initializeHotState(sessionId, {
-					status: "ready",
-					isConnected: true,
-					turnState: "idle",
-					connectionError: null,
-					currentMode,
-					currentModel,
-					availableCommands,
-					configOptions,
-					modelPerMode: currentMode ? { [currentMode.id]: currentModel?.id ?? "" } : {},
-				});
-
-				this.stateWriter.addSession(sessionCold);
-
-				// Persist worktree path to DB for restore across app restarts
-				if (options.worktreePath) {
-					tauriClient.history
-						.setSessionWorktreePath(
+					// Initialize per-mode model memory with current mode choice
+					if (currentMode) {
+						preferencesStore.setSessionModelForMode(
 							sessionId,
-							options.worktreePath,
-							options.projectPath,
-							options.agentId
-						)
-						.mapErr((error) => {
-							logger.error("Failed to persist worktree path to DB", {
+							currentMode.id,
+							currentModel?.id ?? ""
+						);
+					}
+
+					// Store only cold data (identity + metadata) in the sessions array
+					const sessionCold: SessionCold = {
+						id: sessionId,
+						projectPath: options.projectPath,
+						agentId: options.agentId,
+						worktreePath: options.worktreePath,
+						title: options.title || "New Thread",
+						updatedAt: now,
+						createdAt: now,
+						sessionLifecycleState: "created",
+						parentId: null,
+					};
+
+					// Initialize hot state BEFORE adding the session to the store.
+					// initializeHotState writes synchronously (bypasses RAF batch),
+					// so the event service will see isConnected: true immediately
+					// when it receives streaming events for this session.
+					this.hotStateManager.initializeHotState(sessionId, {
+						status: "ready",
+						isConnected: true,
+						turnState: "idle",
+						connectionError: null,
+						currentMode,
+						currentModel,
+						availableCommands,
+						configOptions,
+						modelPerMode: currentMode ? { [currentMode.id]: currentModel?.id ?? "" } : {},
+					});
+
+					this.stateWriter.addSession(sessionCold);
+
+					// Persist worktree path to DB for restore across app restarts
+					if (options.worktreePath) {
+						tauriClient.history
+							.setSessionWorktreePath(
 								sessionId,
-								worktreePath: options.worktreePath,
-								error,
+								options.worktreePath,
+								options.projectPath,
+								options.agentId
+							)
+							.mapErr((error) => {
+								logger.error("Failed to persist worktree path to DB", {
+									sessionId,
+									worktreePath: options.worktreePath,
+									error,
+								});
 							});
-						});
-				}
+					}
 
-				// Store capabilities separately from cold data
-				this.capabilitiesManager.updateCapabilities(sessionId, {
-					availableModes,
-					availableModels,
-					availableCommands,
-					modelsDisplay,
+					// Store capabilities separately from cold data
+					this.capabilitiesManager.updateCapabilities(sessionId, {
+						availableModes,
+						availableModels,
+						availableCommands,
+						modelsDisplay,
+					});
+
+					// Mark as preloaded since it's a new session with no entries
+					this.entryManager.markPreloaded(sessionId);
+
+					// Initialize session machine with correct initial states:
+					// - Content: LOADED (new session has no entries to load)
+					// - Connection: READY (already connected via newSession API)
+					this.connectionManager.initializeConnectedSession(sessionId);
+
+					// Flush any pending events that arrived before session was added
+					this.eventService.flushPendingEvents(sessionId, eventHandler);
+
+					logger.debug("Session created and connected", {
+						sessionId,
+					});
+
+					return this.stateReader.getSessionCold(sessionId)!;
 				});
-
-				// Mark as preloaded since it's a new session with no entries
-				this.entryManager.markPreloaded(sessionId);
-
-				// Initialize session machine with correct initial states:
-				// - Content: LOADED (new session has no entries to load)
-				// - Connection: READY (already connected via newSession API)
-				this.connectionManager.initializeConnectedSession(sessionId);
-
-				// Flush any pending events that arrived before session was added
-				this.eventService.flushPendingEvents(sessionId, eventHandler);
-
-				logger.debug("Session created and connected", {
-					sessionId,
-				});
-
-				return this.stateReader.getSessionCold(sessionId)!;
 			})
 			.mapErr((error) => {
 				logger.error("Failed to create session", { error });

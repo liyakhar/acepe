@@ -44,14 +44,12 @@ type SearchFn = (
 	offset: number
 ) => Promise<FileExplorerSearchResponse>;
 
-type PreviewFn = (
-	projectPath: string,
-	filePath: string
-) => Promise<FileExplorerPreviewResponse>;
+type PreviewFn = (projectPath: string, filePath: string) => Promise<FileExplorerPreviewResponse>;
 
 function makeState(
 	overrides: {
 		projectPaths?: string[];
+		refreshFn?: (projectPaths: string[]) => Promise<void>;
 		searchFn?: SearchFn;
 		previewFn?: PreviewFn;
 	} = {}
@@ -70,6 +68,7 @@ function makeState(
 
 	return new FileExplorerModalState({
 		projectPaths: overrides.projectPaths ? overrides.projectPaths : ["/project"],
+		refreshFn: overrides.refreshFn,
 		searchFn: overrides.searchFn ? overrides.searchFn : defaultSearch,
 		previewFn: overrides.previewFn ? overrides.previewFn : defaultPreview,
 	});
@@ -205,6 +204,43 @@ describe("FileExplorerModalState", () => {
 	});
 
 	describe("searchNow", () => {
+		it("refreshes project indexes before a forced search", async () => {
+			const callOrder: string[] = [];
+			const refreshFn = vi.fn(async (projectPaths: string[]) => {
+				callOrder.push(`refresh:${projectPaths.join(",")}`);
+			});
+			const searchFn = vi.fn<SearchFn>(async () => {
+				callOrder.push("search");
+				return makeSearchResponse([]);
+			});
+
+			const state = makeState({
+				projectPaths: ["/project", "/other"],
+				refreshFn,
+				searchFn,
+			});
+
+			await state.searchNow({ refresh: true });
+
+			expect(refreshFn).toHaveBeenCalledWith(["/project", "/other"]);
+			expect(callOrder).toEqual(["refresh:/project,/other", "search"]);
+		});
+
+		it("continues searching when the refresh hook fails", async () => {
+			const refreshFn = vi.fn(async () => Promise.reject(new Error("refresh failed")));
+			const searchFn = vi.fn<SearchFn>(async () => makeSearchResponse([makeRow("src/index.ts")]));
+
+			const state = makeState({
+				refreshFn,
+				searchFn,
+			});
+
+			await state.searchNow({ refresh: true });
+
+			expect(searchFn).toHaveBeenCalledWith(["/project"], "", expect.any(Number), 0);
+			expect(state.rows).toEqual([makeRow("src/index.ts")]);
+		});
+
 		it("calls searchFn with current query and sets rows", async () => {
 			const rows = [makeRow("src/index.ts"), makeRow("src/app.ts")];
 			const searchFn = vi.fn<SearchFn>(async () => makeSearchResponse(rows));
@@ -213,7 +249,7 @@ describe("FileExplorerModalState", () => {
 			state.setQuery("index");
 			await state.searchNow();
 
-		expect(searchFn).toHaveBeenCalledWith(["/project"], "index", expect.any(Number), 0);
+			expect(searchFn).toHaveBeenCalledWith(["/project"], "index", expect.any(Number), 0);
 			expect(state.rows).toEqual(rows);
 			expect(state.isLoading).toBe(false);
 		});
@@ -328,21 +364,21 @@ describe("FileExplorerModalState", () => {
 		});
 	});
 
-		describe("loadPreview", () => {
-			it("ignores stale preview responses", async () => {
-				const previews: ((response: FileExplorerPreviewResponse) => void)[] = [];
+	describe("loadPreview", () => {
+		it("ignores stale preview responses", async () => {
+			const previews: ((response: FileExplorerPreviewResponse) => void)[] = [];
 			const previewFn: PreviewFn = () =>
 				new Promise((resolve) => {
 					previews.push(resolve);
 				});
 
-				const state = makeState({ previewFn });
-				state.rows = [makeRow("a.ts"), makeRow("b.ts")];
-				state.selectedIndex = 0;
+			const state = makeState({ previewFn });
+			state.rows = [makeRow("a.ts"), makeRow("b.ts")];
+			state.selectedIndex = 0;
 
-				const first = state.loadPreview("a.ts");
-				state.selectedIndex = 1;
-				const second = state.loadPreview("b.ts");
+			const first = state.loadPreview("a.ts");
+			state.selectedIndex = 1;
+			const second = state.loadPreview("b.ts");
 
 			previews[1]({
 				kind: "text",
@@ -372,9 +408,9 @@ describe("FileExplorerModalState", () => {
 		});
 
 		it("loads preview for the new first result when search results change", async () => {
-				let currentRows = [makeRow("a.ts")];
-				const state = makeState({
-					searchFn: async () => makeSearchResponse(currentRows),
+			let currentRows = [makeRow("a.ts")];
+			const state = makeState({
+				searchFn: async () => makeSearchResponse(currentRows),
 				previewFn: async (_projectPath, filePath) => ({
 					kind: "text",
 					file_path: filePath,
@@ -382,11 +418,11 @@ describe("FileExplorerModalState", () => {
 					content: "preview",
 					language_hint: "ts",
 				}),
-				});
-				state.rows = [makeRow("a.ts")];
-				state.selectedIndex = 0;
+			});
+			state.rows = [makeRow("a.ts")];
+			state.selectedIndex = 0;
 
-				await state.loadPreview("a.ts");
+			await state.loadPreview("a.ts");
 			expect(state.preview).not.toBeNull();
 
 			currentRows = [makeRow("b.ts")];

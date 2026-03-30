@@ -225,6 +225,36 @@ describe("createTextReveal", () => {
 		reveal.destroy();
 	});
 
+	it("preserves unrevealed text when a skip element mounts children mid-stream", async () => {
+		const container = document.createElement("div");
+		container.innerHTML = "<p>Hello</p>";
+
+		const reveal = createTextReveal(container);
+		reveal.setStreaming(true);
+
+		container.innerHTML = "<p>Hello <span data-reveal-skip></span> there world</p>";
+		await flushObserver();
+
+		expect(visibleText(container)).toBe("Hello");
+
+		const placeholder = container.querySelector("[data-reveal-skip]");
+		if (!(placeholder instanceof HTMLElement)) {
+			throw new Error("expected skip placeholder");
+		}
+
+		const badge = document.createElement("span");
+		badge.textContent = "BADGE";
+		placeholder.appendChild(badge);
+		await flushObserver();
+
+		expect(placeholder.style.display).toBe("none");
+
+		flushAllFrames();
+		expect(visibleText(container)).toBe("Hello BADGE there world");
+
+		reveal.destroy();
+	});
+
 	it("skips SVG elements", async () => {
 		const container = document.createElement("div");
 		container.innerHTML = "<p>Code</p>";
