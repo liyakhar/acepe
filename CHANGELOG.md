@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.3.36] - 2026-03-30
+
 ### Changed
 - Startup restoration now hydrates only the saved sessions first, then refreshes the wider sidebar history in the background
 - Preconnection skills are now loaded directly from parsed on-disk agent skill directories grouped by agent
@@ -22,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tool call UI now preserves exit-plan approvals, task child status mapping, markdown reveal placeholders, and fullscreen attached-pane layout behavior more reliably
 - Single-session fullscreen now stays scoped to single view mode, keeps terminal fullscreen separate, and restores saved agent fullscreen targets consistently on workspace reload
 - Pierre diffs and markdown tables now keep bottom spacing so the last visible content clears overlay scrollbars
+- Duplicate permission UI events no longer fire when multiple SDK requests share the same tool call
+- Markdown content now shows plain text while streaming instead of flickering partially rendered HTML
+- Question and attention queue entries render approve/deny flows more reliably with consistent UI state tracking
 
 ## [2026.3.34] - 2026-03-29
 
