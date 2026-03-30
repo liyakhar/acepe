@@ -1,12 +1,19 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 function readSource(relativePath: string): string {
 	return readFileSync(resolve(process.cwd(), relativePath), "utf8");
 }
 
 describe("Pierre usage patterns", () => {
+	it("keeps a bottom spacer in the shared Pierre CSS override", () => {
+		const pierreTheme = readSource("src/lib/acp/utils/pierre-diffs-theme.ts");
+
+		expect(pierreTheme).toContain("padding-top: 0 !important;");
+		expect(pierreTheme).toContain("padding-bottom: 8px !important;");
+	});
+
 	it("reuses FileDiff instances in all diff renderers", () => {
 		const pierreDiffView = readSource(
 			"src/lib/acp/components/diff-viewer/pierre-diff-view.svelte"
@@ -45,4 +52,4 @@ describe("Pierre usage patterns", () => {
 		expect(filePanelReadView).toContain("fileInstance.setOptions(");
 		expect(filePanelReadView).toContain("diffInstance.setOptions(");
 	});
-	});
+});

@@ -6,7 +6,8 @@ import { getCursorThemeName, loadCursorTheme } from "./shiki-theme.js";
 
 /**
  * Custom CSS injected into @pierre/diffs shadow DOM.
- * Removes padding gaps between header and first line of diff content.
+ * Removes the top padding gap while keeping enough bottom space for the final
+ * line to scroll clear of overlay scrollbars.
  */
 export const pierreDiffsUnsafeCSS = `
 [data-code] {
@@ -14,7 +15,7 @@ export const pierreDiffsUnsafeCSS = `
   --diffs-gap-fallback: 0;
   font-size: 12px;
   padding-top: 0 !important;
-  padding-bottom: 0 !important;
+	padding-bottom: 8px !important;
 }
 `;
 
