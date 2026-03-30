@@ -11,7 +11,6 @@ import { getAgentPreferencesStore, getAgentStore } from "$lib/acp/store/index.js
 import { createLogger } from "$lib/acp/utils/logger.js";
 import * as m from "$lib/paraglide/messages.js";
 
-import logo from "../../../../../../../../assets/logo.svg?url";
 import {
 	attachSessionToEmptyStatePanel,
 	ensureEmptyStatePanelContext,
@@ -180,11 +179,9 @@ function handleEmptyStateSessionCreated(sessionId: string) {
 </script>
 
 <div class="flex flex-col items-center justify-center h-full w-full max-w-2xl mx-auto px-6 py-12">
-	<!-- Logo and Brand Header -->
-	<div class="flex items-center gap-3 mb-8">
-		<img src={logo} alt="Acepe Logo" class="w-10 h-10" />
-		<h1 class="font-sans font-semibold text-3xl tracking-tight text-foreground">ACEPE</h1>
-	</div>
+	<h1 class="mb-8 text-center font-sans text-[1.9rem] font-semibold tracking-tight text-foreground sm:text-4xl">
+		What do you want to build?
+	</h1>
 
 	{#if canShowInput}
 		<!-- Agent Input -->

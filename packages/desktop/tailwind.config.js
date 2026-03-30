@@ -4,9 +4,6 @@ export default {
 	content: ["./src/**/*.{html,js,svelte,ts}"],
 	theme: {
 		extend: {
-			fontFamily: {
-				sans: ["Matter", "system-ui", "sans-serif"],
-			},
 			colors: {
 				border: "var(--border)",
 				input: "var(--input)",

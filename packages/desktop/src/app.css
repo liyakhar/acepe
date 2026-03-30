@@ -1,9 +1,25 @@
-/* Acepe custom font - font files in static/fonts/ */
+/* App font files in static/fonts/ */
 @font-face {
 	font-family: "Acepe";
 	font-style: normal;
 	font-weight: 400;
-	src: url("/fonts/acepe.woff2") format("woff2");
+	src: url("/fonts/acepe-sans.woff2") format("woff2");
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Acepe Serif";
+	font-style: normal;
+	font-weight: 400;
+	src: url("/fonts/acepe-serif.woff2") format("woff2");
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Acepe Mono";
+	font-style: normal;
+	font-weight: 400;
+	src: url("/fonts/acepe-mono.woff2") format("woff2");
 	font-display: swap;
 }
 
@@ -59,8 +75,8 @@
 
 	/* Font families */
 	--font-sans: Acepe, system-ui, sans-serif;
-	--font-serif: Merriweather, serif;
-	--font-mono: Fira Code, monospace;
+	--font-serif: "Acepe Serif", serif;
+	--font-mono: "Acepe Mono", monospace;
 
 	/* Shadows */
 	--shadow-x: 0px;
@@ -89,7 +105,7 @@
 .dark {
 	/* Cursor Dark theme colors - using hex values directly for better color accuracy */
 	--background: #1a1a1a; /* editor.background */
-	--foreground: #d8dee9; /* editor.foreground */
+	--foreground: #D4D4D4; /* editor.foreground */
 	--card: #232323; /* editorWidget.background */
 	--card-foreground: #ffffff; /* editorSuggestWidget.foreground */
 	--popover: #272727; /* dropdown background */
@@ -131,6 +147,9 @@
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
+	--font-sans: var(--font-sans);
+	--font-serif: var(--font-serif);
+	--font-mono: var(--font-mono);
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 	--color-card: var(--card);

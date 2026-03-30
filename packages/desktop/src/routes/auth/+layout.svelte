@@ -14,10 +14,10 @@ import { Button } from "$lib/components/ui/button/index.js";
 				<div class="flex max-w-lg flex-col gap-8">
 					<div class="mb-4 flex items-center gap-3">
 						<Logo class="h-10 w-8 text-white" />
-						<h1 class="font-matter text-2xl font-medium tracking-tight">Acepe</h1>
+						<h1 class="font-sans text-2xl font-medium tracking-tight">Acepe</h1>
 					</div>
 					<div class="space-y-6">
-						<h2 class="font-matter text-5xl leading-[1.1] tracking-[-1.5px] font-normal">
+						<h2 class="font-sans text-5xl leading-[1.1] tracking-[-1.5px] font-normal">
 							The interface
 							<br />
 							for AI agents.
