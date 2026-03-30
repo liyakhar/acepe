@@ -3,7 +3,7 @@
 //! [`CcSdkClaudeClient`] communicates with the Claude Code CLI via the `cc_sdk` Rust
 //! crate directly — no Bun subprocess or JSON-RPC stdio indirection.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -74,6 +74,15 @@ impl PendingPermissionKind {
         }
     }
 
+    fn approval_group_key(&self) -> Option<String> {
+        match self {
+            Self::Tool { tool_call_id, .. } | Self::Hook { tool_call_id, .. } => {
+                Some(tool_call_id.clone())
+            }
+            Self::Question { .. } => None,
+        }
+    }
+
     fn is_question(&self) -> bool {
         matches!(self, Self::Question { .. })
     }
@@ -83,6 +92,7 @@ impl PendingPermissionKind {
 struct PendingPermissionRequest {
     sender: PendingPermissionResponder,
     kind: PendingPermissionKind,
+    approval_group_key: Option<String>,
 }
 
 #[derive(Debug)]
@@ -91,8 +101,20 @@ enum PendingPermissionResponder {
     Hook(oneshot::Sender<cc_sdk::HookJSONOutput>),
 }
 
+#[derive(Debug, Default)]
+struct PermissionBridgeState {
+    pending: HashMap<u64, PendingPermissionRequest>,
+    approval_groups: HashMap<String, Vec<u64>>,
+}
+
+#[derive(Debug)]
+struct PendingPermissionRegistration<T> {
+    receiver: oneshot::Receiver<T>,
+    should_emit_ui: bool,
+}
+
 struct PermissionBridge {
-    pending: Mutex<HashMap<u64, PendingPermissionRequest>>,
+    state: Mutex<PermissionBridgeState>,
     /// Sequential counter kept within JS safe-integer range (< 2^53).
     counter: AtomicU64,
 }
@@ -100,7 +122,7 @@ struct PermissionBridge {
 impl PermissionBridge {
     fn new() -> Self {
         Self {
-            pending: Mutex::new(HashMap::new()),
+            state: Mutex::new(PermissionBridgeState::default()),
             counter: AtomicU64::new(1),
         }
     }
@@ -114,37 +136,96 @@ impl PermissionBridge {
         &self,
         id: u64,
         kind: PendingPermissionKind,
-    ) -> oneshot::Receiver<cc_sdk::PermissionResult> {
+    ) -> PendingPermissionRegistration<cc_sdk::PermissionResult> {
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(
+        self.register_pending_request(
             id,
             PendingPermissionRequest {
                 sender: PendingPermissionResponder::Tool(tx),
+                approval_group_key: kind.approval_group_key(),
                 kind,
             },
-        );
-        rx
+            rx,
+        )
+        .await
     }
 
     async fn register_hook(
         &self,
         id: u64,
         kind: PendingPermissionKind,
-    ) -> oneshot::Receiver<cc_sdk::HookJSONOutput> {
+    ) -> PendingPermissionRegistration<cc_sdk::HookJSONOutput> {
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(
+        self.register_pending_request(
             id,
             PendingPermissionRequest {
                 sender: PendingPermissionResponder::Hook(tx),
+                approval_group_key: kind.approval_group_key(),
                 kind,
             },
-        );
-        rx
+            rx,
+        )
+        .await
+    }
+
+    async fn register_pending_request<T>(
+        &self,
+        id: u64,
+        pending_request: PendingPermissionRequest,
+        receiver: oneshot::Receiver<T>,
+    ) -> PendingPermissionRegistration<T> {
+        let mut state = self.state.lock().await;
+        let should_emit_ui = if let Some(group_key) = pending_request.approval_group_key.as_ref() {
+            if let Some(existing_request_ids) = state.approval_groups.get_mut(group_key) {
+                existing_request_ids.push(id);
+                false
+            } else {
+                state.approval_groups.insert(group_key.clone(), vec![id]);
+                true
+            }
+        } else {
+            true
+        };
+
+        state.pending.insert(id, pending_request);
+
+        PendingPermissionRegistration {
+            receiver,
+            should_emit_ui,
+        }
+    }
+
+    fn take_request_bundle(
+        state: &mut PermissionBridgeState,
+        id: u64,
+    ) -> Option<Vec<PendingPermissionRequest>> {
+        let pending_request = state.pending.remove(&id)?;
+        let mut requests = vec![pending_request];
+
+        if let Some(group_key) = requests[0].approval_group_key.clone() {
+            if let Some(group_request_ids) = state.approval_groups.remove(&group_key) {
+                for request_id in group_request_ids {
+                    if request_id == id {
+                        continue;
+                    }
+                    if let Some(sibling_request) = state.pending.remove(&request_id) {
+                        requests.push(sibling_request);
+                    }
+                }
+            }
+        }
+
+        Some(requests)
     }
 
     #[cfg(test)]
     async fn resolve(&self, id: u64, result: cc_sdk::PermissionResult) {
-        if let Some(pending) = self.pending.lock().await.remove(&id) {
+        let pending = {
+            let mut state = self.state.lock().await;
+            Self::take_request_bundle(&mut state, id).and_then(|mut requests| requests.drain(..1).next())
+        };
+
+        if let Some(pending) = pending {
             if let PendingPermissionResponder::Tool(sender) = pending.sender {
                 let _ = sender.send(result);
             }
@@ -156,17 +237,23 @@ impl PermissionBridge {
         id: u64,
         result: &Value,
     ) -> Option<PendingPermissionKind> {
-        let pending = self.pending.lock().await.remove(&id)?;
-        let kind = pending.kind.clone();
+        let pending_requests = {
+            let mut state = self.state.lock().await;
+            Self::take_request_bundle(&mut state, id)?
+        };
+        let kind = pending_requests[0].kind.clone();
 
-        match pending.sender {
-            PendingPermissionResponder::Tool(sender) => {
-                let permission_result = permission_result_from_ui_result(&pending.kind, result);
-                let _ = sender.send(permission_result);
-            }
-            PendingPermissionResponder::Hook(sender) => {
-                let hook_output = hook_output_from_ui_result(&pending.kind, result);
-                let _ = sender.send(hook_output);
+        for pending_request in pending_requests {
+            match pending_request.sender {
+                PendingPermissionResponder::Tool(sender) => {
+                    let permission_result =
+                        permission_result_from_ui_result(&pending_request.kind, result);
+                    let _ = sender.send(permission_result);
+                }
+                PendingPermissionResponder::Hook(sender) => {
+                    let hook_output = hook_output_from_ui_result(&pending_request.kind, result);
+                    let _ = sender.send(hook_output);
+                }
             }
         }
 
@@ -174,8 +261,8 @@ impl PermissionBridge {
     }
 
     async fn request_id_for_question_tool_call(&self, tool_call_id: &str) -> Option<u64> {
-        let pending = self.pending.lock().await;
-        pending.iter().find_map(|(request_id, request)| {
+        let state = self.state.lock().await;
+        state.pending.iter().find_map(|(request_id, request)| {
             if request.kind.is_question() && request.kind.tool_call_id() == tool_call_id {
                 Some(*request_id)
             } else {
@@ -184,13 +271,41 @@ impl PermissionBridge {
         })
     }
 
-    async fn clear_request(&self, id: u64) {
-        self.pending.lock().await.remove(&id);
+    async fn clear_request(&self, id: u64, message: &str) {
+        let pending_requests = {
+            let mut state = self.state.lock().await;
+            Self::take_request_bundle(&mut state, id)
+        };
+
+        let Some(pending_requests) = pending_requests else {
+            return;
+        };
+
+        for pending_request in pending_requests {
+            match pending_request.sender {
+                PendingPermissionResponder::Tool(sender) => {
+                    let _ = sender.send(cc_sdk::PermissionResult::Deny(
+                        cc_sdk::PermissionResultDeny {
+                            message: message.to_string(),
+                            interrupt: false,
+                        },
+                    ));
+                }
+                PendingPermissionResponder::Hook(sender) => {
+                    let _ = sender.send(build_denied_hook_output(&pending_request.kind, message));
+                }
+            }
+        }
     }
 
     async fn drain_all_as_denied(&self) {
-        let mut map = self.pending.lock().await;
-        for (_, pending) in map.drain() {
+        let pending_requests = {
+            let mut state = self.state.lock().await;
+            state.approval_groups.clear();
+            state.pending.drain().map(|(_, pending)| pending).collect::<Vec<_>>()
+        };
+
+        for pending in pending_requests {
             match pending.sender {
                 PendingPermissionResponder::Tool(sender) => {
                     let _ = sender.send(cc_sdk::PermissionResult::Deny(
@@ -411,7 +526,7 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
         if tool_name == "AskUserQuestion" {
             let normalized_questions =
                 parse_normalized_questions(tool_name, input, self.agent_type);
-            let rx = self
+            let registration = self
                 .bridge
                 .register(
                     request_id,
@@ -421,6 +536,7 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                     },
                 )
                 .await;
+            let rx = registration.receiver;
 
             let (questions_for_ui, question_already_emitted) = {
                 let mut pending_questions = self.pending_questions.lock().await;
@@ -479,7 +595,9 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 Ok(Ok(result)) => result,
                 other => {
                     self.pending_questions.lock().await.remove(&tool_call_id);
-                    self.bridge.clear_request(request_id).await;
+                    self.bridge
+                        .clear_request(request_id, "Question timed out or was not answered")
+                        .await;
                     tracing::warn!(
                         session_id = %self.session_id,
                         request_id = request_id,
@@ -509,7 +627,7 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
             };
         }
 
-        let rx = self
+        let registration = self
             .bridge
             .register(
                 request_id,
@@ -520,44 +638,55 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 },
             )
             .await;
+        let rx = registration.receiver;
         let has_always_option = _ctx
             .suggestions
             .iter()
             .any(permission_suggestion_supports_always);
-        tracing::info!(
-            session_id = %self.session_id,
-            request_id = request_id,
-            tool_name = %tool_name,
-            tool_call_id = %tool_call_id,
-            "cc-sdk permission request emitted"
-        );
-        let mut permission_json = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "session/request_permission",
-            "params": {
-                "sessionId": self.session_id,
-                "options": [
-                    { "kind": "allow", "name": "Allow once", "optionId": "allow" },
-                    { "kind": "allow_always", "name": "Always allow", "optionId": "allow_always" },
-                    { "kind": "reject", "name": "Reject", "optionId": "reject" }
-                ],
-                "toolCall": {
-                    "toolCallId": tool_call_id,
-                    "name": tool_name,
-                    "title": tool_name,
-                    "rawInput": input,
+        if registration.should_emit_ui {
+            tracing::info!(
+                session_id = %self.session_id,
+                request_id = request_id,
+                tool_name = %tool_name,
+                tool_call_id = %tool_call_id,
+                "cc-sdk permission request emitted"
+            );
+            let mut permission_json = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "session/request_permission",
+                "params": {
+                    "sessionId": self.session_id,
+                    "options": [
+                        { "kind": "allow", "name": "Allow once", "optionId": "allow" },
+                        { "kind": "allow_always", "name": "Always allow", "optionId": "allow_always" },
+                        { "kind": "reject", "name": "Reject", "optionId": "reject" }
+                    ],
+                    "toolCall": {
+                        "toolCallId": tool_call_id,
+                        "name": tool_name,
+                        "title": tool_name,
+                        "rawInput": input,
+                    }
                 }
+            });
+            if !has_always_option {
+                permission_json["params"]["options"] = serde_json::json!([
+                    { "kind": "allow", "name": "Allow once", "optionId": "allow" },
+                    { "kind": "reject", "name": "Reject", "optionId": "reject" }
+                ]);
             }
-        });
-        if !has_always_option {
-            permission_json["params"]["options"] = serde_json::json!([
-                { "kind": "allow", "name": "Allow once", "optionId": "allow" },
-                { "kind": "reject", "name": "Reject", "optionId": "reject" }
-            ]);
+            self.dispatcher
+                .enqueue(AcpUiEvent::inbound_request(permission_json));
+        } else {
+            tracing::info!(
+                session_id = %self.session_id,
+                request_id = request_id,
+                tool_name = %tool_name,
+                tool_call_id = %tool_call_id,
+                "cc-sdk permission request joined existing pending approval"
+            );
         }
-        self.dispatcher
-            .enqueue(AcpUiEvent::inbound_request(permission_json));
 
         match timeout(Duration::from_secs(60), rx).await {
             Ok(Ok(result)) => result,
@@ -569,7 +698,9 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                     timeout_or_error = ?other,
                     "cc-sdk permission request denied or timed out"
                 );
-                self.bridge.clear_request(request_id).await;
+                self.bridge
+                    .clear_request(request_id, "Permission denied or timed out")
+                    .await;
                 cc_sdk::PermissionResult::Deny(cc_sdk::PermissionResultDeny {
                     message: "Permission denied or timed out".to_string(),
                     interrupt: false,
@@ -602,6 +733,19 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
             }));
         };
 
+        if request.tool_name == "AskUserQuestion" {
+            tracing::info!(
+                session_id = %self.session_id,
+                tool_name = %request.tool_name,
+                tool_call_id = tool_use_id.unwrap_or("unknown"),
+                "cc-sdk PermissionRequest hook ignored for AskUserQuestion"
+            );
+            return Ok(cc_sdk::HookJSONOutput::Sync(cc_sdk::SyncHookJSONOutput {
+                continue_: Some(true),
+                ..Default::default()
+            }));
+        }
+
         let request_id = self.bridge.next_id();
         let tool_call_id = tool_use_id
             .map(str::to_string)
@@ -618,7 +762,7 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
         let has_always_option = permission_suggestions
             .iter()
             .any(permission_suggestion_supports_always);
-        let rx = self
+        let registration = self
             .bridge
             .register_hook(
                 request_id,
@@ -630,26 +774,38 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
                 },
             )
             .await;
+        let rx = registration.receiver;
 
-        tracing::info!(
-            session_id = %self.session_id,
-            request_id = request_id,
-            tool_name = %request.tool_name,
-            tool_call_id = %tool_call_id,
-            suggestion_count = permission_suggestions.len(),
-            "cc-sdk PermissionRequest hook emitted"
-        );
+        if registration.should_emit_ui {
+            tracing::info!(
+                session_id = %self.session_id,
+                request_id = request_id,
+                tool_name = %request.tool_name,
+                tool_call_id = %tool_call_id,
+                suggestion_count = permission_suggestions.len(),
+                "cc-sdk PermissionRequest hook emitted"
+            );
 
-        self.dispatcher
-            .enqueue(AcpUiEvent::session_update(build_permission_request_update(
-                &self.session_id,
-                &tool_call_id,
-                request_id,
-                &request.tool_name,
-                &request.tool_input,
-                has_always_option,
-                self.agent_type,
-            )));
+            self.dispatcher
+                .enqueue(AcpUiEvent::session_update(build_permission_request_update(
+                    &self.session_id,
+                    &tool_call_id,
+                    request_id,
+                    &request.tool_name,
+                    &request.tool_input,
+                    has_always_option,
+                    self.agent_type,
+                )));
+        } else {
+            tracing::info!(
+                session_id = %self.session_id,
+                request_id = request_id,
+                tool_name = %request.tool_name,
+                tool_call_id = %tool_call_id,
+                suggestion_count = permission_suggestions.len(),
+                "cc-sdk PermissionRequest hook joined existing pending approval"
+            );
+        }
 
         match timeout(Duration::from_secs(60), rx).await {
             Ok(Ok(result)) => Ok(result),
@@ -661,7 +817,9 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
                     timeout_or_error = ?other,
                     "cc-sdk PermissionRequest hook denied or timed out"
                 );
-                self.bridge.clear_request(request_id).await;
+                self.bridge
+                    .clear_request(request_id, "Permission denied or timed out")
+                    .await;
                 Ok(build_denied_hook_output(
                     &PendingPermissionKind::Hook {
                         tool_call_id,
@@ -1122,6 +1280,77 @@ struct StreamingBridgeContext {
     db: Option<DbConn>,
 }
 
+fn note_pending_stream_tool_call(
+    pending_tool_call_ids: &mut VecDeque<String>,
+    tool_call_id: &str,
+) {
+    if pending_tool_call_ids
+        .iter()
+        .any(|pending_tool_call_id| pending_tool_call_id == tool_call_id)
+    {
+        return;
+    }
+
+    pending_tool_call_ids.push_back(tool_call_id.to_string());
+}
+
+fn resolve_pending_stream_tool_call(
+    pending_tool_call_ids: &mut VecDeque<String>,
+    tool_call_id: &str,
+) {
+    pending_tool_call_ids.retain(|pending_tool_call_id| pending_tool_call_id != tool_call_id);
+}
+
+fn terminal_tool_call_id(update: &SessionUpdate) -> Option<&str> {
+    match update {
+        SessionUpdate::ToolCallUpdate { update, .. }
+            if matches!(
+                update.status,
+                Some(ToolCallStatus::Completed) | Some(ToolCallStatus::Failed)
+            ) =>
+        {
+            Some(update.tool_call_id.as_str())
+        }
+        _ => None,
+    }
+}
+
+async fn take_synthetic_tool_completions_for_resumed_tool_turn(
+    pending_tool_call_ids: &mut VecDeque<String>,
+    pending_questions: &Arc<Mutex<HashMap<String, PendingQuestionState>>>,
+    session_id: &str,
+) -> Vec<SessionUpdate> {
+    let active_question_ids = pending_questions
+        .lock()
+        .await
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut retained_tool_call_ids = VecDeque::new();
+    let mut synthetic_updates = Vec::new();
+
+    while let Some(tool_call_id) = pending_tool_call_ids.pop_front() {
+        if active_question_ids.contains(&tool_call_id) {
+            retained_tool_call_ids.push_back(tool_call_id);
+            continue;
+        }
+
+        synthetic_updates.push(SessionUpdate::ToolCallUpdate {
+            update: ToolCallUpdateData {
+                tool_call_id,
+                status: Some(ToolCallStatus::Completed),
+                ..Default::default()
+            },
+            session_id: Some(session_id.to_string()),
+        });
+    }
+
+    *pending_tool_call_ids = retained_tool_call_ids;
+
+    synthetic_updates
+}
+
 async fn run_streaming_bridge(
     mut stream: impl futures::Stream<Item = cc_sdk::Result<cc_sdk::Message>> + Unpin,
     session_id: String,
@@ -1143,6 +1372,8 @@ async fn run_streaming_bridge(
     let mut message_count: u64 = 0;
     let mut turn_stream_state = crate::acp::parsers::cc_sdk_bridge::CcSdkTurnStreamState::default();
     let mut stream_tool_blocks: HashMap<u64, (String, String)> = HashMap::new();
+    let mut pending_tool_call_ids = VecDeque::new();
+    let mut awaiting_tool_turn_resume = false;
     let mut observed_provider_session_id: Option<String> = None;
 
     while let Some(result) = stream.next().await {
@@ -1168,6 +1399,26 @@ async fn run_streaming_bridge(
                 }
                 if let cc_sdk::Message::StreamEvent { event, .. } = &msg {
                     if let Some(event_type) = event.get("type").and_then(|value| value.as_str()) {
+                        if event_type == "message_start" && awaiting_tool_turn_resume {
+                            let synthetic_updates = take_synthetic_tool_completions_for_resumed_tool_turn(
+                                &mut pending_tool_call_ids,
+                                &pending_questions,
+                                &session_id,
+                            )
+                            .await;
+
+                            for synthetic_update in synthetic_updates {
+                                dispatch_cc_sdk_update(
+                                    &dispatcher,
+                                    &task_reconciler,
+                                    provider.as_ref(),
+                                    synthetic_update,
+                                );
+                            }
+
+                            awaiting_tool_turn_resume = false;
+                        }
+
                         if event_type == "content_block_start" {
                             if let Some(block) = event.get("content_block") {
                                 let is_tool_use =
@@ -1179,6 +1430,10 @@ async fn run_streaming_bridge(
                                     if let (Some(index), Some(id), Some(name)) = (index, id, name) {
                                         stream_tool_blocks
                                             .insert(index, (id.to_string(), name.to_string()));
+                                        note_pending_stream_tool_call(
+                                            &mut pending_tool_call_ids,
+                                            id,
+                                        );
                                         approval_callback_tracker
                                             .note_tool_use_started(&session_id, name, id)
                                             .await;
@@ -1257,6 +1512,13 @@ async fn run_streaming_bridge(
                                     }
                                 }
                             }
+                        }
+                        if event_type == "message_delta" {
+                            awaiting_tool_turn_resume = event
+                                .get("delta")
+                                .and_then(|delta| delta.get("stop_reason"))
+                                .and_then(|value| value.as_str())
+                                == Some("tool_use");
                         }
                         // Extract model from message_start event
                         if event_type == "message_start" {
@@ -1360,6 +1622,9 @@ async fn run_streaming_bridge(
                     "cc-sdk bridge: translated to session updates"
                 );
                 for mut update in updates {
+                    if let Some(tool_call_id) = terminal_tool_call_id(&update) {
+                        resolve_pending_stream_tool_call(&mut pending_tool_call_ids, tool_call_id);
+                    }
                     if !annotate_pending_question_request(&bridge, &pending_questions, &mut update)
                         .await
                     {
@@ -1400,6 +1665,7 @@ async fn run_streaming_bridge(
                         update,
                         SessionUpdate::TurnComplete { .. } | SessionUpdate::TurnError { .. }
                     ) {
+                        awaiting_tool_turn_resume = false;
                         // Reset per-turn stream state but preserve model_id across turns
                         let preserved_model = turn_stream_state.model_id.clone();
                         turn_stream_state =
@@ -2315,7 +2581,7 @@ mod tests {
     use super::*;
     use crate::acp::session_update::ContentChunk;
     use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
-    use cc_sdk::CanUseTool;
+    use cc_sdk::{CanUseTool, HookCallback};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct TestModelDiscoveryProvider {
@@ -2614,7 +2880,7 @@ mod tests {
     async fn respond_selected_resolves_allow_for_regular_permissions() {
         let client = make_test_client();
         let id = client.permission_bridge.next_id();
-        let rx = client
+        let registration = client
             .permission_bridge
             .register(
                 id,
@@ -2625,6 +2891,7 @@ mod tests {
                 },
             )
             .await;
+        let rx = registration.receiver;
 
         let result = serde_json::json!({
             "outcome": { "outcome": "selected", "optionId": "allow" }
@@ -2639,7 +2906,7 @@ mod tests {
     async fn respond_cancelled_resolves_deny_for_regular_permissions() {
         let client = make_test_client();
         let id = client.permission_bridge.next_id();
-        let rx = client
+        let registration = client
             .permission_bridge
             .register(
                 id,
@@ -2650,6 +2917,7 @@ mod tests {
                 },
             )
             .await;
+        let rx = registration.receiver;
         let result = serde_json::json!({
             "outcome": { "outcome": "cancelled", "optionId": "reject" }
         });
@@ -2663,7 +2931,7 @@ mod tests {
     async fn cancel_resolves_pending_question_for_matching_session() {
         let mut client = make_test_client();
         let id = client.permission_bridge.next_id();
-        let rx = client
+        let registration = client
             .permission_bridge
             .register(
                 id,
@@ -2680,6 +2948,7 @@ mod tests {
                 },
             )
             .await;
+        let rx = registration.receiver;
 
         client.pending_questions.lock().await.insert(
             "toolu_question".to_string(),
@@ -2710,7 +2979,7 @@ mod tests {
     async fn respond_selected_allow_always_resolves_updated_permissions_for_regular_tools() {
         let client = make_test_client();
         let id = client.permission_bridge.next_id();
-        let rx = client
+        let registration = client
             .permission_bridge
             .register(
                 id,
@@ -2731,6 +3000,7 @@ mod tests {
                 },
             )
             .await;
+        let rx = registration.receiver;
 
         let result = serde_json::json!({
             "outcome": { "outcome": "selected", "optionId": "allow_always" }
@@ -2758,7 +3028,7 @@ mod tests {
     async fn reply_permission_resolves_hook_allow_once() {
         let mut client = make_test_client();
         let id = client.permission_bridge.next_id();
-        let rx = client
+        let registration = client
             .permission_bridge
             .register_hook(
                 id,
@@ -2770,6 +3040,7 @@ mod tests {
                 },
             )
             .await;
+        let rx = registration.receiver;
 
         assert!(client
             .reply_permission(id.to_string(), "once".to_string())
@@ -2792,7 +3063,7 @@ mod tests {
     async fn reply_permission_resolves_hook_allow_always_with_suggestion() {
         let mut client = make_test_client();
         let id = client.permission_bridge.next_id();
-        let rx = client
+        let registration = client
             .permission_bridge
             .register_hook(
                 id,
@@ -2814,6 +3085,7 @@ mod tests {
                 },
             )
             .await;
+        let rx = registration.receiver;
 
         assert!(client
             .reply_permission(id.to_string(), "always".to_string())
@@ -2833,10 +3105,171 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn permission_request_hook_ignores_ask_user_question() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let bridge = Arc::new(PermissionBridge::new());
+        let provider = crate::acp::providers::claude_code::ClaudeCodeProvider;
+
+        let hook = AcepePermissionRequestHook {
+            session_id: "session-hook".to_string(),
+            agent_type: provider.parser_agent_type(),
+            bridge: bridge.clone(),
+            dispatcher,
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+        };
+
+        let resolver_bridge = bridge.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let _ = resolver_bridge
+                .resolve_from_ui_result(
+                    1,
+                    &serde_json::json!({
+                        "outcome": { "outcome": "selected", "optionId": "allow" }
+                    }),
+                )
+                .await;
+        });
+
+        let result = hook
+            .execute(
+                &cc_sdk::HookInput::PermissionRequest(cc_sdk::PermissionRequestHookInput {
+                    session_id: "session-hook".to_string(),
+                    transcript_path: "/tmp/transcript.jsonl".to_string(),
+                    cwd: "/tmp".to_string(),
+                    permission_mode: Some("default".to_string()),
+                    tool_name: "AskUserQuestion".to_string(),
+                    tool_input: serde_json::json!({
+                        "questions": [{
+                            "question": "Pick one",
+                            "header": "Pick one",
+                            "options": [{ "label": "A", "description": "" }],
+                            "multiSelect": false
+                        }]
+                    }),
+                    permission_suggestions: None,
+                    agent_id: None,
+                    agent_type: None,
+                }),
+                Some("toolu_question_hook"),
+                &cc_sdk::HookContext { signal: None },
+            )
+            .await
+            .expect("hook execute failed");
+
+        let cc_sdk::HookJSONOutput::Sync(output) = result else {
+            panic!("expected sync hook output");
+        };
+
+        assert_eq!(output.continue_, Some(true));
+        assert!(output.hook_specific_output.is_none());
+        assert!(sink.lock().expect("sink lock").is_empty());
+    }
+
+    #[tokio::test]
+    async fn can_use_tool_and_permission_request_hook_share_one_visible_permission_request() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let bridge = Arc::new(PermissionBridge::new());
+        let tracker = Arc::new(ToolCallIdTracker::new());
+        let provider = crate::acp::providers::claude_code::ClaudeCodeProvider;
+
+        tracker
+            .record("Bash".to_string(), "toolu_shared_permission".to_string())
+            .await;
+
+        let handler = AcepePermissionHandler {
+            session_id: "session-shared".to_string(),
+            agent_type: provider.parser_agent_type(),
+            bridge: bridge.clone(),
+            dispatcher: dispatcher.clone(),
+            tool_call_tracker: tracker,
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+        };
+
+        let hook = AcepePermissionRequestHook {
+            session_id: "session-shared".to_string(),
+            agent_type: provider.parser_agent_type(),
+            bridge: bridge.clone(),
+            dispatcher,
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+        };
+
+        let handler_task = tokio::spawn(async move {
+            handler
+                .can_use_tool(
+                    "Bash",
+                    &serde_json::json!({ "command": "git status" }),
+                    &cc_sdk::ToolPermissionContext {
+                        signal: None,
+                        suggestions: Vec::new(),
+                    },
+                )
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        let hook_task = tokio::spawn(async move {
+            hook.execute(
+                &cc_sdk::HookInput::PermissionRequest(cc_sdk::PermissionRequestHookInput {
+                    session_id: "session-shared".to_string(),
+                    transcript_path: "/tmp/transcript.jsonl".to_string(),
+                    cwd: "/tmp".to_string(),
+                    permission_mode: Some("default".to_string()),
+                    tool_name: "Bash".to_string(),
+                    tool_input: serde_json::json!({ "command": "git status" }),
+                    permission_suggestions: None,
+                    agent_id: None,
+                    agent_type: None,
+                }),
+                Some("toolu_shared_permission"),
+                &cc_sdk::HookContext { signal: None },
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        {
+            let captured = sink.lock().expect("sink lock");
+            assert_eq!(captured.len(), 1);
+            assert_eq!(captured[0].event_name, "acp-inbound-request");
+        }
+
+        let resolved_kind = bridge
+            .resolve_from_ui_result(
+                1,
+                &serde_json::json!({
+                    "outcome": { "outcome": "selected", "optionId": "allow" }
+                }),
+            )
+            .await;
+
+        assert!(matches!(resolved_kind, Some(PendingPermissionKind::Tool { .. })));
+        assert!(matches!(
+            handler_task.await.expect("handler task failed"),
+            cc_sdk::PermissionResult::Allow(_)
+        ));
+
+        let hook_result = hook_task
+            .await
+            .expect("hook task failed")
+            .expect("hook execute failed");
+        let cc_sdk::HookJSONOutput::Sync(output) = hook_result else {
+            panic!("expected sync hook output");
+        };
+        let serialized = serde_json::to_value(output).expect("serialize hook output");
+
+        assert_eq!(serialized["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        assert_eq!(sink.lock().expect("sink lock").len(), 1);
+    }
+
+    #[tokio::test]
     async fn respond_selected_question_resolves_updated_input() {
         let client = make_test_client();
         let id = client.permission_bridge.next_id();
-        let rx = client
+        let registration = client
             .permission_bridge
             .register(
                 id,
@@ -2853,6 +3286,7 @@ mod tests {
                 },
             )
             .await;
+        let rx = registration.receiver;
 
         client.pending_questions.lock().await.insert(
             "toolu_question".to_string(),
@@ -3937,5 +4371,122 @@ mod tests {
             }
             other => panic!("expected think arguments, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn run_streaming_bridge_completes_unresolved_tool_use_when_next_message_starts() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
+        let context = StreamingBridgeContext {
+            dispatcher,
+            bridge: Arc::new(PermissionBridge::new()),
+            tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+            sdk_client: Arc::new(Mutex::new(cc_sdk::ClaudeSDKClient::new(
+                cc_sdk::ClaudeCodeOptions::builder()
+                    .cwd(PathBuf::from("/tmp"))
+                    .build(),
+            ))),
+            provider,
+            db: None,
+        };
+
+        let stream = futures::stream::iter(vec![
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "msg-start-1".to_string(),
+                session_id: "provider-session".to_string(),
+                event: serde_json::json!({
+                    "type": "message_start",
+                    "message": {
+                        "content": [],
+                        "model": "claude-sonnet-4-6"
+                    }
+                }),
+                parent_tool_use_id: None,
+            }),
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "tool-start".to_string(),
+                session_id: "provider-session".to_string(),
+                event: serde_json::json!({
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": "toolu_search_stuck",
+                        "name": "ToolSearch",
+                        "input": {}
+                    }
+                }),
+                parent_tool_use_id: None,
+            }),
+            Ok(cc_sdk::Message::Assistant {
+                message: cc_sdk::AssistantMessage {
+                    content: vec![cc_sdk::ContentBlock::ToolUse(cc_sdk::ToolUseContent {
+                        id: "toolu_search_stuck".to_string(),
+                        name: "ToolSearch".to_string(),
+                        input: serde_json::json!({
+                            "query": "select:AskUserQuestion",
+                            "max_results": 1
+                        }),
+                    })],
+                    model: Some("claude-sonnet-4-6".to_string()),
+                    usage: None,
+                    error: None,
+                    parent_tool_use_id: None,
+                },
+            }),
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "message-delta-tool-use".to_string(),
+                session_id: "provider-session".to_string(),
+                event: serde_json::json!({
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "tool_use",
+                        "stop_sequence": null
+                    }
+                }),
+                parent_tool_use_id: None,
+            }),
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "message-stop-tool-use".to_string(),
+                session_id: "provider-session".to_string(),
+                event: serde_json::json!({ "type": "message_stop" }),
+                parent_tool_use_id: None,
+            }),
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "msg-start-2".to_string(),
+                session_id: "provider-session".to_string(),
+                event: serde_json::json!({
+                    "type": "message_start",
+                    "message": {
+                        "content": [],
+                        "model": "claude-sonnet-4-6"
+                    }
+                }),
+                parent_tool_use_id: None,
+            }),
+        ]);
+
+        run_streaming_bridge(stream, "session-bridge".to_string(), context).await;
+
+        let captured = sink.lock().expect("sink lock");
+        let has_completion = captured.iter().any(|event| match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
+                matches!(
+                    update.as_ref(),
+                    SessionUpdate::ToolCallUpdate { update, .. }
+                        if update.tool_call_id == "toolu_search_stuck"
+                            && update.status == Some(ToolCallStatus::Completed)
+                )
+            }
+            _ => false,
+        });
+
+        assert!(
+            has_completion,
+            "expected the next assistant message_start to settle the prior ToolSearch call"
+        );
     }
 }
