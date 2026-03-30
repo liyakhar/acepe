@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Slash command suggestions now fall back to preconnection skills when a connected session has no live commands yet
 - First-send mode and model choices now survive session creation, and busy composer states keep queue and steer actions enabled correctly
 - Tool call UI now preserves exit-plan approvals, task child status mapping, markdown reveal placeholders, and fullscreen attached-pane layout behavior more reliably
+- Single-session fullscreen now stays scoped to single view mode, keeps terminal fullscreen separate, and restores saved agent fullscreen targets consistently on workspace reload
+- Pierre diffs and markdown tables now keep bottom spacing so the last visible content clears overlay scrollbars
 
 ## [2026.3.34] - 2026-03-29
 
