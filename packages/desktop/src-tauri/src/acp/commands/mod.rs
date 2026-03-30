@@ -27,6 +27,7 @@ mod inbound_commands;
 mod install_commands;
 mod interaction_commands;
 mod path_validation;
+mod preconnection_commands;
 mod registry_commands;
 mod session_commands;
 
@@ -43,6 +44,7 @@ pub use interaction_commands::{
     acp_cancel, acp_send_prompt, acp_set_config_option, acp_set_mode, acp_set_model,
 };
 use path_validation::{normalize_acp_path, validate_session_cwd};
+pub use preconnection_commands::acp_list_preconnection_commands;
 pub use registry_commands::{acp_list_agents, acp_register_custom_agent};
 #[cfg(test)]
 pub(crate) use session_commands::persist_session_metadata_for_cwd;

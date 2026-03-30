@@ -17,6 +17,7 @@ export const CMD = {
 	acp: {
 		...acp,
 		set_config_option: "acp_set_config_option",
+		list_preconnection_commands: "acp_list_preconnection_commands",
 		reply_permission: "acp_reply_permission",
 		reply_question: "acp_reply_question",
 		respond_inbound_request: "acp_respond_inbound_request",

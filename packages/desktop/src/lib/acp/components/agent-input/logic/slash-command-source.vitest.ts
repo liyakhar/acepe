@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveSlashCommandSource } from "./slash-command-source.js";
+import {
+	resolveSlashCommandSource,
+	shouldShowSlashCommandDropdown,
+} from "./slash-command-source.js";
 
 describe("resolveSlashCommandSource", () => {
 	it("prefers live commands when they exist", () => {
@@ -75,5 +78,53 @@ describe("resolveSlashCommandSource", () => {
 			commands: [{ name: "ce:brainstorm", description: "Brainstorm" }],
 			tokenType: "skill",
 		});
+	});
+
+	it("shows the dropdown empty state when an agent is selected but no slash commands exist", () => {
+		const source = resolveSlashCommandSource({
+			liveCommands: [],
+			hasConnectedSession: false,
+			selectedAgentId: "opencode",
+			preconnectionCommands: [],
+		});
+
+		expect(
+			shouldShowSlashCommandDropdown({
+				isTriggerActive: true,
+				source,
+				capabilitiesAgentId: "opencode",
+			})
+		).toBe(true);
+	});
+
+	it("keeps the dropdown hidden when no agent context exists", () => {
+		const source = resolveSlashCommandSource({
+			liveCommands: [],
+			hasConnectedSession: false,
+			selectedAgentId: null,
+			preconnectionCommands: [],
+		});
+
+		expect(
+			shouldShowSlashCommandDropdown({
+				isTriggerActive: true,
+				source,
+				capabilitiesAgentId: null,
+			})
+		).toBe(false);
+	});
+
+	it("keeps the dropdown hidden when the slash trigger is inactive", () => {
+		expect(
+			shouldShowSlashCommandDropdown({
+				isTriggerActive: false,
+				source: {
+					source: "preconnection",
+					commands: [{ name: "ce:brainstorm", description: "Brainstorm" }],
+					tokenType: "skill",
+				},
+				capabilitiesAgentId: "opencode",
+			})
+		).toBe(false);
 	});
 });

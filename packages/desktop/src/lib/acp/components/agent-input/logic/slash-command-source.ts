@@ -6,6 +6,22 @@ export type SlashCommandSource = {
 	tokenType: "command" | "skill";
 };
 
+export function shouldShowSlashCommandDropdown(input: {
+	isTriggerActive: boolean;
+	source: SlashCommandSource;
+	capabilitiesAgentId: string | null;
+}): boolean {
+	if (!input.isTriggerActive) {
+		return false;
+	}
+
+	if (input.source.source !== "none") {
+		return true;
+	}
+
+	return input.capabilitiesAgentId ? true : false;
+}
+
 export function resolveSlashCommandSource(input: {
 	liveCommands: ReadonlyArray<AvailableCommand>;
 	hasConnectedSession: boolean;

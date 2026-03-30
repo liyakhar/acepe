@@ -23,6 +23,7 @@ import { getSessionStore } from "../../../store/session-store.svelte.js";
 import { mergeStrategyStore } from "../../../store/merge-strategy-store.svelte.js";
 import { normalizeTitleForDisplay } from "../../../store/session-title-policy.js";
 import type { ModifiedFilesState } from "../../../types/modified-files-state.js";
+import { PanelConnectionEvent } from "../../../types/panel-connection-state.js";
 import { PanelConnectionState } from "../../../types/panel-connection-state.js";
 import type { WorktreeSetupEvent } from "../../../types/worktree-setup.js";
 import type { WorktreeInfo } from "../../../types/worktree-info.js";
@@ -31,6 +32,7 @@ import { getProjectColor, TAG_COLORS } from "../../../utils/colors";
 import { createLogger } from "../../../utils/logger.js";
 import { sessionEntriesToMarkdown } from "../../../utils/session-to-markdown.js";
 import AgentInput from "../../agent-input/agent-input-ui.svelte";
+import { shouldDisableSendForFailedFirstSend } from "../../agent-input/logic/first-send-recovery.js";
 import { CheckpointTimeline } from "../../checkpoint/index.js";
 import { aggregateFileEdits } from "../../modified-files/logic/aggregate-file-edits.js";
 import ModifiedFilesHeader, { type PrGenerationConfig } from "../../modified-files/modified-files-header.svelte";
@@ -153,8 +155,9 @@ const sessionMetadata = $derived(sessionId ? sessionStore.getSessionMetadata(ses
 // Note: getHotState(panelId) subscribes to ALL hot state changes for this panel (messageDraft,
 // reviewMode, etc.), not just pendingUserEntry. This causes extra recomputations during typing,
 // but the fast path returns the same array reference so Svelte skips DOM updates. Acceptable trade-off.
+const panelHotState = $derived(panelId ? panelStore.getHotState(panelId) : null);
 const sessionEntries = $derived.by(() => {
-	const pending = panelId ? panelStore.getHotState(panelId)?.pendingUserEntry : null;
+	const pending = panelHotState?.pendingUserEntry ?? null;
 	const real = sessionId ? sessionStore.getEntries(sessionId) : [];
 	if (!pending) return real;
 	if (real.length > 0 && real[0]?.type === "user") return real;
@@ -332,6 +335,14 @@ const sessionIsStreaming = $derived(runtimeState?.activityPhase === "running");
 const sessionCanSubmit = $derived(runtimeState?.canSubmit ?? false);
 const sessionShowStop = $derived(runtimeState?.showStop ?? false);
 const sessionConnectionError = $derived(sessionHotState?.connectionError ?? null);
+const disableSendForFailedFirstSend = $derived(
+	panelConnectionState
+		? shouldDisableSendForFailedFirstSend({
+				hasSession: Boolean(sessionId),
+				panelConnectionState,
+			})
+		: false
+);
 const errorInfo = $derived.by(() =>
 	derivePanelErrorInfo({
 		panelConnectionState,
@@ -541,7 +552,10 @@ const sessionUpdatedAt = $derived(sessionMetadata?.updatedAt ?? null);
 const agentIconSrc = $derived(getAgentIcon(agentName, effectiveTheme));
 const isConnecting = $derived(
 	panelConnectionState === PanelConnectionState.CONNECTING ||
-		(!sessionId && panelId ? panelStore.getHotState(panelId).pendingUserEntry !== null : false)
+		(!sessionId && panelId ? panelHotState?.pendingUserEntry !== null : false)
+);
+const inputRenderKey = $derived(
+	`${panelId ?? "no-panel"}:${panelHotState?.composerRestoreVersion ?? 0}`
 );
 const branchLookupPath = $derived(
 	(worktreeDeleted ? null : effectiveActiveWorktreePath) ?? effectiveProjectPath ?? null
@@ -1384,6 +1398,12 @@ function handlePanelKeyDown(e: KeyboardEvent) {
 }
 
 function handleRetryConnection() {
+	if (!sessionId && panelId && panelConnectionState === PanelConnectionState.ERROR) {
+		connectionStore.send(panelId, { type: PanelConnectionEvent.CANCEL });
+		errorDismissed = false;
+		return;
+	}
+
 	// Retry session creation using panel's current project and agent
 	if (project && selectedAgentId) {
 		void installAgentThenCreateSession(project, selectedAgentId);
@@ -1744,7 +1764,7 @@ function handleCheckpointRevertComplete() {
 						data-input-area
 					>
 						<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-							{#key panelId}
+							{#key inputRenderKey}
 								<AgentInput
 									sessionId={sessionId ?? undefined}
 									{sessionStatus}
@@ -1752,6 +1772,7 @@ function handleCheckpointRevertComplete() {
 									{sessionIsStreaming}
 									{sessionCanSubmit}
 									{sessionShowStop}
+									disableSend={disableSendForFailedFirstSend}
 								{panelId}
 								voiceSessionId={panelId}
 								projectPath={worktreeToggleProjectPath ?? undefined}

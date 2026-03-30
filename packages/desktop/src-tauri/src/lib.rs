@@ -35,7 +35,7 @@ use browser_webview::{
 use acp::active_agent::ActiveAgent;
 use acp::commands::{
     acp_cancel, acp_close_session, acp_fork_session, acp_get_event_bridge_info, acp_initialize,
-    acp_install_agent, acp_list_agents, acp_new_session, acp_read_text_file,
+    acp_install_agent, acp_list_agents, acp_list_preconnection_commands, acp_new_session, acp_read_text_file,
     acp_register_custom_agent, acp_reply_permission, acp_reply_question,
     acp_respond_inbound_request, acp_resume_session, acp_send_prompt, acp_set_config_option,
     acp_set_mode, acp_set_model, acp_uninstall_agent, acp_write_text_file,
@@ -968,6 +968,7 @@ pub fn run() {
             acp_respond_inbound_request,
             acp_get_event_bridge_info,
             acp_list_agents,
+            acp_list_preconnection_commands,
             acp_install_agent,
             acp_uninstall_agent,
             acp_close_session,

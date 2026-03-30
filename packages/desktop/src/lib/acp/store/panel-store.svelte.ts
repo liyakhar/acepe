@@ -847,6 +847,26 @@ export class PanelStore {
 		return this.getHotState(panelId).messageDraft;
 	}
 
+	setPendingComposerRestore(
+		panelId: string,
+		restore: NonNullable<PanelHotState["pendingComposerRestore"]>
+	): void {
+		const current = this.getHotState(panelId);
+		this.updateHotState(panelId, {
+			pendingComposerRestore: restore,
+			composerRestoreVersion: current.composerRestoreVersion + 1,
+		});
+	}
+
+	consumePendingComposerRestore(panelId: string): PanelHotState["pendingComposerRestore"] {
+		const restore = this.getHotState(panelId).pendingComposerRestore;
+		if (restore === null) {
+			return null;
+		}
+		this.updateHotState(panelId, { pendingComposerRestore: null });
+		return restore;
+	}
+
 	// ============================================
 	// EMBEDDED TERMINAL DRAWER MANAGEMENT
 	// ============================================

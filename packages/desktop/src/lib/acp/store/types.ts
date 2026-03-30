@@ -34,6 +34,7 @@ export type {
 
 import type { ConfigOptionData } from "../../services/converted-session-types.js";
 import type { Mode, Model, SessionStatus } from "../application/dto/session";
+import type { ComposerRestoreSnapshot } from "../components/agent-input/logic/first-send-recovery.js";
 import type { ModifiedFilesState } from "../components/modified-files/types/modified-files-state";
 import type { AvailableCommand } from "../types/available-command";
 import type { SessionState } from "./session-state.js";
@@ -146,6 +147,10 @@ export interface PanelHotState {
 	readonly planSidebarExpanded: boolean;
 	/** Draft message text in the input field */
 	readonly messageDraft: string;
+	/** Pending full composer restore after a failed first-send handoff. */
+	readonly pendingComposerRestore: ComposerRestoreSnapshot | null;
+	/** Monotonic version used to remount the composer when restore data is queued. */
+	readonly composerRestoreVersion: number;
 	/** True when the embedded terminal drawer is open for this panel */
 	readonly embeddedTerminalDrawerOpen: boolean;
 	/** Optimistic user entry displayed before session creation completes (transient, not persisted) */
@@ -173,6 +178,8 @@ export const DEFAULT_PANEL_HOT_STATE: PanelHotState = {
 	browserSidebarExpanded: false,
 	browserSidebarUrl: null,
 	messageDraft: "",
+	pendingComposerRestore: null,
+	composerRestoreVersion: 0,
 	embeddedTerminalDrawerOpen: false,
 	pendingUserEntry: null,
 	pendingWorktreeSetup: null,

@@ -15,9 +15,11 @@ import { getPreconnectionAgentSkillsStore } from "$lib/skills/store/preconnectio
 import { getVoiceSettingsStore } from "$lib/stores/voice-settings-store.svelte.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
 import * as agentModelPrefs from "../../store/agent-model-preferences-store.svelte.js";
+import { getConnectionStore } from "../../store/connection-store.svelte.js";
 import { getMessageQueueStore, getPanelStore, getSessionStore } from "../../store/index.js";
 import type { AvailableCommand } from "../../types/available-command.js";
 import { CanonicalModeId } from "../../types/canonical-mode-id.js";
+import { PanelConnectionEvent } from "../../types/panel-connection-state.js";
 import { createLogger } from "../../utils/logger.js";
 import { filterVisibleModes } from "../../utils/mode-filter.js";
 import { ArtefactBadge } from "../artefact/index.js";
@@ -57,7 +59,11 @@ import {
 	parseFilePickerTrigger,
 	parseSlashCommandTrigger,
 } from "./logic/input-parser.js";
-import { resolveSlashCommandSource } from "./logic/slash-command-source.js";
+import {
+	resolveSlashCommandSource,
+	shouldShowSlashCommandDropdown,
+} from "./logic/slash-command-source.js";
+import { PreconnectionRemoteCommandsState } from "./logic/preconnection-remote-commands-state.svelte.js";
 import { type PreparedMessage, prepareMessageForSend } from "./logic/message-preparation.js";
 import {
 	isPrimaryButtonDisabled,
@@ -76,6 +82,11 @@ import {
 	shouldClearPersistedDraftBeforeAsyncSend,
 	shouldRestoreInitialDraft,
 } from "$lib/components/main-app-view/components/content/logic/empty-state-send-state.js";
+import {
+	formatPreSessionSendFailure,
+	restoreComposerStateAfterFailedSend,
+	type ComposerRestoreSnapshot,
+} from "./logic/first-send-recovery.js";
 import { normalizeVoiceInputText } from "./logic/voice-input-text.js";
 import {
 	shouldRouteWindowVoiceHold,
@@ -83,6 +94,7 @@ import {
 	shouldStopVoiceHold,
 } from "./logic/voice-keyboard.js";
 import { resolveVoiceStateLifecycle } from "./logic/voice-state-lifecycle.js";
+import { SessionCreationError } from "./errors/agent-input-error.js";
 import { AgentInputState } from "./state/agent-input-state.svelte.js";
 import type { AgentInputProps } from "./types/agent-input-props.js";
 
@@ -93,9 +105,11 @@ const kb = getKeybindingsService();
 
 const sessionStore = getSessionStore();
 const panelStore = getPanelStore();
+const connectionStore = getConnectionStore();
 const messageQueueStore = getMessageQueueStore();
 const preconnectionAgentSkillsStore = getPreconnectionAgentSkillsStore();
 const voiceSettingsStore = getVoiceSettingsStore();
+const preconnectionRemoteCommandsState = new PreconnectionRemoteCommandsState();
 const effectiveVoiceSessionId = $derived(props.voiceSessionId ?? props.sessionId ?? null);
 const filePickerProjectPath = $derived(
 	getEffectiveFilePickerProjectPath(props.projectPath, props.worktreePath)
@@ -214,7 +228,11 @@ const preconnectionAvailableCommands = $derived.by(() => {
 		return [];
 	}
 
-	return preconnectionAgentSkillsStore.getCommandsForAgent(capabilitiesAgentId);
+	return preconnectionRemoteCommandsState.getCommands({
+		agentId: capabilitiesAgentId,
+		projectPath: filePickerProjectPath,
+		skillCommands: preconnectionAgentSkillsStore.getCommandsForAgent(capabilitiesAgentId),
+	});
 });
 const slashCommandSource = $derived.by(() => {
 	return resolveSlashCommandSource({
@@ -225,8 +243,12 @@ const slashCommandSource = $derived.by(() => {
 	});
 });
 const effectiveAvailableCommands = $derived(slashCommandSource.commands);
-const isSlashDropdownVisible = $derived(
-	inputState.showSlashDropdown && slashCommandSource.source !== "none"
+const isSlashDropdownVisible = $derived.by(() =>
+	shouldShowSlashCommandDropdown({
+		isTriggerActive: inputState.showSlashDropdown,
+		source: slashCommandSource,
+		capabilitiesAgentId,
+	})
 );
 
 // Input is ready when we have a session or project path (loading state no longer blocks input)
@@ -533,15 +555,38 @@ function handleEditorInput(options?: { suppressAutocomplete?: boolean }): void {
 		} else {
 			inputState.showFileDropdown = false;
 			inputState.fileQuery = "";
+			const hasConnectedSession = sessionRuntimeState?.connectionPhase === "connected";
 
 			if (
 				capabilitiesAgentId &&
-				sessionRuntimeState?.connectionPhase !== "connected" &&
+				!hasConnectedSession &&
 				!preconnectionAgentSkillsStore.loaded &&
 				!preconnectionAgentSkillsStore.loading
 			) {
-				preconnectionAgentSkillsStore.ensureLoaded().mapErr(() => undefined);
+				preconnectionAgentSkillsStore.ensureLoaded().mapErr((error) => {
+					logger.error("Failed to warm preconnection skills", {
+						agentId: capabilitiesAgentId,
+						projectPath: filePickerProjectPath,
+						error: error.message,
+					});
+					return undefined;
+				});
 			}
+
+			preconnectionRemoteCommandsState
+				.ensureLoaded({
+					agentId: capabilitiesAgentId,
+					hasConnectedSession,
+					projectPath: filePickerProjectPath,
+				})
+				.mapErr((error) => {
+					logger.error("Failed to warm remote preconnection commands", {
+						agentId: capabilitiesAgentId,
+						projectPath: filePickerProjectPath,
+						error: error.message,
+					});
+					return undefined;
+				});
 
 			const slashTriggerResult = parseSlashCommandTrigger(inputState.message, cursorPos);
 			if (slashTriggerResult.isOk() && slashTriggerResult.value) {
@@ -683,17 +728,26 @@ onMount(() => {
 	inputState.initialize();
 	// Restore initial draft from PanelStore if panelId is provided
 	if (props.panelId) {
+		const pendingComposerRestore = panelStore.consumePendingComposerRestore(props.panelId);
 		const draft = panelStore.getMessageDraft(props.panelId);
 		const hasPendingUserEntry = panelHotState?.pendingUserEntry !== null;
 		logger.info("[first-send-trace] agent input mount", {
 			panelId: props.panelId,
 			sessionId: props.sessionId ?? null,
 			draftLength: draft.length,
+			hasPendingComposerRestore: pendingComposerRestore !== null,
 			hasPendingUserEntry,
 			hasPendingWorktreeSetup: panelHotState?.pendingWorktreeSetup !== null,
 			messageLengthBeforeRestore: inputState.message.length,
 		});
-		if (
+		if (pendingComposerRestore !== null) {
+			applyComposerRestoreSnapshot(pendingComposerRestore);
+			logger.info("[first-send-trace] restored pending composer snapshot on mount", {
+				panelId: props.panelId,
+				sessionId: props.sessionId ?? null,
+				draftLength: pendingComposerRestore.draft.length,
+			});
+		} else if (
 			shouldRestoreInitialDraft({
 				panelId: props.panelId,
 				sessionId: props.sessionId,
@@ -784,6 +838,68 @@ function clearDraft() {
 	}
 }
 
+function cloneAttachmentForRestore(
+	attachment: (typeof inputState.attachments)[number]
+): (typeof inputState.attachments)[number] {
+	if (attachment.content !== undefined) {
+		return {
+			id: attachment.id,
+			type: attachment.type,
+			path: attachment.path,
+			displayName: attachment.displayName,
+			extension: attachment.extension,
+			content: attachment.content,
+		};
+	}
+
+	return {
+		id: attachment.id,
+		type: attachment.type,
+		path: attachment.path,
+		displayName: attachment.displayName,
+		extension: attachment.extension,
+	};
+}
+
+function createComposerRestoreSnapshot(): ComposerRestoreSnapshot {
+	const inlineTextEntries: Array<[string, string]> = [];
+	for (const [refId, text] of inputState.inlineTextMap.entries()) {
+		inlineTextEntries.push([refId, text]);
+	}
+
+	const attachments = inputState.attachments.map((attachment) =>
+		cloneAttachmentForRestore(attachment)
+	);
+
+	return {
+		draft: inputState.message,
+		attachments,
+		inlineTextEntries,
+	};
+}
+
+function applyComposerRestoreSnapshot(snapshot: ComposerRestoreSnapshot): void {
+	if (draftDebounceTimer) {
+		clearTimeout(draftDebounceTimer);
+		draftDebounceTimer = null;
+	}
+
+	restoreComposerStateAfterFailedSend(inputState, snapshot);
+	lastDraftValue = snapshot.draft;
+	if (props.panelId) {
+		panelStore.setMessageDraft(props.panelId, snapshot.draft);
+	}
+	syncEditorFromMessage(inputState.message.length);
+	queueMicrotask(() => editorRef?.focus());
+	logger.info("[first-send-trace] restored composer snapshot", {
+		panelId: props.panelId ?? null,
+		sessionId: props.sessionId ?? null,
+		draftLength: snapshot.draft.length,
+		attachmentCount: snapshot.attachments.length,
+		inlineTextCount: snapshot.inlineTextEntries.length,
+	});
+}
+
 /**
  * Capture the current input, expand inline refs, serialize attachments,
  * validate, and clear the input state. All send paths call this first.
@@ -870,6 +986,8 @@ async function handleSend() {
 		t0_ms: Math.round(t0),
 	});
 	isSending = true;
+	const restoreSnapshot = createComposerRestoreSnapshot();
+	const isPreSessionSend = Boolean(props.panelId) && !props.sessionId;
 
 	// Capture and clear input before async work
 	const prepared = captureAndClearInput();
@@ -888,6 +1006,14 @@ async function handleSend() {
 		inputState.message = "";
 	}
 	props.onWillSend?.();
+	if (isPreSessionSend && props.panelId && props.projectPath && props.selectedAgentId) {
+		connectionStore.send(props.panelId, {
+			type: PanelConnectionEvent.START_CONNECTION,
+			projectPath: props.projectPath,
+			agentId: props.selectedAgentId,
+			title: props.projectName ?? undefined,
+		});
+	}
 	logger.info("[first-send-trace] prepared input", {
 		panelId: props.panelId ?? null,
 		sessionId: props.sessionId ?? null,
@@ -985,6 +1111,15 @@ async function handleSend() {
 		worktreePending: props.worktreePending ?? false,
 		worktreePathForSend: worktreePathForSend ?? null,
 	});
+	const handleSessionCreated = (createdSessionId: string) => {
+		if (isPreSessionSend && props.panelId) {
+			connectionStore.send(props.panelId, {
+				type: PanelConnectionEvent.CONNECTION_SUCCESS,
+				sessionId: createdSessionId,
+			});
+		}
+		props.onSessionCreated?.(createdSessionId);
+	};
 	inputState
 		.sendPreparedMessage({
 			content: prepared.content,
@@ -995,7 +1130,7 @@ async function handleSend() {
 			selectedAgentId: props.selectedAgentId,
 			projectPath: props.projectPath,
 			projectName: props.projectName,
-			onSessionCreated: props.onSessionCreated,
+			onSessionCreated: handleSessionCreated,
 			worktreePath: worktreePathForSend,
 			imageAttachments: prepared.imageAttachments,
 		})
@@ -1010,14 +1145,23 @@ async function handleSend() {
 				clearDraft();
 			}
 		})
-		.mapErr(() => {
+		.mapErr((error) => {
 			if (props.panelId) {
 				panelStore.clearPendingWorktreeSetup(props.panelId);
 			}
-			if (shouldClearDraftEarly && props.panelId) {
+			if (props.panelId && isPreSessionSend && error instanceof SessionCreationError) {
+				panelStore.setPendingComposerRestore(props.panelId, restoreSnapshot);
+				panelStore.setMessageDraft(props.panelId, restoreSnapshot.draft);
+				lastDraftValue = restoreSnapshot.draft;
+				connectionStore.send(props.panelId, {
+					type: PanelConnectionEvent.CONNECTION_ERROR,
+					error: formatPreSessionSendFailure(error),
+				});
+			} else if (shouldClearDraftEarly && props.panelId) {
 				panelStore.setMessageDraft(props.panelId, prepared.content);
 			}
 			// Error is logged in the state class
+			return error;
 		})
 		.match(
 			() => undefined,

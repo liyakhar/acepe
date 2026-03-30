@@ -124,6 +124,15 @@ impl OpenCodeHttpClient {
         );
         Ok(())
     }
+
+    pub async fn list_preconnection_commands(
+        &mut self,
+        directory: String,
+    ) -> AcpResult<Vec<crate::acp::session_update::AvailableCommand>> {
+        self.current_directory = Some(directory);
+        self.start().await?;
+        Ok(self.fetch_available_commands().await)
+    }
 }
 
 #[cfg(test)]
