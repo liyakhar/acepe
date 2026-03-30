@@ -50,6 +50,8 @@ use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher, Dispatch
 enum PendingPermissionKind {
     Tool {
         tool_call_id: String,
+        tool_name: String,
+        permission_suggestions: Vec<cc_sdk::PermissionUpdate>,
     },
     Question {
         tool_call_id: String,
@@ -66,7 +68,7 @@ enum PendingPermissionKind {
 impl PendingPermissionKind {
     fn tool_call_id(&self) -> &str {
         match self {
-            Self::Tool { tool_call_id }
+            Self::Tool { tool_call_id, .. }
             | Self::Question { tool_call_id, .. }
             | Self::Hook { tool_call_id, .. } => tool_call_id,
         }
@@ -513,9 +515,15 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 request_id,
                 PendingPermissionKind::Tool {
                     tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.to_string(),
+                    permission_suggestions: _ctx.suggestions.clone(),
                 },
             )
             .await;
+        let has_always_option = _ctx
+            .suggestions
+            .iter()
+            .any(permission_suggestion_supports_always);
         tracing::info!(
             session_id = %self.session_id,
             request_id = request_id,
@@ -523,7 +531,7 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
             tool_call_id = %tool_call_id,
             "cc-sdk permission request emitted"
         );
-        let permission_json = serde_json::json!({
+        let mut permission_json = serde_json::json!({
             "jsonrpc": "2.0",
             "id": request_id,
             "method": "session/request_permission",
@@ -531,6 +539,7 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 "sessionId": self.session_id,
                 "options": [
                     { "kind": "allow", "name": "Allow once", "optionId": "allow" },
+                    { "kind": "allow_always", "name": "Always allow", "optionId": "allow_always" },
                     { "kind": "reject", "name": "Reject", "optionId": "reject" }
                 ],
                 "toolCall": {
@@ -541,6 +550,12 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 }
             }
         });
+        if !has_always_option {
+            permission_json["params"]["options"] = serde_json::json!([
+                { "kind": "allow", "name": "Allow once", "optionId": "allow" },
+                { "kind": "reject", "name": "Reject", "optionId": "reject" }
+            ]);
+        }
         self.dispatcher
             .enqueue(AcpUiEvent::inbound_request(permission_json));
 
@@ -762,6 +777,11 @@ impl CcSdkClaudeClient {
         let mut builder = cc_sdk::ClaudeCodeOptions::builder().cwd(PathBuf::from(cwd));
         builder = builder.session_id(session_id.to_string());
         builder = builder.include_partial_messages(true);
+        builder = builder.setting_sources(vec![
+            cc_sdk::SettingSource::User,
+            cc_sdk::SettingSource::Project,
+            cc_sdk::SettingSource::Local,
+        ]);
 
         if let Some(mode_id) = &self.pending_mode_id {
             builder = builder.permission_mode(map_to_claude_permission_mode(mode_id));
@@ -1497,9 +1517,20 @@ fn permission_result_from_ui_result(
             PendingPermissionKind::Tool { .. } | PendingPermissionKind::Hook { .. } => None,
         };
 
+        let updated_permissions = match kind {
+            PendingPermissionKind::Tool {
+                tool_name,
+                permission_suggestions,
+                ..
+            } if selected_option_id(result) == Some("allow_always") => {
+                Some(choose_always_permission_updates(tool_name, permission_suggestions))
+            }
+            _ => None,
+        };
+
         cc_sdk::PermissionResult::Allow(cc_sdk::PermissionResultAllow {
             updated_input,
-            updated_permissions: None,
+            updated_permissions,
         })
     } else {
         cc_sdk::PermissionResult::Deny(cc_sdk::PermissionResultDeny {
@@ -2073,7 +2104,25 @@ impl AgentClient for CcSdkClaudeClient {
         self.send_user_message_text(text).await
     }
 
-    async fn cancel(&mut self, _session_id: String) -> AcpResult<()> {
+    async fn cancel(&mut self, session_id: String) -> AcpResult<()> {
+        let pending_question_ids = {
+            let pending_questions = self.pending_questions.lock().await;
+            pending_questions
+                .iter()
+                .filter_map(|(question_id, pending_question)| {
+                    if pending_question.session_id == session_id {
+                        Some(question_id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for question_id in pending_question_ids {
+            let _ = self.reply_question(question_id, Vec::new()).await?;
+        }
+
         if let Some(sdk_client) = &self.sdk_client {
             // Ignore interrupt errors — the session may already be idle.
             let _ = sdk_client.lock().await.interrupt().await;
@@ -2132,9 +2181,9 @@ impl AgentClient for CcSdkClaudeClient {
         };
 
         if question_answers_are_empty(&answers) {
-            self.pending_questions.lock().await.remove(&request_id);
-
             if pending_question.request_id == 0 {
+                self.pending_questions.lock().await.remove(&request_id);
+
                 tracing::info!(
                     question_id = %request_id,
                     "cc-sdk stream-only question cancelled"
@@ -2472,6 +2521,14 @@ mod tests {
             .as_ref()
             .and_then(|hooks| hooks.get("PermissionRequest"))
             .is_some());
+        assert_eq!(
+            options.setting_sources,
+            Some(vec![
+                cc_sdk::SettingSource::User,
+                cc_sdk::SettingSource::Project,
+                cc_sdk::SettingSource::Local,
+            ])
+        );
     }
 
     #[test]
@@ -2563,6 +2620,8 @@ mod tests {
                 id,
                 PendingPermissionKind::Tool {
                     tool_call_id: "toolu_permission".to_string(),
+                    tool_name: "Bash".to_string(),
+                    permission_suggestions: Vec::new(),
                 },
             )
             .await;
@@ -2586,10 +2645,11 @@ mod tests {
                 id,
                 PendingPermissionKind::Tool {
                     tool_call_id: "toolu_permission".to_string(),
+                    tool_name: "Bash".to_string(),
+                    permission_suggestions: Vec::new(),
                 },
             )
             .await;
-
         let result = serde_json::json!({
             "outcome": { "outcome": "cancelled", "optionId": "reject" }
         });
@@ -2597,6 +2657,101 @@ mod tests {
 
         let resolved = rx.await.expect("channel closed");
         assert!(matches!(resolved, cc_sdk::PermissionResult::Deny(_)));
+    }
+
+    #[tokio::test]
+    async fn cancel_resolves_pending_question_for_matching_session() {
+        let mut client = make_test_client();
+        let id = client.permission_bridge.next_id();
+        let rx = client
+            .permission_bridge
+            .register(
+                id,
+                PendingPermissionKind::Question {
+                    tool_call_id: "toolu_question".to_string(),
+                    original_input: serde_json::json!({
+                        "questions": [{
+                            "question": "Pick one",
+                            "header": "Pick one",
+                            "options": [],
+                            "multiSelect": false
+                        }]
+                    }),
+                },
+            )
+            .await;
+
+        client.pending_questions.lock().await.insert(
+            "toolu_question".to_string(),
+            PendingQuestionState {
+                request_id: id,
+                session_id: "session-stop".to_string(),
+                questions: Some(vec![QuestionItem {
+                    question: "Pick one".to_string(),
+                    header: "Pick one".to_string(),
+                    options: vec![],
+                    multi_select: false,
+                }]),
+                ui_emitted: true,
+            },
+        );
+
+        client
+            .cancel("session-stop".to_string())
+            .await
+            .expect("cancel failed");
+
+        let resolved = rx.await.expect("channel closed");
+        assert!(matches!(resolved, cc_sdk::PermissionResult::Deny(_)));
+        assert!(client.pending_questions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn respond_selected_allow_always_resolves_updated_permissions_for_regular_tools() {
+        let client = make_test_client();
+        let id = client.permission_bridge.next_id();
+        let rx = client
+            .permission_bridge
+            .register(
+                id,
+                PendingPermissionKind::Tool {
+                    tool_call_id: "toolu_permission".to_string(),
+                    tool_name: "Bash".to_string(),
+                    permission_suggestions: vec![cc_sdk::PermissionUpdate {
+                        update_type: cc_sdk::PermissionUpdateType::AddRules,
+                        rules: Some(vec![cc_sdk::PermissionRuleValue {
+                            tool_name: "Bash".to_string(),
+                            rule_content: None,
+                        }]),
+                        behavior: Some(cc_sdk::PermissionBehavior::Allow),
+                        mode: None,
+                        directories: None,
+                        destination: Some(cc_sdk::PermissionUpdateDestination::Session),
+                    }],
+                },
+            )
+            .await;
+
+        let result = serde_json::json!({
+            "outcome": { "outcome": "selected", "optionId": "allow_always" }
+        });
+        client.respond(id, result).await.expect("respond failed");
+
+        let resolved = rx.await.expect("channel closed");
+        let allow = match resolved {
+            cc_sdk::PermissionResult::Allow(allow) => allow,
+            other => panic!("expected allow result, got {:?}", other),
+        };
+
+        assert_eq!(allow.updated_permissions.as_ref().map(Vec::len), Some(1));
+        assert_eq!(
+            allow
+                .updated_permissions
+                .as_ref()
+                .and_then(|updates| updates.first())
+                .map(|update| update.update_type),
+            Some(cc_sdk::PermissionUpdateType::AddRules)
+        );
     }
 
     #[tokio::test]
@@ -2876,6 +3031,90 @@ mod tests {
             "toolu_tracked_123"
         );
         assert_eq!(payload["params"]["toolCall"]["name"], "Bash");
+    }
+
+    #[tokio::test]
+    async fn can_use_tool_emits_allow_always_option_when_sdk_suggests_persistent_allow() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let bridge = Arc::new(PermissionBridge::new());
+        let tracker = Arc::new(ToolCallIdTracker::new());
+        let provider = crate::acp::providers::claude_code::ClaudeCodeProvider;
+        tracker
+            .record("Bash".to_string(), "toolu_tracked_456".to_string())
+            .await;
+
+        let handler = AcepePermissionHandler {
+            session_id: "session-allow-always".to_string(),
+            agent_type: provider.parser_agent_type(),
+            bridge: bridge.clone(),
+            dispatcher,
+            tool_call_tracker: tracker,
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+        };
+
+        let resolver_bridge = bridge.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            resolver_bridge
+                .resolve(
+                    1,
+                    cc_sdk::PermissionResult::Allow(cc_sdk::PermissionResultAllow {
+                        updated_input: None,
+                        updated_permissions: Some(vec![cc_sdk::PermissionUpdate {
+                            update_type: cc_sdk::PermissionUpdateType::AddRules,
+                            rules: Some(vec![cc_sdk::PermissionRuleValue {
+                                tool_name: "Bash".to_string(),
+                                rule_content: None,
+                            }]),
+                            behavior: Some(cc_sdk::PermissionBehavior::Allow),
+                            mode: None,
+                            directories: None,
+                            destination: Some(cc_sdk::PermissionUpdateDestination::Session),
+                        }]),
+                    }),
+                )
+                .await;
+        });
+
+        let context = cc_sdk::ToolPermissionContext {
+            signal: None,
+            suggestions: vec![cc_sdk::PermissionUpdate {
+                update_type: cc_sdk::PermissionUpdateType::AddRules,
+                rules: Some(vec![cc_sdk::PermissionRuleValue {
+                    tool_name: "Bash".to_string(),
+                    rule_content: None,
+                }]),
+                behavior: Some(cc_sdk::PermissionBehavior::Allow),
+                mode: None,
+                directories: None,
+                destination: Some(cc_sdk::PermissionUpdateDestination::Session),
+            }],
+        };
+
+        let result = handler
+            .can_use_tool(
+                "Bash",
+                &serde_json::json!({ "command": "echo ok" }),
+                &context,
+            )
+            .await;
+
+        assert!(matches!(result, cc_sdk::PermissionResult::Allow(_)));
+
+        let captured = sink.lock().expect("sink lock");
+        assert_eq!(captured.len(), 1);
+        let event = &captured[0];
+        let payload = match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::Json(value) => value,
+            other => panic!("expected json payload, got {:?}", other),
+        };
+        let options = payload["params"]["options"]
+            .as_array()
+            .expect("options should be an array");
+        assert_eq!(options.len(), 3);
+        assert_eq!(options[1]["kind"], "allow_always");
+        assert_eq!(options[1]["optionId"], "allow_always");
     }
 
     #[tokio::test]
