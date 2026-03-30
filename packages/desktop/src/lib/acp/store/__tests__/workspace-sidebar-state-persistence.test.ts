@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { okAsync } from "neverthrow";
 import { SvelteMap } from "svelte/reactivity";
 
-import type { Panel } from "../types.js";
+import type { Panel, WorkspacePanel } from "../types.js";
 
 type TerminalPanelGroupStub = {
 	id: string;
@@ -38,7 +38,7 @@ import { WorkspaceStore } from "../workspace-store.svelte.js";
 
 function createPanelStoreStub() {
 	const store = {
-		workspacePanels: [],
+		workspacePanels: [] as WorkspacePanel[],
 		panels: [] as Panel[],
 		filePanels: [],
 		terminalPanelGroups: [] as TerminalPanelGroupStub[],
@@ -48,15 +48,29 @@ function createPanelStoreStub() {
 		reviewPanels: [],
 		gitPanels: [],
 		scrollX: 0,
-		focusedPanelId: null,
-		fullscreenPanelId: null,
-		viewMode: "multi",
+		focusedPanelId: null as string | null,
+		fullscreenPanelId: null as string | null,
+		viewMode: "multi" as "single" | "project" | "multi",
 		focusedViewProjectPath: null,
 		embeddedTerminals: {
 			serialize: mock(() => []),
 			restore: mock(() => {}),
 			getSelectedTabId: mock(() => null),
 		},
+		switchFullscreen: mock((panelId: string) => {
+			store.fullscreenPanelId = panelId;
+		}),
+		ensureSingleViewForAgentFullscreen: mock(() => {
+			if (
+				store.fullscreenPanelId &&
+				store.workspacePanels.some(
+					(panel: WorkspacePanel) =>
+						panel.id === store.fullscreenPanelId && panel.kind === "agent"
+				)
+			) {
+				store.viewMode = "single";
+			}
+		}),
 		getTerminalPanelGroup: mock(() => undefined),
 		getTerminalTabsForGroup: mock(() => []),
 		getActiveFilePanelIdByOwnerPanelIdRecord: mock(() => ({})),
