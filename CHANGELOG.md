@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.3.37] - 2026-03-30
+
+### Changed
+- Desktop updates now predownload in the background for already-open apps and only install plus relaunch after you click Update
+
+### Fixed
+- Dev update previews now route through the simulation flow instead of the production installer path
+
 ## [2026.3.36] - 2026-03-30
 
 ### Changed
