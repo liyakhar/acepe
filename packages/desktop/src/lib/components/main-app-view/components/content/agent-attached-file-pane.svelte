@@ -96,10 +96,10 @@ function getGitDiffStats(filePanel: FilePanelType): { added: number; removed: nu
 
 {#if activeFilePanel}
 	<div
-		class="flex h-full min-h-0 shrink-0 flex-col gap-0"
+		class="flex h-full min-h-0 shrink-0 flex-col gap-0 overflow-hidden"
 		style={`min-width: ${columnWidth}px; width: ${columnWidth}px; max-width: ${columnWidth}px; flex-basis: ${columnWidth}px;`}
 	>
-		<div class="flex min-h-8 items-center overflow-x-auto border-r border-border bg-muted/20">
+		<div class="flex min-h-8 shrink-0 items-center overflow-x-auto border-r border-border bg-muted/20">
 			{#each filePanels as filePanel (filePanel.id)}
 				{@const fileName = filePanel.filePath.split("/").pop() ?? filePanel.filePath}
 				{@const diffStats = getGitDiffStats(filePanel)}
@@ -136,22 +136,24 @@ function getGitDiffStats(filePanel: FilePanelType): { added: number; removed: nu
 				</div>
 			{/each}
 		</div>
-		<FilePanel
-			panelId={activeFilePanel.id}
-			filePath={activeFilePanel.filePath}
-			projectPath={activeFilePanel.projectPath}
-			projectName={projects.find((project) => project.path === activeFilePanel.projectPath)?.name ??
-				m.project_unknown()}
-			projectColor={projects.find((project) => project.path === activeFilePanel.projectPath)?.color}
-			width={activeFilePanel.width}
-			isFullscreenEmbedded={true}
-			hideProjectBadge={true}
-			compactHeader={true}
-			useReadOnlyPierreView={true}
-			flatStyle={true}
-			onClose={() => onCloseFilePanel(activeFilePanel.id)}
-			onResize={(panelId, delta) => onResizeFilePanel(panelId, delta)}
-		/>
+		<div class="min-h-0 flex-1 overflow-hidden">
+			<FilePanel
+				panelId={activeFilePanel.id}
+				filePath={activeFilePanel.filePath}
+				projectPath={activeFilePanel.projectPath}
+				projectName={projects.find((project) => project.path === activeFilePanel.projectPath)?.name ??
+					m.project_unknown()}
+				projectColor={projects.find((project) => project.path === activeFilePanel.projectPath)?.color}
+				width={activeFilePanel.width}
+				isFullscreenEmbedded={true}
+				hideProjectBadge={true}
+				compactHeader={true}
+				useReadOnlyPierreView={true}
+				flatStyle={true}
+				onClose={() => onCloseFilePanel(activeFilePanel.id)}
+				onResize={(panelId, delta) => onResizeFilePanel(panelId, delta)}
+			/>
+		</div>
 	</div>
 {/if}
 
