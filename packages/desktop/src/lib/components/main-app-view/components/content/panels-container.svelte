@@ -216,168 +216,162 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 <div class="flex flex-col flex-1 min-h-0 gap-0.5">
 	<!-- Tabs are now rendered in parent (main-app-view.svelte) via TabBar -->
 	<div
-		class="flex flex-row items-stretch gap-0.5 flex-1 min-h-0 {isAuxOnlyFullscreen
+		class="flex flex-row items-stretch gap-0.5 flex-1 min-h-0 {viewModeState.isFullscreenMode
 			? 'overflow-hidden'
 			: 'overflow-x-auto'}"
 	>
-		<!-- Fullscreen agent panel -->
-		{#if viewModeState.isFullscreenMode && fullscreenPanel}
-			{@const effectiveTheme = themeState.effectiveTheme}
-			{@const projectPath = fullscreenPanelSnapshot.sessionProjectPath}
-			{@const project = projectPath
-				? (projectManager.projects.find((p) => p.path === projectPath) ?? null)
-				: null}
-			{@const availableAgents = agentPreferencesStore
-				.getPanelSelectableAgents(agentStore.agents)
-				.map((a) => ({
-					id: a.id,
-					name: a.name,
-					icon: a.icon,
-					availability_kind: a.availability_kind,
-				}))}
-			{@const selectedAgentId = fullscreenPanelSnapshot.selectedAgentId
-				? availableAgents.some((agent) => agent.id === fullscreenPanelSnapshot.selectedAgentId)
-					? fullscreenPanelSnapshot.selectedAgentId
-					: null
-				: null}
-			{#snippet fullscreenInner()}
-				<div class="flex h-full flex-1 min-w-0 min-h-0 gap-0.5">
-					{#if fullscreenAuxPanel && fullscreenAuxPanel.kind !== "git"}
-						<div
-							class="h-full min-h-0 shrink-0 min-w-[18rem] max-w-[45%]"
-							style={fullscreenAuxPanelWidthStyle ?? undefined}
-						>
-							{#if fullscreenAuxPanel.kind === "file"}
-								{@const filePanel = fullscreenAuxPanel.panel}
-								{@const fileProject = projectManager.projects.find(
-									(p) => p.path === filePanel.projectPath
-								)}
-								<FilePanel
-									panelId={filePanel.id}
-									filePath={filePanel.filePath}
-									projectPath={filePanel.projectPath}
-									projectName={fileProject?.name ?? m.project_unknown()}
-									projectColor={fileProject?.color}
-									width={filePanel.width}
-									isFullscreenEmbedded={true}
-									hideProjectBadge={true}
-									onClose={() => panelStore.closeFilePanel(filePanel.id)}
-									onResize={(panelId, delta) => panelStore.resizeFilePanel(panelId, delta)}
-								/>
-							{:else if fullscreenAuxPanel.kind === "review"}
-								{@const reviewPanel = fullscreenAuxPanel.panel}
-								<ReviewPanel
-									panelId={reviewPanel.id}
-									projectPath={reviewPanel.projectPath}
-									modifiedFilesState={reviewPanel.modifiedFilesState}
-									selectedFileIndex={reviewPanel.selectedFileIndex}
-									width={reviewPanel.width}
-									isFullscreenEmbedded={true}
-									onClose={() => panelStore.closeReviewPanel(reviewPanel.id)}
-									onResize={(panelId, delta) => panelStore.resizeReviewPanel(panelId, delta)}
-									onSelectFile={(index) =>
-										panelStore.updateReviewPanelFileIndex(reviewPanel.id, index)}
-								/>
-							{:else if fullscreenAuxPanel.kind === "terminal"}
-								{@const terminalGroup = fullscreenAuxPanel.panel}
-								{@const terminalProject = projectManager.projects.find(
-									(p) => p.path === terminalGroup.projectPath
-								)}
-								<TerminalTabs
-									group={terminalGroup}
-									tabs={panelStore.getTerminalTabsForGroup(terminalGroup.id)}
-									projectPath={terminalGroup.projectPath}
-									projectName={terminalProject?.name ?? m.project_unknown()}
-									projectColor={terminalProject?.color ?? "#4AD0FF"}
-									{panelStore}
-								/>
-							{:else}
-								{@const browserPanel = fullscreenAuxPanel.panel}
-								<BrowserPanel
-									panelId={browserPanel.id}
-									url={browserPanel.url}
-									title={browserPanel.title}
-									width={browserPanel.width}
-									isFullscreenEmbedded={true}
-									onClose={() => panelStore.closeBrowserPanel(browserPanel.id)}
-									onResize={(panelId, delta) => panelStore.resizeBrowserPanel(panelId, delta)}
-								/>
-							{/if}
-						</div>
-					{/if}
-
-					<div class="relative h-full min-h-0 min-w-0 flex-1">
-						<AgentPanel
-							panelId={fullscreenPanelSnapshot.panelId}
-							sessionId={fullscreenPanelSnapshot.sessionId}
-							width={fullscreenPanelSnapshot.width}
-							pendingProjectSelection={fullscreenPanelSnapshot.pendingProjectSelection}
-							isWaitingForSession={fullscreenPanelSnapshot.isWaitingForSession}
-							projectCount={projectManager.projectCount}
-							allProjects={projectManager.projects}
-							{project}
-							{selectedAgentId}
-							{availableAgents}
-							onAgentChange={(agentId) =>
-								state.handlePanelAgentChange(fullscreenPanelSnapshot.panelId, agentId)}
-							{effectiveTheme}
-							isFullscreen={true}
-							isFocused={panelStore.focusedPanelId === fullscreenPanelSnapshot.panelId}
-							onClose={() => state.handleClosePanel(fullscreenPanelSnapshot.panelId)}
-							onCreateSessionForProject={(project) =>
-								state
-									.handleCreateSessionForProject(fullscreenPanelSnapshot.panelId, project)
-									.mapErr(() => {
-										// Error handling is done in the handler
-									})}
-							onSessionCreated={(sessionId) =>
-								panelStore.updatePanelSession(fullscreenPanelSnapshot.panelId, sessionId)}
-							onResizePanel={(panelId, delta) => state.handleResizePanel(panelId, delta)}
-							onToggleFullscreen={() =>
-								state.handleToggleFullscreen(fullscreenPanelSnapshot.panelId)}
-							onFocus={() => state.handleFocusPanel(fullscreenPanelSnapshot.panelId)}
-							hideProjectBadge={!viewModeState.isSingleMode}
-							reviewMode={fullscreenPanelSnapshot.reviewMode}
-							reviewFilesState={fullscreenPanelSnapshot.reviewFilesState}
-							reviewFileIndex={fullscreenPanelSnapshot.reviewFileIndex}
-							onEnterReviewMode={(modifiedFilesState, initialFileIndex) =>
-								panelStore.enterReviewMode(
-									fullscreenPanelSnapshot.panelId,
-									modifiedFilesState,
-									initialFileIndex
-								)}
-							onExitReviewMode={() => panelStore.exitReviewMode(fullscreenPanelSnapshot.panelId)}
-							onReviewFileIndexChange={(index) =>
-								panelStore.setReviewFileIndex(fullscreenPanelSnapshot.panelId, index)}
-							onOpenFullscreenReview={fullscreenPanelSnapshot.sessionId
-								? (sessionId, fileIndex) => state.openReviewFullscreen(sessionId, fileIndex)
-								: undefined}
-							attachedFilePanels={panelStore.getAttachedFilePanels(fullscreenPanelSnapshot.panelId)}
-							activeAttachedFilePanelId={panelStore.getActiveFilePanelId(
-								fullscreenPanelSnapshot.panelId
+		<!-- Fullscreen top-level panel -->
+		{#if viewModeState.isFullscreenMode && fullscreenTopLevelPanel}
+			{#if fullscreenTopLevelPanel.kind === "agent"}
+				{@const effectiveTheme = themeState.effectiveTheme}
+				{@const projectPath = fullscreenPanelSnapshot.sessionProjectPath}
+				{@const project = projectPath
+					? (projectManager.projects.find((p) => p.path === projectPath) ?? null)
+					: null}
+				{@const availableAgents = agentPreferencesStore
+					.getPanelSelectableAgents(agentStore.agents)
+					.map((a) => ({
+						id: a.id,
+						name: a.name,
+						icon: a.icon,
+						availability_kind: a.availability_kind,
+					}))}
+				{@const selectedAgentId = fullscreenPanelSnapshot.selectedAgentId
+					? availableAgents.some((agent) => agent.id === fullscreenPanelSnapshot.selectedAgentId)
+						? fullscreenPanelSnapshot.selectedAgentId
+						: null
+					: null}
+				<div class="relative h-full min-h-0 min-w-0 flex-1">
+					<AgentPanel
+						panelId={fullscreenPanelSnapshot.panelId}
+						sessionId={fullscreenPanelSnapshot.sessionId}
+						width={fullscreenPanelSnapshot.width}
+						pendingProjectSelection={fullscreenPanelSnapshot.pendingProjectSelection}
+						isWaitingForSession={fullscreenPanelSnapshot.isWaitingForSession}
+						projectCount={projectManager.projectCount}
+						allProjects={projectManager.projects}
+						{project}
+						{selectedAgentId}
+						{availableAgents}
+						onAgentChange={(agentId) =>
+							state.handlePanelAgentChange(fullscreenPanelSnapshot.panelId, agentId)}
+						{effectiveTheme}
+						isFullscreen={true}
+						isFocused={panelStore.focusedPanelId === fullscreenPanelSnapshot.panelId}
+						onClose={() => state.handleClosePanel(fullscreenPanelSnapshot.panelId)}
+						onCreateSessionForProject={(project) =>
+							state
+								.handleCreateSessionForProject(fullscreenPanelSnapshot.panelId, project)
+								.mapErr(() => {
+									// Error handling is done in the handler
+								})}
+						onSessionCreated={(sessionId) =>
+							panelStore.updatePanelSession(fullscreenPanelSnapshot.panelId, sessionId)}
+						onResizePanel={(panelId, delta) => state.handleResizePanel(panelId, delta)}
+						onToggleFullscreen={() =>
+							state.handleToggleFullscreen(fullscreenPanelSnapshot.panelId)}
+						onFocus={() => state.handleFocusPanel(fullscreenPanelSnapshot.panelId)}
+						hideProjectBadge={true}
+						reviewMode={fullscreenPanelSnapshot.reviewMode}
+						reviewFilesState={fullscreenPanelSnapshot.reviewFilesState}
+						reviewFileIndex={fullscreenPanelSnapshot.reviewFileIndex}
+						onEnterReviewMode={(modifiedFilesState, initialFileIndex) =>
+							panelStore.enterReviewMode(
+								fullscreenPanelSnapshot.panelId,
+								modifiedFilesState,
+								initialFileIndex
 							)}
-							onSelectAttachedFilePanel={(ownerPanelId, panelId) =>
-								panelStore.setActiveAttachedFilePanel(ownerPanelId, panelId)}
-							onCloseAttachedFilePanel={(panelId) => panelStore.closeFilePanel(panelId)}
-							onResizeAttachedFilePanel={(panelId, delta) =>
-								panelStore.resizeFilePanel(panelId, delta)}
-							onCreateIssueReport={(draft) => state.openUserReportsWithDraft(draft)}
-						/>
-					</div>
+						onExitReviewMode={() => panelStore.exitReviewMode(fullscreenPanelSnapshot.panelId)}
+						onReviewFileIndexChange={(index) =>
+							panelStore.setReviewFileIndex(fullscreenPanelSnapshot.panelId, index)}
+						onOpenFullscreenReview={fullscreenPanelSnapshot.sessionId
+							? (sessionId, fileIndex) => state.openReviewFullscreen(sessionId, fileIndex)
+							: undefined}
+						attachedFilePanels={panelStore.getAttachedFilePanels(fullscreenPanelSnapshot.panelId)}
+						activeAttachedFilePanelId={panelStore.getActiveFilePanelId(
+							fullscreenPanelSnapshot.panelId
+						)}
+						onSelectAttachedFilePanel={(ownerPanelId, panelId) =>
+							panelStore.setActiveAttachedFilePanel(ownerPanelId, panelId)}
+						onCloseAttachedFilePanel={(panelId) => panelStore.closeFilePanel(panelId)}
+						onResizeAttachedFilePanel={(panelId, delta) =>
+							panelStore.resizeFilePanel(panelId, delta)}
+						onCreateIssueReport={(draft) => state.openUserReportsWithDraft(draft)}
+					/>
 				</div>
-			{/snippet}
-
-			{#if project && !viewModeState.isSingleMode}
-				<ProjectCard
-					projectName={project.name}
-					projectColor={project.color}
-					variant="corner"
-					class="flex-1 min-w-0 min-h-0"
-				>
-					{@render fullscreenInner()}
-				</ProjectCard>
+			{:else if fullscreenTopLevelPanel.kind === "file"}
+				{@const filePanel = fullscreenTopLevelPanel.panel}
+				{@const project = projectManager.projects.find((p) => p.path === filePanel.projectPath)}
+				<FilePanel
+					panelId={filePanel.id}
+					filePath={filePanel.filePath}
+					projectPath={filePanel.projectPath}
+					projectName={project ? project.name : m.project_unknown()}
+					projectColor={project?.color}
+					width={filePanel.width}
+					isFullscreenEmbedded={true}
+					hideProjectBadge={true}
+					onClose={() => panelStore.closeFilePanel(filePanel.id)}
+					onResize={(panelId, delta) => panelStore.resizeFilePanel(panelId, delta)}
+				/>
+			{:else if fullscreenTopLevelPanel.kind === "review"}
+				{@const reviewPanel = fullscreenTopLevelPanel.panel}
+				<ReviewPanel
+					panelId={reviewPanel.id}
+					projectPath={reviewPanel.projectPath}
+					modifiedFilesState={reviewPanel.modifiedFilesState}
+					selectedFileIndex={reviewPanel.selectedFileIndex}
+					width={reviewPanel.width}
+					isFullscreenEmbedded={true}
+					onClose={() => panelStore.closeReviewPanel(reviewPanel.id)}
+					onResize={(panelId, delta) => panelStore.resizeReviewPanel(panelId, delta)}
+					onSelectFile={(index) => panelStore.updateReviewPanelFileIndex(reviewPanel.id, index)}
+				/>
+			{:else if fullscreenTopLevelPanel.kind === "terminal"}
+				{@const terminalGroup = fullscreenTopLevelPanel.panel}
+				{@const project = projectManager.projects.find((p) => p.path === terminalGroup.projectPath)}
+				<TerminalTabs
+					group={terminalGroup}
+					tabs={panelStore.getTerminalTabsForGroup(terminalGroup.id)}
+					projectPath={terminalGroup.projectPath}
+					projectName={project ? project.name : m.project_unknown()}
+					projectColor={project ? project.color : "#4AD0FF"}
+					{panelStore}
+				/>
+			{:else if fullscreenTopLevelPanel.kind === "browser"}
+				{@const browserPanel = fullscreenTopLevelPanel.panel}
+				<BrowserPanel
+					panelId={browserPanel.id}
+					url={browserPanel.url}
+					title={browserPanel.title}
+					width={browserPanel.width}
+					isFullscreenEmbedded={true}
+					onClose={() => panelStore.closeBrowserPanel(browserPanel.id)}
+					onResize={(panelId, delta) => panelStore.resizeBrowserPanel(panelId, delta)}
+				/>
 			{:else}
-				{@render fullscreenInner()}
+				{@const gitPanel = fullscreenTopLevelPanel.panel}
+				{@const project = projectManager.projects.find((p) => p.path === gitPanel.projectPath)}
+				<GitPanel
+					panelId={gitPanel.id}
+					projectPath={gitPanel.projectPath}
+					projectName={project ? project.name : m.project_unknown()}
+					projectColor={project?.color}
+					width={gitPanel.width}
+					initialTarget={gitPanel.initialTarget}
+					isFullscreenEmbedded={true}
+					hideProjectBadge={true}
+					onClose={() => panelStore.closeGitPanel(gitPanel.id)}
+					onResize={(panelId: string, delta: number) => panelStore.resizeGitPanel(panelId, delta)}
+					onRequestGeneration={(prompt) => {
+						const agentPanel = panelsWithState.find(
+							(panel) => panel.sessionProjectPath === gitPanel.projectPath && panel.sessionId
+						);
+						if (agentPanel?.sessionId) {
+							sessionStore.sendMessage(agentPanel.sessionId, prompt);
+						}
+					}}
+				/>
 			{/if}
 		{:else}
 			<!-- Project/Multi mode: panels grouped by project; hide inactive in focused view so they stay mounted -->
@@ -385,40 +379,35 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 			{@const hasAgentPanels = group.agentPanels.length > 0}
 			{@const isSingleProject = allGroups.length === 1}
 			{#snippet groupPanels()}
-					{#if !isAuxOnlyFullscreen}
-						<!-- File panels -->
-						{#each group.filePanels as filePanel (filePanel.id)}
-							{@const project = projectManager.projects.find(
-								(p) => p.path === filePanel.projectPath
-							)}
-							<FilePanel
-								panelId={filePanel.id}
-								filePath={filePanel.filePath}
-								projectPath={filePanel.projectPath}
-								projectName={project?.name ?? m.project_unknown()}
-								projectColor={project?.color}
-								width={filePanel.width}
-								hideProjectBadge={true}
-								onClose={() => panelStore.closeFilePanel(filePanel.id)}
-								onResize={(panelId, delta) => panelStore.resizeFilePanel(panelId, delta)}
-							/>
-						{/each}
+					<!-- File panels -->
+					{#each group.filePanels as filePanel (filePanel.id)}
+						{@const project = projectManager.projects.find((p) => p.path === filePanel.projectPath)}
+						<FilePanel
+							panelId={filePanel.id}
+							filePath={filePanel.filePath}
+							projectPath={filePanel.projectPath}
+							projectName={project ? project.name : m.project_unknown()}
+							projectColor={project?.color}
+							width={filePanel.width}
+							hideProjectBadge={true}
+							onClose={() => panelStore.closeFilePanel(filePanel.id)}
+							onResize={(panelId, delta) => panelStore.resizeFilePanel(panelId, delta)}
+						/>
+					{/each}
 
-						<!-- Review panels -->
-						{#each group.reviewPanels as reviewPanel (reviewPanel.id)}
-							<ReviewPanel
-								panelId={reviewPanel.id}
-								projectPath={reviewPanel.projectPath}
-								modifiedFilesState={reviewPanel.modifiedFilesState}
-								selectedFileIndex={reviewPanel.selectedFileIndex}
-								width={reviewPanel.width}
-								onClose={() => panelStore.closeReviewPanel(reviewPanel.id)}
-								onResize={(panelId, delta) => panelStore.resizeReviewPanel(panelId, delta)}
-								onSelectFile={(index) =>
-									panelStore.updateReviewPanelFileIndex(reviewPanel.id, index)}
-							/>
-						{/each}
-					{/if}
+					<!-- Review panels -->
+					{#each group.reviewPanels as reviewPanel (reviewPanel.id)}
+						<ReviewPanel
+							panelId={reviewPanel.id}
+							projectPath={reviewPanel.projectPath}
+							modifiedFilesState={reviewPanel.modifiedFilesState}
+							selectedFileIndex={reviewPanel.selectedFileIndex}
+							width={reviewPanel.width}
+							onClose={() => panelStore.closeReviewPanel(reviewPanel.id)}
+							onResize={(panelId, delta) => panelStore.resizeReviewPanel(panelId, delta)}
+							onSelectFile={(index) => panelStore.updateReviewPanelFileIndex(reviewPanel.id, index)}
+						/>
+					{/each}
 
 					<!-- Terminal panels (always use TerminalTabs for tab support in header) -->
 					{#if group.terminalPanels.length > 0}
@@ -435,23 +424,42 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 					{/if}
 
 					<!-- Browser panels (project-scoped) -->
-					{#if !isAuxOnlyFullscreen}
-						{#each group.browserPanels as browserPanel (browserPanel.id)}
-							<BrowserPanel
-								panelId={browserPanel.id}
-								url={browserPanel.url}
-								title={browserPanel.title}
-								width={browserPanel.width}
-								isFillContainer={!hasAgentPanels}
-								onClose={() => panelStore.closeBrowserPanel(browserPanel.id)}
-								onResize={(panelId, delta) => panelStore.resizeBrowserPanel(panelId, delta)}
-							/>
-						{/each}
-					{/if}
+					{#each group.browserPanels as browserPanel (browserPanel.id)}
+						<BrowserPanel
+							panelId={browserPanel.id}
+							url={browserPanel.url}
+							title={browserPanel.title}
+							width={browserPanel.width}
+							isFillContainer={!hasAgentPanels && group.gitPanels.length === 0}
+							onClose={() => panelStore.closeBrowserPanel(browserPanel.id)}
+							onResize={(panelId, delta) => panelStore.resizeBrowserPanel(panelId, delta)}
+						/>
+					{/each}
 
-					{#if !isAuxOnlyFullscreen}
-						<!-- Agent panels -->
-						{#each group.agentPanels as panel (panel.id)}
+					<!-- Git panels -->
+					{#each group.gitPanels as gitPanel (gitPanel.id)}
+						<GitPanel
+							panelId={gitPanel.id}
+							projectPath={gitPanel.projectPath}
+							projectName={group.projectName}
+							projectColor={group.projectColor}
+							width={gitPanel.width}
+							initialTarget={gitPanel.initialTarget}
+							onClose={() => panelStore.closeGitPanel(gitPanel.id)}
+							onResize={(panelId: string, delta: number) => panelStore.resizeGitPanel(panelId, delta)}
+							onRequestGeneration={(prompt) => {
+								const agentPanel = panelsWithState.find(
+									(panel) => panel.sessionProjectPath === gitPanel.projectPath && panel.sessionId
+								);
+								if (agentPanel?.sessionId) {
+									sessionStore.sendMessage(agentPanel.sessionId, prompt);
+								}
+							}}
+						/>
+					{/each}
+
+					<!-- Agent panels -->
+					{#each group.agentPanels as panel (panel.id)}
 							{@const effectiveTheme = themeState.effectiveTheme}
 							{@const projectPath = panel.sessionProjectPath}
 							{@const project = projectPath
@@ -514,8 +522,7 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 									panelStore.resizeFilePanel(panelId, delta)}
 								onCreateIssueReport={(draft) => state.openUserReportsWithDraft(draft)}
 							/>
-						{/each}
-					{/if}
+					{/each}
 			{/snippet}
 
 			{#if isSingleProject}
@@ -540,39 +547,4 @@ const fullscreenPanelSnapshot = $derived.by(() => {
 			{/each}
 		{/if}
 	</div>
-
-	{#if sourceControlPanelSnapshot.isOpen}
-		{@const gitProject = projectManager.projects.find(
-			(p) => p.path === sourceControlPanelSnapshot.projectPath
-		)}
-		<EmbeddedModalShell
-			open={true}
-			ariaLabel="Source control"
-			panelClass="max-w-[1180px]"
-			onClose={() => panelStore.closeGitPanel(sourceControlPanelSnapshot.id)}
-		>
-			<GitPanel
-				panelId={sourceControlPanelSnapshot.id}
-				projectPath={sourceControlPanelSnapshot.projectPath}
-				projectName={gitProject?.name ?? m.project_unknown()}
-				projectColor={gitProject?.color}
-				width={sourceControlPanelSnapshot.width}
-				initialTarget={sourceControlPanelSnapshot.initialTarget}
-				isFullscreenEmbedded={true}
-				hideProjectBadge={true}
-				onClose={() => panelStore.closeGitPanel(sourceControlPanelSnapshot.id)}
-				onResize={(panelId: string, delta: number) => panelStore.resizeGitPanel(panelId, delta)}
-				onRequestGeneration={(prompt) => {
-					// Find the active agent panel session for this project
-					const agentPanel = panelsWithState.find(
-						(p) =>
-							p.sessionProjectPath === sourceControlPanelSnapshot.projectPath && p.sessionId
-					);
-					if (agentPanel?.sessionId) {
-						sessionStore.sendMessage(agentPanel.sessionId, prompt);
-					}
-				}}
-			/>
-		</EmbeddedModalShell>
-	{/if}
 </div>

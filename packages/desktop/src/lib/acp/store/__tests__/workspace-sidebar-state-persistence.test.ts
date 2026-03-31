@@ -127,6 +127,41 @@ describe("workspace sidebar state persistence", () => {
 		expect(restoredValues).toEqual([[]]);
 	});
 
+	it("restores collapsed project paths for unified workspace panels", () => {
+		const store = new WorkspaceStore(createPanelStoreStub() as never, createSessionStoreStub() as never);
+		const restoredValues: string[][] = [];
+
+		store.registerProviders({
+			setCollapsedProjectPaths: (paths) => {
+				restoredValues.push(paths);
+			},
+		});
+
+		store.restore({
+			version: 10,
+			workspacePanels: [
+				{
+					id: "agent-1",
+					kind: "agent",
+					projectPath: "/workspace/app",
+					ownerPanelId: null,
+					width: 640,
+					sessionId: "session-1",
+					pendingProjectSelection: false,
+					selectedAgentId: null,
+					agentId: null,
+				},
+			],
+			panels: [],
+			focusedPanelIndex: 0,
+			panelContainerScrollX: 0,
+			savedAt: new Date().toISOString(),
+			collapsedProjectPaths: ["/workspace/app"],
+		});
+
+		expect(restoredValues).toEqual([["/workspace/app"]]);
+	});
+
 	it("can persist sidebar collapse state immediately", () => {
 		const store = new WorkspaceStore(createPanelStoreStub() as never, createSessionStoreStub() as never);
 

@@ -5,6 +5,8 @@ import TerminalPanelComponent from "./terminal-panel.svelte";
 
 interface TerminalTabsPanelStore {
 	readonly fullscreenPanelId: string | null;
+	readonly focusedPanelId: string | null;
+	readonly viewMode: "single" | "project" | "multi";
 	getSelectedTerminalTabId: (groupId: string) => string | null;
 	setSelectedTerminalTab: (groupId: string, tabId: string) => void;
 	openTerminalTab: (groupId: string) => TerminalTab | null;
@@ -47,7 +49,10 @@ const selectedTerminal = $derived(
 		: null
 );
 
-const isAuxFullscreen = $derived(panelStore.fullscreenPanelId === group.id);
+const isAuxFullscreen = $derived(
+	panelStore.fullscreenPanelId === group.id ||
+		(panelStore.viewMode === "single" && panelStore.focusedPanelId === group.id)
+);
 
 function handleSelectTab(tabId: string) {
 	panelStore.setSelectedTerminalTab(group.id, tabId);

@@ -563,6 +563,33 @@ export class WorkspaceStore {
 		this.persistDebounce = setTimeout(saveState, 300);
 	}
 
+	private restoreProviderState(state: PersistedWorkspaceState): void {
+		if (state.sidebarOpen !== undefined) {
+			this.providers.setSidebarOpen?.(state.sidebarOpen);
+		}
+		if (state.topBarVisible !== undefined) {
+			this.providers.setTopBarVisible?.(state.topBarVisible);
+		}
+		if (state.fileTreeExpansion) {
+			this.providers.setFileTreeExpansion?.(state.fileTreeExpansion);
+		}
+		if (state.projectFileViewModes && Object.keys(state.projectFileViewModes).length > 0) {
+			this.providers.setProjectFileViewModes?.(state.projectFileViewModes);
+		}
+		if (state.sqlStudio) {
+			this.providers.setSqlStudioState?.(state.sqlStudio);
+		}
+		if (state.reviewFullscreen) {
+			this.providers.setReviewFullscreenState?.(state.reviewFullscreen);
+		}
+		if (state.collapsedProjectPaths !== undefined) {
+			this.providers.setCollapsedProjectPaths?.(Array.from(state.collapsedProjectPaths));
+		}
+		if (state.queueExpanded !== undefined) {
+			this.providers.setQueueExpanded?.(state.queueExpanded);
+		}
+	}
+
 	/**
 	 * Restore workspace state from persisted data.
 	 * Returns list of session IDs that need to be loaded.
@@ -624,6 +651,7 @@ export class WorkspaceStore {
 					}
 				}
 				this.panelStore.ensureSingleViewForAgentFullscreen();
+				this.restoreProviderState(state);
 
 				const sessionIds = restoredAgentPanels
 					.map((panel) => panel.sessionId)
@@ -720,20 +748,6 @@ export class WorkspaceStore {
 		// Restore scroll position
 		this.panelStore.scrollX = state.panelContainerScrollX;
 
-		// Restore additional state via providers (version 2+)
-		if (state.sidebarOpen !== undefined) {
-			this.providers.setSidebarOpen?.(state.sidebarOpen);
-		}
-		if (state.topBarVisible !== undefined) {
-			this.providers.setTopBarVisible?.(state.topBarVisible);
-		}
-		if (state.fileTreeExpansion) {
-			this.providers.setFileTreeExpansion?.(state.fileTreeExpansion);
-		}
-		if (state.projectFileViewModes && Object.keys(state.projectFileViewModes).length > 0) {
-			this.providers.setProjectFileViewModes?.(state.projectFileViewModes);
-		}
-
 		// Restore panel scroll positions (deferred to allow DOM to render)
 		if (panelScrollPositions.length > 0) {
 			// Use requestAnimationFrame to ensure DOM is ready
@@ -762,11 +776,6 @@ export class WorkspaceStore {
 				? restoredPanels[state.fullscreenPanelIndex].id
 				: null;
 
-		// Restore SQL Studio state (version 4+)
-		if (state.sqlStudio) {
-			this.providers.setSqlStudioState?.(state.sqlStudio);
-		}
-
 		// Restore panel review mode (deferred until session loads)
 		const panelReviewRestores: Array<{ id: string; reviewFileIndex: number }> = [];
 		for (let i = 0; i < state.panels.length; i++) {
@@ -780,11 +789,6 @@ export class WorkspaceStore {
 		}
 		for (const { id, reviewFileIndex } of panelReviewRestores) {
 			this.panelStore.setPendingReviewRestore(id, reviewFileIndex);
-		}
-
-		// Restore full-screen review overlay (version 5+)
-		if (state.reviewFullscreen) {
-			this.providers.setReviewFullscreenState?.(state.reviewFullscreen);
 		}
 
 		if (state.terminalPanelGroups && state.terminalTabs) {
@@ -849,14 +853,6 @@ export class WorkspaceStore {
 			);
 		}
 
-		// Restore sidebar card collapse state
-		if (state.collapsedProjectPaths !== undefined) {
-			this.providers.setCollapsedProjectPaths?.(Array.from(state.collapsedProjectPaths));
-		}
-		if (state.queueExpanded !== undefined) {
-			this.providers.setQueueExpanded?.(state.queueExpanded);
-		}
-
 		// Restore view mode (version 8+), with backward compat for focusedViewEnabled
 		if (state.viewMode !== undefined) {
 			this.panelStore.viewMode = state.viewMode;
@@ -872,6 +868,7 @@ export class WorkspaceStore {
 			this.panelStore.fullscreenPanelId = null;
 		}
 		this.panelStore.ensureSingleViewForAgentFullscreen();
+		this.restoreProviderState(state);
 
 		// Return session IDs that need loading
 		const sessionIds = restoredPanels
