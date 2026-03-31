@@ -1095,11 +1095,12 @@ async function handleCreatePr(config?: PrGenerationConfig) {
 	if (shipCtxResult.isOk() && shipCtxResult.value) {
 		const ctx = shipCtxResult.value;
 		logger.info("handleCreatePr: generating commit/PR content via AI", { branch: ctx.branch });
+		const prompt = ctx.prompt;
 
 		// Use the streaming text generation service — updates the PR card live
 		const { generateShipContentStreaming } = await import("../../ship-card/ship-card-generation.js");
 		const genResult = await generateShipContentStreaming(
-			ctx.prompt,
+			prompt,
 			path,
 			(data) => {
 				const hadPreviewContent = hasStreamingPreviewContent(streamingShipData);
@@ -1659,162 +1660,164 @@ function handleCheckpointRevertComplete() {
 							</div>
 						</div>
 					{/if}
-					{#if showInlineErrorCard}
-						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-							<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
-								<AgentErrorCard
-									title="Connection error"
-									summary={errorInfo.details?.split("\n")[0]?.slice(0, 80) ?? "Failed to connect to agent"}
-									details={errorInfo.details ?? "Unknown error"}
-									onRetry={handleRetryConnection}
-									onDismiss={handleDismissError}
-									onCreateIssue={handleCreateIssueFromError}
-								/>
-							</div>
-						</div>
-					{/if}
-					{#if worktreeSetupState?.isVisible}
-						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-							<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
-								<WorktreeSetupCard state={worktreeSetupState} />
-							</div>
-						</div>
-					{/if}
-					{#if agentInstallState}
-						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-							<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
-								<AgentInstallCard
-									agentId={agentInstallState.agentId}
-									agentName={agentInstallState.agentName}
-								stage={agentInstallState.stage}
-								progress={agentInstallState.progress}
-							/>
-							</div>
-						</div>
-					{/if}
-					{#if effectivePathForGit && (createdPr || createPrRunning || streamingShipData)}
-						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-							<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-								{#key prCardRenderKey}
-									<PrStatusCard
-										projectPath={effectivePathForGit}
-										prNumber={createdPr}
-										isCreating={createPrRunning}
-										prDetails={prDetails}
-										fetchError={prFetchError}
-										onMerge={(strategy) => void handleMergePr(strategy)}
-										merging={mergePrRunning}
-										streamingData={streamingShipData}
+						<div class="flex shrink-0 flex-col gap-0.5">
+							{#if showInlineErrorCard}
+								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+									<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
+										<AgentErrorCard
+											title="Connection error"
+											summary={errorInfo.details?.split("\n")[0]?.slice(0, 80) ?? "Failed to connect to agent"}
+											details={errorInfo.details ?? "Unknown error"}
+											onRetry={handleRetryConnection}
+											onDismiss={handleDismissError}
+											onCreateIssue={handleCreateIssueFromError}
+										/>
+									</div>
+								</div>
+							{/if}
+							{#if worktreeSetupState?.isVisible}
+								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+									<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
+										<WorktreeSetupCard state={worktreeSetupState} />
+									</div>
+								</div>
+							{/if}
+							{#if agentInstallState}
+								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+									<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
+										<AgentInstallCard
+											agentId={agentInstallState.agentId}
+											agentName={agentInstallState.agentName}
+											stage={agentInstallState.stage}
+											progress={agentInstallState.progress}
+										/>
+									</div>
+								</div>
+							{/if}
+							{#if effectivePathForGit && (createdPr || createPrRunning || streamingShipData)}
+								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
+										{#key prCardRenderKey}
+											<PrStatusCard
+												projectPath={effectivePathForGit}
+												prNumber={createdPr}
+												isCreating={createPrRunning}
+												prDetails={prDetails}
+												fetchError={prFetchError}
+												onMerge={(strategy) => void handleMergePr(strategy)}
+												merging={mergePrRunning}
+												streamingData={streamingShipData}
+											/>
+										{/key}
+									</div>
+								</div>
+							{/if}
+							{#if modifiedFilesState}
+								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
+										<ModifiedFilesHeader
+											{modifiedFilesState}
+											{sessionId}
+											{onEnterReviewMode}
+											onOpenFullscreenReview={onOpenFullscreenReview && sessionId
+												? (_, fileIndex) => onOpenFullscreenReview(sessionId, fileIndex)
+												: undefined}
+											onCreatePr={createdPr || createPrRunning ? undefined : (config) => void handleCreatePr(config)}
+											createPrLoading={createPrRunning}
+											{createPrLabel}
+											{availableAgents}
+											currentAgentId={sessionAgentId ? sessionAgentId : selectedAgentId}
+											currentModelId={sessionCurrentModelId}
+											{effectiveTheme}
+										/>
+									</div>
+								</div>
+							{/if}
+							<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+								<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
+									<TodoHeader
+										{sessionId}
+										entries={sessionEntries}
+										isConnected={sessionHotState?.isConnected ?? false}
+										status={sessionStatus ?? "idle"}
+										isStreaming={sessionIsStreaming}
 									/>
-								{/key}
+								</div>
+							</div>
+							{#if sessionId}
+								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
+										<QueueCardStrip {sessionId} />
+									</div>
+								</div>
+							{/if}
+							{#if sessionId}
+								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
+									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
+										<PermissionBar
+											sessionId={sessionId}
+											projectPath={effectiveProjectPath ?? sessionProjectPath}
+										/>
+									</div>
+								</div>
+							{/if}
+							<div
+								class="shrink-0 px-2 pb-2 {centeredFullscreenContent ? 'flex justify-center' : ''}"
+								data-input-area
+							>
+								<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
+									{#key inputRenderKey}
+										<AgentInput
+											sessionId={sessionId ?? undefined}
+											{sessionStatus}
+											sessionIsConnected={sessionHotState?.isConnected ?? false}
+											{sessionIsStreaming}
+											{sessionCanSubmit}
+											{sessionShowStop}
+											disableSend={disableSendForFailedFirstSend}
+											{panelId}
+											voiceSessionId={panelId}
+											projectPath={worktreeToggleProjectPath ?? undefined}
+											projectName={effectiveProjectName ?? undefined}
+											worktreePath={effectiveActiveWorktreePath ?? undefined}
+											{worktreePending}
+											onWorktreeCreating={() => {
+												worktreeSetupState = createWorktreeCreationState({
+													projectPath:
+														worktreeToggleProjectPath || sessionProjectPath || project?.path || "",
+												});
+											}}
+											onWorktreeCreated={(path) => {
+												activeWorktreePath = path;
+												activeWorktreeOwnerProjectPath = worktreeToggleProjectPath ?? sessionProjectPath ?? null;
+											}}
+											{selectedAgentId}
+											{availableAgents}
+											{onAgentChange}
+											pendingProjectSelection={pendingProjectSelection && !isWaitingForSession}
+											onSessionCreated={handleSessionCreated}
+											onWillSend={prepareForNextUserReveal}
+											onToolbarWidthChange={(w) => {
+												toolbarMinWidth = w;
+											}}
+										>
+											{#snippet checkpointButton()}
+												{#if sessionProjectPath && checkpoints.length > 0}
+													<EmbeddedIconButton
+														active={showCheckpointTimeline}
+														title={m.checkpoint_toggle_tooltip()}
+														ariaLabel={m.checkpoint_toggle_tooltip()}
+														onclick={handleToggleCheckpointTimeline}
+													>
+														<Clock class="h-3.5 w-3.5" weight="fill" />
+													</EmbeddedIconButton>
+												{/if}
+											{/snippet}
+										</AgentInput>
+									{/key}
+								</div>
 							</div>
 						</div>
-					{/if}
-					{#if modifiedFilesState}
-						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-							<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-								<ModifiedFilesHeader
-									{modifiedFilesState}
-									{sessionId}
-									{onEnterReviewMode}
-									onOpenFullscreenReview={onOpenFullscreenReview && sessionId
-										? (_, fileIndex) => onOpenFullscreenReview(sessionId, fileIndex)
-										: undefined}
-									onCreatePr={createdPr || createPrRunning ? undefined : (config) => void handleCreatePr(config)}
-									createPrLoading={createPrRunning}
-									{createPrLabel}
-									{availableAgents}
-									currentAgentId={sessionAgentId ? sessionAgentId : selectedAgentId}
-									currentModelId={sessionCurrentModelId}
-									{effectiveTheme}
-								/>
-							</div>
-						</div>
-					{/if}
-					<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-						<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-							<TodoHeader
-								{sessionId}
-								entries={sessionEntries}
-								isConnected={sessionHotState?.isConnected ?? false}
-								status={sessionStatus ?? "idle"}
-								isStreaming={sessionIsStreaming}
-							/>
-						</div>
-					</div>
-					{#if sessionId}
-						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-							<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-								<QueueCardStrip {sessionId} />
-							</div>
-						</div>
-					{/if}
-					{#if sessionId}
-						<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-							<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-								<PermissionBar
-									sessionId={sessionId}
-									projectPath={effectiveProjectPath ?? sessionProjectPath}
-								/>
-							</div>
-						</div>
-					{/if}
-					<div
-						class="shrink-0 px-2 pt-0.5 pb-2 {centeredFullscreenContent ? 'flex justify-center' : ''}"
-						data-input-area
-					>
-						<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-							{#key inputRenderKey}
-								<AgentInput
-									sessionId={sessionId ?? undefined}
-									{sessionStatus}
-									sessionIsConnected={sessionHotState?.isConnected ?? false}
-									{sessionIsStreaming}
-									{sessionCanSubmit}
-									{sessionShowStop}
-									disableSend={disableSendForFailedFirstSend}
-								{panelId}
-								voiceSessionId={panelId}
-								projectPath={worktreeToggleProjectPath ?? undefined}
-									projectName={effectiveProjectName ?? undefined}
-									worktreePath={effectiveActiveWorktreePath ?? undefined}
-									{worktreePending}
-									onWorktreeCreating={() => {
-										worktreeSetupState = createWorktreeCreationState({
-											projectPath:
-												worktreeToggleProjectPath || sessionProjectPath || project?.path || "",
-										});
-									}}
-									onWorktreeCreated={(path) => {
-										activeWorktreePath = path;
-										activeWorktreeOwnerProjectPath = worktreeToggleProjectPath ?? sessionProjectPath ?? null;
-									}}
-									{selectedAgentId}
-									{availableAgents}
-									{onAgentChange}
-									pendingProjectSelection={pendingProjectSelection && !isWaitingForSession}
-									onSessionCreated={handleSessionCreated}
-									onWillSend={prepareForNextUserReveal}
-									onToolbarWidthChange={(w) => {
-										toolbarMinWidth = w;
-									}}
-								>
-									{#snippet checkpointButton()}
-										{#if sessionProjectPath && checkpoints.length > 0}
-											<EmbeddedIconButton
-												active={showCheckpointTimeline}
-												title={m.checkpoint_toggle_tooltip()}
-												ariaLabel={m.checkpoint_toggle_tooltip()}
-												onclick={handleToggleCheckpointTimeline}
-											>
-												<Clock class="h-3.5 w-3.5" weight="fill" />
-											</EmbeddedIconButton>
-										{/if}
-									{/snippet}
-								</AgentInput>
-							{/key}
-						</div>
-					</div>
 					<!-- Footer bar: worktree picker (left) + terminal toggle (right) -->
 					{#if worktreeToggleProjectPath && panelId}
 						<AgentPanelFooter

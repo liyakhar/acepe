@@ -43,7 +43,7 @@ const PR_GENERATION_PREFS_KEY = "pr_generation_preferences";
 export interface PrGenerationPreferences {
 	agentId?: string;
 	modelId?: string;
-	/** User-provided instructions that replace the default prompt template. */
+	/** User-provided instructions layered ahead of the hidden response contract and diff context. */
 	customPrompt?: string;
 }
 

@@ -18,7 +18,7 @@ let isExpanded = $state(false);
 
 </script>
 
-<div class="w-full px-5 mb-2">
+<div class="w-full px-5">
 	<div
 		role="button"
 		tabindex="0"

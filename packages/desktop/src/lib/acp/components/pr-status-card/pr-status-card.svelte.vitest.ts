@@ -94,6 +94,38 @@ describe("PrStatusCard", () => {
 		expect(markdownRoot?.querySelectorAll("li")).toHaveLength(2);
 	});
 
+	it("keeps the PR action bar above expanded content", async () => {
+		const prDetails = {
+			number: 91,
+			title: "Move PR controls to the top",
+			body: "## Summary\n- Header should stay first",
+			state: "OPEN",
+			url: "https://github.com/acepe/acepe/pull/91",
+			isDraft: false,
+			additions: 12,
+			deletions: 4,
+			commits: [],
+		} satisfies PrDetails;
+
+		const { container } = render(PrStatusCard, {
+			projectPath: "/repo",
+			prNumber: prDetails.number,
+			isCreating: false,
+			prDetails,
+			fetchError: null,
+		});
+
+		const header = container.querySelector("div[role='button'][tabindex='0']");
+		expect(header).not.toBeNull();
+
+		await fireEvent.click(header as HTMLElement);
+
+		const cardRoot = container.querySelector(".w-full.px-5.mb-1");
+		expect(cardRoot).not.toBeNull();
+		expect(cardRoot?.firstElementChild).toBe(header);
+		expect(cardRoot?.lastElementChild).not.toBe(header);
+	});
+
 	it("keeps streamed content collapsed after the user closes the card", async () => {
 		const streamingData = {
 			commitMessage: null,

@@ -119,63 +119,7 @@
 </script>
 
 {#if isVisible}
-	<div class="w-full px-5 mb-1">
-		<!-- Expanded content: streaming preview OR description + commits -->
-		{#if isExpanded && (hasStreamingContent || prDetails)}
-			<div class="rounded-t-md bg-muted/30 overflow-hidden border border-b-0 border-border">
-				<!-- Streaming preview (shown during AI generation) -->
-				{#if hasStreamingContent && !prDetails}
-					<div class="px-3 pt-2.5 pb-2 max-h-[300px] overflow-y-auto">
-						{#if streamingDescriptionHtml}
-							<div class="markdown-content text-xs text-foreground leading-relaxed">
-								{@html streamingDescriptionHtml}
-								{#if isStreaming}
-									<span class="inline-block w-1.5 h-3 bg-foreground/50 animate-pulse ml-0.5 align-text-bottom"></span>
-								{/if}
-							</div>
-						{:else if isStreaming}
-							<div class="flex items-center gap-1.5 text-xs text-muted-foreground">
-								<Spinner class="size-3" />
-								<span>{m.pr_card_generating()}</span>
-							</div>
-						{/if}
-					</div>
-				{/if}
-
-				<!-- Final PR content (shown after PR is created) -->
-				{#if prDetails}
-					{#if descriptionHtml}
-						<div class="px-3 pt-2.5 pb-2 max-h-[200px] overflow-y-auto">
-							<div class="markdown-content text-xs text-foreground leading-relaxed">
-								{@html descriptionHtml}
-							</div>
-						</div>
-					{/if}
-
-					{#if prDetails.commits.length > 0}
-						<div class="flex flex-col px-2 pb-1.5 {descriptionHtml ? 'border-t border-border/30 pt-1.5' : 'pt-1.5'}">
-							{#each prDetails.commits as commit (commit.oid)}
-								<div class="flex items-center gap-2 px-1 py-0.5">
-									<GitHubBadge
-										ref={{ type: "commit", sha: commit.oid }}
-										insertions={commit.additions}
-										deletions={commit.deletions}
-										onclick={(e) => {
-											e.stopPropagation();
-											handleCommitClick(commit.oid);
-										}}
-									/>
-									<span class="text-[11px] text-foreground/70 truncate leading-none">
-										{commit.messageHeadline}
-									</span>
-								</div>
-							{/each}
-						</div>
-					{/if}
-				{/if}
-			</div>
-		{/if}
-
+	<div class="w-full px-5">
 		<!-- Header bar -->
 		<div
 			role="button"
@@ -184,7 +128,7 @@
 			onkeydown={(e) => e.key === "Enter" && toggleExpand()}
 			class="w-full flex items-center justify-between px-3 py-1 rounded-md border border-border bg-muted/30 hover:bg-muted/40 transition-colors {hasExpandedContent
 				? 'cursor-pointer'
-				: 'cursor-default'} {isExpanded ? 'rounded-t-none border-t-0' : ''}"
+				: 'cursor-default'} {isExpanded ? 'rounded-b-none border-b-0' : ''}"
 		>
 			<!-- Left: PR icon + number (clickable to open GitHub) OR streaming title OR spinner -->
 			<div class="flex items-center gap-1.5 min-w-0 text-[0.6875rem]">
@@ -318,6 +262,62 @@
 				</div>
 			{/if}
 		</div>
+
+		<!-- Expanded content: streaming preview OR description + commits -->
+		{#if isExpanded && (hasStreamingContent || prDetails)}
+			<div class="rounded-b-md bg-muted/30 overflow-hidden border border-t-0 border-border">
+				<!-- Streaming preview (shown during AI generation) -->
+				{#if hasStreamingContent && !prDetails}
+					<div class="px-3 pt-2.5 pb-2 max-h-[300px] overflow-y-auto">
+						{#if streamingDescriptionHtml}
+							<div class="markdown-content text-xs text-foreground leading-relaxed">
+								{@html streamingDescriptionHtml}
+								{#if isStreaming}
+									<span class="inline-block w-1.5 h-3 bg-foreground/50 animate-pulse ml-0.5 align-text-bottom"></span>
+								{/if}
+							</div>
+						{:else if isStreaming}
+							<div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+								<Spinner class="size-3" />
+								<span>{m.pr_card_generating()}</span>
+							</div>
+						{/if}
+					</div>
+				{/if}
+
+				<!-- Final PR content (shown after PR is created) -->
+				{#if prDetails}
+					{#if descriptionHtml}
+						<div class="px-3 pt-2.5 pb-2 max-h-[200px] overflow-y-auto">
+							<div class="markdown-content text-xs text-foreground leading-relaxed">
+								{@html descriptionHtml}
+							</div>
+						</div>
+					{/if}
+
+					{#if prDetails.commits.length > 0}
+						<div class="flex flex-col px-2 pb-1.5 {descriptionHtml ? 'border-t border-border/30 pt-1.5' : 'pt-1.5'}">
+							{#each prDetails.commits as commit (commit.oid)}
+								<div class="flex items-center gap-2 px-1 py-0.5">
+									<GitHubBadge
+										ref={{ type: "commit", sha: commit.oid }}
+										insertions={commit.additions}
+										deletions={commit.deletions}
+										onclick={(e) => {
+											e.stopPropagation();
+											handleCommitClick(commit.oid);
+										}}
+									/>
+									<span class="text-[11px] text-foreground/70 truncate leading-none">
+										{commit.messageHeadline}
+									</span>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				{/if}
+			</div>
+		{/if}
 
 		{#if fetchError}
 			<div class="px-3 py-1.5 text-xs text-destructive/70 bg-muted/30 rounded-b-lg border border-t-0 border-border">{fetchError}</div>

@@ -21,8 +21,11 @@ import { sessionReviewStateStore } from "../../store/session-review-state-store.
 import { capitalizeName } from "../../utils/string-formatting.js";
 import { getModelDisplayName } from "../model-selector-logic.js";
 import AnimatedChevron from "../animated-chevron.svelte";
+import SelectorCheck from "../selector-check.svelte";
 import type { FileReviewStatus } from "../review-panel/review-session-state.js";
 import InlineModifiedFileRow from "./components/inline-modified-file-row.svelte";
+import { buildKeepAllReviewEntries } from "./logic/keep-all-review-progress.js";
+import { DEFAULT_SHIP_INSTRUCTIONS } from "./logic/build-pr-prompt-preview.js";
 import {
 	buildPrGenerationPrefsForAgentSelection,
 	buildPrGenerationRequestConfig,
@@ -37,7 +40,7 @@ import type { ModifiedFilesState } from "./types/modified-files-state.js";
 export interface PrGenerationConfig {
 	agentId?: string;
 	modelId?: string;
-	/** User-provided instructions that replace the default prompt template. */
+	/** User-provided instructions layered ahead of the hidden response contract and diff context. */
 	customPrompt?: string;
 }
 
@@ -88,7 +91,8 @@ let {
 const reviewPreferenceStore = getReviewPreferenceStore();
 
 let isExpanded = $state(false);
-let showPromptEditor = $state(false);
+let hasPromptDraft = $state(false);
+let promptDraft = $state("");
 
 // PR generation preferences — persisted globally via SQLite
 const prPrefs = $derived(agentModelPrefs.getPrGenerationPrefs());
@@ -116,9 +120,47 @@ const effectiveModel = $derived.by((): Model | null => {
 });
 
 const effectiveModelDisplayName = $derived.by(() => {
-	if (!effectiveModel) return "Default";
+	if (!effectiveModel) return "Choose model";
 	return getModelDisplayName(effectiveModel, effectiveAgentId);
 });
+
+const effectiveAgentDisplayName = $derived.by(() => {
+	if (!effectiveAgent) return "Choose agent";
+	return capitalizeName(effectiveAgent.name);
+});
+
+const effectiveAgentIcon = $derived.by(() => {
+	if (!effectiveAgent) return null;
+	return getAgentIcon(effectiveAgent.id, effectiveTheme);
+});
+
+const promptEditorBaseline = $derived.by(() => {
+	if (prPrefs.customPrompt) {
+		return prPrefs.customPrompt;
+	}
+
+	return DEFAULT_SHIP_INSTRUCTIONS;
+});
+
+const resolvedPromptEditorValue = $derived.by(() => {
+	if (hasPromptDraft) {
+		return promptDraft;
+	}
+
+	return promptEditorBaseline;
+});
+
+const promptPreviewHelperText = $derived.by(() => {
+	return "Acepe adds the XML response format, current branch, changed files, and diff automatically.";
+});
+
+const hasUnsavedPromptChanges = $derived(hasPromptDraft && promptDraft !== promptEditorBaseline);
+
+const canSavePrompt = $derived(
+	hasUnsavedPromptChanges && resolvedPromptEditorValue.trim().length > 0
+);
+
+const canResetPrompt = $derived(hasPromptDraft || Boolean(prPrefs.customPrompt));
 
 const totalAdded = $derived(
 	modifiedFilesState ? modifiedFilesState.files.reduce((sum, f) => sum + f.totalAdded, 0) : 0
@@ -149,6 +191,14 @@ const reviewedFileCount = $derived.by(() => {
 	}, 0);
 });
 
+const canKeepAll = $derived.by(() => {
+	if (!sessionId) {
+		return false;
+	}
+
+	return sessionReviewStateStore.isLoaded(sessionId);
+});
+
 $effect(() => {
 	if (!sessionId) return;
 	sessionReviewStateStore.ensureLoaded(sessionId);
@@ -173,21 +223,48 @@ function handleCreatePrClick(): void {
 	const config = buildPrGenerationRequestConfig(
 		prPrefs.agentId,
 		prPrefs.modelId,
-		prPrefs.customPrompt,
+		resolveCustomPrompt(),
 		reactiveModels,
 	);
 	onCreatePr(config);
 }
 
-function handleAgentSelect(agentId: string, isSelected: boolean): void {
-	const newAgentId = isSelected ? undefined : agentId;
-	const nextEffectiveAgentId = newAgentId ? newAgentId : currentAgentId;
+function handleKeepAllClick(): void {
+	if (!sessionId) {
+		return;
+	}
+
+	if (!modifiedFilesState) {
+		return;
+	}
+
+	if (!sessionReviewStateStore.isLoaded(sessionId)) {
+		return;
+	}
+
+	const reviewEntries = buildKeepAllReviewEntries(modifiedFilesState.files);
+
+	for (const reviewEntry of reviewEntries) {
+		sessionReviewStateStore.upsertFileProgress(
+			sessionId,
+			reviewEntry.revisionKey,
+			reviewEntry.progress
+		);
+	}
+}
+
+function handleAgentPickerChange(value: string): void {
+	if (value === effectiveAgentId) {
+		return;
+	}
+
+	const nextEffectiveAgentId = value;
 	const nextModels = nextEffectiveAgentId
 		? agentModelPrefs.getCachedModels(nextEffectiveAgentId)
 		: [];
 	agentModelPrefs.setPrGenerationPrefs(
 		buildPrGenerationPrefsForAgentSelection(
-			newAgentId,
+			value,
 			prPrefs.modelId,
 			prPrefs.customPrompt,
 			nextModels,
@@ -195,27 +272,64 @@ function handleAgentSelect(agentId: string, isSelected: boolean): void {
 	);
 }
 
-function handleModelSelect(modelId: string, isSelected: boolean): void {
+function handleModelPickerChange(value: string): void {
+	if (value === effectiveModelId) {
+		return;
+	}
+
 	agentModelPrefs.setPrGenerationPrefs({
 		agentId: prPrefs.agentId,
-		modelId: isSelected ? undefined : modelId,
+		modelId: value,
 		customPrompt: prPrefs.customPrompt,
 	});
 }
 
 function handlePromptChange(e: Event): void {
-	const textarea = e.target as HTMLTextAreaElement;
-	const value = textarea.value.trim();
+	hasPromptDraft = true;
+	promptDraft = (e.target as HTMLTextAreaElement).value;
+}
+
+function resolveCustomPrompt(): string | undefined {
+	if (hasPromptDraft) {
+		const draft = promptDraft.trim();
+		return draft.length > 0 ? draft : undefined;
+	}
+
+	if (prPrefs.customPrompt) {
+		return prPrefs.customPrompt;
+	}
+
+	return undefined;
+}
+
+function handlePromptSaveClick(): void {
+	const nextPrompt = resolvedPromptEditorValue.trim();
+	if (nextPrompt.length === 0) {
+		return;
+	}
+
+	hasPromptDraft = false;
+	promptDraft = "";
 	agentModelPrefs.setPrGenerationPrefs({
 		agentId: prPrefs.agentId,
 		modelId: prPrefs.modelId,
-		customPrompt: value.length > 0 ? value : undefined,
+		customPrompt: nextPrompt,
+	});
+}
+
+function handlePromptResetClick(): void {
+	hasPromptDraft = false;
+	promptDraft = "";
+	agentModelPrefs.setPrGenerationPrefs({
+		agentId: prPrefs.agentId,
+		modelId: prPrefs.modelId,
+		customPrompt: undefined,
 	});
 }
 </script>
 
 {#if modifiedFilesState}
-	<div class="w-full px-5 mb-2">
+	<div class="w-full px-5">
 		<!-- Inline Expanded File List (in document flow) -->
 		{#if isExpanded}
 			<div class="rounded-t-md bg-muted/30 overflow-hidden border border-b-0 border-border">
@@ -240,19 +354,11 @@ function handlePromptChange(e: Event): void {
 			tabindex="0"
 			onclick={toggleExpanded}
 			onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(); } }}
-			class="w-full flex items-center justify-between px-3 py-1 rounded-md border border-border bg-muted/30 hover:bg-muted/40 transition-colors cursor-pointer {isExpanded
+			class="w-full flex items-center justify-between pl-1 pr-3 py-1 rounded-md border border-border bg-muted/30 hover:bg-muted/40 transition-colors cursor-pointer {isExpanded
 				? 'rounded-t-none border-t-0'
 				: ''}"
 		>
-			<div class="flex items-center gap-1.5 text-[0.6875rem] min-w-0">
-				<span class="text-foreground">
-					{m.modified_files_count({ count: modifiedFilesState.fileCount })}
-				</span>
-				<!-- Diff stats summary -->
-				<DiffPill insertions={totalAdded} deletions={totalRemoved} variant="plain" />
-			</div>
-
-			<div class="flex items-center gap-3 shrink-0">
+			<div class="flex items-center gap-2 shrink-0 min-w-0">
 				<!-- PR split button: main action + dropdown for agent/model/prompt config -->
 				{#if onCreatePr}
 					<DropdownMenu.Root>
@@ -265,15 +371,22 @@ function handlePromptChange(e: Event): void {
 								type="button"
 								disabled={createPrLoading}
 								onclick={handleCreatePrClick}
-								class="flex items-center gap-1 px-2 py-0.5 font-medium text-foreground/80 hover:text-foreground hover:bg-muted/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								class="group/open-pr flex items-center gap-2 px-2 py-0.5 font-medium text-foreground/75 hover:text-foreground hover:bg-muted/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 							>
-								{#if createPrLoading}
-									<Spinner class="size-3 shrink-0" />
-									{createPrLabel ? createPrLabel : m.agent_panel_open_pr()}
-								{:else}
-									<GitPullRequest size={11} weight="bold" class="shrink-0" style="color: var(--success)" />
-									{m.agent_panel_open_pr()}
-								{/if}
+								<span class="flex items-center gap-1 shrink-0">
+									{#if createPrLoading}
+										<Spinner class="size-3 shrink-0" />
+										{createPrLabel ? createPrLabel : m.agent_panel_open_pr()}
+									{:else}
+										<GitPullRequest
+											size={11}
+											weight="bold"
+											class="shrink-0 text-muted-foreground transition-colors group-hover/open-pr:text-success"
+										/>
+										{m.agent_panel_open_pr()}
+									{/if}
+								</span>
+								<DiffPill insertions={totalAdded} deletions={totalRemoved} variant="plain" />
 							</button>
 							<DropdownMenu.Trigger
 								disabled={createPrLoading}
@@ -283,146 +396,149 @@ function handlePromptChange(e: Event): void {
 								<DotsThreeVertical size={12} weight="bold" class="shrink-0" />
 							</DropdownMenu.Trigger>
 						</div>
-						<DropdownMenu.Content align="end" class="w-[260px] p-0" sideOffset={4}>
-							<!-- Agent Selection -->
-							{#if availableAgents.length > 0}
-								<div class="px-2.5 pt-2.5 pb-1">
-									<div class="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
-										<Robot size={10} weight="bold" class="shrink-0" />
-										Agent
-									</div>
+						<DropdownMenu.Content align="start" class="w-[420px] overflow-hidden p-0" sideOffset={6}>
+							<div class="border-b border-border/50 bg-muted/20 px-3 py-2.5">
+								<div class="flex items-center gap-2 text-[0.6875rem] font-medium text-foreground/90">
+									<GitPullRequest size={12} weight="bold" class="shrink-0 text-muted-foreground" />
+									PR settings
 								</div>
-								<div class="px-1 pb-1">
-									{#each availableAgents as agent (agent.id)}
-										{@const icon = getAgentIcon(agent.id, effectiveTheme)}
-										{@const isSelected = agent.id === effectiveAgentId}
-										<DropdownMenu.Item
-											onSelect={(e) => {
-												e.preventDefault();
-												handleAgentSelect(agent.id, isSelected);
-											}}
-											class="cursor-pointer text-[0.6875rem] py-1.5"
-										>
-											<div class="flex items-center gap-2 w-full">
-												{#if icon}
-													<img src={icon} alt={agent.name} class="h-3.5 w-3.5 shrink-0" />
-												{/if}
-												<span class="flex-1 truncate">{capitalizeName(agent.name)}</span>
-												{#if isSelected}
-													<Check size={12} weight="bold" class="shrink-0 text-primary" />
-												{/if}
-											</div>
-										</DropdownMenu.Item>
-									{/each}
-								</div>
-							{/if}
-
-							<!-- Separator -->
-							{#if availableAgents.length > 0 && reactiveModels.length > 0}
-								<DropdownMenu.Separator />
-							{/if}
-
-							<!-- Model Selection (reacts to agent changes) -->
-							{#if reactiveModels.length > 0}
-								<div class="px-2.5 pt-1.5 pb-1">
-									<div class="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
-										<Cpu size={10} weight="bold" class="shrink-0" />
-										Model
-									</div>
-								</div>
-								<div class="px-1 pb-1.5 max-h-[180px] overflow-y-auto scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
-									{#each reactiveModels as model (model.id)}
-										{@const isSelected = model.id === effectiveModelId}
-										{@const displayName = getModelDisplayName(model, effectiveAgentId)}
-										<DropdownMenu.Item
-											onSelect={(e) => {
-												e.preventDefault();
-												handleModelSelect(model.id, isSelected);
-											}}
-											class="cursor-pointer text-[0.6875rem] py-1.5"
-										>
-											<div class="flex items-center gap-2 w-full">
-												<span class="flex-1 truncate">{displayName}</span>
-												{#if isSelected}
-													<Check size={12} weight="bold" class="shrink-0 text-primary" />
-												{/if}
-											</div>
-										</DropdownMenu.Item>
-									{/each}
-								</div>
-							{/if}
-
-							<!-- Separator before prompt -->
-							<DropdownMenu.Separator />
-
-							<!-- Custom prompt section -->
-							<div class="px-2.5 pt-1.5 pb-1">
-								<button
-									type="button"
-									class="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground/70 hover:text-muted-foreground transition-colors w-full"
-									onclick={(e: MouseEvent) => {
-										e.preventDefault();
-										e.stopPropagation();
-										showPromptEditor = !showPromptEditor;
-									}}
-								>
-									<NotePencil size={10} weight="bold" class="shrink-0" />
-									Prompt
-									<AnimatedChevron isOpen={showPromptEditor} class="size-2.5 ml-auto" durationClass="duration-150" />
-								</button>
+								<p class="mt-1 text-[0.625rem] leading-relaxed text-muted-foreground/70">
+									Choose the agent, choose the model, and save review instructions. Acepe appends the response format and git context automatically.
+								</p>
 							</div>
-							{#if showPromptEditor}
-								<div
-									class="px-2.5 pb-2"
+
+							<div class="border-b border-border/50 px-3 py-2.5">
+								<div class="grid gap-1.5 sm:grid-cols-2">
+									<div class="space-y-1.5">
+										<div class="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+											<Robot size={10} weight="bold" class="shrink-0" />
+											Agent
+										</div>
+										<DropdownMenu.Root>
+											<DropdownMenu.Trigger
+												disabled={availableAgents.length === 0}
+												class="flex w-full items-center gap-1.5 rounded-md border border-border/50 bg-background/70 px-2 py-1 text-[11px] text-foreground/85 transition-colors hover:bg-muted/30 disabled:cursor-not-allowed disabled:opacity-50"
+												onclick={(e: MouseEvent) => e.stopPropagation()}
+											>
+												{#if effectiveAgentIcon}
+													<img src={effectiveAgentIcon} alt={effectiveAgentDisplayName} class="h-3 w-3 shrink-0" />
+												{/if}
+												<span class="flex-1 truncate text-left">{effectiveAgentDisplayName}</span>
+												<svg class="size-2.5 shrink-0 text-muted-foreground" viewBox="0 0 10 10" fill="none">
+													<path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+												</svg>
+											</DropdownMenu.Trigger>
+											<DropdownMenu.Content align="start" class="w-[190px] p-0" sideOffset={6}>
+												{#each availableAgents as agent (agent.id)}
+													{@const icon = getAgentIcon(agent.id, effectiveTheme)}
+													{@const isSelected = agent.id === effectiveAgentId}
+													<DropdownMenu.Item
+														onSelect={() => handleAgentPickerChange(agent.id)}
+														class="group/item py-0.5 {isSelected ? 'bg-accent' : ''}"
+													>
+														<div class="flex w-full min-w-0 items-center gap-1.5">
+															{#if icon}
+																<img src={icon} alt={agent.name} class="h-3.5 w-3.5 shrink-0" />
+															{/if}
+															<span class="flex-1 truncate text-[11px]">{capitalizeName(agent.name)}</span>
+															<SelectorCheck visible={isSelected} />
+														</div>
+													</DropdownMenu.Item>
+												{/each}
+											</DropdownMenu.Content>
+										</DropdownMenu.Root>
+									</div>
+
+									<div class="space-y-1.5">
+										<div class="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+											<Cpu size={10} weight="bold" class="shrink-0" />
+											Model
+										</div>
+										<DropdownMenu.Root>
+											<DropdownMenu.Trigger
+												disabled={reactiveModels.length === 0}
+												class="flex w-full items-center gap-1.5 rounded-md border border-border/50 bg-background/70 px-2 py-1 text-[11px] text-foreground/85 transition-colors hover:bg-muted/30 disabled:cursor-not-allowed disabled:opacity-50"
+												onclick={(e: MouseEvent) => e.stopPropagation()}
+											>
+												<span class="flex-1 truncate text-left">{effectiveModelDisplayName}</span>
+												<svg class="size-2.5 shrink-0 text-muted-foreground" viewBox="0 0 10 10" fill="none">
+													<path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+												</svg>
+											</DropdownMenu.Trigger>
+											<DropdownMenu.Content align="start" class="w-[210px] p-0" sideOffset={6}>
+												{#each reactiveModels as model (model.id)}
+													{@const displayName = getModelDisplayName(model, effectiveAgentId)}
+													{@const isSelected = model.id === effectiveModelId}
+													<DropdownMenu.Item
+														onSelect={() => handleModelPickerChange(model.id)}
+														class="group/item py-0.5 {isSelected ? 'bg-accent' : ''}"
+													>
+														<div class="flex w-full min-w-0 items-center gap-1.5">
+															<span class="flex-1 truncate text-[11px]">{displayName}</span>
+															<SelectorCheck visible={isSelected} />
+														</div>
+													</DropdownMenu.Item>
+												{/each}
+											</DropdownMenu.Content>
+										</DropdownMenu.Root>
+									</div>
+								</div>
+							</div>
+
+							<div class="px-3 py-2.5">
+								<div class="flex items-center justify-between gap-3">
+									<div>
+										<div class="flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+											<NotePencil size={10} weight="bold" class="shrink-0" />
+											PR instructions
+										</div>
+										<p class="mt-1 text-[0.625rem] leading-relaxed text-muted-foreground/65">
+											{promptPreviewHelperText}
+										</p>
+									</div>
+									<div class="flex shrink-0 items-center gap-1.5">
+										<button
+											type="button"
+											disabled={!canResetPrompt}
+											onclick={(e: MouseEvent) => {
+												e.preventDefault();
+												e.stopPropagation();
+												handlePromptResetClick();
+											}}
+											class="rounded border border-border/50 px-2 py-1 text-[0.625rem] font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+										>
+											Reset
+										</button>
+										<button
+											type="button"
+											disabled={!canSavePrompt}
+											onclick={(e: MouseEvent) => {
+												e.preventDefault();
+												e.stopPropagation();
+												handlePromptSaveClick();
+											}}
+											class="rounded border border-[#D6A16A] bg-[#F4D2AE] px-2 py-1 text-[0.625rem] font-medium text-[#5B3818] transition-colors hover:bg-[#EEC18F] disabled:cursor-not-allowed disabled:opacity-50"
+										>
+											Save prompt
+										</button>
+									</div>
+								</div>
+								<textarea
+									class="mt-2 w-full min-h-[150px] max-h-[260px] resize-y rounded-md border border-border/50 bg-background/70 px-2.5 py-2 text-[0.6875rem] leading-snug text-foreground placeholder:text-muted-foreground/45 focus:outline-none focus:ring-1 focus:ring-primary/35"
+									placeholder="Add PR instructions for Acepe to apply"
+									spellcheck="false"
+									value={resolvedPromptEditorValue}
+									oninput={handlePromptChange}
 									onclick={(e: MouseEvent) => e.stopPropagation()}
 									onkeydown={(e: KeyboardEvent) => e.stopPropagation()}
-									role="none"
-								>
-									<textarea
-										class="w-full min-h-[80px] max-h-[160px] text-[0.6875rem] leading-snug rounded-md border border-border/50 bg-background/50 px-2 py-1.5 text-foreground placeholder:text-muted-foreground/50 resize-y focus:outline-none focus:ring-1 focus:ring-primary/40"
-										placeholder="Custom instructions for PR generation…"
-										value={prPrefs.customPrompt ? prPrefs.customPrompt : ""}
-										onchange={handlePromptChange}
-									></textarea>
-									<p class="text-[0.5625rem] text-muted-foreground/60 mt-1 leading-tight">
-										Replaces the default prompt. Leave empty to use built-in template with ASCII flow diagrams.
-									</p>
-								</div>
-							{/if}
-
-							<!-- Footer: current selection summary + create action -->
-							<div class="border-t border-border/50 px-2.5 py-2">
-								<div class="flex items-center gap-2 text-[0.625rem] text-muted-foreground mb-2">
-									{#if effectiveAgent}
-										{@const agentIcon = getAgentIcon(effectiveAgent.id, effectiveTheme)}
-										{#if agentIcon}
-											<img src={agentIcon} alt={effectiveAgent.name} class="h-3 w-3 shrink-0" />
-										{/if}
-										<span class="truncate">{capitalizeName(effectiveAgent.name)}</span>
-										<span class="text-border">·</span>
-									{/if}
-									<Cpu size={10} weight="fill" class="shrink-0" />
-									<span class="truncate">{effectiveModelDisplayName}</span>
-								</div>
-								<button
-									type="button"
-									disabled={createPrLoading}
-									onclick={handleCreatePrClick}
-									class="w-full flex items-center justify-center gap-1.5 px-2 py-1 rounded-md bg-primary text-primary-foreground text-[0.6875rem] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									{#if createPrLoading}
-										<Spinner class="size-3 shrink-0" />
-										{createPrLabel ? createPrLabel : m.agent_panel_open_pr()}
-									{:else}
-										<GitPullRequest size={11} weight="bold" class="shrink-0" />
-										Create PR
-									{/if}
-								</button>
+								></textarea>
 							</div>
 						</DropdownMenu.Content>
 					</DropdownMenu.Root>
 				{/if}
+			</div>
 
+			<div class="flex items-center gap-3 shrink-0 ml-auto">
 				<!-- Review split button -->
 				<DropdownMenu.Root>
 					<div
@@ -470,6 +586,19 @@ function handlePromptChange(e: Event): void {
 						</DropdownMenu.Item>
 					</DropdownMenu.Content>
 				</DropdownMenu.Root>
+
+				<button
+					type="button"
+					disabled={!canKeepAll}
+					onclick={(e: MouseEvent) => {
+						e.stopPropagation();
+						handleKeepAllClick();
+					}}
+					class="flex items-center gap-1 rounded border border-[#E5A96D] bg-[#FFC799] px-2 py-0.5 text-[0.6875rem] font-medium text-[#5B3818] transition-colors hover:bg-[#FFB86B] disabled:cursor-not-allowed disabled:opacity-50"
+				>
+					<Check size={11} weight="bold" class="shrink-0" />
+					{m.review_keep()}
+				</button>
 
 				<!-- Reviewed count -->
 				<span class="text-muted-foreground tabular-nums text-[0.6875rem]">

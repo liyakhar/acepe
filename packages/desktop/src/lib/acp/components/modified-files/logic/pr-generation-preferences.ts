@@ -43,7 +43,11 @@ export function buildPrGenerationRequestConfig(
 	modelId?: string;
 	customPrompt?: string;
 } | undefined {
-	const config = buildPrGenerationPrefsForAgentSelection(
+	const config: {
+		agentId?: string;
+		modelId?: string;
+		customPrompt?: string;
+	} = buildPrGenerationPrefsForAgentSelection(
 		agentId,
 		modelId,
 		customPrompt,

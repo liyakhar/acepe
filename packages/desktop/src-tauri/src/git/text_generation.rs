@@ -5,14 +5,17 @@
 
 use crate::git::operations::StagedContext;
 
-/// Default instructions for the PR description prompt.
+/// Default user-facing instructions for PR generation.
 ///
-/// Kept as a constant so the frontend can display it as a customisable
-/// starting point while the actual context (branch, diff) is appended at
-/// generation time.
-pub const DEFAULT_SHIP_INSTRUCTIONS: &str = r#"Generate a git commit message and pull request description for the following staged changes.
+/// This is the only part we expose for editing in the frontend. The XML
+/// response contract and git diff context are appended internally.
+pub const DEFAULT_SHIP_INSTRUCTIONS: &str = r#"Generate a git commit message and pull request description for these changes.
 
-Respond in this EXACT XML format — no other text outside the tags:
+Focus on what changed, why it matters, the most important implementation details,
+and how it was verified. Keep the commit subject concise and imperative, and make
+the PR description easy for a reviewer to scan."#;
+
+const SHIP_RESPONSE_FORMAT: &str = r#"Respond in this EXACT XML format — no other text outside the tags:
 
 <ship>
 <commit-message>
@@ -30,9 +33,9 @@ When the change involves a non-trivial flow (data pipelines, request
 lifecycles, state machines, etc.), include an ASCII diagram:
 
 ```
-  ┌──────────┐      ┌──────────┐      ┌──────────┐
-  │  Input   │─────▶│ Process  │─────▶│  Output  │
-  └──────────┘      └──────────┘      └──────────┘
+    ┌──────────┐      ┌──────────┐      ┌──────────┐
+    │  Input   │─────▶│ Process  │─────▶│  Output  │
+    └──────────┘      └──────────┘      └──────────┘
 ```
 
 Use the appropriate diagram style for the situation:
@@ -55,9 +58,9 @@ Use the appropriate diagram style for the situation:
 /// Build a prompt that instructs the agent to respond with commit message
 /// and PR description in XML format for the ShipCard generative UI.
 ///
-/// When `custom_instructions` is provided it replaces the default
-/// instructions block; the branch / staged-files / diff context is always
-/// appended.
+/// When `custom_instructions` is provided it replaces only the editable user
+/// guidance. The XML response contract plus branch / staged-files / diff
+/// context are always appended internally.
 pub fn build_ship_prompt(
     branch: &str,
     context: &StagedContext,
@@ -65,10 +68,46 @@ pub fn build_ship_prompt(
 ) -> String {
     let instructions = custom_instructions.unwrap_or(DEFAULT_SHIP_INSTRUCTIONS);
     format!(
-        "{instructions}\n\nCurrent branch: {branch}\n\nStaged files:\n{summary}\n\nDiff:\n{patch}",
+        "{instructions}\n\n{response_format}\n\nCurrent branch: {branch}\n\nStaged files:\n{summary}\n\nDiff:\n{patch}",
         instructions = instructions,
+        response_format = SHIP_RESPONSE_FORMAT,
         branch = branch,
         summary = context.summary,
         patch = context.patch,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_ship_prompt_keeps_hidden_response_contract() {
+        let context = StagedContext {
+            summary: "M\tsrc/lib.rs".to_string(),
+            patch: "diff --git a/src/lib.rs b/src/lib.rs".to_string(),
+        };
+
+        let prompt = build_ship_prompt("feature/default", &context, None);
+
+        assert!(prompt.starts_with(DEFAULT_SHIP_INSTRUCTIONS));
+        assert!(prompt.contains("Respond in this EXACT XML format"));
+        assert!(prompt.contains("Current branch: feature/default"));
+        assert!(prompt.contains("Diff:\ndiff --git a/src/lib.rs b/src/lib.rs"));
+    }
+
+    #[test]
+    fn build_ship_prompt_preserves_hidden_contract_with_custom_instructions() {
+        let context = StagedContext {
+            summary: "M\tsrc/lib.rs".to_string(),
+            patch: "diff --git a/src/lib.rs b/src/lib.rs".to_string(),
+        };
+
+        let prompt = build_ship_prompt("feature/custom", &context, Some("Custom ship instructions"));
+
+        assert!(prompt.starts_with("Custom ship instructions"));
+        assert!(!prompt.contains(DEFAULT_SHIP_INSTRUCTIONS));
+        assert!(prompt.contains("Respond in this EXACT XML format"));
+        assert!(prompt.contains("<ship>"));
+    }
 }
