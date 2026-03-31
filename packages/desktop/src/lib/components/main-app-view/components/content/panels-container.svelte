@@ -17,12 +17,10 @@ import {
 } from "$lib/acp/store/index.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
 import { useTheme } from "$lib/components/theme/context.svelte.js";
-import EmbeddedModalShell from "$lib/components/ui/embedded-modal-shell.svelte";
 import * as m from "$lib/paraglide/messages.js";
 
 import type { MainAppViewState } from "../../logic/main-app-view-state.svelte.js";
 
-import { clampFullscreenAuxPanelWidth, resolveFullscreenAuxPanel } from "./fullscreen-layout.js";
 import { groupAllPanelsByProject } from "./panel-grouping.js";
 
 const pcLogger = createLogger({ id: "panels-container-perf", name: "PanelsContainerPerf" });
@@ -128,102 +126,78 @@ const allGroups = $derived(
 	)
 );
 
+const topLevelPanelsWithProject = $derived.by(() => {
+	const topLevelPanels: Array<{ id: string; projectPath: string | null }> = [];
+	for (const panel of panelsWithState) {
+		topLevelPanels.push({ id: panel.id, projectPath: panel.sessionProjectPath });
+	}
+	for (const panel of panelStore.workspacePanels) {
+		if (panel.kind === "agent" || panel.ownerPanelId !== null) {
+			continue;
+		}
+		topLevelPanels.push({ id: panel.id, projectPath: panel.projectPath });
+	}
+	return topLevelPanels;
+});
+
 // Single source of truth for single/project/multi semantics (layout, active project, fullscreen panel)
 const viewModeState = $derived.by(() =>
-	getViewModeState(panelStore, { panelsWithState, allGroups })
+	getViewModeState(panelStore, { panelsWithState: topLevelPanelsWithProject, allGroups })
 );
-
-// Main fullscreen mode is only for agent-panel fullscreen.
-// Terminal aux-only fullscreen stays on the project-card rendering path so the terminal component does not remount.
-const selectedFullscreenAuxPanel = $derived.by(() => {
-	const fullscreenPanelId = panelStore.fullscreenPanelId;
-	if (fullscreenPanelId === null) {
-		return null;
-	}
-
-	if (
-		panelStore.filePanels.some(
-			(panel) => panel.ownerPanelId === null && panel.id === fullscreenPanelId
-		)
-	) {
-		return { kind: "file", id: fullscreenPanelId } as const;
-	}
-	if (panelStore.reviewPanels.some((panel) => panel.id === fullscreenPanelId)) {
-		return { kind: "review", id: fullscreenPanelId } as const;
-	}
-	if (panelStore.terminalPanelGroups.some((panel) => panel.id === fullscreenPanelId)) {
-		return { kind: "terminal", id: fullscreenPanelId } as const;
-	}
-	if (panelStore.gitPanels.some((panel) => panel.id === fullscreenPanelId)) {
-		return { kind: "git", id: fullscreenPanelId } as const;
-	}
-	if (panelStore.browserPanels.some((panel) => panel.id === fullscreenPanelId)) {
-		return { kind: "browser", id: fullscreenPanelId } as const;
-	}
-
-	return null;
-});
-const isAuxOnlyFullscreen = $derived(
-	panelStore.fullscreenPanelId !== null &&
-		viewModeState.fullscreenPanel === null &&
-		selectedFullscreenAuxPanel !== null
-);
-const fullscreenAuxPanel = $derived(
-	viewModeState.isFullscreenMode || isAuxOnlyFullscreen
-		? resolveFullscreenAuxPanel({
-				selectedAuxPanel: selectedFullscreenAuxPanel,
-				filePanels: panelStore.filePanels.filter((panel) => panel.ownerPanelId === null),
-				reviewPanels: panelStore.reviewPanels,
-				terminalPanels: panelStore.terminalPanelGroups,
-				gitPanels: panelStore.gitPanels,
-				browserPanels: panelStore.browserPanels,
-			})
-		: null
-);
-const fullscreenAuxPanelWidthStyle = $derived.by(() => {
-	const auxPanel = fullscreenAuxPanel;
-	if (!auxPanel) return null;
-	const clampedWidth = clampFullscreenAuxPanelWidth(auxPanel.panel.width);
-	return `width: ${clampedWidth}px; flex-basis: ${clampedWidth}px;`;
-});
-
-const auxOnlyTerminalProjectPath = $derived.by(() => {
-	if (!isAuxOnlyFullscreen || fullscreenAuxPanel?.kind !== "terminal") return null;
-	const terminalPanel = panelStore.terminalPanelGroups.find(
-		(panel) => panel.id === fullscreenAuxPanel.panel.id
-	);
-	return terminalPanel?.projectPath ?? null;
-});
-
-const sourceControlPanel = $derived(panelStore.gitPanels[0] ?? null);
-const sourceControlPanelSnapshot = $derived.by(() => {
-	const panel = sourceControlPanel;
-	return {
-		id: panel?.id ?? "",
-		projectPath: panel?.projectPath ?? "",
-		width: panel?.width ?? 400,
-		initialTarget: panel?.initialTarget,
-		isOpen: panel !== null,
-	};
-});
 
 function isGroupHidden(group: { projectPath: string }): boolean {
-	if (isAuxOnlyFullscreen && auxOnlyTerminalProjectPath !== null) {
-		return group.projectPath !== auxOnlyTerminalProjectPath;
-	}
 	return (
 		viewModeState.activeProjectPath != null && group.projectPath !== viewModeState.activeProjectPath
 	);
 }
 
-// Resolve full panel from viewModeState for template (helper returns minimal PanelWithProject)
-const fullscreenPanel = $derived(
-	viewModeState.fullscreenPanel
-		? (panelsWithState.find((p) => p.id === viewModeState.fullscreenPanel?.id) ?? null)
-		: null
-);
+const fullscreenTopLevelPanel = $derived.by(() => {
+	const fullscreenPanelRef = viewModeState.fullscreenPanel;
+	if (!fullscreenPanelRef) {
+		return null;
+	}
+
+	const agentPanel = panelsWithState.find((panel) => panel.id === fullscreenPanelRef.id);
+	if (agentPanel) {
+		return { kind: "agent", panel: agentPanel } as const;
+	}
+
+	const filePanel = panelStore.filePanels.find(
+		(panel) => panel.ownerPanelId === null && panel.id === fullscreenPanelRef.id
+	);
+	if (filePanel) {
+		return { kind: "file", panel: filePanel } as const;
+	}
+
+	const reviewPanel = panelStore.reviewPanels.find((panel) => panel.id === fullscreenPanelRef.id);
+	if (reviewPanel) {
+		return { kind: "review", panel: reviewPanel } as const;
+	}
+
+	const terminalPanel = panelStore.terminalPanelGroups.find(
+		(panel) => panel.id === fullscreenPanelRef.id
+	);
+	if (terminalPanel) {
+		return { kind: "terminal", panel: terminalPanel } as const;
+	}
+
+	const browserPanel = panelStore.browserPanels.find((panel) => panel.id === fullscreenPanelRef.id);
+	if (browserPanel) {
+		return { kind: "browser", panel: browserPanel } as const;
+	}
+
+	const gitPanel = panelStore.gitPanels.find((panel) => panel.id === fullscreenPanelRef.id);
+	if (gitPanel) {
+		return { kind: "git", panel: gitPanel } as const;
+	}
+
+	return null;
+});
 const fullscreenPanelSnapshot = $derived.by(() => {
-	const panel = fullscreenPanel;
+	const panel =
+		fullscreenTopLevelPanel && fullscreenTopLevelPanel.kind === "agent"
+			? fullscreenTopLevelPanel.panel
+			: null;
 	return {
 		panelId: panel?.id ?? "",
 		sessionId: panel?.sessionId ?? null,
