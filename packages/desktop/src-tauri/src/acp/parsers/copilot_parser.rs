@@ -20,6 +20,16 @@ pub struct CopilotParser;
 fn infer_tool_kind_from_raw_arguments(raw_arguments: &serde_json::Value) -> Option<ToolKind> {
     let object = raw_arguments.as_object()?;
 
+    if object.contains_key("file_path")
+        || object.contains_key("filePath")
+        || object.contains_key("path")
+        || object.contains_key("command")
+        || object.contains_key("pattern")
+        || object.contains_key("url")
+    {
+        return None;
+    }
+
     if object.contains_key("description")
         || object.contains_key("prompt")
         || object.contains_key("agent_type")

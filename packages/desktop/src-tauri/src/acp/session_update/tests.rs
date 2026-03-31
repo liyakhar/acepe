@@ -1725,6 +1725,107 @@ mod parse_tool_call_update_from_acp {
     }
 
     #[test]
+    fn copilot_tool_call_update_infers_task_arguments_without_tool_name() {
+        with_agent(AgentType::Copilot, || {
+            let data = json!({
+                "toolCallId": "tool-copilot-task-update",
+                "status": "in_progress",
+                "kind": "other",
+                "rawInput": {
+                    "agent_type": "explore",
+                    "description": "Explain codebase overview",
+                    "prompt": "Explore the repository and summarize it."
+                }
+            });
+
+            let result: Result<ToolCallUpdateData, serde_json::Error> =
+                parse_tool_call_update_from_acp(&data, None);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let update = result.unwrap();
+
+            match update.arguments {
+                Some(ToolArguments::Think {
+                    description,
+                    prompt,
+                    subagent_type,
+                    raw,
+                    ..
+                }) => {
+                    assert_eq!(description.as_deref(), Some("Explain codebase overview"));
+                    assert_eq!(
+                        prompt.as_deref(),
+                        Some("Explore the repository and summarize it.")
+                    );
+                    assert_eq!(subagent_type.as_deref(), Some("explore"));
+                    assert!(raw.is_some(), "Expected raw payload to be preserved");
+                }
+                other => {
+                    panic!(
+                        "Expected Think arguments for Copilot task update payload, got {:?}",
+                        other
+                    )
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn copilot_tool_call_update_uses_kind_hint_when_tool_name_missing() {
+        with_agent(AgentType::Copilot, || {
+            let test_cases = vec![
+                ("read", json!({ "path": "/tmp/file.rs" })),
+                ("execute", json!({ "command": "echo ok" })),
+                ("fetch", json!({ "url": "https://example.com" })),
+            ];
+
+            for (kind_hint, raw_input) in test_cases {
+                let data = json!({
+                    "toolCallId": format!("tool-update-{kind_hint}"),
+                    "status": "in_progress",
+                    "kind": kind_hint,
+                    "rawInput": raw_input
+                });
+
+                let result: Result<ToolCallUpdateData, serde_json::Error> =
+                    parse_tool_call_update_from_acp(&data, None);
+
+                assert!(
+                    result.is_ok(),
+                    "Expected Ok for {kind_hint}, got {:?}",
+                    result
+                );
+                let update = result.unwrap();
+
+                match (kind_hint, update.arguments) {
+                    (
+                        "read",
+                        Some(ToolArguments::Read {
+                            file_path: Some(file_path),
+                        }),
+                    ) => {
+                        assert_eq!(file_path, "/tmp/file.rs");
+                    }
+                    (
+                        "execute",
+                        Some(ToolArguments::Execute {
+                            command: Some(command),
+                        }),
+                    ) => {
+                        assert_eq!(command, "echo ok");
+                    }
+                    ("fetch", Some(ToolArguments::Fetch { url: Some(url) })) => {
+                        assert_eq!(url, "https://example.com");
+                    }
+                    (_, other) => {
+                        panic!("Expected typed arguments for {kind_hint}, got {:?}", other);
+                    }
+                }
+            }
+        });
+    }
+
+    #[test]
     fn handles_direct_content_format() {
         // Also support direct format without wrapper
         let data = json!({
