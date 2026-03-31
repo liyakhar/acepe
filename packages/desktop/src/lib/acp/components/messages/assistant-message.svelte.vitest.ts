@@ -3,6 +3,38 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AssistantMessage } from "../../types/assistant-message.js";
 
+type ResizeObserverCallback = () => void;
+
+class TestResizeObserver {
+	readonly targets = new Set<Element>();
+
+	constructor(private readonly callback: ResizeObserverCallback) {
+		resizeObservers.push(this);
+	}
+
+	observe(target: Element): void {
+		this.targets.add(target);
+	}
+
+	disconnect(): void {
+		this.targets.clear();
+	}
+
+	trigger(): void {
+		this.callback();
+	}
+}
+
+const resizeObservers: TestResizeObserver[] = [];
+
+type QueuedAnimationFrame = {
+	id: number;
+	callback: FrameRequestCallback;
+};
+
+let queuedAnimationFrames: QueuedAnimationFrame[] = [];
+let nextAnimationFrameId = 1;
+
 vi.mock(
 	"svelte",
 	async () => {
@@ -37,7 +69,26 @@ const { default: AssistantMessageComponent } = await import("./assistant-message
 
 afterEach(() => {
 	cleanup();
+	resizeObservers.length = 0;
+	queuedAnimationFrames = [];
+	nextAnimationFrameId = 1;
+	vi.unstubAllGlobals();
 });
+
+function triggerResizeObservers(): void {
+	for (const observer of resizeObservers) {
+		observer.trigger();
+	}
+}
+
+async function flushAnimationFrames(): Promise<void> {
+	const queued = [...queuedAnimationFrames];
+	queuedAnimationFrames = [];
+	for (const frame of queued) {
+		frame.callback(0);
+	}
+	await Promise.resolve();
+}
 
 function createStreamingThoughtMessage(): AssistantMessage {
 	return {
@@ -46,7 +97,76 @@ function createStreamingThoughtMessage(): AssistantMessage {
 }
 
 describe("AssistantMessage thinking auto-scroll", () => {
+	it("coalesces repeated thinking growth notifications into one scroll update per frame", async () => {
+		vi.stubGlobal("ResizeObserver", TestResizeObserver);
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback): number => {
+			const id = nextAnimationFrameId;
+			nextAnimationFrameId += 1;
+			queuedAnimationFrames.push({ id, callback });
+			return id;
+		});
+		vi.stubGlobal("cancelAnimationFrame", (id: number): void => {
+			queuedAnimationFrames = queuedAnimationFrames.filter((frame) => frame.id !== id);
+		});
+
+		const view = render(AssistantMessageComponent, {
+			message: createStreamingThoughtMessage(),
+			isStreaming: true,
+		});
+
+		const thinkingContainer = view.container.querySelector(".thinking-content");
+		if (!(thinkingContainer instanceof HTMLDivElement)) {
+			throw new Error("Missing thinking content container");
+		}
+
+		let scrollTopValue = 0;
+		let scrollWrites = 0;
+		Object.defineProperty(thinkingContainer, "scrollTop", {
+			configurable: true,
+			get: () => scrollTopValue,
+			set: (value: number) => {
+				scrollTopValue = value;
+				scrollWrites += 1;
+			},
+		});
+
+		Object.defineProperty(thinkingContainer, "scrollHeight", {
+			configurable: true,
+			get: () => thinkingContainer.querySelectorAll(".stub-line").length * 20,
+		});
+
+		Object.defineProperty(thinkingContainer, "clientHeight", {
+			configurable: true,
+			get: () => 20,
+		});
+
+		scrollWrites = 0;
+
+		await fireEvent.click(view.getByTestId("grow-line"));
+		triggerResizeObservers();
+		await fireEvent.click(view.getByTestId("grow-line"));
+		triggerResizeObservers();
+
+		expect(scrollWrites).toBe(0);
+
+		await flushAnimationFrames();
+
+		expect(scrollWrites).toBe(1);
+		expect(scrollTopValue).toBe(60);
+	});
+
 	it("keeps following thinking content that grows inside the existing DOM subtree", async () => {
+		vi.stubGlobal("ResizeObserver", TestResizeObserver);
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback): number => {
+			const id = nextAnimationFrameId;
+			nextAnimationFrameId += 1;
+			queuedAnimationFrames.push({ id, callback });
+			return id;
+		});
+		vi.stubGlobal("cancelAnimationFrame", (id: number): void => {
+			queuedAnimationFrames = queuedAnimationFrames.filter((frame) => frame.id !== id);
+		});
+
 		const view = render(AssistantMessageComponent, {
 			message: createStreamingThoughtMessage(),
 			isStreaming: true,
@@ -74,6 +194,8 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		expect(thinkingContainer.querySelectorAll(".stub-line")).toHaveLength(1);
 
 		await fireEvent.click(view.getByTestId("grow-line"));
+		triggerResizeObservers();
+		await flushAnimationFrames();
 
 		await waitFor(() => {
 			expect(thinkingContainer.querySelectorAll(".stub-line")).toHaveLength(2);
@@ -81,6 +203,8 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		});
 
 		await fireEvent.click(view.getByTestId("grow-line"));
+		triggerResizeObservers();
+		await flushAnimationFrames();
 
 		await waitFor(() => {
 			expect(thinkingContainer.querySelectorAll(".stub-line")).toHaveLength(3);

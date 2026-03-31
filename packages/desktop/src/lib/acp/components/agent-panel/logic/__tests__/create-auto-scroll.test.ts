@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 import type { ScrollPositionProvider } from "../create-auto-scroll.svelte.js";
 
-import { AutoScrollLogic, canNestedScrollableConsumeWheel } from "../create-auto-scroll.svelte.js";
+import {
+	AutoScrollLogic,
+	canNestedScrollableConsumeWheel,
+	createAutoScroll,
+} from "../create-auto-scroll.svelte.js";
 
 /**
  * Creates a mock ScrollPositionProvider with configurable scroll state.
@@ -470,5 +474,67 @@ describe("AutoScrollLogic", () => {
 				})
 			).toBe(true);
 		});
+	});
+});
+
+describe("createAutoScroll", () => {
+	const originalRAF = globalThis.requestAnimationFrame;
+	const originalCancelRAF = globalThis.cancelAnimationFrame;
+	let queuedAnimationFrames: Array<{ id: number; callback: FrameRequestCallback }> = [];
+	let nextAnimationFrameId = 1;
+
+	beforeEach(() => {
+		queuedAnimationFrames = [];
+		nextAnimationFrameId = 1;
+		globalThis.requestAnimationFrame = (callback: FrameRequestCallback) => {
+			const id = nextAnimationFrameId;
+			nextAnimationFrameId += 1;
+			queuedAnimationFrames.push({ id, callback });
+			return id;
+		};
+		globalThis.cancelAnimationFrame = (id: number) => {
+			queuedAnimationFrames = queuedAnimationFrames.filter((frame) => frame.id !== id);
+		};
+	});
+
+	afterEach(() => {
+		globalThis.requestAnimationFrame = originalRAF;
+		globalThis.cancelAnimationFrame = originalCancelRAF;
+	});
+
+	it("coalesces rapid scroll events into one geometry measurement pass per frame", () => {
+		const provider = {
+			getScrollSize: mock(() => 1000),
+			getViewportSize: mock(() => 500),
+			getScrollOffset: mock(() => 100),
+			scrollToIndex: mock(() => {}),
+		};
+
+		const autoScroll = createAutoScroll();
+		autoScroll.setVListRef(provider);
+
+		provider.getScrollSize.mockClear();
+		provider.getViewportSize.mockClear();
+		provider.getScrollOffset.mockClear();
+
+		autoScroll.handleScroll();
+		autoScroll.handleScroll();
+		autoScroll.handleScroll();
+
+		expect(provider.getScrollSize).toHaveBeenCalledTimes(0);
+		expect(provider.getViewportSize).toHaveBeenCalledTimes(0);
+		expect(provider.getScrollOffset).toHaveBeenCalledTimes(0);
+
+		const queued = [...queuedAnimationFrames];
+		queuedAnimationFrames = [];
+		for (const frame of queued) {
+			frame.callback(0);
+		}
+
+		expect(provider.getScrollSize).toHaveBeenCalledTimes(1);
+		expect(provider.getViewportSize).toHaveBeenCalledTimes(1);
+		expect(provider.getScrollOffset).toHaveBeenCalledTimes(1);
+		expect(autoScroll.following).toBe(false);
+		expect(autoScroll.nearBottom).toBe(false);
 	});
 });

@@ -24,6 +24,22 @@ export interface ScrollPositionProvider {
 	scrollToIndex(index: number, options?: { align?: "start" | "center" | "end" }): void;
 }
 
+export interface AutoScrollStateSnapshot {
+	following: boolean;
+	nearBottom: boolean;
+	nearTop: boolean;
+}
+
+type ScrollMetrics = {
+	scrollSize: number;
+	viewportSize: number;
+	scrollOffset: number;
+	distanceFromBottom: number;
+	nearBottom: boolean;
+	nearTop: boolean;
+	canScroll: boolean;
+};
+
 export function canNestedScrollableConsumeWheel(options: {
 	scrollTop: number;
 	scrollHeight: number;
@@ -117,6 +133,39 @@ export class AutoScrollLogic {
 		return this._provider.getScrollSize() - this._provider.getViewportSize() > 1;
 	}
 
+	private measure(): ScrollMetrics | null {
+		if (!this._provider) {
+			return null;
+		}
+
+		const scrollSize = this._provider.getScrollSize();
+		const viewportSize = this._provider.getViewportSize();
+		const scrollOffset = this._provider.getScrollOffset();
+		const distanceFromBottom = scrollSize - (scrollOffset + viewportSize);
+
+		return {
+			scrollSize,
+			viewportSize,
+			scrollOffset,
+			distanceFromBottom,
+			nearBottom: distanceFromBottom < BOTTOM_THRESHOLD,
+			nearTop: scrollOffset < BOTTOM_THRESHOLD,
+			canScroll: scrollSize - viewportSize > 1,
+		};
+	}
+
+	private buildStateSnapshot(metrics: ScrollMetrics | null): AutoScrollStateSnapshot {
+		return {
+			following: this._following,
+			nearBottom: metrics ? metrics.nearBottom : true,
+			nearTop: metrics ? metrics.nearTop : true,
+		};
+	}
+
+	getStateSnapshot(): AutoScrollStateSnapshot {
+		return this.buildStateSnapshot(this.measure());
+	}
+
 	/**
 	 * Mark the current scroll as programmatic. Records a suppression window and
 	 * the bottom offset we targeted so subsequent scroll events caused by
@@ -143,17 +192,24 @@ export class AutoScrollLogic {
 	 * virtualization where measured heights settle asynchronously.
 	 */
 	isAuto(): boolean {
-		if (!this._autoMark || !this._provider) return false;
+		const metrics = this.measure();
+		if (!metrics) {
+			return false;
+		}
+
+		return this.isAutoForMetrics(metrics);
+	}
+
+	private isAutoForMetrics(metrics: ScrollMetrics): boolean {
+		if (!this._autoMark) return false;
 		if (Date.now() > this._autoMark.expiresAt) {
 			this._autoMark = undefined;
 			return false;
 		}
-		const currentOffset = this._provider.getScrollOffset();
-		const scrollSize = this._provider.getScrollSize();
-		const viewportSize = this._provider.getViewportSize();
+		const currentOffset = metrics.scrollOffset;
 		const metricsChanged =
-			Math.abs(scrollSize - this._autoMark.scrollSizeAtMark) > 1 ||
-			Math.abs(viewportSize - this._autoMark.viewportSizeAtMark) > 1;
+			Math.abs(metrics.scrollSize - this._autoMark.scrollSizeAtMark) > 1 ||
+			Math.abs(metrics.viewportSize - this._autoMark.viewportSizeAtMark) > 1;
 		const isAtMarkedBottom =
 			currentOffset >=
 			this._autoMark.expectedBottomOffsetAtMark - AUTO_MARK_MATCH_TOLERANCE_PX;
@@ -329,29 +385,28 @@ export class AutoScrollLogic {
 	 * Marks the user detached when they move away from bottom, and re-attaches
 	 * once they intentionally return to bottom via scroll position alone.
 	 */
-	handleScroll(): void {
-		if (!this._provider) return;
-
-		const dist = this.distanceFromBottom();
-		const auto = this.isAuto();
-		const nearBottom = this.isNearBottom();
-		const canScr = this.canScroll();
+	handleScroll(): AutoScrollStateSnapshot {
+		const metrics = this.measure();
+		if (!metrics) {
+			return this.buildStateSnapshot(null);
+		}
 
 		// Content fits in viewport — reset, nothing to track
-		if (!canScr) {
+		if (!metrics.canScroll) {
 			if (!this._following) {
 				log("scroll", "RESET (content fits viewport)");
 				this._following = true;
 			}
-			return;
+			return this.buildStateSnapshot(metrics);
 		}
 
 		// Ignore scroll events triggered by our own scrollToBottom calls.
-		if (auto) {
-			log("scroll", "IGNORED (isAuto), dist=", dist);
-			return;
+		if (this.isAutoForMetrics(metrics)) {
+			log("scroll", "IGNORED (isAuto), dist=", metrics.distanceFromBottom);
+			return this.buildStateSnapshot(metrics);
 		}
 
+<<<<<<< HEAD
 		// Returning to bottom by position alone is an explicit follow action.
 		if (nearBottom) {
 			if (!this._following) {
@@ -359,6 +414,12 @@ export class AutoScrollLogic {
 				log("scroll", "RE-ENGAGE (returned near bottom), dist=", dist);
 			}
 			return;
+=======
+		// Near bottom — not a detach, just normal position.
+		// Re-engagement happens only via handleWheelIntent (unambiguous user intent).
+		if (metrics.nearBottom) {
+			return this.buildStateSnapshot(metrics);
+>>>>>>> bd169a12 (perf(acp): coalesce auto-scroll updates)
 		}
 
 		// User scrolled away from bottom
@@ -366,12 +427,13 @@ export class AutoScrollLogic {
 			log(
 				"scroll",
 				"DETACH (scrolled away), dist=",
-				dist,
+				metrics.distanceFromBottom,
 				"offset=",
-				this._provider.getScrollOffset()
+				metrics.scrollOffset
 			);
 		}
 		this._following = false;
+		return this.buildStateSnapshot(metrics);
 	}
 
 	/**
@@ -402,10 +464,11 @@ export function createAutoScroll() {
 	// Any $state read inside syncState() would become a tracked dependency
 	// in every $effect that calls it, causing feedback loops.
 	// Svelte 5 $state already skips updates when the value doesn't change (=== check).
-	function syncState(): void {
-		following = logic.following;
-		nearBottom = logic.isNearBottom();
-		nearTop = logic.isNearTop();
+	function syncState(snapshot?: AutoScrollStateSnapshot): void {
+		const nextState = snapshot ? snapshot : logic.getStateSnapshot();
+		following = nextState.following;
+		nearBottom = nextState.nearBottom;
+		nearTop = nextState.nearTop;
 	}
 
 	function setVListRef(ref: ScrollPositionProvider | undefined): void {
@@ -423,20 +486,20 @@ export function createAutoScroll() {
 
 	function revealLatest(force?: boolean): boolean {
 		const didReveal = logic.revealLatest(force);
-		syncState();
+		syncState(logic.getStateSnapshot());
 		return didReveal;
 	}
 
 	function revealIndex(index: number, force?: boolean): boolean {
 		const didReveal = logic.revealIndex(index, force);
-		syncState();
+		syncState(logic.getStateSnapshot());
 		return didReveal;
 	}
 
 	function isNearBottom(): boolean {
-		const currentNearBottom = logic.isNearBottom();
-		nearBottom = currentNearBottom;
-		return currentNearBottom;
+		const snapshot = logic.getStateSnapshot();
+		syncState(snapshot);
+		return snapshot.nearBottom;
 	}
 
 	function handleWheel(e: WheelEvent): void {
@@ -452,7 +515,7 @@ export function createAutoScroll() {
 					})
 				: false;
 		logic.handleWheelIntent(e.deltaY, isNestedScrollable);
-		syncState();
+		syncState(logic.getStateSnapshot());
 	}
 
 	/**
@@ -464,8 +527,7 @@ export function createAutoScroll() {
 		if (rafId !== null) return;
 		rafId = requestAnimationFrame(() => {
 			rafId = null;
-			logic.handleScroll();
-			syncState();
+			syncState(logic.handleScroll());
 		});
 	}
 
@@ -475,7 +537,7 @@ export function createAutoScroll() {
 			rafId = null;
 		}
 		logic.reset();
-		syncState();
+		syncState(logic.getStateSnapshot());
 	}
 
 	return {

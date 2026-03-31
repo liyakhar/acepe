@@ -80,6 +80,48 @@ const thinkingHeaderLabel = $derived.by(() => {
 });
 
 let thinkingContainerRef = $state<HTMLDivElement | undefined>();
+let thinkingContentRef = $state<HTMLDivElement | undefined>();
+let thinkingScrollRafId: number | null = null;
+
+function cancelThinkingFollowFrame(): void {
+	if (thinkingScrollRafId !== null) {
+		cancelAnimationFrame(thinkingScrollRafId);
+		thinkingScrollRafId = null;
+	}
+}
+
+function scrollThinkingToBottom(container: HTMLDivElement): void {
+	const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+	if (maxScrollTop <= 0) {
+		return;
+	}
+
+	if (container.scrollTop >= maxScrollTop - 1) {
+		return;
+	}
+
+	container.scrollTop = container.scrollHeight;
+}
+
+function scheduleThinkingFollow(container: HTMLDivElement): void {
+	if (thinkingScrollRafId !== null) {
+		return;
+	}
+
+	thinkingScrollRafId = requestAnimationFrame(() => {
+		thinkingScrollRafId = null;
+
+		if (!showThinkingBlock || !isStreaming || isCollapsed) {
+			return;
+		}
+
+		if (thinkingContainerRef !== container) {
+			return;
+		}
+
+		scrollThinkingToBottom(container);
+	});
+}
 
 const chatPrefs = getChatPreferencesStore();
 let isCollapsed = $state(false);
@@ -105,35 +147,39 @@ $effect(() => {
 });
 
 $effect(() => {
-	if (showThinkingBlock && isStreaming && thinkingContainerRef) {
-		thinkingContainerRef.scrollTop = thinkingContainerRef.scrollHeight;
+	if (showThinkingBlock && isStreaming && !isCollapsed && thinkingContainerRef) {
+		scheduleThinkingFollow(thinkingContainerRef);
 	}
 });
 
 $effect(() => {
-	if (!showThinkingBlock || !isStreaming || !thinkingContainerRef) {
+	if (!showThinkingBlock || !isStreaming || isCollapsed || !thinkingContainerRef) {
 		return;
 	}
 
 	const container = thinkingContainerRef;
-	const scrollToBottom = () => {
-		container.scrollTop = container.scrollHeight;
-	};
+	const content = thinkingContentRef;
+	scheduleThinkingFollow(container);
 
-	scrollToBottom();
+	if (!content || typeof ResizeObserver !== "function") {
+		return;
+	}
 
-	const observer = new MutationObserver(() => {
-		scrollToBottom();
+	const observer = new ResizeObserver(() => {
+		scheduleThinkingFollow(container);
 	});
 
-	observer.observe(container, {
-		childList: true,
-		subtree: true,
-		characterData: true,
-	});
+	observer.observe(content);
 
 	return () => {
 		observer.disconnect();
+		cancelThinkingFollowFrame();
+	};
+});
+
+$effect(() => {
+	return () => {
+		cancelThinkingFollowFrame();
 	};
 });
 </script>
@@ -156,18 +202,20 @@ $effect(() => {
 						class="thinking-content scrollbar-none max-h-[5.04rem] overflow-y-auto opacity-60"
 						bind:this={thinkingContainerRef}
 					>
-						{#each filteredThoughtGroups as group, index (index)}
-							{@const isLastThoughtGroup = index === filteredThoughtGroups.length - 1}
-							{#if group.type === "text"}
-								<ContentBlockRouter
-									block={{ type: "text", text: group.text }}
-									isStreaming={isStreaming && isLastThoughtGroup}
-									{projectPath}
-								/>
-							{:else}
-								<ContentBlockRouter block={group.block} {projectPath} />
-							{/if}
-						{/each}
+						<div bind:this={thinkingContentRef}>
+							{#each filteredThoughtGroups as group, index (index)}
+								{@const isLastThoughtGroup = index === filteredThoughtGroups.length - 1}
+								{#if group.type === "text"}
+									<ContentBlockRouter
+										block={{ type: "text", text: group.text }}
+										isStreaming={isStreaming && isLastThoughtGroup}
+										{projectPath}
+									/>
+								{:else}
+									<ContentBlockRouter block={group.block} {projectPath} />
+								{/if}
+							{/each}
+						</div>
 					</div>
 				</AgentToolThinking>
 			{/if}
