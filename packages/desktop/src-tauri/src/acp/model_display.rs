@@ -161,7 +161,7 @@ impl ModelsDisplayTransformer for CodexTransformer {
 
 pub fn get_transformer(agent: AgentType) -> Box<dyn ModelsDisplayTransformer> {
     match agent {
-        AgentType::ClaudeCode => Box::new(ClaudeCodeTransformer),
+        AgentType::ClaudeCode | AgentType::Copilot => Box::new(ClaudeCodeTransformer),
         AgentType::OpenCode | AgentType::Cursor => Box::new(DefaultTransformer),
         AgentType::Codex => Box::new(CodexTransformer),
     }

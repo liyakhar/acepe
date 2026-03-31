@@ -7,11 +7,12 @@ mod agent_type {
     fn can_create_all_agent_types() {
         let agents = [
             AgentType::ClaudeCode,
+            AgentType::Copilot,
             AgentType::OpenCode,
             AgentType::Cursor,
             AgentType::Codex,
         ];
-        assert_eq!(agents.len(), 4);
+        assert_eq!(agents.len(), 5);
     }
 
     #[test]
@@ -42,10 +43,10 @@ mod agent_type {
     }
 
     #[test]
-    fn converts_from_canonical_copilot_to_claude_code_parser_family() {
+    fn converts_from_canonical_copilot_to_copilot_parser_family() {
         let canonical = CanonicalAgentId::Copilot;
         let agent_type = AgentType::from_canonical(&canonical);
-        assert_eq!(agent_type, AgentType::ClaudeCode);
+        assert_eq!(agent_type, AgentType::Copilot);
     }
 
     #[test]
@@ -134,6 +135,12 @@ mod get_parser {
     fn returns_parser_for_opencode() {
         let parser = get_parser(AgentType::OpenCode);
         assert_eq!(parser.agent_type(), AgentType::OpenCode);
+    }
+
+    #[test]
+    fn returns_parser_for_copilot() {
+        let parser = get_parser(AgentType::Copilot);
+        assert_eq!(parser.agent_type(), AgentType::Copilot);
     }
 
     #[test]

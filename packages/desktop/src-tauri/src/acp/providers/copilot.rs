@@ -65,9 +65,7 @@ impl AgentProvider for CopilotProvider {
     }
 
     fn parser_agent_type(&self) -> AgentType {
-        // Copilot currently reuses the Claude-compatible ACP parsing family until a
-        // dedicated Copilot parser is added for history replay classification.
-        AgentType::ClaudeCode
+        AgentType::Copilot
     }
 
     fn authenticate_request_params(&self, auth_methods: &[Value]) -> AcpResult<Option<Value>> {
@@ -217,10 +215,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_uses_explicit_claude_code_parser_family() {
+    fn provider_uses_dedicated_copilot_parser_family() {
         let provider = CopilotProvider;
 
-        assert_eq!(provider.parser_agent_type(), AgentType::ClaudeCode);
+        assert_eq!(provider.parser_agent_type(), AgentType::Copilot);
     }
 
     #[test]

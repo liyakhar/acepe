@@ -18,6 +18,7 @@ pub mod adapters;
 pub(crate) mod arguments;
 pub mod cc_sdk_bridge;
 pub(crate) mod claude_code_parser;
+pub(crate) mod copilot_parser;
 pub(crate) mod codex_parser;
 pub(crate) mod cursor_parser;
 pub(crate) mod edit_normalizers;
@@ -28,6 +29,7 @@ mod types;
 
 pub use adapters::{ClaudeCodeAdapter, CodexAdapter, CursorAdapter, OpenCodeAdapter};
 pub use claude_code_parser::ClaudeCodeParser;
+pub use copilot_parser::CopilotParser;
 pub use codex_parser::CodexParser;
 pub use cursor_parser::CursorParser;
 pub use opencode_parser::OpenCodeParser;

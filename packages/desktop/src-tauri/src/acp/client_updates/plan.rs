@@ -101,7 +101,9 @@ pub(super) fn enrich_plan_data(
     if plan.source.is_none() {
         plan.source = Some(provider.map(AgentProvider::default_plan_source).unwrap_or(
             match agent_type {
-                AgentType::ClaudeCode | AgentType::Cursor => PlanSource::Deterministic,
+                AgentType::ClaudeCode | AgentType::Copilot | AgentType::Cursor => {
+                    PlanSource::Deterministic
+                }
                 AgentType::OpenCode | AgentType::Codex => PlanSource::Heuristic,
             },
         ));
@@ -157,6 +159,7 @@ fn render_steps_markdown(steps: &[crate::acp::session_update::PlanStep]) -> Opti
 fn agent_id_for_agent(agent_type: AgentType) -> &'static str {
     match agent_type {
         AgentType::ClaudeCode => "claude-code",
+        AgentType::Copilot => "copilot",
         AgentType::OpenCode => "opencode",
         AgentType::Cursor => "cursor",
         AgentType::Codex => "codex",
