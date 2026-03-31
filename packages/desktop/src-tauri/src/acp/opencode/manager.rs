@@ -1,4 +1,6 @@
 use super::sse;
+use crate::acp::providers::opencode::resolve_opencode_spawn_configs;
+use crate::acp::types::CanonicalAgentId;
 use crate::shell_env::get_enhanced_path_string;
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
@@ -185,23 +187,37 @@ impl OpenCodeManager {
             "Starting OpenCode HTTP server"
         );
 
+        let mut spawn_config = resolve_opencode_spawn_configs(
+            crate::acp::agent_installer::get_cached_binary(&CanonicalAgentId::OpenCode)
+                .map(|path| path.to_string_lossy().to_string()),
+            crate::acp::agent_installer::get_cached_args(&CanonicalAgentId::OpenCode),
+        )
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!(
+            "No launchers available for provider opencode. Install the agent before starting a session."
+        ))?;
+
         // Use port 0 for auto-selection
         let desired_port = 0u16;
-        let args = vec![
-            "serve".to_string(),
-            "--port".to_string(),
-            desired_port.to_string(),
-        ];
+        spawn_config.args.push("--port".to_string());
+        spawn_config.args.push(desired_port.to_string());
 
-        // Spawn the process with enhanced PATH
-        let mut cmd = Command::new("opencode");
-        cmd.args(&args)
+        // Spawn the process with the provider-resolved launcher
+        let mut cmd = Command::new(&spawn_config.command);
+        cmd.args(&spawn_config.args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .current_dir(&self.project_root)
             .kill_on_drop(false); // We handle cleanup manually
 
-        // Set enhanced PATH to find opencode binary in production
+        // Preserve the provider env contract for downloaded OpenCode binaries.
+        cmd.env_clear();
+        for (key, value) in &spawn_config.env {
+            cmd.env(key, value);
+        }
+
+        // PATH should stay enhanced even when the cached launcher was resolved earlier.
         cmd.env("PATH", get_enhanced_path_string());
 
         let mut child = cmd

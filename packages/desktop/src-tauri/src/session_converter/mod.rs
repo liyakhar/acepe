@@ -6,7 +6,9 @@
 
 use crate::acp::parsers::get_parser;
 use crate::acp::parsers::AgentType;
-use crate::acp::session_update::{TodoStatus, ToolArguments};
+use crate::acp::session_update::{
+    TodoStatus, ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData,
+};
 use crate::opencode_history::types::OpenCodeMessage;
 use crate::session_jsonl::types::{ConvertedSession, FullSession, StoredEntry};
 use std::collections::HashMap;
@@ -54,6 +56,49 @@ fn parse_timestamp_to_millis(timestamp: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(timestamp)
         .ok()
         .map(|dt| dt.timestamp_millis())
+}
+
+pub(crate) fn merge_tool_call_update(tool_call: &mut ToolCallData, update: &ToolCallUpdateData) {
+    if let Some(status) = &update.status {
+        if !is_terminal_tool_call_status(&tool_call.status) || is_terminal_tool_call_status(status)
+        {
+            tool_call.status = status.clone();
+        }
+    }
+
+    if let Some(title) = &update.title {
+        tool_call.title = Some(title.clone());
+    }
+
+    if let Some(locations) = &update.locations {
+        tool_call.locations = Some(locations.clone());
+    }
+
+    if let Some(arguments) = update
+        .arguments
+        .as_ref()
+        .or(update.streaming_arguments.as_ref())
+    {
+        tool_call.arguments = arguments.clone();
+    }
+
+    if tool_call.result.is_none() {
+        if let Some(result) = &update.result {
+            tool_call.result = Some(result.clone());
+        }
+    }
+
+    if let Some(normalized_questions) = &update.normalized_questions {
+        tool_call.normalized_questions = Some(normalized_questions.clone());
+    }
+
+    if let Some(normalized_todos) = &update.normalized_todos {
+        tool_call.normalized_todos = Some(normalized_todos.clone());
+    }
+}
+
+fn is_terminal_tool_call_status(status: &ToolCallStatus) -> bool {
+    matches!(status, ToolCallStatus::Completed | ToolCallStatus::Failed)
 }
 
 pub fn calculate_todo_timing(entries: &mut [StoredEntry]) {

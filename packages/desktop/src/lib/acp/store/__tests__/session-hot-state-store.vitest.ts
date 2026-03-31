@@ -14,6 +14,8 @@ describe("SessionHotStateStore", () => {
 		it("should return default hot state for unknown session", () => {
 			const state = store.getHotState("unknown");
 			expect(state).toEqual(DEFAULT_HOT_STATE);
+			expect(state.autonomousEnabled).toBe(false);
+			expect(state.autonomousTransition).toBe("idle");
 		});
 
 		it("should return initialized state", () => {

@@ -3,6 +3,52 @@ use crate::acp::session_registry::redact_session_id;
 use crate::db::repository::SessionMetadataRepository;
 use sea_orm::DbConn;
 
+async fn reset_resumed_session_execution_profile(
+    app: &AppHandle,
+    session_id: &str,
+    current_mode_id: &str,
+) -> Result<(), SerializableAcpError> {
+    let session_registry = app.state::<SessionRegistry>();
+    let registry = app.state::<Arc<AgentRegistry>>();
+
+    let agent_id = session_registry.get_agent_id(session_id).ok_or_else(|| {
+        SerializableAcpError::SessionNotFound {
+            session_id: session_id.to_string(),
+        }
+    })?;
+
+    let provider = registry.get(&agent_id).ok_or_else(|| SerializableAcpError::AgentNotFound {
+        agent_id: agent_id.as_str().to_string(),
+    })?;
+
+    let native_mode_id = provider
+        .map_execution_profile_mode_id(current_mode_id, false)
+        .ok_or_else(|| SerializableAcpError::ProtocolError {
+            message: format!(
+                "unsupported autonomous execution profile: provider={} ui_mode={} autonomous=false",
+                provider.id(),
+                current_mode_id
+            ),
+        })?;
+
+    let client_mutex = session_registry.get(session_id).map_err(SerializableAcpError::from)?;
+    let mut client_guard = lock_session_client(
+        &client_mutex,
+        "acp_resume_session: reset execution profile lock",
+    )
+    .await?;
+
+    timeout(
+        SESSION_CLIENT_OPERATION_TIMEOUT,
+        client_guard.set_session_mode(session_id.to_string(), native_mode_id),
+    )
+    .await
+    .map_err(|_| SerializableAcpError::Timeout {
+        operation: "acp_resume_session: reset execution profile".to_string(),
+    })?
+    .map_err(SerializableAcpError::from)
+}
+
 fn git_main_repo_from_worktree_path(worktree_path: &std::path::Path) -> Option<std::path::PathBuf> {
     let git_file_path = worktree_path.join(".git");
     let git_file_content = std::fs::read_to_string(&git_file_path).ok()?;
@@ -283,6 +329,9 @@ pub async fn acp_resume_session(
         },
     )
     .await?;
+
+    reset_resumed_session_execution_profile(&app, &session_id, &result.modes.current_mode_id)
+        .await?;
 
     persist_session_metadata_for_cwd(db.inner(), &session_id, &agent_id_enum, &cwd).await?;
 

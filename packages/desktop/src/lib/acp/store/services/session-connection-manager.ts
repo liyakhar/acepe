@@ -97,6 +97,23 @@ export class SessionConnectionManager {
 		return modeId === CanonicalModeId.PLAN ? CanonicalModeId.PLAN : CanonicalModeId.BUILD;
 	}
 
+	private isUnsupportedAutonomousProfileError(error: AppError): boolean {
+		const errorMessage = error.message;
+		const causeMessage = error.cause ? error.cause.message : "";
+		return (
+			errorMessage.includes("unsupported autonomous execution profile") ||
+			causeMessage.includes("unsupported autonomous execution profile")
+		);
+	}
+
+	private applyExecutionProfile(
+		sessionId: string,
+		modeId: string,
+		autonomousEnabled: boolean
+	): ResultAsync<void, AppError> {
+		return api.setExecutionProfile(sessionId, modeId, autonomousEnabled);
+	}
+
 	private resolveDefaultModelForMode(
 		agentId: string,
 		modeId: string | undefined,
@@ -766,12 +783,27 @@ export class SessionConnectionManager {
 		const capabilities = this.capabilitiesManager.getCapabilities(sessionId);
 		const newMode = capabilities.availableModes.find((m) => m.id === modeId);
 		const oldMode = hotState.currentMode;
+		const oldAutonomousEnabled = hotState.autonomousEnabled;
 
 		this.hotStateManager.updateHotState(sessionId, { currentMode: newMode || null });
 		logger.debug("Setting mode (optimistic)", { sessionId, modeId });
 
-		return api
-			.setMode(session.id, modeId)
+		const applyMode = this.applyExecutionProfile(session.id, modeId, oldAutonomousEnabled).orElse(
+			(error) => {
+				if (!oldAutonomousEnabled || !this.isUnsupportedAutonomousProfileError(error)) {
+					return errAsync(error);
+				}
+
+				logger.info("Falling back to non-autonomous mode change", {
+					sessionId,
+					modeId,
+				});
+				this.hotStateManager.updateHotState(sessionId, { autonomousEnabled: false });
+				return this.applyExecutionProfile(session.id, modeId, false);
+			}
+		);
+
+		return applyMode
 			.andThen(() => {
 				logger.debug("Mode set successfully", { sessionId, modeId });
 
@@ -811,13 +843,73 @@ export class SessionConnectionManager {
 				return okAsync(undefined);
 			})
 			.mapErr((error) => {
-				this.hotStateManager.updateHotState(sessionId, { currentMode: oldMode });
+				this.hotStateManager.updateHotState(sessionId, {
+					currentMode: oldMode,
+					autonomousEnabled: oldAutonomousEnabled,
+				});
 				logger.error("Failed to set mode, rolling back", {
 					sessionId,
 					modeId,
 					error,
 				});
 				return new AgentError("setMode", error instanceof Error ? error : undefined);
+			});
+	}
+
+	setAutonomousEnabled(sessionId: string, enabled: boolean): ResultAsync<void, AppError> {
+		const session = this.stateReader.getSessionCold(sessionId);
+		if (!session) {
+			return errAsync(new SessionNotFoundError(sessionId));
+		}
+
+		const hotState = this.stateReader.getHotState(sessionId);
+		if (!hotState.isConnected) {
+			return errAsync(new ConnectionError(sessionId));
+		}
+
+		if (hotState.autonomousTransition !== "idle") {
+			return errAsync(
+				new AgentError(
+					"setAutonomousEnabled",
+					new Error("Autonomous transition already in progress")
+				)
+			);
+		}
+
+		const currentModeId = hotState.currentMode ? hotState.currentMode.id : null;
+		if (!currentModeId) {
+			return errAsync(
+				new AgentError(
+					"setAutonomousEnabled",
+					new Error("Current mode is required to apply Autonomous")
+				)
+			);
+		}
+
+		const previousAutonomousEnabled = hotState.autonomousEnabled;
+		this.hotStateManager.updateHotState(sessionId, {
+			autonomousEnabled: enabled,
+			autonomousTransition: enabled ? "enabling" : "disabling",
+		});
+
+		return this.applyExecutionProfile(session.id, currentModeId, enabled)
+			.map(() => {
+				this.hotStateManager.updateHotState(sessionId, { autonomousTransition: "idle" });
+			})
+			.mapErr((error) => {
+				this.hotStateManager.updateHotState(sessionId, {
+					autonomousEnabled: previousAutonomousEnabled,
+					autonomousTransition: "idle",
+				});
+				logger.error("Failed to set Autonomous, rolling back", {
+					sessionId,
+					enabled,
+					error,
+				});
+				return new AgentError(
+					"setAutonomousEnabled",
+					error instanceof Error ? error : undefined
+				);
 			});
 	}
 

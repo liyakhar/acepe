@@ -1,5 +1,5 @@
 use crate::acp::parsers::AgentType;
-use crate::acp::session_update::{ToolCallData, ToolCallStatus, ToolCallUpdateData};
+use crate::acp::session_update::ToolCallUpdateData;
 use crate::session_jsonl::types::{ConvertedSession, FullSession, StoredEntry};
 
 #[derive(serde::Deserialize)]
@@ -70,55 +70,15 @@ fn apply_tool_call_update(converted: &mut ConvertedSession, update: &ToolCallUpd
         return;
     };
 
-    merge_tool_call_update(tool_call, update);
-}
-
-fn merge_tool_call_update(tool_call: &mut ToolCallData, update: &ToolCallUpdateData) {
-    if let Some(status) = &update.status {
-        if !is_terminal_status(&tool_call.status) || is_terminal_status(status) {
-            tool_call.status = status.clone();
-        }
-    }
-
-    if let Some(title) = &update.title {
-        tool_call.title = Some(title.clone());
-    }
-
-    if let Some(locations) = &update.locations {
-        tool_call.locations = Some(locations.clone());
-    }
-
-    if let Some(arguments) = update
-        .arguments
-        .as_ref()
-        .or(update.streaming_arguments.as_ref())
-    {
-        tool_call.arguments = arguments.clone();
-    }
-
-    if tool_call.result.is_none() {
-        if let Some(result) = &update.result {
-            tool_call.result = Some(result.clone());
-        }
-    }
-
-    if let Some(normalized_questions) = &update.normalized_questions {
-        tool_call.normalized_questions = Some(normalized_questions.clone());
-    }
-
-    if let Some(normalized_todos) = &update.normalized_todos {
-        tool_call.normalized_todos = Some(normalized_todos.clone());
-    }
-}
-
-fn is_terminal_status(status: &ToolCallStatus) -> bool {
-    matches!(status, ToolCallStatus::Completed | ToolCallStatus::Failed)
+    super::merge_tool_call_update(tool_call, update);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp::session_update::{SessionUpdate, ToolArguments, ToolKind};
+    use crate::acp::session_update::{
+        SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus, ToolKind,
+    };
     use crate::acp::streaming_log::{clear_session_log, log_emitted_event};
     use crate::session_jsonl::types::SessionStats;
 

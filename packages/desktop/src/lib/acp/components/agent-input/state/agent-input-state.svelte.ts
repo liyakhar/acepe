@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { okAsync, ResultAsync } from "neverthrow";
+import { okAsync, Result, ResultAsync } from "neverthrow";
 import { SvelteMap } from "svelte/reactivity";
 
 import type { ProjectIndex } from "../../../../services/converted-session-types.js";
@@ -206,6 +206,7 @@ export class AgentInputState {
 	private unlistenFileDrop: UnlistenFn | null = null;
 	private unlistenFileDropHover: UnlistenFn | null = null;
 	private unlistenFileDropCancelled: UnlistenFn | null = null;
+	private isDestroyed = false;
 
 	/**
 	 * Creates a new AgentInputState instance.
@@ -242,6 +243,7 @@ export class AgentInputState {
 	 * Focuses the textarea on mount and sets up Tauri drag-drop listeners.
 	 */
 	initialize(): void {
+		this.isDestroyed = false;
 		// Focus textarea on mount
 		setTimeout(() => {
 			this.focusInput();
@@ -274,20 +276,23 @@ export class AgentInputState {
 	 */
 	private async setupTauriDragDropListeners(): Promise<void> {
 		// Listen for file drop hover (drag over)
-		this.unlistenFileDropHover = await listen<{
+		const hoverUnlisten = await listen<{
 			paths: string[];
 			position: { x: number; y: number };
 		}>("tauri://drag-over", (event) => {
+			if (this.isDestroyed) return;
 			// Always show drop zone when dragging in window
 			this.isDragActive = true;
 			// Highlight only when over this specific container
 			this.isDragHovering = this.isPositionInBounds(event.payload.position);
 		});
+		this.registerResolvedDragDropListener("hover", hoverUnlisten);
 
 		// Listen for file drop
-		this.unlistenFileDrop = await listen<{ paths: string[]; position: { x: number; y: number } }>(
+		const dropUnlisten = await listen<{ paths: string[]; position: { x: number; y: number } }>(
 			"tauri://drag-drop",
 			async (event) => {
+				if (this.isDestroyed) return;
 				const wasHovering = this.isDragHovering;
 				this.isDragActive = false;
 				this.isDragHovering = false;
@@ -325,31 +330,97 @@ export class AgentInputState {
 				this.textareaRef?.focus();
 			}
 		);
+		this.registerResolvedDragDropListener("drop", dropUnlisten);
 
 		// Listen for drag cancelled (drag leave)
-		this.unlistenFileDropCancelled = await listen("tauri://drag-leave", () => {
+		const leaveUnlisten = await listen("tauri://drag-leave", () => {
+			if (this.isDestroyed) return;
 			this.isDragActive = false;
 			this.isDragHovering = false;
 		});
+		this.registerResolvedDragDropListener("leave", leaveUnlisten);
+	}
+
+	private registerResolvedDragDropListener(
+		listenerKind: "hover" | "drop" | "leave",
+		unlisten: UnlistenFn
+	): void {
+		if (this.isDestroyed) {
+			this.runUnlisten(listenerKind, unlisten);
+			return;
+		}
+
+		if (listenerKind === "hover") {
+			this.unlistenFileDropHover = unlisten;
+			return;
+		}
+
+		if (listenerKind === "drop") {
+			this.unlistenFileDrop = unlisten;
+			return;
+		}
+
+		this.unlistenFileDropCancelled = unlisten;
+	}
+
+	private runUnlisten(listenerKind: string, unlisten: UnlistenFn): void {
+		Result.fromThrowable(
+			() => {
+				unlisten();
+			},
+			(error) => {
+				if (error instanceof Error) {
+					return error;
+				}
+
+				return new Error(String(error));
+			}
+		)().match(
+			() => {},
+			(error) => {
+				this.logger.warn("Failed to unregister drag-drop listener", {
+					listenerKind,
+					error,
+				});
+			}
+		);
+	}
+
+	private clearDragDropListener(listenerKind: "hover" | "drop" | "leave"): void {
+		if (listenerKind === "hover") {
+			const unlisten = this.unlistenFileDropHover;
+			this.unlistenFileDropHover = null;
+			if (unlisten) {
+				this.runUnlisten(listenerKind, unlisten);
+			}
+			return;
+		}
+
+		if (listenerKind === "drop") {
+			const unlisten = this.unlistenFileDrop;
+			this.unlistenFileDrop = null;
+			if (unlisten) {
+				this.runUnlisten(listenerKind, unlisten);
+			}
+			return;
+		}
+
+		const unlisten = this.unlistenFileDropCancelled;
+		this.unlistenFileDropCancelled = null;
+		if (unlisten) {
+			this.runUnlisten(listenerKind, unlisten);
+		}
 	}
 
 	/**
 	 * Cleans up resources including Tauri event listeners.
 	 */
 	destroy(): void {
+		this.isDestroyed = true;
 		// Clean up Tauri event listeners
-		if (this.unlistenFileDrop) {
-			this.unlistenFileDrop();
-			this.unlistenFileDrop = null;
-		}
-		if (this.unlistenFileDropHover) {
-			this.unlistenFileDropHover();
-			this.unlistenFileDropHover = null;
-		}
-		if (this.unlistenFileDropCancelled) {
-			this.unlistenFileDropCancelled();
-			this.unlistenFileDropCancelled = null;
-		}
+		this.clearDragDropListener("drop");
+		this.clearDragDropListener("hover");
+		this.clearDragDropListener("leave");
 	}
 
 	// ============================================

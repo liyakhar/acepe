@@ -72,6 +72,17 @@ export function setMode(sessionId: string, modeId: string): ResultAsync<void, Ap
 	return tauriClient.acp.setMode(sessionId, modeId);
 }
 
+/**
+ * Apply the provider-owned execution profile for a visible UI mode.
+ */
+export function setExecutionProfile(
+	sessionId: string,
+	modeId: string,
+	autonomousEnabled: boolean
+): ResultAsync<void, AppError> {
+	return tauriClient.acp.setExecutionProfile(sessionId, modeId, autonomousEnabled);
+}
+
 /** Response shape from session/set_config_option — returns full updated config state. */
 export interface SetConfigOptionResponse {
 	configOptions?: ConfigOptionData[];
@@ -228,6 +239,7 @@ export interface AgentInfo {
 	description?: string;
 	icon?: string;
 	availability_kind?: AgentAvailabilityKind;
+	autonomous_supported_mode_ids?: ReadonlyArray<string>;
 }
 
 /**
@@ -271,6 +283,7 @@ export const api = {
 	sendPrompt,
 	setModel,
 	setMode,
+	setExecutionProfile,
 	setConfigOption,
 	stopStreaming,
 	closeSession,

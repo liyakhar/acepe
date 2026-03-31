@@ -13,6 +13,8 @@ struct TestProvider {
 
 struct RetryingProvider;
 
+struct NoLauncherProvider;
+
 fn failing_spawn_config() -> SpawnConfig {
     SpawnConfig {
         command: "/bin/sh".to_string(),
@@ -172,6 +174,28 @@ impl AgentProvider for RetryingProvider {
     }
 }
 
+impl AgentProvider for NoLauncherProvider {
+    fn id(&self) -> &str {
+        "cursor"
+    }
+
+    fn name(&self) -> &str {
+        "No Launcher Provider"
+    }
+
+    fn spawn_config(&self) -> SpawnConfig {
+        SpawnConfig {
+            command: "agent".to_string(),
+            args: vec!["acp".to_string()],
+            env: HashMap::new(),
+        }
+    }
+
+    fn spawn_configs(&self) -> Vec<SpawnConfig> {
+        Vec::new()
+    }
+}
+
 fn create_test_client() -> AcpClient {
     let provider: StdArc<dyn AgentProvider> = StdArc::new(TestProvider { id: "codex" });
     let cwd = std::env::current_dir().expect("current dir should be available");
@@ -186,6 +210,12 @@ fn create_cursor_test_client() -> AcpClient {
 
 fn create_retry_test_client() -> AcpClient {
     let provider: StdArc<dyn AgentProvider> = StdArc::new(RetryingProvider);
+    let cwd = std::env::current_dir().expect("current dir should be available");
+    AcpClient::new_with_provider(provider, None, cwd).expect("client should be created")
+}
+
+fn create_no_launcher_test_client() -> AcpClient {
+    let provider: StdArc<dyn AgentProvider> = StdArc::new(NoLauncherProvider);
     let cwd = std::env::current_dir().expect("current dir should be available");
     AcpClient::new_with_provider(provider, None, cwd).expect("client should be created")
 }
@@ -744,4 +774,13 @@ async fn initialize_retries_with_next_spawn_config_after_subprocess_exit() {
     assert_eq!(client.spawn_config_index, 1);
 
     client.stop();
+}
+
+#[tokio::test]
+async fn start_returns_clear_error_when_provider_has_no_launchers() {
+    let mut client = create_no_launcher_test_client();
+
+    let error = client.start().await.expect_err("start should fail without launchers");
+
+    assert!(matches!(error, AcpError::InvalidState(message) if message.contains("No launchers available for provider cursor")));
 }

@@ -15,6 +15,8 @@ pub enum CommunicationMode {
     Http,
     /// Direct Rust SDK (cc-sdk) — no subprocess indirection
     CcSdk,
+    /// Native Codex app-server over line-delimited request/response messages
+    CodexNative,
 }
 
 /// Trait for agent client implementations

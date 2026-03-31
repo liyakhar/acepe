@@ -42,6 +42,13 @@ mod agent_type {
     }
 
     #[test]
+    fn converts_from_canonical_copilot_to_claude_code_parser_family() {
+        let canonical = CanonicalAgentId::Copilot;
+        let agent_type = AgentType::from_canonical(&canonical);
+        assert_eq!(agent_type, AgentType::ClaudeCode);
+    }
+
+    #[test]
     fn converts_from_canonical_cursor() {
         let canonical = CanonicalAgentId::Cursor;
         let agent_type = AgentType::from_canonical(&canonical);

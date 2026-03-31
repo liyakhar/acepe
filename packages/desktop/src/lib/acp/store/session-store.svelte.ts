@@ -613,6 +613,10 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		return this.connectionMgr.setMode(sessionId, modeId);
 	}
 
+	setAutonomousEnabled(sessionId: string, enabled: boolean): ResultAsync<void, AppError> {
+		return this.connectionMgr.setAutonomousEnabled(sessionId, enabled);
+	}
+
 	setConfigOption(sessionId: string, configId: string, value: string): ResultAsync<void, AppError> {
 		return this.connectionMgr.setConfigOption(sessionId, configId, value);
 	}

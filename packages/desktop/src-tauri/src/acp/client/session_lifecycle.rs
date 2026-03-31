@@ -134,8 +134,8 @@ impl AcpClient {
     ) -> AcpResult<ResumeSessionResponse> {
         tracing::info!(session_id = %session_id, cwd = %cwd, "Resuming session");
         let params = json!({
-            "sessionId": session_id,
-            "cwd": cwd,
+            "sessionId": session_id.clone(),
+            "cwd": cwd.clone(),
             "mcpServers": []
         });
 
@@ -146,20 +146,50 @@ impl AcpClient {
             Ok(result) => result,
             Err(err) if is_method_not_found_error(&err) => {
                 tracing::warn!("session/resume not supported, falling back to session/load");
-                let _replay_guard = ReplayGuard::activate(&self.is_replay_active);
-                match self.send_request(acp_methods::SESSION_LOAD, params).await {
-                    Ok(result) => result,
-                    Err(load_err) if is_session_not_found_error(&load_err) => {
-                        return Err(AcpError::SessionNotFound(session_id.clone()));
-                    }
-                    Err(load_err) => return Err(load_err),
-                }
+                return self.load_session(session_id, cwd).await;
             }
             Err(err) if is_session_not_found_error(&err) => {
                 return Err(AcpError::SessionNotFound(session_id.clone()));
             }
             Err(err) => return Err(err),
         };
+        self.finalize_resume_response(session_id, result, "resume")
+            .await
+    }
+
+    /// Load an existing session with replay semantics.
+    ///
+    /// This always uses ACP `session/load`, which replays historical updates.
+    pub async fn load_session(
+        &mut self,
+        session_id: String,
+        cwd: String,
+    ) -> AcpResult<ResumeSessionResponse> {
+        tracing::info!(session_id = %session_id, cwd = %cwd, "Loading session");
+        let params = json!({
+            "sessionId": session_id.clone(),
+            "cwd": cwd.clone(),
+            "mcpServers": []
+        });
+
+        let _replay_guard = ReplayGuard::activate(&self.is_replay_active);
+        let result = match self.send_request(acp_methods::SESSION_LOAD, params).await {
+            Ok(result) => result,
+            Err(err) if is_session_not_found_error(&err) => {
+                return Err(AcpError::SessionNotFound(session_id.clone()));
+            }
+            Err(err) => return Err(err),
+        };
+
+        self.finalize_resume_response(session_id, result, "load").await
+    }
+
+    async fn finalize_resume_response(
+        &mut self,
+        session_id: String,
+        result: serde_json::Value,
+        operation: &str,
+    ) -> AcpResult<ResumeSessionResponse> {
         let mut response: ResumeSessionResponse =
             serde_json::from_value(result).map_err(AcpError::SerializationError)?;
 
@@ -194,7 +224,8 @@ impl AcpClient {
             session_id = %session_id,
             modes_count = response.modes.available_modes.len(),
             current_mode = %response.modes.current_mode_id,
-            "Session resumed"
+            operation = operation,
+            "Session ready"
         );
         Ok(response)
     }
@@ -274,11 +305,17 @@ impl AcpClient {
     /// Calls session/list to retrieve available sessions. Optional cwd parameter
     /// filters sessions to a specific working directory.
     pub async fn list_sessions(&mut self, cwd: Option<String>) -> AcpResult<ListSessionsResponse> {
-        tracing::info!(cwd = ?cwd, "Listing sessions");
-        let params = match cwd {
-            Some(path) => json!({ "cwd": path }),
-            None => json!({}),
-        };
+        self.list_sessions_page(cwd, None).await
+    }
+
+    /// List a page of sessions from the agent.
+    pub async fn list_sessions_page(
+        &mut self,
+        cwd: Option<String>,
+        cursor: Option<String>,
+    ) -> AcpResult<ListSessionsResponse> {
+        tracing::info!(cwd = ?cwd, cursor = ?cursor, "Listing sessions");
+        let params = build_list_sessions_params(cwd, cursor);
 
         let result = self.send_request(acp_methods::SESSION_LIST, params).await?;
         let response: ListSessionsResponse =
@@ -286,5 +323,41 @@ impl AcpClient {
 
         tracing::info!(count = response.sessions.len(), "Listed sessions");
         Ok(response)
+    }
+}
+
+fn build_list_sessions_params(cwd: Option<String>, cursor: Option<String>) -> serde_json::Value {
+    let mut params = serde_json::Map::new();
+
+    if let Some(path) = cwd {
+        params.insert("cwd".to_string(), json!(path));
+    }
+
+    if let Some(value) = cursor {
+        params.insert("cursor".to_string(), json!(value));
+    }
+
+    serde_json::Value::Object(params)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_list_sessions_params;
+    use serde_json::json;
+
+    #[test]
+    fn list_sessions_params_include_cursor_when_present() {
+        assert_eq!(
+            build_list_sessions_params(Some("/repo".to_string()), Some("cursor-1".to_string())),
+            json!({
+                "cwd": "/repo",
+                "cursor": "cursor-1"
+            })
+        );
+    }
+
+    #[test]
+    fn list_sessions_params_omit_empty_fields() {
+        assert_eq!(build_list_sessions_params(None, None), json!({}));
     }
 }

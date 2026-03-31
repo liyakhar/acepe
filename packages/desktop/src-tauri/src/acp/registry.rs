@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::acp::provider::AgentProvider;
 use crate::acp::providers::{
-    ClaudeCodeProvider, CodexProvider, CursorProvider, CustomAgentConfig, OpenCodeProvider,
+    ClaudeCodeProvider, CodexProvider, CopilotProvider, CursorProvider, CustomAgentConfig,
+    OpenCodeProvider,
 };
 use crate::acp::types::CanonicalAgentId;
 
@@ -29,6 +30,8 @@ pub struct AgentInfo {
     pub icon: String,
     /// How this agent is provisioned
     pub availability_kind: AgentAvailabilityKind,
+    /// Visible UI modes that support wrapper-managed Autonomous execution.
+    pub autonomous_supported_mode_ids: Vec<String>,
 }
 
 /// Registry for managing all available agents (built-in and custom)
@@ -41,9 +44,10 @@ pub struct AgentRegistry {
 
 impl AgentRegistry {
     /// Shared agent ordering for all list/get-first operations.
-    const AGENT_ORDER: [CanonicalAgentId; 4] = [
+    const AGENT_ORDER: [CanonicalAgentId; 5] = [
         CanonicalAgentId::ClaudeCode,
         CanonicalAgentId::Cursor,
+        CanonicalAgentId::Copilot,
         CanonicalAgentId::OpenCode,
         CanonicalAgentId::Codex,
     ];
@@ -64,6 +68,10 @@ impl AgentRegistry {
         built_in.insert(
             CanonicalAgentId::Cursor,
             Arc::new(CursorProvider) as Arc<dyn AgentProvider>,
+        );
+        built_in.insert(
+            CanonicalAgentId::Copilot,
+            Arc::new(CopilotProvider) as Arc<dyn AgentProvider>,
         );
         built_in.insert(
             CanonicalAgentId::Codex,
@@ -122,6 +130,11 @@ impl AgentRegistry {
                     name: provider.name().to_string(),
                     icon: provider.icon().to_string(),
                     availability_kind,
+                    autonomous_supported_mode_ids: provider
+                        .autonomous_supported_mode_ids()
+                        .iter()
+                        .map(|mode_id| (*mode_id).to_string())
+                        .collect(),
                 });
             }
         }
@@ -146,6 +159,11 @@ impl AgentRegistry {
                 name: provider.name().to_string(),
                 icon: provider.icon().to_string(),
                 availability_kind: AgentAvailabilityKind::Bundled,
+                autonomous_supported_mode_ids: provider
+                    .autonomous_supported_mode_ids()
+                    .iter()
+                    .map(|mode_id| (*mode_id).to_string())
+                    .collect(),
             });
         }
 
@@ -159,6 +177,7 @@ impl AgentRegistry {
         match agent_id {
             CanonicalAgentId::ClaudeCode
             | CanonicalAgentId::Cursor
+            | CanonicalAgentId::Copilot
             | CanonicalAgentId::OpenCode
             | CanonicalAgentId::Codex => {
                 let installed = crate::acp::agent_installer::is_installed(agent_id);
@@ -174,6 +193,7 @@ impl AgentRegistry {
         const PRIORITY_ORDER: &[CanonicalAgentId] = &[
             CanonicalAgentId::ClaudeCode,
             CanonicalAgentId::Cursor,
+            CanonicalAgentId::Copilot,
             CanonicalAgentId::OpenCode,
             CanonicalAgentId::Codex,
         ];
@@ -244,10 +264,43 @@ mod tests {
             vec![
                 "claude-code".to_string(),
                 "cursor".to_string(),
+                "copilot".to_string(),
                 "opencode".to_string(),
                 "codex".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn copilot_is_marked_installable_for_ui() {
+        let registry = AgentRegistry::new();
+        let agents = registry.list_all_for_ui();
+        let copilot = agents
+            .into_iter()
+            .find(|agent| agent.id == "copilot")
+            .expect("copilot should be listed");
+
+        assert!(matches!(
+            copilot.availability_kind,
+            AgentAvailabilityKind::Installable { .. }
+        ));
+    }
+
+    #[test]
+    fn list_all_for_ui_includes_autonomous_support_metadata() {
+        let registry = AgentRegistry::new();
+        let agents = registry.list_all_for_ui();
+        let claude = agents
+            .iter()
+            .find(|agent| agent.id == "claude-code")
+            .expect("Claude agent should exist");
+        let codex = agents
+            .iter()
+            .find(|agent| agent.id == "codex")
+            .expect("Codex agent should exist");
+
+        assert_eq!(claude.autonomous_supported_mode_ids, vec!["build".to_string()]);
+        assert!(codex.autonomous_supported_mode_ids.is_empty());
     }
 
     #[test]

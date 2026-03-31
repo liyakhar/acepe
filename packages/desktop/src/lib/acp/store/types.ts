@@ -36,6 +36,7 @@ import type { ConfigOptionData } from "../../services/converted-session-types.js
 import type { Mode, Model, SessionStatus } from "../application/dto/session";
 import type { ComposerRestoreSnapshot } from "../components/agent-input/logic/first-send-recovery.js";
 import type { ModifiedFilesState } from "../components/modified-files/types/modified-files-state";
+import type { ModifiedFileEntry } from "../types/modified-file-entry.js";
 import type { AvailableCommand } from "../types/available-command";
 import type { SessionState } from "./session-state.js";
 
@@ -87,6 +88,8 @@ export interface SessionHotState {
 	readonly turnState: TurnState;
 	readonly acpSessionId: string | null;
 	readonly connectionError: string | null;
+	readonly autonomousEnabled: boolean;
+	readonly autonomousTransition: "idle" | "enabling" | "disabling";
 	readonly currentModel: Model | null;
 	readonly currentMode: Mode | null;
 	readonly availableCommands: ReadonlyArray<AvailableCommand>;
@@ -114,6 +117,8 @@ export const DEFAULT_HOT_STATE: SessionHotState = {
 	turnState: "idle",
 	acpSessionId: null,
 	connectionError: null,
+	autonomousEnabled: false,
+	autonomousTransition: "idle",
 	currentModel: null,
 	currentMode: null,
 	availableCommands: [],
@@ -206,7 +211,7 @@ export interface Panel {
 	readonly sessionTitle: string | null;
 }
 
-export type WorkspacePanelKind = "agent" | "file" | "terminal" | "browser";
+export type WorkspacePanelKind = "agent" | "file" | "terminal" | "browser" | "review" | "git";
 
 export interface WorkspacePanelBase {
 	readonly id: string;
@@ -268,11 +273,32 @@ export interface BrowserWorkspacePanel extends WorkspacePanelBase {
 	readonly title: string;
 }
 
+export interface ReviewWorkspacePanel extends WorkspacePanelBase {
+	readonly kind: "review";
+	readonly projectPath: string;
+	readonly ownerPanelId: null;
+	readonly modifiedFilesState: ModifiedFilesState;
+	readonly selectedFileIndex: number;
+}
+
+export interface GitWorkspacePanel extends WorkspacePanelBase {
+	readonly kind: "git";
+	readonly projectPath: string;
+	readonly ownerPanelId: null;
+	readonly initialTarget?: {
+		readonly section: "commits" | "prs";
+		readonly commitSha?: string;
+		readonly prNumber?: number;
+	};
+}
+
 export type WorkspacePanel =
 	| AgentWorkspacePanel
 	| FileWorkspacePanel
 	| TerminalWorkspacePanel
-	| BrowserWorkspacePanel;
+	| BrowserWorkspacePanel
+	| ReviewWorkspacePanel
+	| GitWorkspacePanel;
 
 export interface PersistedWorkspacePanelBase {
 	readonly id?: string;
@@ -339,11 +365,33 @@ export interface PersistedBrowserWorkspacePanelState extends PersistedWorkspaceP
 	readonly title: string;
 }
 
+export interface PersistedReviewWorkspacePanelState extends PersistedWorkspacePanelBase {
+	readonly kind: "review";
+	readonly projectPath: string;
+	readonly ownerPanelId: null;
+	readonly files: ReadonlyArray<ModifiedFileEntry>;
+	readonly totalEditCount: number;
+	readonly selectedFileIndex: number;
+}
+
+export interface PersistedGitWorkspacePanelState extends PersistedWorkspacePanelBase {
+	readonly kind: "git";
+	readonly projectPath: string;
+	readonly ownerPanelId: null;
+	readonly initialTarget?: {
+		readonly section: "commits" | "prs";
+		readonly commitSha?: string;
+		readonly prNumber?: number;
+	};
+}
+
 export type PersistedWorkspacePanelState =
 	| PersistedAgentWorkspacePanelState
 	| PersistedFileWorkspacePanelState
 	| PersistedTerminalWorkspacePanelState
-	| PersistedBrowserWorkspacePanelState;
+	| PersistedBrowserWorkspacePanelState
+	| PersistedReviewWorkspacePanelState
+	| PersistedGitWorkspacePanelState;
 
 /**
  * Panel layout state.
@@ -373,6 +421,8 @@ export interface Agent {
 	readonly icon: string;
 	/** How this agent is provisioned (set by store when loading from API) */
 	readonly availability_kind?: AgentAvailabilityKind;
+	/** Visible UI modes that support wrapper-managed Autonomous execution. */
+	readonly autonomous_supported_mode_ids?: ReadonlyArray<string>;
 }
 
 // ============================================

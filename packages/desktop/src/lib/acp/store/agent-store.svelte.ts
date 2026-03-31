@@ -79,6 +79,9 @@ export class AgentStore {
 					description: a.description,
 					icon: a.icon ?? a.id,
 					availability_kind: a.availability_kind ?? { kind: "bundled" as const },
+					autonomous_supported_mode_ids: a.autonomous_supported_mode_ids
+						? a.autonomous_supported_mode_ids
+						: [],
 				}));
 				this.agentsLoading = false;
 				logger.debug("Loaded agents", { count: this.agents.length });

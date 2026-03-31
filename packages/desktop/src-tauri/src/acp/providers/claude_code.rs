@@ -1,6 +1,4 @@
-use super::super::provider::{
-    command_exists, AgentProvider, CommandAvailabilityCache, ModelFallbackCandidate, SpawnConfig,
-};
+use super::super::provider::{command_exists, AgentProvider, ModelFallbackCandidate, SpawnConfig};
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::session_update::PlanSource;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
@@ -39,26 +37,33 @@ impl AgentProvider for ClaudeCodeProvider {
     }
 
     fn is_available(&self) -> bool {
-        // cc-sdk handles CLI resolution internally; check if `claude` is in PATH
-        command_exists("claude")
-            || agent_installer::is_installed(&CanonicalAgentId::ClaudeCode)
-            || std::env::var("CLAUDE_CODE_ACP_PATH")
-                .ok()
-                .filter(|p| !p.trim().is_empty())
-                .is_some()
-            || command_exists("claude-code-acp")
+        agent_installer::get_cached_binary(&CanonicalAgentId::ClaudeCode).is_some()
+            || command_exists("claude")
+            || command_exists("claude-code")
     }
 
     fn model_discovery_commands(&self) -> Vec<SpawnConfig> {
+        let primary = resolve_claude_spawn_configs()
+            .into_iter()
+            .next()
+            .unwrap_or(SpawnConfig {
+                command: "claude".to_string(),
+                args: vec![],
+                env: claude_env(),
+            });
+
+        let mut args = primary.args;
+        args.extend([
+            "--no-session-persistence".to_string(),
+            "-p".to_string(),
+            "Return only the exact current model id. Output the raw model id only, with no markdown or explanation."
+                .to_string(),
+        ]);
+
         vec![SpawnConfig {
-            command: "claude".to_string(),
-            args: vec![
-                "--no-session-persistence".to_string(),
-                "-p".to_string(),
-                "Return only the exact current model id. Output the raw model id only, with no markdown or explanation."
-                    .to_string(),
-            ],
-            env: claude_env(),
+            command: primary.command,
+            args,
+            env: primary.env,
         }]
     }
 
@@ -96,6 +101,25 @@ impl AgentProvider for ClaudeCodeProvider {
         }
     }
 
+    fn autonomous_supported_mode_ids(&self) -> &'static [&'static str] {
+        &["build"]
+    }
+
+    fn map_execution_profile_mode_id(
+        &self,
+        mode_id: &str,
+        autonomous_enabled: bool,
+    ) -> Option<String> {
+        match (mode_id, autonomous_enabled) {
+            ("build", false) => Some("default".to_string()),
+            ("build", true) => Some("bypassPermissions".to_string()),
+            ("plan", false) => Some("plan".to_string()),
+            ("plan", true) => None,
+            (_, false) => Some(self.map_outbound_mode_id(mode_id)),
+            (_, true) => None,
+        }
+    }
+
     fn default_plan_source(&self) -> PlanSource {
         PlanSource::Deterministic
     }
@@ -108,89 +132,54 @@ impl AgentProvider for ClaudeCodeProvider {
 fn resolve_claude_spawn_configs() -> Vec<SpawnConfig> {
     let mut configs = Vec::new();
 
-    // 1. Env var override (dev use)
-    if let Some(override_path) = std::env::var("CLAUDE_CODE_ACP_PATH")
-        .ok()
-        .filter(|path| !path.trim().is_empty())
-    {
-        push_unique_spawn_config(&mut configs, spawn_config_from_path(override_path));
-    }
-
-    // 2. Cached binary (downloaded on demand)
+    // 1. Cached Claude CLI (managed by the vendored SDK).
     if let Some(cached) = agent_installer::get_cached_binary(&CanonicalAgentId::ClaudeCode) {
-        let args = agent_installer::get_cached_args(&CanonicalAgentId::ClaudeCode);
         push_unique_spawn_config(
             &mut configs,
             SpawnConfig {
                 command: cached.to_string_lossy().to_string(),
-                args,
-                env: claude_env(),
-            },
-        );
-    }
-
-    // 3. System binary in PATH
-    if command_exists("claude-code-acp") {
-        push_unique_spawn_config(
-            &mut configs,
-            SpawnConfig {
-                command: "claude-code-acp".to_string(),
                 args: vec![],
                 env: claude_env(),
             },
         );
     }
 
-    // 4. bunx fallback
-    let command_cache = CommandAvailabilityCache::get();
-    if command_cache.bunx {
+    // 2. System Claude CLI in PATH.
+    if command_exists("claude") {
         push_unique_spawn_config(
             &mut configs,
             SpawnConfig {
-                command: "bunx".to_string(),
-                args: vec!["@zed-industries/claude-code-acp".to_string()],
+                command: "claude".to_string(),
+                args: vec![],
                 env: claude_env(),
             },
         );
     }
 
-    // 5. npx fallback
-    if command_cache.npx {
+    // 3. Alternate command name used by some installs.
+    if command_exists("claude-code") {
         push_unique_spawn_config(
             &mut configs,
             SpawnConfig {
-                command: "npx".to_string(),
-                args: vec![
-                    "-y".to_string(),
-                    "@zed-industries/claude-code-acp@latest".to_string(),
-                ],
+                command: "claude-code".to_string(),
+                args: vec![],
                 env: claude_env(),
             },
         );
     }
 
-    assert!(
-        !configs.is_empty(),
-        "Claude provider must have at least one launcher"
-    );
+    if configs.is_empty() {
+        push_unique_spawn_config(
+            &mut configs,
+            SpawnConfig {
+                command: "claude".to_string(),
+                args: vec![],
+                env: claude_env(),
+            },
+        );
+    }
 
     configs
-}
-
-fn spawn_config_from_path(path: String) -> SpawnConfig {
-    if path.ends_with(".mjs") || path.ends_with(".js") {
-        return SpawnConfig {
-            command: "node".to_string(),
-            args: vec![path],
-            env: claude_env(),
-        };
-    }
-
-    SpawnConfig {
-        command: path,
-        args: vec![],
-        env: claude_env(),
-    }
 }
 
 fn claude_env() -> std::collections::HashMap<String, String> {
@@ -206,72 +195,12 @@ fn push_unique_spawn_config(configs: &mut Vec<SpawnConfig>, candidate: SpawnConf
     }
 }
 
-/// Sets up a test agent cache directory with stub binaries for Claude and Codex.
-/// Idempotent; safe to call from both Claude and Codex tests.
-#[cfg(test)]
-pub(crate) fn ensure_test_cache_dir() {
-    use std::fs;
-    use std::io::Write;
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let p = temp.path();
-
-        // Create claude-code cached agent with meta.json
-        let claude_dir = p.join("claude-code");
-        fs::create_dir_all(&claude_dir).expect("create claude-code");
-        fs::File::create(claude_dir.join("claude-agent-acp"))
-            .expect("create stub")
-            .write_all(b"stub")
-            .expect("write stub");
-        let meta = serde_json::json!({
-            "version": "0.1.0",
-            "archive_url": "https://github.com/flazouh/acepe/releases/test",
-            "sha256": null,
-            "downloaded_at": "2026-01-01T00:00:00Z",
-            "cmd": "./claude-agent-acp",
-            "args": []
-        });
-        fs::write(
-            claude_dir.join("meta.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
-        )
-        .expect("write meta.json");
-
-        // Create codex cached agent with meta.json
-        let codex_dir = p.join("codex");
-        fs::create_dir_all(&codex_dir).expect("create codex");
-        fs::File::create(codex_dir.join("codex-acp"))
-            .expect("create stub")
-            .write_all(b"stub")
-            .expect("write stub");
-        let meta = serde_json::json!({
-            "version": "0.9.5",
-            "archive_url": "https://cdn.agentclientprotocol.com/test",
-            "sha256": null,
-            "downloaded_at": "2026-01-01T00:00:00Z",
-            "cmd": "./codex-acp",
-            "args": []
-        });
-        fs::write(
-            codex_dir.join("meta.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
-        )
-        .expect("write meta.json");
-
-        agent_installer::set_cache_dir(p.to_path_buf());
-        Box::leak(Box::new(temp));
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn spawn_config_never_panics() {
-        ensure_test_cache_dir();
         let provider = ClaudeCodeProvider;
         let result = std::panic::catch_unwind(|| provider.spawn_config());
 
@@ -284,32 +213,12 @@ mod tests {
     }
 
     #[test]
-    fn spawn_configs_prefer_explicit_override_path() {
-        ensure_test_cache_dir();
+    fn spawn_configs_return_a_launcher_candidate() {
         let provider = ClaudeCodeProvider;
-        let override_path = "/tmp/custom-claude-agent-acp";
-
-        std::env::set_var("CLAUDE_CODE_ACP_PATH", override_path);
-        let configs = provider.spawn_configs();
-        std::env::remove_var("CLAUDE_CODE_ACP_PATH");
-
-        assert_eq!(configs[0].command, override_path);
-        assert!(configs[0].args.is_empty());
-    }
-
-    #[test]
-    fn spawn_configs_use_cached_binary_when_no_override_is_set() {
-        ensure_test_cache_dir();
-        let provider = ClaudeCodeProvider;
-
-        std::env::remove_var("CLAUDE_CODE_ACP_PATH");
         let configs = provider.spawn_configs();
 
-        assert!(
-            configs[0].command.contains("claude-agent-acp"),
-            "expected cached Claude ACP binary, got {}",
-            configs[0].command
-        );
+        assert!(!configs.is_empty());
+        assert!(configs.iter().all(|config| !config.command.trim().is_empty()));
     }
 
     #[test]
@@ -318,9 +227,16 @@ mod tests {
         let attempts = provider.model_discovery_commands();
 
         assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].command, "claude");
+        assert!(!attempts[0].command.trim().is_empty());
         assert_eq!(attempts[0].args[0], "--no-session-persistence");
         assert_eq!(attempts[0].args[1], "-p");
+    }
+
+    #[test]
+    fn provider_uses_cc_sdk_communication_mode() {
+        let provider = ClaudeCodeProvider;
+
+        assert_eq!(provider.communication_mode(), CommunicationMode::CcSdk);
     }
 
     #[test]
@@ -338,5 +254,31 @@ mod tests {
         assert!(models
             .iter()
             .any(|model| model.model_id == "claude-haiku-4-5-20251001"));
+    }
+
+    #[test]
+    fn claude_provider_reports_autonomous_support_for_build_only() {
+        let provider = ClaudeCodeProvider;
+
+        assert_eq!(provider.autonomous_supported_mode_ids(), &["build"]);
+    }
+
+    #[test]
+    fn claude_provider_maps_execution_profiles() {
+        let provider = ClaudeCodeProvider;
+
+        assert_eq!(
+            provider.map_execution_profile_mode_id("build", false),
+            Some("default".to_string())
+        );
+        assert_eq!(
+            provider.map_execution_profile_mode_id("build", true),
+            Some("bypassPermissions".to_string())
+        );
+        assert_eq!(
+            provider.map_execution_profile_mode_id("plan", false),
+            Some("plan".to_string())
+        );
+        assert_eq!(provider.map_execution_profile_mode_id("plan", true), None);
     }
 }

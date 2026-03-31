@@ -54,6 +54,8 @@ function createStateReader(state: SessionStoreState): ISessionStateReader {
 			turnState: "idle" as const,
 			acpSessionId: null,
 			connectionError: null,
+			autonomousEnabled: false,
+			autonomousTransition: "idle",
 			currentModel: null,
 			currentMode: null,
 			availableCommands: [],

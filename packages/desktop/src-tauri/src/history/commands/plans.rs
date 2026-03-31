@@ -58,6 +58,7 @@ pub async fn get_unified_plan(
             );
             Ok(None)
         }
+        CanonicalAgentId::Copilot => Ok(None),
         CanonicalAgentId::Codex => Ok(None),
         // Graceful fallback for agents without plans
         CanonicalAgentId::Custom(_) => {

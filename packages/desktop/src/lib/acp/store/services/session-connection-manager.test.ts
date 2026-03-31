@@ -1,8 +1,9 @@
 import { errAsync, okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentError } from "../../errors/app-error.js";
 import type { SessionEventHandler } from "../session-event-handler.js";
 import { SessionEventService } from "../session-event-service.svelte.js";
-import type { SessionCold } from "../types.js";
+import type { SessionCold, SessionHotState } from "../types.js";
 import type { ICapabilitiesManager } from "./interfaces/capabilities-manager.js";
 import type { IConnectionManager } from "./interfaces/connection-manager.js";
 import type { IEntryManager } from "./interfaces/entry-manager.js";
@@ -16,6 +17,7 @@ const resumeSession = vi.fn();
 const newSession = vi.fn();
 const closeSession = vi.fn();
 const setMode = vi.fn();
+const setExecutionProfile = vi.fn();
 const setModel = vi.fn();
 const stopStreaming = vi.fn();
 
@@ -25,6 +27,7 @@ vi.mock("../api.js", () => ({
 		newSession,
 		resumeSession,
 		setMode,
+		setExecutionProfile,
 		setModel,
 		stopStreaming,
 	},
@@ -201,6 +204,7 @@ describe("SessionConnectionManager.connectSession", () => {
 		(connectionManager.isConnecting as ReturnType<typeof vi.fn>).mockReturnValue(false);
 		ensureLoaded.mockReturnValue(okAsync(undefined));
 		isSessionModelLoaded.mockReturnValue(true);
+		setExecutionProfile.mockReturnValue(okAsync(undefined));
 		resumeSession.mockReturnValue(
 			okAsync({
 				modes: {
@@ -587,6 +591,7 @@ describe("SessionConnectionManager.createSession", () => {
 		ensureLoaded.mockReturnValue(okAsync(undefined));
 		getDefaultModel.mockReturnValue(undefined);
 		setMode.mockReturnValue(okAsync(undefined));
+		setExecutionProfile.mockReturnValue(okAsync(undefined));
 		setModel.mockReturnValue(okAsync(undefined));
 		newSession.mockReturnValue(
 			okAsync({
@@ -801,6 +806,218 @@ describe("SessionConnectionManager.createSession", () => {
 	});
 });
 
+describe("SessionConnectionManager Autonomous execution profile", () => {
+	const sessionId = "session-autonomous";
+	const connectedSession: SessionCold = {
+		id: sessionId,
+		projectPath: "/tmp/project",
+		agentId: "claude-code",
+		title: "Autonomous",
+		updatedAt: new Date(),
+		createdAt: new Date(),
+		parentId: null,
+	};
+
+	const stateReader: ISessionStateReader = {
+		getHotState: vi.fn(),
+		getEntries: vi.fn(),
+		isPreloaded: vi.fn(),
+		getSessionsForProject: vi.fn(),
+		getSessionCold: vi.fn(),
+		getAllSessions: vi.fn(),
+	};
+
+	const stateWriter: ISessionStateWriter = {
+		addSession: vi.fn(),
+		updateSession: vi.fn(),
+		removeSession: vi.fn(),
+		setSessions: vi.fn(),
+		setLoading: vi.fn(),
+		addScanningProjects: vi.fn(),
+		removeScanningProjects: vi.fn(),
+	};
+
+	const hotState: IHotStateManager = {
+		getHotState: vi.fn(),
+		hasHotState: vi.fn(),
+		updateHotState: vi.fn(),
+		removeHotState: vi.fn(),
+		initializeHotState: vi.fn(),
+	};
+
+	const capabilities: ICapabilitiesManager = {
+		getCapabilities: vi.fn(),
+		hasCapabilities: vi.fn(),
+		updateCapabilities: vi.fn(),
+		removeCapabilities: vi.fn(),
+	};
+
+	const entryManager: IEntryManager = {
+		getEntries: vi.fn(),
+		hasEntries: vi.fn(),
+		isPreloaded: vi.fn(),
+		markPreloaded: vi.fn(),
+		unmarkPreloaded: vi.fn(),
+		storeEntriesAndBuildIndex: vi.fn(),
+		addEntry: vi.fn(),
+		removeEntry: vi.fn(),
+		updateEntry: vi.fn(),
+		clearEntries: vi.fn(),
+		createToolCallEntry: vi.fn(),
+		updateToolCallEntry: vi.fn(),
+		updateChildInParent: vi.fn(),
+		aggregateAssistantChunk: vi.fn(),
+		clearStreamingAssistantEntry: vi.fn(),
+	};
+
+	const connectionManager: IConnectionManager = {
+		createOrGetMachine: vi.fn(),
+		getMachine: vi.fn(),
+		getState: vi.fn(),
+		removeMachine: vi.fn(),
+		isConnecting: vi.fn(),
+		setConnecting: vi.fn(),
+		sendContentLoad: vi.fn(),
+		sendContentLoaded: vi.fn(),
+		sendContentLoadError: vi.fn(),
+		sendConnectionConnect: vi.fn(),
+		sendConnectionSuccess: vi.fn(),
+		sendCapabilitiesLoaded: vi.fn(),
+		sendConnectionError: vi.fn(),
+		sendTurnFailed: vi.fn(),
+		sendDisconnect: vi.fn(),
+		sendMessageSent: vi.fn(),
+		sendResponseStarted: vi.fn(),
+		sendResponseComplete: vi.fn(),
+		initializeConnectedSession: vi.fn(),
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		(stateReader.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue(connectedSession);
+		(stateReader.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: true,
+			status: "ready",
+			turnState: "idle",
+			acpSessionId: sessionId,
+			connectionError: null,
+			autonomousEnabled: false,
+			autonomousTransition: "idle" as const,
+			currentModel: null,
+			currentMode: { id: "build", name: "Build", description: null },
+			availableCommands: [],
+			modelPerMode: {},
+			statusChangedAt: Date.now(),
+		});
+		(capabilities.getCapabilities as ReturnType<typeof vi.fn>).mockReturnValue({
+			availableModes: [
+				{ id: "build", name: "Build", description: null },
+				{ id: "plan", name: "Plan", description: null },
+			],
+			availableModels: [],
+			availableCommands: [],
+		});
+		setExecutionProfile.mockReturnValue(okAsync(undefined));
+	});
+
+	it("optimistically toggles Autonomous and clears the transition on success", async () => {
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.setAutonomousEnabled(sessionId, true);
+		result._unsafeUnwrap();
+
+		expect(setExecutionProfile).toHaveBeenCalledWith(sessionId, "build", true);
+		expect(hotState.updateHotState).toHaveBeenNthCalledWith(1, sessionId, {
+			autonomousEnabled: true,
+			autonomousTransition: "enabling",
+		});
+		expect(hotState.updateHotState).toHaveBeenNthCalledWith(2, sessionId, {
+			autonomousTransition: "idle",
+		});
+	});
+
+	it("rolls Autonomous state back when execution profile apply fails", async () => {
+		setExecutionProfile.mockReturnValue(
+			errAsync(new AgentError("setExecutionProfile", new Error("backend failed")))
+		);
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.setAutonomousEnabled(sessionId, true);
+		expect(result.isErr()).toBe(true);
+
+		expect(hotState.updateHotState).toHaveBeenNthCalledWith(1, sessionId, {
+			autonomousEnabled: true,
+			autonomousTransition: "enabling",
+		});
+		expect(hotState.updateHotState).toHaveBeenNthCalledWith(2, sessionId, {
+			autonomousEnabled: false,
+			autonomousTransition: "idle",
+		});
+	});
+
+	it("forces Autonomous off when a mode change is unsupported in autonomous mode", async () => {
+		(stateReader.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: true,
+			status: "ready",
+			turnState: "idle",
+			acpSessionId: sessionId,
+			connectionError: null,
+			autonomousEnabled: true,
+			autonomousTransition: "idle",
+			currentModel: null,
+			currentMode: { id: "build", name: "Build", description: null },
+			availableCommands: [],
+			modelPerMode: {},
+			statusChangedAt: Date.now(),
+		});
+		setExecutionProfile
+			.mockReturnValueOnce(
+				errAsync(
+					new AgentError(
+						"setExecutionProfile",
+						new Error(
+							"unsupported autonomous execution profile: provider=claude-code ui_mode=plan autonomous=true"
+						)
+					)
+				)
+			)
+			.mockReturnValueOnce(okAsync(undefined));
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.setMode(sessionId, "plan");
+		result._unsafeUnwrap();
+
+		expect(setExecutionProfile).toHaveBeenNthCalledWith(1, sessionId, "plan", true);
+		expect(setExecutionProfile).toHaveBeenNthCalledWith(2, sessionId, "plan", false);
+		expect(hotState.updateHotState).toHaveBeenCalledWith(sessionId, {
+			autonomousEnabled: false,
+		});
+	});
+});
+
 describe("SessionConnectionManager.cancelStreaming", () => {
 	const sessionId = "session-cancel";
 
@@ -949,12 +1166,14 @@ describe("SessionConnectionManager.disconnectSession", () => {
 	it("clears available commands when disconnecting a session", async () => {
 		const sessionId = "session-disconnect";
 		const stateReader: ISessionStateReader = {
-			getHotState: vi.fn(() => ({
+			getHotState: vi.fn((): SessionHotState => ({
 				isConnected: true,
 				status: "ready" as const,
 				turnState: "idle" as const,
 				acpSessionId: "acp-1",
 				connectionError: null,
+				autonomousEnabled: false,
+				autonomousTransition: "idle",
 				currentModel: null,
 				currentMode: null,
 				availableCommands: [{ name: "open", description: "Open file" }],

@@ -1,10 +1,8 @@
-use super::super::provider::{command_exists, AgentProvider, CommandAvailabilityCache, SpawnConfig};
+use super::super::provider::{command_exists, AgentProvider, SpawnConfig};
+use crate::acp::client_trait::CommunicationMode;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
 
-/// Codex ACP Agent Provider
-///
-/// Uses a binary downloaded on demand from the ACP registry CDN.
-/// The binary is cached at `{app_data_dir}/agents/codex/`.
+/// Native Codex app-server provider.
 pub struct CodexProvider;
 
 impl AgentProvider for CodexProvider {
@@ -20,11 +18,37 @@ impl AgentProvider for CodexProvider {
         self.spawn_configs()
             .into_iter()
             .next()
-            .expect("Codex provider must always return at least one spawn config")
+            .expect("Codex provider must return at least one spawn config")
     }
 
     fn spawn_configs(&self) -> Vec<SpawnConfig> {
-        resolve_codex_spawn_configs()
+        let mut configs = Vec::new();
+
+        if let Some(cached) = agent_installer::get_cached_binary(&CanonicalAgentId::Codex) {
+            push_unique_spawn_config(
+                &mut configs,
+                SpawnConfig {
+                    command: cached.to_string_lossy().to_string(),
+                    args: vec!["app-server".to_string()],
+                    env: codex_env(),
+                },
+            );
+        }
+
+        push_unique_spawn_config(
+            &mut configs,
+            SpawnConfig {
+                command: "codex".to_string(),
+                args: vec!["app-server".to_string()],
+                env: codex_env(),
+            },
+        );
+
+        configs
+    }
+
+    fn communication_mode(&self) -> CommunicationMode {
+        CommunicationMode::CodexNative
     }
 
     fn icon(&self) -> &str {
@@ -32,11 +56,8 @@ impl AgentProvider for CodexProvider {
     }
 
     fn is_available(&self) -> bool {
-        let command_cache = CommandAvailabilityCache::get();
-        agent_installer::is_installed(&CanonicalAgentId::Codex)
-            || command_exists("codex-acp")
-            || command_cache.bunx
-            || command_cache.npx
+        agent_installer::get_cached_binary(&CanonicalAgentId::Codex).is_some()
+            || command_exists("codex")
     }
 
     fn uses_wrapper_plan_streaming(&self) -> bool {
@@ -46,85 +67,6 @@ impl AgentProvider for CodexProvider {
     fn clear_message_tracker_on_prompt_response(&self) -> bool {
         true
     }
-}
-
-fn resolve_codex_spawn_configs() -> Vec<SpawnConfig> {
-    let configs = build_codex_spawn_configs(
-        agent_installer::get_cached_binary(&CanonicalAgentId::Codex)
-            .map(|path| path.to_string_lossy().to_string()),
-        agent_installer::get_cached_args(&CanonicalAgentId::Codex),
-        command_exists("codex-acp"),
-        CommandAvailabilityCache::get(),
-    );
-
-    if let Some(config) = configs.first() {
-        tracing::info!(command = %config.command, args = ?config.args, "Using codex ACP launcher");
-    }
-
-    configs
-}
-
-fn build_codex_spawn_configs(
-    cached_binary: Option<String>,
-    cached_args: Vec<String>,
-    system_binary_available: bool,
-    command_cache: &CommandAvailabilityCache,
-) -> Vec<SpawnConfig> {
-    let mut configs = Vec::new();
-
-    if let Some(cached_binary) = cached_binary {
-        push_unique_spawn_config(
-            &mut configs,
-            SpawnConfig {
-                command: cached_binary,
-                args: cached_args,
-                env: codex_env(),
-            },
-        );
-    }
-
-    if system_binary_available {
-        push_unique_spawn_config(
-            &mut configs,
-            SpawnConfig {
-                command: "codex-acp".to_string(),
-                args: Vec::new(),
-                env: codex_env(),
-            },
-        );
-    }
-
-    if command_cache.bunx {
-        push_unique_spawn_config(
-            &mut configs,
-            SpawnConfig {
-                command: "bunx".to_string(),
-                args: vec!["@zed-industries/codex-acp".to_string()],
-                env: codex_env(),
-            },
-        );
-    }
-
-    if command_cache.npx {
-        push_unique_spawn_config(
-            &mut configs,
-            SpawnConfig {
-                command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@zed-industries/codex-acp@latest".to_string()],
-                env: codex_env(),
-            },
-        );
-    }
-
-    if configs.is_empty() {
-        configs.push(SpawnConfig {
-            command: "codex-acp".to_string(),
-            args: Vec::new(),
-            env: codex_env(),
-        });
-    }
-
-    configs
 }
 
 fn codex_env() -> std::collections::HashMap<String, String> {
@@ -143,12 +85,67 @@ fn push_unique_spawn_config(configs: &mut Vec<SpawnConfig>, candidate: SpawnConf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp::provider::CommandAvailabilityCache;
-    use crate::acp::providers::claude_code::ensure_test_cache_dir;
+    use std::fs;
+    use std::io::Write;
+    use std::sync::Once;
+
+    fn test_codex_binary_name() -> &'static str {
+        #[cfg(windows)]
+        {
+            return "codex.exe";
+        }
+
+        #[cfg(not(windows))]
+        {
+            return "codex";
+        }
+    }
+
+    fn test_codex_meta_command() -> &'static str {
+        #[cfg(windows)]
+        {
+            return "./codex.exe";
+        }
+
+        #[cfg(not(windows))]
+        {
+            return "./codex";
+        }
+    }
+
+    fn ensure_test_codex_cache_dir() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let p = temp.path();
+
+            let codex_dir = p.join("codex");
+            fs::create_dir_all(&codex_dir).expect("create codex");
+            fs::File::create(codex_dir.join(test_codex_binary_name()))
+                .expect("create stub")
+                .write_all(b"stub")
+                .expect("write stub");
+            let meta = serde_json::json!({
+                "version": "0.117.0",
+                "archive_url": "https://github.com/openai/codex/releases/test",
+                "sha256": null,
+                "downloaded_at": "2026-01-01T00:00:00Z",
+                "cmd": test_codex_meta_command(),
+                "args": []
+            });
+            fs::write(
+                codex_dir.join("meta.json"),
+                serde_json::to_string_pretty(&meta).expect("serialize meta"),
+            )
+            .expect("write meta.json");
+
+            agent_installer::set_cache_dir(p.to_path_buf());
+            Box::leak(Box::new(temp));
+        });
+    }
 
     #[test]
     fn spawn_config_never_panics() {
-        ensure_test_cache_dir();
         let provider = CodexProvider;
         let result = std::panic::catch_unwind(|| provider.spawn_config());
 
@@ -161,36 +158,33 @@ mod tests {
     }
 
     #[test]
-    fn spawn_configs_prefer_cached_binary_and_args() {
-        let configs = build_codex_spawn_configs(
-            Some("/tmp/codex-acp".to_string()),
-            vec!["--stdio".to_string()],
-            false,
-            &CommandAvailabilityCache::default(),
-        );
+    fn spawn_config_uses_native_codex_app_server() {
+        let provider = CodexProvider;
+        let config = provider.spawn_config();
 
-        assert_eq!(configs[0].command, "/tmp/codex-acp");
-        assert_eq!(configs[0].args, vec!["--stdio".to_string()]);
+        assert_eq!(config.args, vec!["app-server".to_string()]);
+        assert!(!config.command.trim().is_empty());
     }
 
     #[test]
-    fn spawn_configs_include_js_launcher_fallbacks_when_binary_is_missing() {
-        let configs = build_codex_spawn_configs(
-            None,
-            Vec::new(),
-            false,
-            &CommandAvailabilityCache {
-                bunx: true,
-                npx: true,
-            },
-        );
+    fn spawn_config_prefers_cached_codex_binary_when_available() {
+        ensure_test_codex_cache_dir();
+        let provider = CodexProvider;
+        let config = provider.spawn_config();
 
-        assert_eq!(configs[0].command, "bunx");
-        assert_eq!(configs[0].args, vec!["@zed-industries/codex-acp".to_string()]);
-        assert_eq!(configs[1].command, "npx");
-        assert_eq!(
-            configs[1].args,
-            vec!["-y".to_string(), "@zed-industries/codex-acp@latest".to_string()]
+        assert_ne!(config.command, "codex");
+        assert!(
+            config.command.ends_with("codex") || config.command.ends_with("codex.exe"),
+            "expected cached Codex binary path, got {}",
+            config.command
         );
+        assert_eq!(config.args, vec!["app-server".to_string()]);
+    }
+
+    #[test]
+    fn provider_uses_native_communication_mode() {
+        let provider = CodexProvider;
+
+        assert_eq!(provider.communication_mode(), CommunicationMode::CodexNative);
     }
 }

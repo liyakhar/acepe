@@ -2,6 +2,7 @@ pub mod acp;
 mod analytics;
 pub mod browser_webview;
 pub mod checkpoint;
+pub mod copilot_history;
 pub mod codex_history;
 mod commands;
 pub mod cursor_history;
@@ -38,7 +39,8 @@ use acp::commands::{
     acp_install_agent, acp_list_agents, acp_list_preconnection_commands, acp_new_session, acp_read_text_file,
     acp_register_custom_agent, acp_reply_permission, acp_reply_question,
     acp_respond_inbound_request, acp_resume_session, acp_send_prompt, acp_set_config_option,
-    acp_set_mode, acp_set_model, acp_uninstall_agent, acp_write_text_file,
+    acp_set_execution_profile, acp_set_mode, acp_set_model, acp_uninstall_agent,
+    acp_write_text_file,
 };
 use acp::event_bridge_server::start_event_bridge_server;
 use acp::event_hub::AcpEventHubState;
@@ -195,6 +197,7 @@ fn kill_orphaned_acp_processes(agents_dir: &std::path::Path) {
         let patterns = [
             format!("{}/claude-code/claude-agent-acp", agents_dir_str),
             format!("{}/codex-acp/codex-acp", agents_dir_str),
+            format!("{}/codex/codex", agents_dir_str),
         ];
         for pattern in &patterns {
             let _ = Command::new("/usr/bin/pkill")
@@ -960,6 +963,7 @@ pub fn run() {
             acp_fork_session,
             acp_set_model,
             acp_set_mode,
+            acp_set_execution_profile,
             acp_set_config_option,
             acp_send_prompt,
             acp_cancel,

@@ -116,6 +116,26 @@ pub trait AgentProvider: Send + Sync {
         &["build", "plan"]
     }
 
+    /// Visible UI mode IDs that support wrapper-managed Autonomous execution.
+    fn autonomous_supported_mode_ids(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Map a visible UI mode and Autonomous flag to the provider-native execution profile.
+    ///
+    /// Returning `None` means the provider does not support that combination.
+    fn map_execution_profile_mode_id(
+        &self,
+        mode_id: &str,
+        autonomous_enabled: bool,
+    ) -> Option<String> {
+        if autonomous_enabled {
+            return None;
+        }
+
+        Some(self.map_outbound_mode_id(mode_id))
+    }
+
     /// Optional fallback model candidate if provider returns empty models list.
     fn model_fallback_for_empty_list(
         &self,

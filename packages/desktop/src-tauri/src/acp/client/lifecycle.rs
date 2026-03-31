@@ -70,6 +70,12 @@ impl AcpClient {
                 .as_ref()
                 .ok_or(AcpError::NoProviderConfigured)?;
             let spawn_configs = provider.spawn_configs();
+            if spawn_configs.is_empty() {
+                return Err(AcpError::InvalidState(format!(
+                    "No launchers available for provider {}. Install the agent or make its CLI available in PATH.",
+                    provider_id
+                )));
+            }
             let total_spawn_configs = spawn_configs.len();
             let Some(mut spawn_config) = spawn_configs.get(self.spawn_config_index).cloned() else {
                 return Err(AcpError::InvalidState(format!(

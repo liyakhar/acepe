@@ -29,6 +29,14 @@ pub async fn create_client(
         .ok_or_else(|| AcpError::AgentNotFound(agent_id.as_str().to_string()))?
         .clone();
 
+    if crate::acp::agent_installer::is_installable(&agent_id) && !provider.is_available() {
+        tracing::info!(
+            agent_id = %agent_id.as_str(),
+            "Managed agent not available; installing before client creation"
+        );
+        crate::acp::agent_installer::install_agent(agent_id.clone(), app_handle.clone()).await?;
+    }
+
     let client: Box<dyn AgentClient> = match provider.communication_mode() {
         CommunicationMode::Subprocess => {
             tracing::debug!(
@@ -66,6 +74,27 @@ pub async fn create_client(
                 })?
                 .map_err(|e| {
                     AcpError::InvalidState(format!("Failed to start cc-sdk client: {}", e))
+                })?;
+            Box::new(client)
+        }
+        CommunicationMode::CodexNative => {
+            tracing::debug!(
+                "Creating native Codex client for {} in {}",
+                agent_id.as_str(),
+                cwd.display()
+            );
+            let mut client = crate::acp::client::codex_native_client::CodexNativeClient::new(
+                provider, app_handle, cwd,
+            )?;
+            timeout(CLIENT_START_TIMEOUT, client.start())
+                .await
+                .map_err(|_| {
+                    AcpError::InvalidState(
+                        "Native Codex client start timed out after 30s".to_string(),
+                    )
+                })?
+                .map_err(|e| {
+                    AcpError::InvalidState(format!("Failed to start native Codex client: {}", e))
                 })?;
             Box::new(client)
         }

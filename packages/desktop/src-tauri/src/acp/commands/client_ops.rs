@@ -5,6 +5,7 @@ use crate::analytics;
 fn agent_display_name(agent_id: &CanonicalAgentId) -> &str {
     match agent_id {
         CanonicalAgentId::ClaudeCode => "Claude Code",
+        CanonicalAgentId::Copilot => "GitHub Copilot",
         CanonicalAgentId::Cursor => "Cursor",
         CanonicalAgentId::OpenCode => "OpenCode",
         CanonicalAgentId::Codex => "Codex",

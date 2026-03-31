@@ -1,5 +1,7 @@
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AgentError, type AppError } from "../../errors/app-error.js";
 import { buildAcpPermissionId, type PermissionRequest } from "../../types/permission.js";
 
 import { PermissionStore } from "../permission-store.svelte.js";
@@ -21,32 +23,15 @@ function createAcpPermission(
 	};
 }
 
-/** Builds a chainable mock matching the ResultAsync interface subset used by PermissionStore. */
-function mockResultAsync() {
-	const terminal = { map: vi.fn(), mapErr: vi.fn(), match: vi.fn((ok: () => void) => ok()) };
-	return {
-		map: vi.fn((fn: () => void) => {
-			fn();
-			return { mapErr: vi.fn(() => terminal), match: vi.fn((ok: () => void) => ok()) };
-		}),
-		mapErr: vi.fn(() => ({
-			map: vi.fn((fn: () => void) => {
-				fn();
-				return { mapErr: vi.fn(), match: vi.fn((ok: () => void) => ok()) };
-			}),
-			match: vi.fn((ok: () => void) => ok()),
-		})),
-		match: vi.fn((ok: () => void) => ok()),
-	};
-}
-
 // Mock the API module
-const mockReplyPermission = vi.fn((..._args: [string, string, "once" | "always" | "reject"]) =>
-	mockResultAsync()
+const mockReplyPermission = vi.fn(
+	(..._args: [string, string, "once" | "always" | "reject"]): ResultAsync<void, AppError> =>
+		okAsync(undefined)
 );
 
-const mockRespondInboundRequest = vi.fn((_sessionId: string, _requestId: number, _result: object) =>
-	mockResultAsync()
+const mockRespondInboundRequest = vi.fn(
+	(_sessionId: string, _requestId: number, _result: object): ResultAsync<void, AppError> =>
+		okAsync(undefined)
 );
 
 vi.mock("../api.js", () => ({
@@ -64,8 +49,8 @@ vi.mock("../api.js", () => ({
 // Mock the inbound request handler's respondToPermission
 vi.mock("../../logic/inbound-request-handler.js", () => ({
 	respondToPermission: vi.fn(
-		(_sessionId: string, _requestId: number, _allowed: boolean, _optionId: string) =>
-			mockResultAsync()
+		(_sessionId: string, _requestId: number, _allowed: boolean, _optionId: string): ResultAsync<void, AppError> =>
+			okAsync(undefined)
 	),
 }));
 
@@ -395,6 +380,27 @@ describe("PermissionStore", () => {
 			expect(result.isErr()).toBe(true);
 		});
 
+		it("reinserts a permission when replying via HTTP fails", async () => {
+			mockReplyPermission.mockReturnValueOnce(
+				errAsync(new AgentError("replyPermission", new Error("network failed")))
+			);
+
+			const permission: PermissionRequest = {
+				id: "perm-http-failure",
+				sessionId: "session-http",
+				permission: "ReadFile",
+				patterns: [],
+				metadata: {},
+				always: [],
+			};
+
+			store.add(permission);
+			const result = await store.reply(permission.id, "once");
+
+			expect(result.isErr()).toBe(true);
+			expect(store.pending.get(permission.id)).toEqual(permission);
+		});
+
 			it("should keep session batch progress while later permissions remain pending", async () => {
 				const firstPermission = createAcpPermission("session-batch", "tool-1", 100);
 				const secondPermission = createAcpPermission("session-batch", "tool-2", 101);
@@ -415,5 +421,36 @@ describe("PermissionStore", () => {
 				]);
 				expect(store.getSessionProgress("session-batch")).toEqual({ total: 2, completed: 1 });
 			});
+	});
+
+	describe("drainPendingForSession", () => {
+		it("drains only the matching session after Autonomous is enabled", async () => {
+			const firstPermission = createAcpPermission("session-1", "tool-1", 100);
+			const secondPermission = createAcpPermission("session-1", "tool-2", 101);
+			const otherSessionPermission = createAcpPermission("session-2", "tool-3", 102);
+
+			store.add(firstPermission);
+			store.add(secondPermission);
+			store.add(otherSessionPermission);
+
+			const result = await store.drainPendingForSession("session-1");
+			result._unsafeUnwrap();
+
+			expect(store.pending.has(otherSessionPermission.id)).toBe(true);
+			expect(store.pending.has(firstPermission.id)).toBe(false);
+			expect(store.pending.has(secondPermission.id)).toBe(false);
+		});
+
+		it("skips permissions that were already resolved before drain runs", async () => {
+			const permission = createAcpPermission("session-1", "tool-1", 100);
+
+			store.add(permission);
+			store.remove(permission.id);
+
+			const result = await store.drainPendingForSession("session-1");
+			result._unsafeUnwrap();
+
+			expect(mockReplyPermission).not.toHaveBeenCalledWith("session-1", permission.id, "once");
+		});
 	});
 });

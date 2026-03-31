@@ -9,14 +9,20 @@ import { Button } from "$lib/components/ui/button/index.js";
 import { Kbd, KbdGroup } from "$lib/components/ui/kbd/index.js";
 import { Skeleton } from "$lib/components/ui/skeleton/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
-import { getKeybindingsService } from "$lib/keybindings/index.js";
+import { getKeybindingsService, isMac } from "$lib/keybindings/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { getPreconnectionAgentSkillsStore } from "$lib/skills/store/preconnection-agent-skills-store.svelte.js";
 import { getVoiceSettingsStore } from "$lib/stores/voice-settings-store.svelte.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
 import * as agentModelPrefs from "../../store/agent-model-preferences-store.svelte.js";
 import { getConnectionStore } from "../../store/connection-store.svelte.js";
-import { getMessageQueueStore, getPanelStore, getSessionStore } from "../../store/index.js";
+import {
+	getAgentStore,
+	getMessageQueueStore,
+	getPanelStore,
+	getPermissionStore,
+	getSessionStore,
+} from "../../store/index.js";
 import type { AvailableCommand } from "../../types/available-command.js";
 import { CanonicalModeId } from "../../types/canonical-mode-id.js";
 import { PanelConnectionEvent } from "../../types/panel-connection-state.js";
@@ -24,12 +30,13 @@ import { createLogger } from "../../utils/logger.js";
 import { filterVisibleModes } from "../../utils/mode-filter.js";
 import { ArtefactBadge } from "../artefact/index.js";
 import FilePickerDropdown from "../file-picker/file-picker-dropdown.svelte";
-import { ModelSelector, ModeSelector } from "../index.js";
+import { ConfigOptionSelector, ModelSelector, ModeSelector } from "../index.js";
 import { InputContainer } from "@acepe/ui/input-container";
 import ModelSelectorMetricsChip from "../model-selector.metrics-chip.svelte";
 import SlashCommandDropdown from "../slash-command-dropdown/slash-command-dropdown-ui.svelte";
 import { runWorktreeSetup } from "../worktree-toggle/worktree-setup-orchestrator.js";
 import MicButton from "./components/mic-button.svelte";
+import AutonomousToggleButton from "./components/autonomous-toggle-button.svelte";
 import VoiceModelMenu from "./components/voice-model-menu.svelte";
 import PastedTextOverlay from "./components/pasted-text-overlay.svelte";
 import VoiceRecordingOverlay from "./components/voice-recording-overlay.svelte";
@@ -77,6 +84,8 @@ import {
 	resolveToolbarModeId,
 	resolveToolbarModelId,
 } from "./logic/toolbar-state.js";
+import { resolveAutonomousSupport } from "./logic/autonomous-support.js";
+import { getToolbarConfigOptions } from "./logic/toolbar-config-options.js";
 import { createPendingUserEntry } from "./logic/pending-user-entry.js";
 import {
 	shouldClearPersistedDraftBeforeAsyncSend,
@@ -93,6 +102,7 @@ import {
 	shouldStartVoiceHold,
 	shouldStopVoiceHold,
 } from "./logic/voice-keyboard.js";
+import { shouldInterruptComposerStream } from "./logic/interrupt-shortcut.js";
 import { resolveVoiceStateLifecycle } from "./logic/voice-state-lifecycle.js";
 import { SessionCreationError } from "./errors/agent-input-error.js";
 import { AgentInputState } from "./state/agent-input-state.svelte.js";
@@ -107,6 +117,8 @@ const sessionStore = getSessionStore();
 const panelStore = getPanelStore();
 const connectionStore = getConnectionStore();
 const messageQueueStore = getMessageQueueStore();
+const permissionStore = getPermissionStore();
+const agentStore = getAgentStore();
 const preconnectionAgentSkillsStore = getPreconnectionAgentSkillsStore();
 const voiceSettingsStore = getVoiceSettingsStore();
 const preconnectionRemoteCommandsState = new PreconnectionRemoteCommandsState();
@@ -122,6 +134,7 @@ let voiceState: VoiceInputState | null = $state(null);
 let voiceStateSessionId: string | null = $state(null);
 let voiceStatePendingSessionId: string | null = $state(null);
 let voiceStateInitGeneration = 0;
+let autonomousStatusMessage = $state("");
 const voiceEnabled = $derived(voiceSettingsStore.enabled);
 const voiceOverlayActive = $derived.by(() => {
 	const currentVoiceState = voiceState;
@@ -138,7 +151,21 @@ const panelHotState = $derived(props.panelId ? panelStore.getHotState(props.pane
 const sessionIdentity = $derived(
 	props.sessionId ? sessionStore.getSessionIdentity(props.sessionId) : null
 );
-const capabilitiesAgentId = $derived(props.selectedAgentId ?? sessionIdentity?.agentId ?? null);
+const capabilitiesAgentId = $derived.by(() => {
+	if (props.sessionId) {
+		if (sessionIdentity) {
+			return sessionIdentity.agentId;
+		}
+
+		return props.selectedAgentId ? props.selectedAgentId : null;
+	}
+
+	if (props.selectedAgentId) {
+		return props.selectedAgentId;
+	}
+
+	return sessionIdentity ? sessionIdentity.agentId : null;
+});
 
 // Get capabilities from session store when we have a session
 const sessionCapabilities = $derived(
@@ -180,6 +207,55 @@ const effectiveCurrentModeId = $derived.by(() =>
 	})
 );
 
+const autonomousSupportState = $derived.by(() =>
+	resolveAutonomousSupport({
+		agentId: capabilitiesAgentId,
+		connectionPhase: sessionRuntimeState ? sessionRuntimeState.connectionPhase : null,
+		currentUiModeId: effectiveCurrentModeId,
+		agents: agentStore.agents,
+	})
+);
+
+const autonomousToggleActive = $derived(
+	sessionHotState ? sessionHotState.autonomousEnabled : false
+);
+
+const autonomousToggleBusy = $derived(
+	sessionHotState ? sessionHotState.autonomousTransition !== "idle" : false
+);
+
+const autonomousToggleDisabled = $derived.by(() => {
+	if (!props.sessionId) {
+		return true;
+	}
+
+	if (autonomousToggleBusy) {
+		return true;
+	}
+
+	return !autonomousSupportState.supported;
+});
+
+const autonomousTooltip = $derived.by(() => {
+	if (autonomousSupportState.disabledReason === "not-live") {
+		return "Available once this session is live.";
+	}
+
+	if (autonomousSupportState.disabledReason === "unsupported-agent") {
+		return "This agent does not support Autonomous.";
+	}
+
+	if (autonomousSupportState.disabledReason === "unsupported-mode") {
+		return "This mode does not support Autonomous for this agent.";
+	}
+
+	if (autonomousToggleActive) {
+		return "Autonomous is on. New permissions for this session auto-approve.";
+	}
+
+	return "Autonomous auto-approves new permissions for this session.";
+});
+
 // Derive submit button fill from the same tokens as mode icons (plan / build mint in dark)
 const buttonColor = $derived.by(() => {
 	switch (effectiveCurrentModeId) {
@@ -215,6 +291,14 @@ const effectiveCurrentModelId = $derived.by(() =>
 		preferredDefaultModelId,
 	})
 );
+
+const toolbarConfigOptions = $derived.by(() => {
+	if (!sessionHotState || !sessionHotState.configOptions) {
+		return [];
+	}
+
+	return getToolbarConfigOptions(sessionHotState.configOptions, effectiveAvailableModels);
+});
 
 const liveAvailableCommands = $derived.by(() => {
 	if (sessionHotState && sessionHotState.availableCommands) {
@@ -1216,10 +1300,51 @@ function handlePrimaryButtonClick(): void {
 // Handle mode change
 async function handleModeChange(modeId: string) {
 	if (props.sessionId) {
-		await sessionStore.setMode(props.sessionId, modeId);
+		const shouldAnnounceForcedOff =
+			autonomousToggleActive &&
+			!resolveAutonomousSupport({
+				agentId: capabilitiesAgentId,
+				connectionPhase: sessionRuntimeState ? sessionRuntimeState.connectionPhase : null,
+				currentUiModeId: modeId,
+				agents: agentStore.agents,
+			}).supported;
+		const result = await sessionStore.setMode(props.sessionId, modeId);
+		if (result.isErr()) {
+			toast.error("Failed to switch mode.");
+			return;
+		}
+
+		if (shouldAnnounceForcedOff) {
+			autonomousStatusMessage =
+				"Autonomous turned off because this mode is unsupported for the current agent.";
+		}
 		return;
 	}
 	provisionalModeId = modeId;
+}
+
+async function handleAutonomousToggle(): Promise<void> {
+	if (!props.sessionId || autonomousToggleDisabled || !sessionHotState) {
+		return;
+	}
+
+	const nextEnabled = !sessionHotState.autonomousEnabled;
+	const result = await sessionStore.setAutonomousEnabled(props.sessionId, nextEnabled);
+	if (result.isErr()) {
+		toast.error(nextEnabled ? "Failed to enable Autonomous." : "Failed to disable Autonomous.");
+		return;
+	}
+
+	if (nextEnabled) {
+		const drainResult = await permissionStore.drainPendingForSession(props.sessionId);
+		if (drainResult.isErr()) {
+			logger.error("Failed to drain Autonomous permissions", { error: drainResult.error });
+			toast.error("Autonomous is on, but some pending permissions still need attention.");
+		}
+		return;
+	}
+
+	autonomousStatusMessage = "Future actions now require approval again.";
 }
 
 // Handle model change
@@ -1229,6 +1354,14 @@ async function handleModelChange(modelId: string) {
 		return;
 	}
 	provisionalModelId = modelId;
+}
+
+async function handleConfigOptionChange(configId: string, value: string) {
+	if (!props.sessionId) {
+		return;
+	}
+
+	await sessionStore.setConfigOption(props.sessionId, configId, value);
 }
 
 function cycleModeOnTab(event: KeyboardEvent): boolean {
@@ -1270,6 +1403,18 @@ function handleEditorKeyDown(event: KeyboardEvent): void {
 	if (currentVoiceState !== null && shouldUseVoiceHoldKey(event)) {
 		event.preventDefault();
 		currentVoiceState.onKeyboardHoldStart();
+		return;
+	}
+
+	if (
+		shouldInterruptComposerStream({
+			isMac: isMac(),
+			isStreaming,
+			event,
+		})
+	) {
+		event.preventDefault();
+		void handleCancel();
 		return;
 	}
 
@@ -1855,6 +2000,7 @@ async function handleCancel() {
 				{@const currentVoiceState = voiceState}
 				{@const isVoiceRecordingUi = currentVoiceState !== null && (currentVoiceState.phase === "checking_permission" || currentVoiceState.phase === "recording")}
 				{@const isVoiceActive = currentVoiceState !== null && currentVoiceState.phase !== "idle" && currentVoiceState.phase !== "error"}
+				<span class="sr-only" role="status" aria-live="polite">{autonomousStatusMessage}</span>
 				<!-- Normal toolbar: fades out during recording -->
 				<div
 					class="flex items-center h-7 transition-opacity duration-200 ease-out"
@@ -1873,6 +2019,14 @@ async function handleCancel() {
 						<Skeleton class="h-7 w-7" />
 						<div class="h-full w-px bg-border/50"></div>
 					{/if}
+					<AutonomousToggleButton
+						active={autonomousToggleActive}
+						disabled={autonomousToggleDisabled}
+						busy={autonomousToggleBusy}
+						tooltip={autonomousTooltip}
+						onToggle={handleAutonomousToggle}
+					/>
+					<div class="h-full w-px bg-border/50"></div>
 					<ModelSelector
 						availableModels={effectiveAvailableModels}
 						currentModelId={effectiveCurrentModelId}
@@ -1881,6 +2035,18 @@ async function handleCancel() {
 						isLoading={selectorsLoading}
 						panelId={props.panelId}
 					/>
+					{#if toolbarConfigOptions.length > 0}
+						<div class="h-full w-px bg-border/50"></div>
+						<div class="flex items-center">
+							{#each toolbarConfigOptions as configOption (configOption.id)}
+								<ConfigOptionSelector
+									{configOption}
+									onValueChange={handleConfigOptionChange}
+									disabled={selectorsLoading}
+								/>
+							{/each}
+						</div>
+					{/if}
 					{#if props.agentProjectPicker}
 						<div class="h-full w-px bg-border/50"></div>
 						{@render props.agentProjectPicker()}

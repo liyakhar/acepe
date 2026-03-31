@@ -344,7 +344,19 @@ sessionStore.setCallbacks({
 
 // Auto-accept permissions from child sessions (subtasks)
 permissionStore.setAutoAccept(
-	(permission) => sessionStore.getSessionMetadata(permission.sessionId)?.parentId != null
+	(permission) => {
+		const sessionMetadata = sessionStore.getSessionMetadata(permission.sessionId);
+		if (sessionMetadata && sessionMetadata.parentId != null) {
+			return "child-session";
+		}
+
+		const hotState = sessionStore.getHotState(permission.sessionId);
+		if (hotState.autonomousEnabled) {
+			return "autonomous-live";
+		}
+
+		return false;
+	}
 );
 
 // Initialize session updates subscription

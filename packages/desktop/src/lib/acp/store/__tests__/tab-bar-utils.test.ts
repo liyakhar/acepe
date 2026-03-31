@@ -38,6 +38,8 @@ function makeHotState(overrides: Partial<SessionHotState> = {}): SessionHotState
 		turnState: "idle",
 		acpSessionId: null,
 		connectionError: null,
+		autonomousEnabled: false,
+		autonomousTransition: "idle",
 		currentModel: null,
 		currentMode: null,
 		availableCommands: [],

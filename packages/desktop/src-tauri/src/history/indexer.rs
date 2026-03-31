@@ -36,6 +36,7 @@ use std::time::SystemTime;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 use crate::codex_history::scanner as codex_scanner;
+use crate::copilot_history;
 use crate::cursor_history::parser as cursor_parser;
 use crate::db::repository::{
     AppSettingsRepository, SessionMetadataRecord, SessionMetadataRepository,
@@ -47,6 +48,7 @@ use crate::session_jsonl::types::HistoryEntry;
 
 const HISTORY_SYNC_STATE_KEY: &str = "history.sync_state.v1";
 const SOURCE_CLAUDE: &str = "claude-code";
+const SOURCE_COPILOT: &str = "copilot";
 const SOURCE_CURSOR: &str = "cursor";
 const SOURCE_OPENCODE: &str = "opencode";
 const SOURCE_CODEX: &str = "codex";
@@ -96,6 +98,7 @@ trait SessionMetadataSource: Send + Sync {
 }
 
 struct ClaudeSource;
+struct CopilotSource;
 struct CursorSource;
 struct OpenCodeSource;
 struct CodexSource;
@@ -247,6 +250,71 @@ impl SessionMetadataSource for ClaudeSource {
             records,
             live_session_ids,
             unchanged_count,
+        })
+    }
+}
+
+#[async_trait]
+impl SessionMetadataSource for CopilotSource {
+    fn source_id(&self) -> &'static str {
+        SOURCE_COPILOT
+    }
+
+    fn agent_id(&self) -> &'static str {
+        SOURCE_COPILOT
+    }
+
+    async fn fetch(
+        &self,
+        db: &DbConn,
+        project_paths: &[String],
+        previous_state: Option<&SourceSyncState>,
+    ) -> Result<SourceDelta> {
+        let started = std::time::Instant::now();
+        let sessions = copilot_history::list_workspace_sessions(project_paths)
+            .await
+            .map_err(|error| anyhow!(error))?;
+
+        let mut records: Vec<SessionMetadataRecord> = Vec::with_capacity(sessions.len());
+        let mut live_session_ids: HashSet<String> = HashSet::with_capacity(sessions.len());
+
+        for session in sessions {
+            let session_id = session.session_id.clone();
+            live_session_ids.insert(session_id.clone());
+
+            if let Some(worktree_path) = session.worktree_path.as_deref() {
+                SessionMetadataRepository::set_worktree_path(
+                    db,
+                    &session_id,
+                    worktree_path,
+                    Some(&session.project_path),
+                    Some(self.agent_id()),
+                )
+                .await?;
+            }
+
+            records.push((
+                session_id.clone(),
+                session.title,
+                session.updated_at_ms,
+                session.project_path,
+                self.agent_id().to_string(),
+                format!("__session_registry__/copilot/{session_id}"),
+                0,
+                0,
+            ));
+        }
+
+        Ok(SourceDelta {
+            next_state: SourceSyncState {
+                last_synced_at_ms: Utc::now().timestamp_millis(),
+                last_duration_ms: started.elapsed().as_millis() as u64,
+                last_records_seen: live_session_ids.len(),
+                runs: previous_state.map_or(1, |state| state.runs.saturating_add(1)),
+            },
+            records,
+            live_session_ids,
+            unchanged_count: 0,
         })
     }
 }
@@ -826,7 +894,8 @@ impl IndexerActor {
             }
         };
 
-        let sources: [Box<dyn SessionMetadataSource>; 3] = [
+        let sources: [Box<dyn SessionMetadataSource>; 4] = [
+            Box::new(CopilotSource),
             Box::new(CursorSource),
             Box::new(OpenCodeSource),
             Box::new(CodexSource),
@@ -914,8 +983,9 @@ impl IndexerActor {
             }
         };
 
-        let sources: [Box<dyn SessionMetadataSource>; 4] = [
+        let sources: [Box<dyn SessionMetadataSource>; 5] = [
             Box::new(ClaudeSource),
+            Box::new(CopilotSource),
             Box::new(CursorSource),
             Box::new(OpenCodeSource),
             Box::new(CodexSource),

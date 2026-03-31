@@ -14,6 +14,10 @@ export const AGENT_ICONS: Record<string, { light: string; dark: string }> = {
 		light: "/svgs/agents/claude/claude-icon-light.svg",
 		dark: "/svgs/agents/claude/claude-icon-dark.svg",
 	},
+	copilot: {
+		light: "/svgs/icons/copilot_light.svg",
+		dark: "/svgs/icons/copilot.svg",
+	},
 	cursor: {
 		light: "/svgs/agents/cursor/cursor-icon-light.svg",
 		dark: "/svgs/agents/cursor/cursor-icon-dark.svg",

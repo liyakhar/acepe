@@ -1,11 +1,9 @@
-//! Agent binary installer — downloads, caches, and manages ACP agent binaries.
+//! Managed agent installer — downloads, caches, and manages agent runtimes.
 //!
-//! Follows Zed's pattern: download on demand, extract to a local cache,
-//! and resolve from cache (no PATH fallback).
-//!
-//! Supports two download sources:
-//! - **Registry**: ACP registry CDN (Cursor, OpenCode, Codex)
-//! - **GitHub Release**: GitHub Releases (Claude custom fork)
+//! Supports three managed sources:
+//! - **Registry**: ACP registry CDN (Cursor, OpenCode)
+//! - **Claude SDK cache**: Official Claude CLI via the vendored cc-sdk
+//! - **GitHub Release**: Official Codex release binaries from openai/codex
 
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::types::CanonicalAgentId;
@@ -113,30 +111,32 @@ struct BinaryDistribution {
 // AGENT SOURCE (where to download from)
 // ============================================
 
-/// Where an agent binary is downloaded from.
+/// Where an agent runtime is downloaded from.
 enum AgentSource {
-    /// From cdn.agentclientprotocol.com (Cursor, OpenCode, Codex)
+    /// From cdn.agentclientprotocol.com (Cursor, OpenCode)
     Registry,
-    /// From GitHub Releases (custom fork binaries)
-    GitHubRelease {
-        owner: &'static str,
-        repo: &'static str,
-        tag_prefix: &'static str,
-        asset_pattern: &'static str,
-        cmd: &'static str,
-    },
+    /// From the vendored Claude SDK's official CLI cache.
+    ClaudeCli,
+    /// From GitHub Releases (official Copilot CLI binaries).
+    CopilotGitHubRelease,
+    /// From GitHub Releases (official Codex binaries).
+    CodexGitHubRelease,
+}
+
+struct DownloadInfo {
+    archive_url: String,
+    version: String,
+    cmd: String,
+    args: Vec<String>,
+    official_sha256: Option<String>,
 }
 
 /// Determine the download source for a given agent.
 fn agent_source(agent_id: &CanonicalAgentId) -> AgentSource {
     match agent_id {
-        CanonicalAgentId::ClaudeCode => AgentSource::GitHubRelease {
-            owner: "flazouh",
-            repo: "acepe",
-            tag_prefix: "claude-acp/v",
-            asset_pattern: "claude-agent-acp-{platform}.tar.gz",
-            cmd: "./claude-agent-acp",
-        },
+        CanonicalAgentId::ClaudeCode => AgentSource::ClaudeCli,
+        CanonicalAgentId::Copilot => AgentSource::CopilotGitHubRelease,
+        CanonicalAgentId::Codex => AgentSource::CodexGitHubRelease,
         _ => AgentSource::Registry,
     }
 }
@@ -190,6 +190,15 @@ fn cache_dir() -> AcpResult<&'static PathBuf> {
 
 /// Get the path to a cached agent binary, if installed.
 pub fn get_cached_binary(agent_id: &CanonicalAgentId) -> Option<PathBuf> {
+    if matches!(agent_id, CanonicalAgentId::ClaudeCode) {
+        let path = cc_sdk::cli_download::get_cached_cli_path()?;
+        return if path.exists() && path.is_file() {
+            Some(path)
+        } else {
+            None
+        };
+    }
+
     let dir = AGENTS_CACHE_DIR.get()?;
     let agent_dir = dir.join(agent_id_str(agent_id));
     let meta_path = agent_dir.join("meta.json");
@@ -215,6 +224,10 @@ pub fn get_cached_binary(agent_id: &CanonicalAgentId) -> Option<PathBuf> {
 
 /// Get the spawn args for a cached agent.
 pub fn get_cached_args(agent_id: &CanonicalAgentId) -> Vec<String> {
+    if matches!(agent_id, CanonicalAgentId::ClaudeCode) {
+        return Vec::new();
+    }
+
     let Some(dir) = AGENTS_CACHE_DIR.get() else {
         return Vec::new();
     };
@@ -231,6 +244,18 @@ pub fn get_cached_args(agent_id: &CanonicalAgentId) -> Vec<String> {
 /// Check if an agent is installed in the cache.
 pub fn is_installed(agent_id: &CanonicalAgentId) -> bool {
     get_cached_binary(agent_id).is_some()
+}
+
+/// Whether Acepe can provision the agent automatically.
+pub fn is_installable(agent_id: &CanonicalAgentId) -> bool {
+    matches!(
+        agent_id,
+        CanonicalAgentId::ClaudeCode
+            | CanonicalAgentId::Cursor
+            | CanonicalAgentId::Copilot
+            | CanonicalAgentId::OpenCode
+            | CanonicalAgentId::Codex
+    )
 }
 
 /// Install an agent by downloading from the appropriate source (registry or GitHub Releases).
@@ -262,6 +287,19 @@ pub async fn install_agent(agent_id: CanonicalAgentId, app: AppHandle) -> AcpRes
 
 /// Uninstall an agent by removing its cache directory.
 pub fn uninstall(agent_id: &CanonicalAgentId) -> AcpResult<()> {
+    if matches!(agent_id, CanonicalAgentId::ClaudeCode) {
+        if let Some(cache_dir) = cc_sdk::cli_download::get_cache_dir() {
+            if cache_dir.exists() {
+                std::fs::remove_dir_all(&cache_dir).map_err(|e| {
+                    AcpError::InvalidState(format!("Failed to remove Claude CLI cache: {}", e))
+                })?;
+                tracing::info!(agent = %agent_id_str(agent_id), "Managed agent uninstalled");
+            }
+        }
+
+        return Ok(());
+    }
+
     let dir = cache_dir()?;
     let agent_dir = dir.join(agent_id_str(agent_id));
 
@@ -302,6 +340,11 @@ pub fn cleanup_stale_temps() {
 
 async fn install_agent_inner(agent_id: &CanonicalAgentId, app: &AppHandle) -> AcpResult<PathBuf> {
     let id_str = agent_id_str(agent_id);
+
+    if matches!(agent_source(agent_id), AgentSource::ClaudeCli) {
+        return install_claude_cli(app, &id_str).await;
+    }
+
     let base_dir = cache_dir()?;
 
     // Single HTTP client for the entire install flow (connection reuse)
@@ -319,38 +362,40 @@ async fn install_agent_inner(agent_id: &CanonicalAgentId, app: &AppHandle) -> Ac
     );
 
     // 1. Fetch download info from the appropriate source
-    let (archive_url, version, cmd, args) = match agent_source(agent_id) {
+    let download_info = match agent_source(agent_id) {
         AgentSource::Registry => fetch_download_info(&client, agent_id).await?,
-        AgentSource::GitHubRelease {
-            owner,
-            repo,
-            tag_prefix,
-            asset_pattern,
-            cmd,
-        } => {
-            fetch_github_release_download_info(&client, owner, repo, tag_prefix, asset_pattern, cmd)
-                .await?
-        }
+        AgentSource::CopilotGitHubRelease => fetch_copilot_download_info(&client).await?,
+        AgentSource::CodexGitHubRelease => fetch_codex_download_info(&client).await?,
+        AgentSource::ClaudeCli => unreachable!("Claude install path returns early"),
     };
 
     // 2. Validate URL against allowlist
-    validate_url(&archive_url)?;
+    validate_url(&download_info.archive_url)?;
 
     emit_progress(
         app,
         &id_str,
         "downloading",
         Some(0.05),
-        &format!("Downloading {} v{}...", id_str, version),
+        &format!("Downloading {} v{}...", id_str, download_info.version),
     );
 
     // 3. Download archive with progress
-    let archive_bytes = download_archive(&client, &archive_url, app, &id_str).await?;
+    let archive_bytes = download_archive(&client, &download_info.archive_url, app, &id_str).await?;
 
     // 4. Compute SHA-256 of downloaded archive
     let mut hasher = Sha256::new();
     hasher.update(&archive_bytes);
     let sha256 = format!("{:x}", hasher.finalize());
+
+    if let Some(expected_sha256) = download_info.official_sha256.as_deref() {
+        if sha256 != expected_sha256 {
+            return Err(AcpError::InvalidState(format!(
+                "Downloaded archive checksum did not match upstream manifest for {}: expected {}, got {}",
+                id_str, expected_sha256, sha256
+            )));
+        }
+    }
 
     emit_progress(app, &id_str, "extracting", Some(0.8), "Extracting...");
 
@@ -366,32 +411,37 @@ async fn install_agent_inner(agent_id: &CanonicalAgentId, app: &AppHandle) -> Ac
         .map_err(|e| AcpError::InvalidState(format!("Failed to create tmp dir: {}", e)))?;
 
     // 6. Extract with path traversal protection
-    if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
+    if download_info.archive_url.ends_with(".tar.gz")
+        || download_info.archive_url.ends_with(".tgz")
+    {
         safe_extract_tar_gz(&archive_bytes, &tmp_dir)?;
-    } else if archive_url.ends_with(".zip") {
+    } else if download_info.archive_url.ends_with(".zip") {
         safe_extract_zip(&archive_bytes, &tmp_dir)?;
     } else {
         return Err(AcpError::InvalidState(format!(
             "Unsupported archive format: {}",
-            archive_url
+            download_info.archive_url
         )));
     }
 
     // 7. Write meta.json
     let meta = AgentMeta {
-        version: version.clone(),
-        archive_url: archive_url.clone(),
+        version: download_info.version.clone(),
+        archive_url: download_info.archive_url.clone(),
         sha256: Some(sha256),
         downloaded_at: chrono::Utc::now().to_rfc3339(),
-        cmd: cmd.clone(),
-        args: args.clone(),
+        cmd: download_info.cmd.clone(),
+        args: download_info.args.clone(),
     };
     let meta_json = serde_json::to_string_pretty(&meta).map_err(AcpError::SerializationError)?;
     std::fs::write(tmp_dir.join("meta.json"), meta_json)
         .map_err(|e| AcpError::InvalidState(format!("Failed to write meta.json: {}", e)))?;
 
     // 8. Set executable permissions
-    let cmd_rel = cmd.strip_prefix("./").unwrap_or(&cmd);
+    let cmd_rel = download_info
+        .cmd
+        .strip_prefix("./")
+        .unwrap_or(&download_info.cmd);
     let binary_path = tmp_dir.join(cmd_rel);
     #[cfg(unix)]
     {
@@ -416,7 +466,7 @@ async fn install_agent_inner(agent_id: &CanonicalAgentId, app: &AppHandle) -> Ac
     let final_binary = agent_dir.join(cmd_rel);
     tracing::info!(
         agent = %id_str,
-        version = %version,
+        version = %download_info.version,
         path = %final_binary.display(),
         "Agent installed successfully"
     );
@@ -426,11 +476,62 @@ async fn install_agent_inner(agent_id: &CanonicalAgentId, app: &AppHandle) -> Ac
     Ok(final_binary)
 }
 
+async fn install_claude_cli(app: &AppHandle, agent_id: &str) -> AcpResult<PathBuf> {
+    emit_progress(
+        app,
+        agent_id,
+        "downloading",
+        Some(0.0),
+        "Resolving Claude CLI...",
+    );
+
+    let app_handle = app.clone();
+    let agent_id_string = agent_id.to_string();
+    let path = cc_sdk::cli_download::download_cli(
+        None,
+        Some(Box::new(move |downloaded, total| {
+            let (progress, message) = if let Some(total_bytes) = total {
+                let progress = if total_bytes == 0 {
+                    0.5
+                } else {
+                    downloaded as f64 / total_bytes as f64
+                };
+                (
+                    Some(0.05 + progress * 0.90),
+                    format!(
+                        "Downloading Claude CLI... {:.1} MB / {:.1} MB",
+                        downloaded as f64 / 1_048_576.0,
+                        total_bytes as f64 / 1_048_576.0
+                    ),
+                )
+            } else {
+                (
+                    Some(0.5),
+                    "Downloading Claude CLI...".to_string(),
+                )
+            };
+
+            emit_progress(
+                &app_handle,
+                &agent_id_string,
+                "downloading",
+                progress,
+                &message,
+            );
+        })),
+    )
+    .await
+    .map_err(|error| AcpError::InvalidState(format!("Failed to install Claude CLI: {}", error)))?;
+
+    emit_progress(app, agent_id, "complete", Some(1.0), "Installed");
+    Ok(path)
+}
+
 /// Fetch download info from the ACP registry for a given agent.
 async fn fetch_download_info(
     client: &reqwest::Client,
     agent_id: &CanonicalAgentId,
-) -> AcpResult<(String, String, String, Vec<String>)> {
+) -> AcpResult<DownloadInfo> {
     let registry: Registry = client
         .get(REGISTRY_URL)
         .send()
@@ -462,28 +563,26 @@ async fn fetch_download_info(
             ))
         })?;
 
-    Ok((
-        distribution.archive.clone(),
-        agent.version.clone(),
-        distribution.cmd.clone(),
-        distribution.args.clone(),
-    ))
+    Ok(DownloadInfo {
+        archive_url: distribution.archive.clone(),
+        version: agent.version.clone(),
+        cmd: distribution.cmd.clone(),
+        args: distribution.args.clone(),
+        official_sha256: None,
+    })
 }
 
-/// Fetch download info from a GitHub Release for a given agent.
+/// Fetch download info from a GitHub Release asset.
 ///
-/// Finds the latest release matching `tag_prefix` and resolves the platform-specific asset.
+/// Finds the latest release matching `tag_prefix` and resolves the expected asset.
 async fn fetch_github_release_download_info(
     client: &reqwest::Client,
     owner: &str,
     repo: &str,
     tag_prefix: &str,
-    asset_pattern: &str,
+    expected_asset: &str,
     cmd: &str,
-) -> AcpResult<(String, String, String, Vec<String>)> {
-    let platform = platform_key()?;
-    let expected_asset = asset_pattern.replace("{platform}", platform);
-
+) -> AcpResult<DownloadInfo> {
     // Fetch releases and find the latest one matching our tag prefix
     let api_url = format!("https://api.github.com/repos/{}/{}/releases", owner, repo);
     let releases: Vec<GitHubRelease> = client
@@ -534,12 +633,43 @@ async fn fetch_github_release_download_info(
             ))
         })?;
 
-    Ok((
-        asset.browser_download_url.clone(),
+    Ok(DownloadInfo {
+        archive_url: asset.browser_download_url.clone(),
         version,
-        cmd.to_string(),
-        vec![],
-    ))
+        cmd: cmd.to_string(),
+        args: vec![],
+        official_sha256: None,
+    })
+}
+
+async fn fetch_codex_download_info(client: &reqwest::Client) -> AcpResult<DownloadInfo> {
+    fetch_github_release_download_info(
+        client,
+        "openai",
+        "codex",
+        "rust-v",
+        codex_release_asset_name(),
+        codex_release_command(),
+    )
+    .await
+}
+
+async fn fetch_copilot_download_info(client: &reqwest::Client) -> AcpResult<DownloadInfo> {
+    let release = fetch_latest_github_release(client, "github", "copilot-cli").await?;
+    let expected_asset =
+        copilot_release_asset_name_for(std::env::consts::OS, std::env::consts::ARCH)?;
+    let checksum_asset = find_release_asset(&release, "SHA256SUMS.txt")?;
+    let archive_asset = find_release_asset(&release, expected_asset)?;
+    let checksum_manifest = download_text_asset(client, &checksum_asset.browser_download_url).await?;
+    let official_sha256 = parse_sha256_manifest(&checksum_manifest, expected_asset)?;
+
+    Ok(DownloadInfo {
+        archive_url: archive_asset.browser_download_url.clone(),
+        version: normalize_github_release_version(&release.tag_name),
+        cmd: copilot_release_command_for(std::env::consts::OS).to_string(),
+        args: vec![],
+        official_sha256: Some(official_sha256),
+    })
 }
 
 /// Download archive bytes with streaming progress.
@@ -634,6 +764,99 @@ fn validate_url(url: &str) -> AcpResult<()> {
     Ok(())
 }
 
+async fn fetch_latest_github_release(
+    client: &reqwest::Client,
+    owner: &str,
+    repo: &str,
+) -> AcpResult<GitHubRelease> {
+    let api_url = format!("https://api.github.com/repos/{}/{}/releases/latest", owner, repo);
+
+    client
+        .get(&api_url)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "acepe-agent-installer")
+        .send()
+        .await
+        .map_err(AcpError::HttpError)?
+        .error_for_status()
+        .map_err(AcpError::HttpError)?
+        .json()
+        .await
+        .map_err(AcpError::HttpError)
+}
+
+fn find_release_asset<'a>(
+    release: &'a GitHubRelease,
+    asset_name: &str,
+) -> AcpResult<&'a GitHubAsset> {
+    release
+        .assets
+        .iter()
+        .find(|asset| asset.name == asset_name)
+        .ok_or_else(|| {
+            AcpError::InvalidState(format!(
+                "No asset '{}' found in release '{}' (available: {})",
+                asset_name,
+                release.tag_name,
+                release
+                    .assets
+                    .iter()
+                    .map(|asset| asset.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })
+}
+
+async fn download_text_asset(client: &reqwest::Client, url: &str) -> AcpResult<String> {
+    validate_url(url)?;
+
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(AcpError::HttpError)?
+        .error_for_status()
+        .map_err(AcpError::HttpError)?;
+
+    validate_url(response.url().as_str())?;
+
+    response.text().await.map_err(AcpError::HttpError)
+}
+
+fn normalize_github_release_version(tag_name: &str) -> String {
+    tag_name.strip_prefix('v').unwrap_or(tag_name).to_string()
+}
+
+fn parse_sha256_manifest(manifest: &str, expected_asset: &str) -> AcpResult<String> {
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        let Some(sha256) = parts.next() else {
+            continue;
+        };
+        let Some(asset_name) = parts.next() else {
+            continue;
+        };
+
+        let asset_name = asset_name.strip_prefix('*').unwrap_or(asset_name);
+        let normalized_name = asset_name.strip_prefix("./").unwrap_or(asset_name);
+
+        if normalized_name == expected_asset {
+            return Ok(sha256.to_string());
+        }
+    }
+
+    Err(AcpError::InvalidState(format!(
+        "Official checksum manifest did not contain an entry for {}",
+        expected_asset
+    )))
+}
+
 /// Get the current platform key for the ACP registry.
 fn platform_key() -> AcpResult<&'static str> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -670,16 +893,17 @@ fn platform_key() -> AcpResult<&'static str> {
 /// Exhaustive match ensures compile errors when new variants are added.
 /// Registry IDs differ from canonical display IDs because the registry
 /// uses the binary/package name, not the product name:
-/// - ClaudeCode → "claude-code" (cache directory name)
-/// - Codex → "codex-acp" (registry binary name, NOT "codex")
+/// - ClaudeCode → "claude-code" (install progress / logical cache key)
+/// - Codex → "codex" (official CLI binary and cache directory)
 /// - Cursor → "cursor" (matches canonical)
 /// - OpenCode → "opencode" (matches canonical)
 fn agent_id_str(agent_id: &CanonicalAgentId) -> String {
     match agent_id {
         CanonicalAgentId::Cursor => "cursor".to_string(),
+        CanonicalAgentId::Copilot => "copilot".to_string(),
         CanonicalAgentId::OpenCode => "opencode".to_string(),
         CanonicalAgentId::ClaudeCode => "claude-code".to_string(),
-        CanonicalAgentId::Codex => "codex-acp".to_string(),
+        CanonicalAgentId::Codex => "codex".to_string(),
         CanonicalAgentId::Custom(id) => {
             // Sanitize: reject path separators and traversal to prevent directory escape
             assert!(
@@ -689,6 +913,81 @@ fn agent_id_str(agent_id: &CanonicalAgentId) -> String {
             );
             id.clone()
         }
+    }
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn codex_release_asset_name() -> &'static str {
+    "codex-aarch64-apple-darwin.tar.gz"
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+fn codex_release_asset_name() -> &'static str {
+    "codex-x86_64-apple-darwin.tar.gz"
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn codex_release_asset_name() -> &'static str {
+    "codex-x86_64-unknown-linux-gnu.tar.gz"
+}
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+fn codex_release_asset_name() -> &'static str {
+    "codex-aarch64-unknown-linux-gnu.tar.gz"
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn codex_release_asset_name() -> &'static str {
+    "codex-x86_64-pc-windows-msvc.exe.zip"
+}
+
+#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+fn codex_release_asset_name() -> &'static str {
+    "codex-aarch64-pc-windows-msvc.exe.zip"
+}
+
+#[cfg(not(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "macos", target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "aarch64"),
+    all(target_os = "windows", target_arch = "x86_64"),
+    all(target_os = "windows", target_arch = "aarch64")
+)))]
+fn codex_release_asset_name() -> &'static str {
+    panic!("Unsupported platform for Codex release asset")
+}
+
+#[cfg(windows)]
+fn codex_release_command() -> &'static str {
+    "./codex.exe"
+}
+
+#[cfg(not(windows))]
+fn codex_release_command() -> &'static str {
+    "./codex"
+}
+
+fn copilot_release_asset_name_for(os: &str, arch: &str) -> AcpResult<&'static str> {
+    match (os, arch) {
+        ("macos", "aarch64") => Ok("copilot-darwin-arm64.tar.gz"),
+        ("macos", "x86_64") => Ok("copilot-darwin-x64.tar.gz"),
+        ("linux", "aarch64") => Ok("copilot-linux-arm64.tar.gz"),
+        ("linux", "x86_64") => Ok("copilot-linux-x64.tar.gz"),
+        ("windows", "aarch64") => Ok("copilot-win32-arm64.zip"),
+        ("windows", "x86_64") => Ok("copilot-win32-x64.zip"),
+        _ => Err(AcpError::InvalidState(format!(
+            "Unsupported Copilot platform: {}/{}",
+            os, arch
+        ))),
+    }
+}
+
+fn copilot_release_command_for(os: &str) -> &'static str {
+    if os == "windows" {
+        "./copilot.exe"
+    } else {
+        "./copilot"
     }
 }
 
@@ -816,6 +1115,80 @@ fn validate_archive_path(entry_path: &Path) -> AcpResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_uses_official_cache_key() {
+        assert_eq!(agent_id_str(&CanonicalAgentId::Codex), "codex");
+    }
+
+    #[test]
+    fn copilot_uses_official_cache_key() {
+        assert_eq!(agent_id_str(&CanonicalAgentId::Copilot), "copilot");
+    }
+
+    #[test]
+    fn all_built_in_agents_are_installable() {
+        assert!(is_installable(&CanonicalAgentId::ClaudeCode));
+        assert!(is_installable(&CanonicalAgentId::Cursor));
+        assert!(is_installable(&CanonicalAgentId::Copilot));
+        assert!(is_installable(&CanonicalAgentId::OpenCode));
+        assert!(is_installable(&CanonicalAgentId::Codex));
+    }
+
+    #[test]
+    fn copilot_release_asset_name_supports_all_known_platforms() {
+        assert_eq!(
+            copilot_release_asset_name_for("macos", "aarch64").unwrap(),
+            "copilot-darwin-arm64.tar.gz"
+        );
+        assert_eq!(
+            copilot_release_asset_name_for("macos", "x86_64").unwrap(),
+            "copilot-darwin-x64.tar.gz"
+        );
+        assert_eq!(
+            copilot_release_asset_name_for("linux", "aarch64").unwrap(),
+            "copilot-linux-arm64.tar.gz"
+        );
+        assert_eq!(
+            copilot_release_asset_name_for("linux", "x86_64").unwrap(),
+            "copilot-linux-x64.tar.gz"
+        );
+        assert_eq!(
+            copilot_release_asset_name_for("windows", "aarch64").unwrap(),
+            "copilot-win32-arm64.zip"
+        );
+        assert_eq!(
+            copilot_release_asset_name_for("windows", "x86_64").unwrap(),
+            "copilot-win32-x64.zip"
+        );
+    }
+
+    #[test]
+    fn copilot_release_asset_name_rejects_unsupported_platform() {
+        let error = copilot_release_asset_name_for("freebsd", "x86_64")
+            .expect_err("unsupported platform should fail");
+
+        assert!(matches!(error, AcpError::InvalidState(message) if message.contains("Unsupported Copilot platform")));
+    }
+
+    #[test]
+    fn parse_sha256_manifest_returns_checksum_for_matching_asset() {
+        let manifest = "abc123  copilot-darwin-arm64.tar.gz\nfff999  copilot-linux-x64.tar.gz\n";
+
+        let checksum = parse_sha256_manifest(manifest, "copilot-linux-x64.tar.gz").unwrap();
+
+        assert_eq!(checksum, "fff999");
+    }
+
+    #[test]
+    fn parse_sha256_manifest_rejects_missing_asset() {
+        let manifest = "abc123  copilot-darwin-arm64.tar.gz\n";
+
+        let error = parse_sha256_manifest(manifest, "copilot-linux-x64.tar.gz")
+            .expect_err("missing manifest entry should fail");
+
+        assert!(matches!(error, AcpError::InvalidState(message) if message.contains("Official checksum manifest did not contain an entry")));
+    }
 
     #[test]
     fn validate_archive_path_rejects_parent_dir() {

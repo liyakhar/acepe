@@ -55,6 +55,7 @@ impl AgentType {
     pub fn from_canonical(canonical: &crate::acp::types::CanonicalAgentId) -> Self {
         match canonical {
             crate::acp::types::CanonicalAgentId::ClaudeCode => AgentType::ClaudeCode,
+            crate::acp::types::CanonicalAgentId::Copilot => AgentType::ClaudeCode,
             crate::acp::types::CanonicalAgentId::OpenCode => AgentType::OpenCode,
             crate::acp::types::CanonicalAgentId::Cursor => AgentType::Cursor,
             crate::acp::types::CanonicalAgentId::Codex => AgentType::Codex,

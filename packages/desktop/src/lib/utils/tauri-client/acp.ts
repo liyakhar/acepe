@@ -49,6 +49,18 @@ export const acp = {
 		return invokeAsync(CMD.acp.set_mode, { sessionId, modeId });
 	},
 
+	setExecutionProfile: (
+		sessionId: string,
+		modeId: string,
+		autonomousEnabled: boolean
+	): ResultAsync<void, AppError> => {
+		return invokeAsync(CMD.acp.set_execution_profile, {
+			sessionId,
+			modeId,
+			autonomousEnabled,
+		});
+	},
+
 	setConfigOption: (
 		sessionId: string,
 		configId: string,

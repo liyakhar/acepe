@@ -22,7 +22,10 @@ fn fallback_project_path_for_history_load(
     effective_project_path: &str,
 ) -> String {
     match agent {
-        CanonicalAgentId::ClaudeCode | CanonicalAgentId::OpenCode | CanonicalAgentId::Codex => {
+        CanonicalAgentId::ClaudeCode
+        | CanonicalAgentId::Copilot
+        | CanonicalAgentId::OpenCode
+        | CanonicalAgentId::Codex => {
             effective_project_path.to_string()
         }
         _ => project_path.to_string(),
@@ -220,6 +223,40 @@ pub async fn get_unified_session(
                 }
             }
         }
+        CanonicalAgentId::Copilot => {
+            let session_title = match db.as_ref() {
+                Some(db) => SessionMetadataRepository::get_by_id(db, &session_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|row| row.display)
+                    .unwrap_or_else(|| format!("Session {}", &session_id[..8.min(session_id.len())])),
+                None => format!("Session {}", &session_id[..8.min(session_id.len())]),
+            };
+
+            match crate::copilot_history::load_session(
+                &app,
+                &context.history_session_id,
+                &fallback_project_path_for_history_load(
+                    &CanonicalAgentId::Copilot,
+                    &context.project_path,
+                    &context.effective_project_path,
+                ),
+                &session_title,
+            )
+            .await
+            {
+                Ok(session) => session,
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "Copilot session replay load failed"
+                    );
+                    None
+                }
+            }
+        }
         CanonicalAgentId::Custom(_) => {
             // Unknown custom agent - no parser available
             None
@@ -270,6 +307,9 @@ pub async fn audit_session_load_timing_cli(
 
     if matches!(canonical_agent, CanonicalAgentId::OpenCode) {
         return Err("OpenCode audit requires running app (use in-app invoke)".to_string());
+    }
+    if matches!(canonical_agent, CanonicalAgentId::Copilot) {
+        return Err("Copilot audit is not implemented yet".to_string());
     }
     if matches!(canonical_agent, CanonicalAgentId::Custom(_)) {
         return Err("Custom agents do not support session load audit".to_string());
@@ -362,7 +402,7 @@ pub async fn audit_session_load_timing_cli(
             add_stage(&mut stages, "load_session", t0);
             codex_result
         }
-        CanonicalAgentId::OpenCode | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode | CanonicalAgentId::Copilot | CanonicalAgentId::Custom(_) => {
             unreachable!("handled above")
         }
     };
@@ -371,7 +411,9 @@ pub async fn audit_session_load_timing_cli(
         CanonicalAgentId::ClaudeCode => "claude-code",
         CanonicalAgentId::Cursor => "cursor",
         CanonicalAgentId::Codex => "codex",
-        CanonicalAgentId::OpenCode | CanonicalAgentId::Custom(_) => unreachable!(),
+        CanonicalAgentId::OpenCode | CanonicalAgentId::Copilot | CanonicalAgentId::Custom(_) => {
+            unreachable!()
+        }
     };
 
     let total_ms = total_start.elapsed().as_millis();
@@ -400,6 +442,10 @@ pub async fn audit_session_load_timing(
     let mut stages = Vec::new();
     let total_start = Instant::now();
     let canonical_agent = CanonicalAgentId::parse(&agent_id);
+
+    if matches!(canonical_agent, CanonicalAgentId::Copilot) {
+        return Err("Copilot audit is not implemented yet".to_string());
+    }
 
     let (result, agent_name) = match canonical_agent {
         CanonicalAgentId::ClaudeCode => {
@@ -519,6 +565,7 @@ pub async fn audit_session_load_timing(
         CanonicalAgentId::Custom(_) => {
             return Err("Custom agents do not support session load audit".to_string());
         }
+        CanonicalAgentId::Copilot => unreachable!("handled above"),
     };
 
     let total_ms = total_start.elapsed().as_millis();

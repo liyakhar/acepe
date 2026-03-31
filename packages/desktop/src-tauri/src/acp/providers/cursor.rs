@@ -2,7 +2,7 @@
 //!
 //! This provider spawns Cursor CLI's native ACP server via `agent acp`.
 
-use super::super::provider::{AgentProvider, ModelFallbackCandidate, SpawnConfig};
+use super::super::provider::{command_exists, AgentProvider, ModelFallbackCandidate, SpawnConfig};
 use crate::acp::cursor_extensions::{
     adapt_cursor_response, cursor_extension_kind, normalize_cursor_extension, CursorExtensionEvent,
     CursorResponseAdapter,
@@ -30,31 +30,27 @@ impl AgentProvider for CursorProvider {
     fn spawn_config(&self) -> SpawnConfig {
         tracing::debug!("Determining spawn config for Cursor");
 
+        self.spawn_configs().into_iter().next().unwrap_or_else(|| {
+            tracing::warn!(
+                "Cursor launcher unavailable in cache and PATH; returning placeholder spawn config"
+            );
+            SpawnConfig {
+                command: "agent".to_string(),
+                args: vec!["acp".to_string()],
+                env: filtered_env(),
+            }
+        })
+    }
+
+    fn spawn_configs(&self) -> Vec<SpawnConfig> {
         let canonical = crate::acp::types::CanonicalAgentId::Cursor;
 
-        // Resolve from cache — no PATH fallback by design.
-        // If not installed, is_available() returns false and this should not be called.
-        let command = crate::acp::agent_installer::get_cached_binary(&canonical)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| {
-                tracing::warn!("Cursor binary not found in cache; spawn will likely fail");
-                "agent".to_string()
-            });
-
-        let args = crate::acp::agent_installer::get_cached_args(&canonical)
-            .into_iter()
-            .filter(|a| !a.is_empty())
-            .collect::<Vec<_>>();
-        let args = if args.is_empty() {
-            vec!["acp".to_string()]
-        } else {
-            args
-        };
-
-        // Filtered env — only pass safe variables to downloaded binaries
-        let env = filtered_env();
-
-        SpawnConfig { command, args, env }
+        resolve_cursor_spawn_configs(
+            crate::acp::agent_installer::get_cached_binary(&canonical)
+                .map(|path| path.to_string_lossy().to_string()),
+            crate::acp::agent_installer::get_cached_args(&canonical),
+            command_exists("agent"),
+        )
     }
 
     fn icon(&self) -> &str {
@@ -62,42 +58,13 @@ impl AgentProvider for CursorProvider {
     }
 
     fn is_available(&self) -> bool {
-        crate::acp::agent_installer::is_installed(&crate::acp::types::CanonicalAgentId::Cursor)
+        crate::acp::agent_installer::get_cached_binary(&crate::acp::types::CanonicalAgentId::Cursor)
+            .is_some()
+            || command_exists("agent")
     }
 
     fn model_discovery_commands(&self) -> Vec<SpawnConfig> {
-        let canonical = crate::acp::types::CanonicalAgentId::Cursor;
-        let command = crate::acp::agent_installer::get_cached_binary(&canonical)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| {
-                tracing::warn!("Cursor binary not found in cache for model discovery");
-                "agent".to_string()
-            });
-
-        let env = filtered_env();
-
-        vec![
-            SpawnConfig {
-                command: command.clone(),
-                args: vec![
-                    "--list-models".to_string(),
-                    "--output-format".to_string(),
-                    "json".to_string(),
-                    "--print".to_string(),
-                ],
-                env: env.clone(),
-            },
-            SpawnConfig {
-                command: command.clone(),
-                args: vec!["--list-models".to_string()],
-                env: env.clone(),
-            },
-            SpawnConfig {
-                command,
-                args: vec!["models".to_string()],
-                env,
-            },
-        ]
+        resolve_cursor_model_discovery_commands(self.spawn_configs())
     }
 
     fn initialize_params(&self, client_name: &str, client_version: &str) -> Value {
@@ -213,9 +180,115 @@ fn filtered_env() -> HashMap<String, String> {
     crate::shell_env::build_env(crate::shell_env::EnvStrategy::Allowlist(ALLOWED_ENV_KEYS))
 }
 
+fn resolve_cursor_spawn_configs(
+    cached_command: Option<String>,
+    cached_args: Vec<String>,
+    path_agent_available: bool,
+) -> Vec<SpawnConfig> {
+    let mut configs = Vec::new();
+    let env = filtered_env();
+
+    if let Some(command) = cached_command {
+        push_unique_spawn_config(
+            &mut configs,
+            SpawnConfig {
+                command,
+                args: normalize_cursor_acp_args(cached_args),
+                env: env.clone(),
+            },
+        );
+    }
+
+    if path_agent_available {
+        push_unique_spawn_config(
+            &mut configs,
+            SpawnConfig {
+                command: "agent".to_string(),
+                args: vec!["acp".to_string()],
+                env,
+            },
+        );
+    }
+
+    configs
+}
+
+fn resolve_cursor_model_discovery_commands(launchers: Vec<SpawnConfig>) -> Vec<SpawnConfig> {
+    let mut attempts = Vec::new();
+
+    for launcher in launchers {
+        attempts.push(SpawnConfig {
+            command: launcher.command.clone(),
+            args: vec![
+                "--list-models".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+                "--print".to_string(),
+            ],
+            env: launcher.env.clone(),
+        });
+        attempts.push(SpawnConfig {
+            command: launcher.command.clone(),
+            args: vec!["--list-models".to_string()],
+            env: launcher.env.clone(),
+        });
+        attempts.push(SpawnConfig {
+            command: launcher.command,
+            args: vec!["models".to_string()],
+            env: launcher.env,
+        });
+    }
+
+    attempts
+}
+
+fn normalize_cursor_acp_args(cached_args: Vec<String>) -> Vec<String> {
+    let args = cached_args
+        .into_iter()
+        .filter(|arg| !arg.is_empty())
+        .collect::<Vec<_>>();
+
+    if args.is_empty() {
+        vec!["acp".to_string()]
+    } else {
+        args
+    }
+}
+
+fn push_unique_spawn_config(configs: &mut Vec<SpawnConfig>, candidate: SpawnConfig) {
+    let exists = configs
+        .iter()
+        .any(|config| config.command == candidate.command && config.args == candidate.args);
+    if !exists {
+        configs.push(candidate);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_spawn_configs_prefers_cached_binary_before_path_agent() {
+        let configs = resolve_cursor_spawn_configs(
+            Some("/tmp/cursor-agent".to_string()),
+            vec!["acp".to_string()],
+            true,
+        );
+
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].command, "/tmp/cursor-agent");
+        assert_eq!(configs[0].args, vec!["acp"]);
+        assert_eq!(configs[1].command, "agent");
+        assert_eq!(configs[1].args, vec!["acp"]);
+    }
+
+    #[test]
+    fn resolve_spawn_configs_omits_fake_agent_fallback_when_unavailable() {
+        let configs = resolve_cursor_spawn_configs(None, Vec::new(), false);
+
+        assert!(configs.is_empty());
+    }
 
     #[test]
     fn spawn_config_has_acp_args() {
@@ -230,12 +303,14 @@ mod tests {
 
     #[test]
     fn model_discovery_commands_include_list_models_attempts() {
-        let provider = CursorProvider;
-        let attempts = provider.model_discovery_commands();
+        let attempts = resolve_cursor_model_discovery_commands(resolve_cursor_spawn_configs(
+            Some("/tmp/cursor-agent".to_string()),
+            vec!["acp".to_string()],
+            false,
+        ));
 
         assert_eq!(attempts.len(), 3);
-        // Falls back to bare "agent" command when cache is not set (test environment)
-        assert_eq!(attempts[0].command, "agent");
+        assert_eq!(attempts[0].command, "/tmp/cursor-agent");
         assert_eq!(
             attempts[0].args,
             vec!["--list-models", "--output-format", "json", "--print"]
@@ -245,10 +320,8 @@ mod tests {
     }
 
     #[test]
-    fn is_not_available_when_cache_not_set() {
-        // Without a cache dir, is_installed returns false, so is_available returns false
-        let provider = CursorProvider;
-        assert!(!provider.is_available());
+    fn normalize_cursor_acp_args_defaults_to_acp() {
+        assert_eq!(normalize_cursor_acp_args(Vec::new()), vec!["acp"]);
     }
 
     #[test]

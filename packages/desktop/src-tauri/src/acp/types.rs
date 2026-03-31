@@ -10,6 +10,8 @@ use specta::Type;
 pub enum CanonicalAgentId {
     #[serde(rename = "claude-code")]
     ClaudeCode,
+    #[serde(rename = "copilot")]
+    Copilot,
     #[serde(rename = "cursor")]
     Cursor,
     #[serde(rename = "opencode")]
@@ -28,6 +30,7 @@ impl CanonicalAgentId {
     pub fn as_str(&self) -> &str {
         match self {
             Self::ClaudeCode => "claude-code",
+            Self::Copilot => "copilot",
             Self::Cursor => "cursor",
             Self::OpenCode => "opencode",
             Self::Codex => "codex",
@@ -46,6 +49,7 @@ impl CanonicalAgentId {
     pub fn to_string_with_prefix(&self) -> String {
         match self {
             Self::ClaudeCode => "claude-code".to_string(),
+            Self::Copilot => "copilot".to_string(),
             Self::Cursor => "cursor".to_string(),
             Self::OpenCode => "opencode".to_string(),
             Self::Codex => "codex".to_string(),
@@ -65,6 +69,7 @@ impl CanonicalAgentId {
         // Then check built-in names
         match s {
             "claude-code" => Self::ClaudeCode,
+            "copilot" => Self::Copilot,
             "cursor" => Self::Cursor,
             "opencode" => Self::OpenCode,
             "codex" => Self::Codex,
@@ -227,6 +232,22 @@ pub struct PromptRequest {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn canonical_agent_id_round_trips_copilot() {
+        let agent_id = CanonicalAgentId::parse("copilot");
+
+        assert_eq!(agent_id, CanonicalAgentId::Copilot);
+        assert_eq!(agent_id.as_str(), "copilot");
+        assert_eq!(agent_id.to_string_with_prefix(), "copilot");
+    }
+
+    #[test]
+    fn canonical_agent_id_preserves_custom_prefix_behavior() {
+        let agent_id = CanonicalAgentId::parse("custom:copilot-like");
+
+        assert_eq!(agent_id, CanonicalAgentId::Custom("copilot-like".to_string()));
+    }
 
     #[test]
     fn prompt_request_serializes_with_stream_true() {

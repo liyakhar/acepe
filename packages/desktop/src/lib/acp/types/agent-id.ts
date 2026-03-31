@@ -16,6 +16,7 @@ export type AgentId = string & { readonly __brand: "AgentId" };
  */
 export const AGENT_IDS = {
 	CLAUDE_CODE: "claude-code",
+	COPILOT: "copilot",
 	CURSOR: "cursor",
 	OPENCODE: "opencode",
 	CODEX: "codex",

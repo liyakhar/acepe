@@ -11,7 +11,7 @@
  * and responses are sent via HTTP endpoints.
  */
 
-import { errAsync, type ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync, type ResultAsync as ResultAsyncType } from "neverthrow";
 import { getContext, setContext } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { AppError } from "../errors/app-error.js";
@@ -30,8 +30,10 @@ export class PermissionStore {
 	private sessionBatchTotals = new SvelteMap<string, number>();
 	private sessionBatchCompleted = new SvelteMap<string, number>();
 
-	/** Callback to check if a permission should be auto-accepted (e.g. child sessions). */
-	private shouldAutoAccept: ((permission: PermissionRequest) => boolean) | null = null;
+	/** Callback to check if a permission should be auto-accepted (e.g. child sessions or Autonomous). */
+	private shouldAutoAccept:
+		| ((permission: PermissionRequest) => boolean | "child-session" | "autonomous-live")
+		| null = null;
 
 	private countPendingForSession(sessionId: string): number {
 		let count = 0;
@@ -82,11 +84,33 @@ export class PermissionStore {
 	}
 
 	/** Configure auto-accept predicate. Returns a dispose function. */
-	setAutoAccept(fn: (permission: PermissionRequest) => boolean): () => void {
+	setAutoAccept(
+		fn: (permission: PermissionRequest) => boolean | "child-session" | "autonomous-live"
+	): () => void {
 		this.shouldAutoAccept = fn;
 		return () => {
 			this.shouldAutoAccept = null;
 		};
+	}
+
+	private restorePermissionAfterFailedReply(
+		permission: PermissionRequest,
+		totalBeforeReply: number | undefined,
+		completedBeforeReply: number | undefined
+	): void {
+		this.pending.set(permission.id, permission);
+
+		if (totalBeforeReply !== undefined) {
+			this.sessionBatchTotals.set(permission.sessionId, totalBeforeReply);
+		} else {
+			this.sessionBatchTotals.delete(permission.sessionId);
+		}
+
+		if (completedBeforeReply !== undefined) {
+			this.sessionBatchCompleted.set(permission.sessionId, completedBeforeReply);
+		} else {
+			this.sessionBatchCompleted.delete(permission.sessionId);
+		}
 	}
 
 	private getToolCallId(permission: PermissionRequest): string {
@@ -121,11 +145,20 @@ export class PermissionStore {
 		this.pending.set(permission.id, permission);
 		this.notePermissionAdded(permission.sessionId, hadPendingBeforeAdd);
 
-		if (this.shouldAutoAccept?.(permission)) {
+		const autoAcceptDecision = this.shouldAutoAccept ? this.shouldAutoAccept(permission) : false;
+		const autoAcceptSource =
+			autoAcceptDecision === true
+				? "auto"
+				: autoAcceptDecision === false
+					? null
+					: autoAcceptDecision;
+
+		if (autoAcceptSource) {
 			logger.info("Auto-accepting permission", {
 				permissionId: permission.id,
 				sessionId: permission.sessionId,
 				tool: permission.permission,
+				source: autoAcceptSource,
 			});
 			void this.reply(permission.id, "once").match(
 				() => {},
@@ -253,6 +286,9 @@ export class PermissionStore {
 			);
 		}
 
+		const totalBeforeReply = this.sessionBatchTotals.get(permission.sessionId);
+		const completedBeforeReply = this.sessionBatchCompleted.get(permission.sessionId);
+
 		// Eagerly remove from pending map so the UI updates immediately.
 		// The user's intent is clear — don't wait for the async IPC response.
 		this.pending.delete(permissionId);
@@ -273,13 +309,52 @@ export class PermissionStore {
 				.map(() => {
 					logger.debug("Permission replied via JSON-RPC", { permissionId, reply, optionId });
 				})
-				.mapErr((err) => new AgentError("replyPermission", new Error(err.message)) as AppError);
+				.mapErr((err) => {
+					this.restorePermissionAfterFailedReply(
+						permission,
+						totalBeforeReply,
+						completedBeforeReply
+					);
+					return new AgentError("replyPermission", new Error(err.message)) as AppError;
+				});
 		}
 
 		// Otherwise, use the HTTP endpoint (OpenCode mode)
-		return api.replyPermission(permission.sessionId, permissionId, reply).map(() => {
-			logger.debug("Permission replied via HTTP", { permissionId, reply });
-		});
+		return api.replyPermission(permission.sessionId, permissionId, reply)
+			.map(() => {
+				logger.debug("Permission replied via HTTP", { permissionId, reply });
+			})
+			.mapErr((error) => {
+				this.restorePermissionAfterFailedReply(
+					permission,
+					totalBeforeReply,
+					completedBeforeReply
+				);
+				return error;
+			});
+	}
+
+	drainPendingForSession(sessionId: string): ResultAsyncType<void, AppError> {
+		const pendingPermissions = this.getForSession(sessionId);
+		if (pendingPermissions.length === 0) {
+			return okAsync(undefined);
+		}
+
+		return ResultAsync.combine(
+			pendingPermissions.map((permission) => {
+				if (!this.pending.has(permission.id)) {
+					return okAsync(undefined);
+				}
+
+				logger.info("Draining autonomous permission", {
+					permissionId: permission.id,
+					sessionId: permission.sessionId,
+					tool: permission.permission,
+					source: "drain-on-enable",
+				});
+				return this.reply(permission.id, "once");
+			})
+		).map(() => undefined);
 	}
 }
 
