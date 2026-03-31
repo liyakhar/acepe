@@ -372,7 +372,7 @@ pub(crate) fn parse_tool_kind_arguments(
                 prompt: extract_parser_string(raw_arguments, &["prompt"]),
                 subagent_type: extract_parser_string(
                     raw_arguments,
-                    &["subagent_type", "subagentType"],
+                    &["subagent_type", "subagentType", "agent_type", "agentType"],
                 ),
                 skill,
                 skill_args,

@@ -2,6 +2,7 @@
 
 use crate::acp::parsers::adapters::ClaudeCodeAdapter;
 use crate::acp::parsers::arguments::parse_tool_kind_arguments;
+use crate::acp::parsers::kind::{canonical_name_for_kind, infer_kind_from_payload};
 use crate::acp::parsers::edit_normalizers::claude_code::parse_edit_arguments;
 use crate::acp::parsers::types::{
     extract_plan_from_raw_input_impl, parse_ask_user_question, parse_common_update_type_name,
@@ -15,6 +16,42 @@ use crate::acp::session_update::{
 
 pub struct ClaudeCodeParser;
 
+fn infer_tool_kind_from_raw_arguments(raw_arguments: &serde_json::Value) -> Option<ToolKind> {
+    let object = raw_arguments.as_object()?;
+
+    if object.contains_key("description")
+        || object.contains_key("prompt")
+        || object.contains_key("agent_type")
+        || object.contains_key("agentType")
+        || object.contains_key("subagent_type")
+        || object.contains_key("subagentType")
+    {
+        return Some(ToolKind::Task);
+    }
+
+    if object.contains_key("questions") {
+        return Some(ToolKind::Question);
+    }
+
+    if object.contains_key("todos") {
+        return Some(ToolKind::Todo);
+    }
+
+    if object.contains_key("task_id") || object.contains_key("taskId") {
+        return Some(ToolKind::TaskOutput);
+    }
+
+    if object.contains_key("skill")
+        || object.contains_key("skill_name")
+        || object.contains_key("skillName")
+        || object.contains_key("skill_args")
+        || object.contains_key("skillArgs")
+    {
+        return Some(ToolKind::Skill);
+    }
+
+    None
+}
 impl AgentParser for ClaudeCodeParser {
     fn agent_type(&self) -> AgentType {
         AgentType::ClaudeCode
@@ -70,13 +107,30 @@ impl AgentParser for ClaudeCodeParser {
         if raw_arguments.is_null() || raw_arguments.as_object().is_some_and(|obj| obj.is_empty()) {
             return None;
         }
-        let kind = tool_name
+        let kind_from_raw_arguments = infer_tool_kind_from_raw_arguments(raw_arguments);
+
+        let kind = if let Some(kind) = tool_name
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(|name| self.detect_tool_kind(name))
             .filter(|k| *k != ToolKind::Other)
-            .or_else(|| kind_hint.map(|hint| self.detect_tool_kind(hint)))
-            .unwrap_or(ToolKind::Other);
+        {
+            kind
+        } else if let Some(kind) = kind_hint
+            .map(str::trim)
+            .filter(|hint| !hint.is_empty())
+            .map(|hint| self.detect_tool_kind(hint))
+            .filter(|k| *k != ToolKind::Other)
+        {
+            if matches!(kind, ToolKind::Think) {
+                kind_from_raw_arguments.unwrap_or(kind)
+            } else {
+                kind
+            }
+        } else {
+            kind_from_raw_arguments.unwrap_or(ToolKind::Other)
+        };
+
         if kind == ToolKind::Edit {
             return Some(parse_edit_arguments(raw_arguments));
         }
@@ -191,18 +245,26 @@ impl ClaudeCodeParser {
             .map(|s| s.to_string())
             .ok_or_else(|| ParseError::MissingField("toolCallId".to_string()))?;
 
-        let name = data
-            .get("_meta")
-            .and_then(|m| m.get("claudeCode"))
-            .and_then(|c| c.get("toolName"))
+        let title = data
+            .get("title")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map(|s| s.to_string());
 
         let arguments = data
             .get("rawInput")
             .cloned()
             .unwrap_or(serde_json::json!({}));
+
+        let kind_hint = data.get("kind").and_then(|v| v.as_str());
+
+        let explicit_name = data
+            .get("_meta")
+            .and_then(|m| m.get("claudeCode"))
+            .and_then(|c| c.get("toolName"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let inferred_name = self.infer_tool_display_name(None, &arguments, kind_hint);
 
         let status = tool_call_status_from_str(
             data.get("status")
@@ -210,12 +272,29 @@ impl ClaudeCodeParser {
                 .unwrap_or("pending"),
         );
 
-        let kind = Some(ClaudeCodeAdapter::normalize(&name));
+        let kind = explicit_name
+            .as_deref()
+            .map(ClaudeCodeAdapter::normalize)
+            .filter(|kind| *kind != ToolKind::Other)
+            .or_else(|| infer_kind_from_payload(&id, title.as_deref(), kind_hint))
+            .or_else(|| infer_tool_kind_from_raw_arguments(&arguments))
+            .or_else(|| {
+                self.parse_typed_tool_arguments(None, &arguments, kind_hint)
+                    .map(|parsed_arguments| parsed_arguments.tool_kind())
+                    .filter(|kind| *kind != ToolKind::Other)
+            })
+            .unwrap_or(ToolKind::Other);
 
-        let title = data
-            .get("title")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let name = explicit_name.clone().unwrap_or_else(|| {
+            if kind != ToolKind::Other {
+                canonical_name_for_kind(kind).to_string()
+            } else if inferred_name == "Tool" {
+                "unknown".to_string()
+            } else {
+                inferred_name
+            }
+        });
+
         let parent_tool_use_id = data
             .get("_meta")
             .and_then(|m| m.get("claudeCode"))
@@ -228,7 +307,7 @@ impl ClaudeCodeParser {
             name,
             arguments,
             status,
-            kind,
+            kind: Some(kind),
             title,
             parent_tool_use_id,
             task_children: None,

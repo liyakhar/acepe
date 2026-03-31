@@ -49,6 +49,8 @@ pub use preconnection_commands::acp_list_preconnection_commands;
 pub use registry_commands::{acp_list_agents, acp_register_custom_agent};
 #[cfg(test)]
 pub(crate) use session_commands::persist_session_metadata_for_cwd;
+#[cfg(test)]
+pub(crate) use session_commands::resume_path_needs_post_connect_execution_profile_reset;
 pub(crate) use session_commands::session_metadata_context_from_cwd;
 pub use session_commands::{
     acp_close_session, acp_fork_session, acp_get_event_bridge_info, acp_initialize,

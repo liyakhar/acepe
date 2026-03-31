@@ -3,6 +3,12 @@ use crate::acp::session_registry::redact_session_id;
 use crate::db::repository::SessionMetadataRepository;
 use sea_orm::DbConn;
 
+pub(crate) fn resume_path_needs_post_connect_execution_profile_reset(
+    agent_id: &CanonicalAgentId,
+) -> bool {
+    !matches!(agent_id, CanonicalAgentId::ClaudeCode)
+}
+
 async fn reset_resumed_session_execution_profile(
     app: &AppHandle,
     session_id: &str,
@@ -16,6 +22,15 @@ async fn reset_resumed_session_execution_profile(
             session_id: session_id.to_string(),
         }
     })?;
+
+    if !resume_path_needs_post_connect_execution_profile_reset(&agent_id) {
+        tracing::debug!(
+            session_id = %session_id,
+            agent_id = %agent_id.as_str(),
+            "Skipping post-connect execution profile reset for provider-managed safe resume"
+        );
+        return Ok(());
+    }
 
     let provider = registry.get(&agent_id).ok_or_else(|| SerializableAcpError::AgentNotFound {
         agent_id: agent_id.as_str().to_string(),

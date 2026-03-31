@@ -453,6 +453,109 @@ mod parse_tool_call_from_acp {
     }
 
     #[test]
+    fn infers_task_from_copilot_subagent_payload_without_tool_name() {
+        with_agent(AgentType::Copilot, || {
+            let data = json!({
+                "toolCallId": "toolu_vrtx_018JbChzpCamF48QXLBn8fyA",
+                "kind": "other",
+                "rawInput": {
+                    "agent_type": "explore",
+                    "description": "Explain codebase overview",
+                    "name": "codebase-explainer",
+                    "prompt": "Explore the repository and summarize it."
+                },
+                "status": "pending",
+                "title": "Explain codebase overview"
+            });
+
+            let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let tool_call = result.unwrap();
+            assert_eq!(tool_call.name, "Task");
+            assert_eq!(tool_call.kind, Some(ToolKind::Task));
+
+            match tool_call.arguments {
+                ToolArguments::Think {
+                    description,
+                    prompt,
+                    subagent_type,
+                    raw,
+                    ..
+                } => {
+                    assert_eq!(description.as_deref(), Some("Explain codebase overview"));
+                    assert_eq!(
+                        prompt.as_deref(),
+                        Some("Explore the repository and summarize it.")
+                    );
+                    assert_eq!(subagent_type.as_deref(), Some("explore"));
+                    assert!(raw.is_some(), "Expected raw payload to be preserved");
+                }
+                other => {
+                    panic!("Expected Think arguments for Copilot task payload, got {:?}", other)
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn uses_kind_hint_when_tool_name_missing() {
+        with_agent(AgentType::Copilot, || {
+            let test_cases = vec![
+                (
+                    "read",
+                    json!({ "path": "/tmp/file.rs" }),
+                    ToolKind::Read,
+                ),
+                (
+                    "execute",
+                    json!({ "command": "echo ok" }),
+                    ToolKind::Execute,
+                ),
+                (
+                    "search",
+                    json!({ "query": "needle", "path": "/tmp" }),
+                    ToolKind::Search,
+                ),
+                (
+                    "glob",
+                    json!({ "pattern": "**/*.rs", "path": "/tmp" }),
+                    ToolKind::Glob,
+                ),
+                (
+                    "fetch",
+                    json!({ "url": "https://example.com" }),
+                    ToolKind::Fetch,
+                ),
+            ];
+
+            for (kind_hint, raw_input, expected_kind) in test_cases {
+                let data = json!({
+                    "toolCallId": format!("tool-{kind_hint}"),
+                    "kind": kind_hint,
+                    "rawInput": raw_input,
+                    "status": "pending"
+                });
+
+                let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+                assert!(result.is_ok(), "Expected Ok for {kind_hint}, got {:?}", result);
+                let tool_call = result.unwrap();
+                assert_ne!(tool_call.name, "unknown", "Expected inferred name for {kind_hint}");
+                assert_eq!(
+                    tool_call.kind,
+                    Some(expected_kind),
+                    "Expected inferred kind for {kind_hint}"
+                );
+                assert!(
+                    !matches!(tool_call.arguments, ToolArguments::Other { .. }),
+                    "Expected typed arguments for {kind_hint}"
+                );
+            }
+        });
+    }
+
+    #[test]
     fn fails_when_toolcallid_missing() {
         let data = json!({
             "_meta": {
@@ -2146,6 +2249,10 @@ mod parser_integration {
         let canonical = CanonicalAgentId::ClaudeCode;
         let agent_type = AgentType::from_canonical(&canonical);
         assert_eq!(agent_type, AgentType::ClaudeCode);
+
+        let canonical = CanonicalAgentId::Copilot;
+        let agent_type = AgentType::from_canonical(&canonical);
+        assert_eq!(agent_type, AgentType::Copilot);
     }
 }
 

@@ -408,6 +408,7 @@ export class SessionConnectionManager {
 		}
 
 		const hotState = this.stateReader.getHotState(sessionId);
+		const shouldRestoreAutonomous = hotState.autonomousEnabled;
 		if (hotState.isConnected) {
 			logger.debug("Session already connected, skipping", {
 				sessionId,
@@ -556,6 +557,59 @@ export class SessionConnectionManager {
 					currentModel: initialModel,
 				});
 			})
+			.andThen(
+				({
+					availableModes,
+					availableModels,
+					availableCommands,
+					configOptions,
+					modelsDisplay,
+					currentMode,
+					currentModel,
+				}) => {
+					if (!shouldRestoreAutonomous || !currentMode) {
+						return okAsync({
+							availableModes,
+							availableModels,
+							availableCommands,
+							configOptions,
+							modelsDisplay,
+							currentMode,
+							currentModel,
+							autonomousEnabled: shouldRestoreAutonomous,
+						});
+					}
+
+					return this.applyExecutionProfile(session.id, currentMode.id, true)
+						.map(() => ({
+							availableModes,
+							availableModels,
+							availableCommands,
+							configOptions,
+							modelsDisplay,
+							currentMode,
+							currentModel,
+							autonomousEnabled: true,
+						}))
+						.orElse((error) => {
+							logger.warn("Failed to restore Autonomous on connect; continuing safely", {
+								sessionId,
+								modeId: currentMode.id,
+								error,
+							});
+							return okAsync({
+								availableModes,
+								availableModels,
+								availableCommands,
+								configOptions,
+								modelsDisplay,
+								currentMode,
+								currentModel,
+								autonomousEnabled: false,
+							});
+						});
+				}
+			)
 			.map(
 				({
 					availableModes,
@@ -565,6 +619,7 @@ export class SessionConnectionManager {
 					modelsDisplay,
 					currentMode,
 					currentModel,
+					autonomousEnabled,
 				}) => {
 					// Cache available models and modes for settings/optimistic display
 					preferencesStore.updateModelsCache(session.agentId, availableModels);
@@ -608,6 +663,8 @@ export class SessionConnectionManager {
 						turnState: "idle",
 						isConnected: true,
 						acpSessionId: sessionId,
+						autonomousEnabled,
+						autonomousTransition: "idle",
 						currentMode,
 						currentModel,
 						availableCommands,
@@ -863,10 +920,6 @@ export class SessionConnectionManager {
 		}
 
 		const hotState = this.stateReader.getHotState(sessionId);
-		if (!hotState.isConnected) {
-			return errAsync(new ConnectionError(sessionId));
-		}
-
 		if (hotState.autonomousTransition !== "idle") {
 			return errAsync(
 				new AgentError(
@@ -874,6 +927,14 @@ export class SessionConnectionManager {
 					new Error("Autonomous transition already in progress")
 				)
 			);
+		}
+
+		if (!hotState.isConnected) {
+			this.hotStateManager.updateHotState(sessionId, {
+				autonomousEnabled: enabled,
+				autonomousTransition: "idle",
+			});
+			return okAsync(undefined);
 		}
 
 		const currentModeId = hotState.currentMode ? hotState.currentMode.id : null;

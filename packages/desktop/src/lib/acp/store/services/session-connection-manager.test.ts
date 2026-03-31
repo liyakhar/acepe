@@ -263,6 +263,39 @@ describe("SessionConnectionManager.connectSession", () => {
 		);
 	});
 
+	it("applies the stored Autonomous profile after reconnecting a disconnected session", async () => {
+		(stateReader.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: false,
+			isStreaming: false,
+			status: "idle",
+			autonomousEnabled: true,
+			autonomousTransition: "idle",
+			currentMode: { id: "build", name: "Build", description: null },
+		});
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.connectSession(sessionId, createMockEventHandler());
+		result._unsafeUnwrap();
+
+		expect(setExecutionProfile).toHaveBeenCalledWith(sessionId, "plan", true);
+		expect(hotState.updateHotState).toHaveBeenCalledWith(
+			sessionId,
+			expect.objectContaining({
+				autonomousEnabled: true,
+				isConnected: true,
+				status: "ready",
+			})
+		);
+	});
+
 	it("restores stored model for current mode on connect", async () => {
 		getSessionModelForMode.mockReturnValue("model-b");
 
@@ -947,6 +980,41 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 			autonomousTransition: "enabling",
 		});
 		expect(hotState.updateHotState).toHaveBeenNthCalledWith(2, sessionId, {
+			autonomousTransition: "idle",
+		});
+	});
+
+	it("stores Autonomous locally when the session is disconnected", async () => {
+		(stateReader.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: false,
+			status: "idle",
+			turnState: "idle",
+			acpSessionId: null,
+			connectionError: null,
+			autonomousEnabled: false,
+			autonomousTransition: "idle" as const,
+			currentModel: null,
+			currentMode: { id: "build", name: "Build", description: null },
+			availableCommands: [],
+			modelPerMode: {},
+			statusChangedAt: Date.now(),
+		});
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.setAutonomousEnabled(sessionId, true);
+		result._unsafeUnwrap();
+
+		expect(setExecutionProfile).not.toHaveBeenCalled();
+		expect(hotState.updateHotState).toHaveBeenCalledWith(sessionId, {
+			autonomousEnabled: true,
 			autonomousTransition: "idle",
 		});
 	});

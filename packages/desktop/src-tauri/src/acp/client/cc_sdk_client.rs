@@ -903,6 +903,10 @@ impl CcSdkClaudeClient {
         self.pending_questions = Arc::new(Mutex::new(HashMap::new()));
     }
 
+    fn reset_pending_mode_for_safe_resume(&mut self) {
+        self.pending_mode_id = Some("default".to_string());
+    }
+
     /// Build cc-sdk options for the given working directory.
     ///
     /// `session_id` is the Acepe session ID that will own this connection.
@@ -2235,6 +2239,7 @@ impl AgentClient for CcSdkClaudeClient {
         cwd: String,
     ) -> AcpResult<ResumeSessionResponse> {
         self.reset_stream_runtime_state();
+        self.reset_pending_mode_for_safe_resume();
         let history_session_id = self.history_session_id_for_app_session(&session_id).await;
         if !self.session_has_persisted_history(&session_id, &cwd).await {
             let options = self.build_options(&cwd, &session_id, None, false);
@@ -2805,6 +2810,32 @@ mod tests {
 
         assert_eq!(options.resume.as_deref(), Some("resume-1"));
         assert!(options.fork_session);
+    }
+
+    #[tokio::test]
+    async fn resume_session_clears_stale_autonomous_permission_mode_before_reconnect() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut client = make_test_client();
+        client.pending_mode_id = Some("bypassPermissions".to_string());
+
+        let response = client
+            .resume_session(
+                "session-1".to_string(),
+                temp.path().to_string_lossy().into_owned(),
+            )
+            .await
+            .expect("resume session should succeed without persisted history");
+
+        assert_eq!(response.modes.current_mode_id, "build");
+        assert_eq!(client.pending_mode_id.as_deref(), Some("default"));
+        assert_eq!(
+            client
+                .pending_options
+                .as_ref()
+                .expect("resume without persisted history should defer connect")
+                .permission_mode,
+            cc_sdk::PermissionMode::Default
+        );
     }
 
     #[tokio::test]

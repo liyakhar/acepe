@@ -397,6 +397,16 @@ fn session_metadata_created_rows_are_detected_as_pending_transcript() {
 }
 
 #[test]
+fn claude_resume_skips_post_connect_execution_profile_reset() {
+    assert!(!resume_path_needs_post_connect_execution_profile_reset(
+        &CanonicalAgentId::ClaudeCode,
+    ));
+    assert!(resume_path_needs_post_connect_execution_profile_reset(
+        &CanonicalAgentId::Cursor,
+    ));
+}
+
+#[test]
 fn session_metadata_real_rows_are_resumable() {
     let row = crate::db::repository::SessionMetadataRow {
         id: "session-real".to_string(),
