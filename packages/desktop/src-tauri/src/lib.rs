@@ -1191,15 +1191,16 @@ pub fn run() {
             session_jsonl::commands::get_converted_session,
         ])
         .on_window_event(|window, event| {
-            // When the last window is destroyed, stop all ACP subprocess trees.
-            // The SessionRegistry::Drop impl handles this, but we also do it
-            // explicitly here to ensure cleanup happens before Tauri state is dropped.
+            // When the last window is destroyed, stop all ACP subprocess trees
+            // and project-scoped OpenCode helpers before Tauri drops app state.
             if let tauri::WindowEvent::Destroyed = event {
                 let app = window.app_handle();
                 if app.webview_windows().is_empty() {
-                    tracing::info!("Last window destroyed, cleaning up all ACP sessions");
+                    tracing::info!("Last window destroyed, cleaning up ACP sessions and OpenCode managers");
                     let registry = app.state::<SessionRegistry>();
                     registry.stop_all();
+                    let opencode_registry = app.state::<Arc<OpenCodeManagerRegistry>>();
+                    tauri::async_runtime::block_on(opencode_registry.shutdown_all());
                     let git_watcher = app.state::<Arc<GitHeadWatcher>>();
                     git_watcher.unwatch_all();
                 }

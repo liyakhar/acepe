@@ -38,6 +38,34 @@ static URL_REGEX: Lazy<Option<Regex>> =
         },
     );
 
+#[cfg(unix)]
+fn configure_child_process_group(cmd: &mut Command) {
+    unsafe {
+        cmd.pre_exec(|| {
+            nix::unistd::setsid().map_err(std::io::Error::other)?;
+            Ok(())
+        });
+    }
+}
+
+#[cfg(unix)]
+fn signal_child_tree(child: &Child, signal: nix::sys::signal::Signal) -> bool {
+    use nix::sys::signal::kill;
+    use nix::sys::signal::killpg;
+    use nix::unistd::Pid;
+
+    let Some(raw_pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) else {
+        return false;
+    };
+
+    let pid = Pid::from_raw(raw_pid);
+    if killpg(pid, signal).is_ok() {
+        return true;
+    }
+
+    kill(pid, signal).is_ok()
+}
+
 /// Manages the lifecycle of the OpenCode HTTP server subprocess
 pub struct OpenCodeManager {
     /// Project root this manager is bound to.
@@ -182,6 +210,18 @@ impl OpenCodeManager {
 
     /// Start the OpenCode HTTP server
     async fn start(&mut self) -> Result<()> {
+        if self.child.is_some() {
+            tracing::warn!(
+                project_root = %self.project_root.display(),
+                "Restarting OpenCode server after stale child state"
+            );
+            self.graceful_stop().await?;
+        }
+
+        self.shutdown_flag.store(false, Ordering::Relaxed);
+        *self.port.write().await = None;
+        *self.api_prefix.write().await = String::new();
+
         tracing::info!(
             project_root = %self.project_root.display(),
             "Starting OpenCode HTTP server"
@@ -210,6 +250,9 @@ impl OpenCodeManager {
             .stderr(Stdio::piped())
             .current_dir(&self.project_root)
             .kill_on_drop(false); // We handle cleanup manually
+
+        #[cfg(unix)]
+        configure_child_process_group(&mut cmd);
 
         // Preserve the provider env contract for downloaded OpenCode binaries.
         cmd.env_clear();
@@ -372,6 +415,8 @@ impl OpenCodeManager {
     pub async fn graceful_stop(&mut self) -> Result<()> {
         self.shutdown_flag.store(true, Ordering::Relaxed);
         self.stop_sse(); // Stop SSE before stopping server
+        *self.port.write().await = None;
+        *self.api_prefix.write().await = String::new();
 
         if let Some(mut child) = self.child.take() {
             tracing::info!("Stopping OpenCode server gracefully");
@@ -379,12 +424,13 @@ impl OpenCodeManager {
             // Send SIGTERM on Unix
             #[cfg(unix)]
             {
-                use nix::sys::signal::{kill, Signal};
-                use nix::unistd::Pid;
-
                 if let Some(pid) = child.id() {
-                    let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
-                    tracing::debug!(pid = pid, "Sent SIGTERM to OpenCode");
+                    let signaled = signal_child_tree(&child, nix::sys::signal::Signal::SIGTERM);
+                    tracing::debug!(
+                        pid = pid,
+                        signaled_tree = signaled,
+                        "Sent SIGTERM to OpenCode process tree"
+                    );
                 }
             }
 
@@ -400,7 +446,14 @@ impl OpenCodeManager {
             }
 
             // Force kill if still running
-            let _ = child.kill().await;
+            #[cfg(unix)]
+            {
+                let _ = signal_child_tree(&child, nix::sys::signal::Signal::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill().await;
+            }
             let _ = child.wait().await;
             tracing::info!("OpenCode server killed");
         }
@@ -414,7 +467,22 @@ impl Drop for OpenCodeManager {
         self.stop_sse(); // Clean up SSE on drop
                          // Attempt to kill the child on drop (non-async)
         if let Some(mut child) = self.child.take() {
+            #[cfg(unix)]
+            {
+                let _ = signal_child_tree(&child, nix::sys::signal::Signal::SIGKILL);
+            }
             let _ = child.start_kill();
+
+            match child.try_wait() {
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => {
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        handle.spawn(async move {
+                            let _ = child.wait().await;
+                        });
+                    }
+                }
+            }
         }
     }
 }
@@ -468,8 +536,128 @@ impl OpenCodeManagerRegistry {
         managers.insert(key.clone(), manager.clone());
         Ok((key, manager))
     }
+
+    pub async fn shutdown_all(&self) {
+        let managers = {
+            let mut guard = self.managers.lock().await;
+            std::mem::take(&mut *guard)
+        };
+
+        if managers.is_empty() {
+            return;
+        }
+
+        tracing::info!(count = managers.len(), "Shutting down all OpenCode managers");
+
+        for (project_key, manager) in managers {
+            let mut guard = manager.lock().await;
+            if let Err(error) = guard.graceful_stop().await {
+                tracing::warn!(project_key = %project_key, %error, "Failed to stop OpenCode manager during shutdown");
+            }
+        }
+    }
 }
 
 fn canonicalize_project_root(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OpenCodeManager;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::process::Stdio;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use tokio::process::Command;
+
+    #[cfg(unix)]
+    async fn wait_for_pid_file(pid_file: &PathBuf) -> u32 {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+
+        loop {
+            if let Ok(contents) = fs::read_to_string(pid_file) {
+                if let Ok(pid) = contents.trim().parse::<u32>() {
+                    return pid;
+                }
+            }
+
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for grandchild pid file"
+            );
+
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    fn process_exists(pid: u32) -> bool {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+    }
+
+    #[cfg(unix)]
+    fn kill_process(pid: u32) {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn graceful_stop_kills_spawned_descendants() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let pid_file = std::env::temp_dir().join(format!("acepe-opencode-child-{}.pid", unique));
+        let _ = fs::remove_file(&pid_file);
+
+        let script = format!(
+            "sleep 30 & echo $! > '{}' && while :; do sleep 1; done",
+            pid_file.display()
+        );
+
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg(script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        unsafe {
+            command.pre_exec(|| {
+                nix::unistd::setsid().map_err(std::io::Error::other)?;
+                Ok(())
+            });
+        }
+
+        let child = command.spawn().expect("test shell should spawn");
+        let grandchild_pid = wait_for_pid_file(&pid_file).await;
+
+        let mut manager = OpenCodeManager::new(PathBuf::from("/tmp/test-project"));
+        manager.child = Some(child);
+
+        manager
+            .graceful_stop()
+            .await
+            .expect("graceful stop should succeed");
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let grandchild_alive = process_exists(grandchild_pid);
+
+        if grandchild_alive {
+            kill_process(grandchild_pid);
+        }
+
+        let _ = fs::remove_file(&pid_file);
+
+        assert!(
+            !grandchild_alive,
+            "graceful_stop should terminate descendant processes, but pid {} is still alive",
+            grandchild_pid
+        );
+    }
 }
