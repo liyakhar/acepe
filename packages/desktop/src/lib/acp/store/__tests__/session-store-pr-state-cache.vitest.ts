@@ -85,6 +85,31 @@ describe("SessionStore PR state refresh caching", () => {
 		expect(store.getSessionCold("session-pr-1")?.prState).toBe("OPEN");
 	});
 
+	it("preserves historical updatedAt when PR state refresh changes prState", async () => {
+		vi.setSystemTime(new Date("2026-03-31T12:00:00.000Z"));
+		const previousUpdatedAt = new Date("2026-03-01T08:30:00.000Z");
+
+		store.addSession({
+			id: "session-pr-1",
+			projectPath: "/test/path",
+			agentId: "cursor",
+			title: "Historical session",
+			prNumber: 83,
+			prState: "OPEN",
+			updatedAt: previousUpdatedAt,
+			createdAt: new Date("2026-02-28T18:00:00.000Z"),
+			parentId: null,
+		});
+		prDetailsMock.mockReturnValue(okAsync(createPrDetails({ state: "MERGED" })));
+
+		await store.refreshSessionPrState("session-pr-1", "/test/path", 83);
+
+		expect(store.getSessionCold("session-pr-1")?.prState).toBe("MERGED");
+		expect(store.getSessionCold("session-pr-1")?.updatedAt.toISOString()).toBe(
+			previousUpdatedAt.toISOString()
+		);
+	});
+
 	it("dedupes in-flight requests for the same PR", async () => {
 		addSessionWithPr(store, "session-pr-1", 83);
 		addSessionWithPr(store, "session-pr-2", 83);
