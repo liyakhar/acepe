@@ -36,7 +36,7 @@ import {
 	extractPermissionFilePath,
 } from "../tool-calls/permission-display.js";
 import { isExitPlanPermission, getExitPlanDisplayPlan } from "../tool-calls/exit-plan-helpers.js";
-import { getQueueItemToolDisplay, getTaskSubagentSummaries } from "./queue-item-display.js";
+import { getQueueItemTaskDisplay, getQueueItemToolDisplay } from "./queue-item-display.js";
 import {
 	buildQueueItemQuestionUiState,
 	type QuestionSelectionReader,
@@ -240,23 +240,10 @@ const mode = $derived<ActivityEntryMode>(
 			: null
 );
 
-const taskDescription = $derived.by(() => {
-	if (!effectiveToolCall || effectiveToolKind !== "task") {
-		return null;
-	}
-	if (effectiveToolCall.arguments.kind === "think" && effectiveToolCall.arguments.description) {
-		return effectiveToolCall.arguments.description.trim() || null;
-	}
-	return null;
-});
-
-const taskSubagentSummaries = $derived.by(() => {
-	if (!effectiveToolCall || effectiveToolKind !== "task" || taskDescription) {
-		return [];
-	}
-	return getTaskSubagentSummaries(effectiveToolCall);
-});
-const showTaskSubagentList = $derived(taskSubagentSummaries.length > 1);
+const taskDisplay = $derived.by(() => getQueueItemTaskDisplay(effectiveToolCall, effectiveToolKind));
+const taskDescription = $derived(taskDisplay.taskDescription);
+const taskSubagentSummaries = $derived(taskDisplay.taskSubagentSummaries);
+const showTaskSubagentList = $derived(taskDisplay.showTaskSubagentList);
 
 let now = $state(Date.now());
 $effect(() => {

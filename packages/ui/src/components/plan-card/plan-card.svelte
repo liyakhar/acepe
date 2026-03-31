@@ -76,7 +76,7 @@
   class="plan-card rounded-md border border-border bg-accent/50 overflow-hidden {className}"
 >
   <!-- Header -->
-  <EmbeddedPanelHeader class="bg-accent/40">
+  <EmbeddedPanelHeader class="bg-accent/50">
     <HeaderTitleCell compactPadding>
       <PlanIcon size="sm" class="shrink-0 mr-1" />
       <span
@@ -242,7 +242,7 @@
     justify-content: space-between;
     gap: 1px;
     border-top: 1px solid var(--border);
-    background: color-mix(in srgb, var(--accent) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 50%, transparent);
   }
 
   .plan-footer-left,

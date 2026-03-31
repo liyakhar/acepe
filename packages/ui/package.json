@@ -152,6 +152,10 @@
     "./input-container": {
       "svelte": "./src/components/input-container/index.ts",
       "default": "./src/components/input-container/index.ts"
+    },
+    "./user-message-container": {
+      "svelte": "./src/components/user-message-container/index.ts",
+      "default": "./src/components/user-message-container/index.ts"
     }
   },
   "peerDependencies": {

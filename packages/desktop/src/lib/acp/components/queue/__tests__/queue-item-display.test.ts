@@ -3,6 +3,7 @@ import type { ToolCall } from "$lib/acp/types/tool-call.js";
 
 import {
 	getQueueItemToolDisplay,
+	getQueueItemTaskDisplay,
 	getTaskSubagentSummaries,
 	type QueueItemToolDisplayInput,
 } from "../queue-item-display.js";
@@ -78,6 +79,38 @@ describe("getTaskSubagentSummaries", () => {
 		const taskTool = createTaskToolCall([]);
 
 		expect(getTaskSubagentSummaries(taskTool)).toEqual([]);
+	});
+});
+
+describe("getQueueItemTaskDisplay", () => {
+	it("prefers child subagent widgets over the parent task description", () => {
+		const taskTool = createTaskToolCall([
+			createSubagentChild("child-1", "Explore community board and email notification code"),
+			createSubagentChild("child-2", "Trace queue item rendering for task tools"),
+		]);
+
+		const display = getQueueItemTaskDisplay(taskTool, "task");
+
+		expect(display).toEqual({
+			taskDescription: null,
+			taskSubagentSummaries: [
+				"Explore community board and email notification code",
+				"Trace queue item rendering for task tools",
+			],
+			showTaskSubagentList: true,
+		});
+	});
+
+	it("falls back to the parent task description when no child subagents exist", () => {
+		const taskTool = createTaskToolCall([]);
+
+		const display = getQueueItemTaskDisplay(taskTool, "task");
+
+		expect(display).toEqual({
+			taskDescription: "Parent task",
+			taskSubagentSummaries: [],
+			showTaskSubagentList: false,
+		});
 	});
 });
 

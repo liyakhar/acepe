@@ -10,6 +10,7 @@ import { TextShimmer } from "../text-shimmer/index.js";
 import { DiffPill } from "../diff-pill/index.js";
 import { SegmentedProgress } from "../segmented-progress/index.js";
 import FeedItem from "./attention-queue-item.svelte";
+import QueueSubagentCard from "./attention-queue-subagent-card.svelte";
 import type {
 	ActivityEntryMode,
 	ActivityEntryQuestion,
@@ -127,6 +128,14 @@ const hasMainRowContent = $derived(
 	)
 );
 const questionIconClassName = $derived(currentQuestionAnswered ? "text-success" : "text-primary");
+const taskWidgetSummaries = $derived.by(() => {
+	if (showTaskSubagentList || taskSubagentSummaries.length > 0) {
+		return taskSubagentSummaries;
+	}
+
+	return taskDescription ? [taskDescription] : [];
+});
+const showTaskWidgets = $derived(taskWidgetSummaries.length > 0);
 </script>
 
 <FeedItem selected={selected} onSelect={onSelect} {slidingHighlight} {compactPadding} {collapsed}>
@@ -168,19 +177,11 @@ const questionIconClassName = $derived(currentQuestionAnswered ? "text-success" 
 	</div>
 
 	{#if showMainRow && hasMainRowContent}
-		<div class="flex items-center gap-1.5">
-			{#if taskDescription}
-				<div class="flex items-center gap-1 text-[10px] text-muted-foreground truncate max-w-[60%]">
-					{#if isStreaming}
-						<TextShimmer class="truncate">{taskDescription}</TextShimmer>
-					{:else}
-						<span class="truncate">{taskDescription}</span>
-					{/if}
-				</div>
-			{:else if showTaskSubagentList}
-				<div class="flex flex-col gap-0.5 text-[10px] text-muted-foreground max-w-[60%] min-w-0">
-					{#each taskSubagentSummaries as subagentSummary, subagentIndex (`${subagentSummary}-${subagentIndex}`)}
-						<span class="truncate">{subagentSummary}</span>
+		<div class="flex items-start gap-1.5">
+			{#if showTaskWidgets}
+				<div class="flex max-w-[60%] min-w-0 flex-col gap-1">
+					{#each taskWidgetSummaries as subagentSummary, subagentIndex (`${subagentSummary}-${subagentIndex}`)}
+						<QueueSubagentCard summary={subagentSummary} isStreaming={isStreaming} />
 					{/each}
 				</div>
 			{:else if fileToolDisplayText}

@@ -53,7 +53,7 @@
 	});
 </script>
 
-<div class="flex flex-col h-full bg-background">
+<div class="flex flex-col h-full bg-accent/20">
 	<AgentPanelHeader
 		{sessionTitle}
 		{agentIconSrc}
@@ -62,7 +62,7 @@
 	/>
 
 	<!-- Message list -->
-	<div bind:this={scrollContainer} class="flex-1 min-h-0 overflow-y-auto py-1">
+	<div bind:this={scrollContainer} class="flex-1 min-h-0 overflow-y-auto bg-accent/20 py-1">
 		{#each entries as entry (entry.id)}
 			<div class="py-1.5 px-3">
 				{#if entry.type === "user"}
@@ -133,6 +133,8 @@
 	</div>
 
 	{#if inputArea}
-		{@render inputArea()}
+		<div class="shrink-0 bg-accent/20">
+			{@render inputArea()}
+		</div>
 	{/if}
 </div>

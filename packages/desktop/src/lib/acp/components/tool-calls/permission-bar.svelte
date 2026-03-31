@@ -77,7 +77,7 @@
 	{@const command = extractCommand(currentPermission)}
 	{@const filePath = extractFilePath(currentPermission)}
 	{@const verb = extractVerb(currentPermission, filePath, command)}
-	<div class="w-full px-5 mb-1">
+	<div class="w-full px-5">
 		<div class="permission-card">
 			<!-- Header: fixed h-7 embedded row -->
 			<div class="flex h-7 items-center justify-between gap-2 border-b border-border/50 px-2.5">

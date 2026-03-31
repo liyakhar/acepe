@@ -47,6 +47,7 @@ export type {
 } from "./components/attention-queue/index.js";
 export {
 	ActivityEntry,
+	AttentionQueueSubagentCard,
 	FeedItem,
 	PermissionFeedItem,
 	SectionedFeed,
@@ -209,6 +210,7 @@ export { SegmentedProgress } from "./components/segmented-progress/index.js";
 // Selector
 export { Selector } from "./components/selector/index.js";
 export { TextShimmer } from "./components/text-shimmer/index.js";
+export { UserMessageContainer } from "./components/user-message-container/index.js";
 export {
 	COLOR_NAMES,
 	Colors,

@@ -83,7 +83,7 @@ function toggleExpanded() {
 </script>
 
 {#if shouldRender && todoState}
-	<div class="w-full px-5 mb-2">
+	<div class="w-full px-5">
 		<!-- Expanded Task Table (above the bar, expanding upward) -->
 		{#if isExpanded}
 			<div class="rounded-t-md bg-muted/30 overflow-hidden border border-b-0 border-border">

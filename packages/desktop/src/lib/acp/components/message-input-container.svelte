@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
-import { InputContainer } from "@acepe/ui/input-container";
+import { UserMessageContainer } from "@acepe/ui/user-message-container";
 import CopyButton from "./messages/copy-button.svelte";
 
 let { class: className = "", children }: { class?: string; children: Snippet } = $props();
@@ -8,7 +8,7 @@ let { class: className = "", children }: { class?: string; children: Snippet } =
 let contentRef: HTMLDivElement | null = $state(null);
 </script>
 
-<InputContainer class="w-full !p-0.5 {className}" contentClass="p-1.5">
+<UserMessageContainer class="w-full !p-0.5 {className}" contentClass="p-1.5">
 	{#snippet content()}
 		<div class="group/copy flex items-start gap-2">
 			<div
@@ -24,4 +24,4 @@ let contentRef: HTMLDivElement | null = $state(null);
 			/>
 		</div>
 	{/snippet}
-</InputContainer>
+</UserMessageContainer>
