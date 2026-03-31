@@ -407,7 +407,9 @@ export interface PanelLayout {
 /**
  * How an agent is provisioned (bundled vs installable).
  */
-export type AgentAvailabilityKind = { kind: "bundled" } | { kind: "installable" };
+export type AgentAvailabilityKind =
+	| { kind: "bundled" }
+	| { kind: "installable"; installed: boolean };
 
 /**
  * Agent - represents an AI agent provider.

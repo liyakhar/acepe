@@ -21,6 +21,10 @@ import { useTheme } from "$lib/components/theme/index.js";
 import * as m from "$lib/paraglide/messages.js";
 
 import type { MainAppViewState } from "../../logic/main-app-view-state.svelte.js";
+import {
+	ensureProjectHeaderAgentSelected,
+	getProjectHeaderAgents,
+} from "./app-sidebar-agents.js";
 
 import AppQueueRow from "../app-queue-row.svelte";
 import SidebarFooter from "./sidebar-footer.svelte";
@@ -59,6 +63,28 @@ function handleNewThread() {
 }
 
 function handleCreateSession(projectPath: string, agentId?: string) {
+	if (agentId) {
+		const agentIsSelected = agentPreferencesStore.selectedAgentIds.includes(agentId);
+		if (!agentIsSelected) {
+			const nextSelectedAgentIds = ensureProjectHeaderAgentSelected(
+				agentPreferencesStore.selectedAgentIds,
+				agentId
+			);
+
+			void agentPreferencesStore.setSelectedAgentIds(nextSelectedAgentIds).match(
+				() => undefined,
+				(error) => {
+					toast.error(error.message);
+					logger.error("[ProjectHeaderAgents] Failed to persist selected agents", {
+						agentId,
+						error,
+						projectPath,
+					});
+				}
+			);
+		}
+	}
+
 	appState.handleNewThreadForProject(projectPath, agentId);
 }
 
@@ -173,7 +199,7 @@ async function handleArchiveSession(session: SessionDisplayItem) {
 
 // Agent dropdown data for session creation
 const availableAgents = $derived(
-	agentPreferencesStore.getPanelSelectableAgents(agentStore.agents).map((a) => ({
+	getProjectHeaderAgents(agentStore.agents, agentPreferencesStore.selectedAgentIds).map((a) => ({
 		id: a.id,
 		name: a.name,
 		icon: a.icon,
