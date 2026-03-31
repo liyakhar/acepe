@@ -447,9 +447,24 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	/**
 	 * Update a session's cold data by ID (creates new array for reactivity).
 	 */
-	updateSession(id: string, updates: Partial<SessionCold>): void {
+	updateSession(
+		id: string,
+		updates: Partial<SessionCold>,
+		options?: { touchUpdatedAt?: boolean }
+	): void {
 		this.sessions = this.sessions.map((s) =>
-			s.id === id ? { ...s, ...updates, updatedAt: new Date() } : s
+			s.id === id
+				? {
+					...s,
+					...updates,
+					updatedAt:
+						updates.updatedAt !== undefined
+							? updates.updatedAt
+							: options?.touchUpdatedAt === false
+								? s.updatedAt
+								: new Date(),
+				}
+				: s
 		);
 	}
 
@@ -819,7 +834,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 					oldState: session.prState,
 					newState: details.state,
 				});
-				this.updateSession(session.id, { prState: details.state });
+				this.updateSession(session.id, { prState: details.state }, { touchUpdatedAt: false });
 				continue;
 			}
 
