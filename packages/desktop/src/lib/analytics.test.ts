@@ -5,6 +5,7 @@ let analyticsModuleVersion = 0;
 
 const sentryCaptureException = mock(() => {});
 const sentryInit = mock(() => {});
+const sentryReplayIntegration = mock(() => ({ name: "replay" }));
 const sentrySetTag = mock(() => {});
 const sentrySetUser = mock(() => {});
 
@@ -22,7 +23,7 @@ describe("analytics", () => {
 			browserTracingIntegration: () => ({ name: "browser-tracing" }),
 			captureException: sentryCaptureException,
 			init: sentryInit,
-			replayIntegration: () => ({ name: "replay" }),
+			replayIntegration: sentryReplayIntegration,
 			setTag: sentrySetTag,
 			setUser: sentrySetUser,
 		}));
@@ -63,6 +64,7 @@ describe("analytics", () => {
 	afterEach(() => {
 		sentryCaptureException.mockClear();
 		sentryInit.mockClear();
+		sentryReplayIntegration.mockClear();
 		sentrySetTag.mockClear();
 		sentrySetUser.mockClear();
 		invokeMock.mockClear();
@@ -75,5 +77,22 @@ describe("analytics", () => {
 		initAnalytics();
 
 		expect(sentryInit).toHaveBeenCalledTimes(1);
+	});
+
+	it("initializes Sentry without Replay integration", () => {
+		initAnalytics();
+
+		expect(sentryReplayIntegration).not.toHaveBeenCalled();
+		expect(sentryInit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				integrations: [{ name: "browser-tracing" }],
+			})
+		);
+		expect(sentryInit).toHaveBeenCalledWith(
+			expect.not.objectContaining({
+				replaysOnErrorSampleRate: expect.anything(),
+				replaysSessionSampleRate: expect.anything(),
+			})
+		);
 	});
 });

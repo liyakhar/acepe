@@ -25,20 +25,15 @@ function isEnabled(): boolean {
 }
 
 export function initAnalytics(): void {
-	// Sentry: errors and replays only
+	// Sentry: errors and tracing only
 	const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
 	if (dsn && dsn.length > 0 && isEnabled()) {
 		Sentry.init({
 			dsn,
 			environment: import.meta.env.MODE,
 			enabled: true,
-			integrations: [
-				Sentry.browserTracingIntegration(),
-				Sentry.replayIntegration({ maskAllText: false, blockAllMedia: false }),
-			],
+			integrations: [Sentry.browserTracingIntegration()],
 			tracesSampleRate: 0.1,
-			replaysSessionSampleRate: 0.1,
-			replaysOnErrorSampleRate: 1.0,
 			ignoreErrors: [/ResizeObserver/],
 			beforeSend(event) {
 				if (isOptedOut()) return null;
