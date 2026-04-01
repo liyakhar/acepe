@@ -460,6 +460,7 @@
 	"review_accept_file": "Accept file",
 	"review_reject_file": "Reject file",
 	"review_undo": "Undo",
+	"review_applied": "Applied",
 	"review_keep": "Keep",
 	"review_prev_hunk": "Previous hunk",
 	"review_next_hunk": "Next hunk",

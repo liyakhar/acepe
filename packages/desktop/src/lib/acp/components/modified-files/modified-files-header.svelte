@@ -3,6 +3,7 @@ import { DiffPill } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import ArrowsOut from "phosphor-svelte/lib/ArrowsOut";
 import Check from "phosphor-svelte/lib/Check";
+import CheckCircle from "phosphor-svelte/lib/CheckCircle";
 import DotsThreeVertical from "phosphor-svelte/lib/DotsThreeVertical";
 import FileCode from "phosphor-svelte/lib/FileCode";
 import GitPullRequest from "phosphor-svelte/lib/GitPullRequest";
@@ -24,13 +25,16 @@ import SelectorCheck from "../selector-check.svelte";
 import type { FileReviewStatus } from "../review-panel/review-session-state.js";
 import InlineModifiedFileRow from "./components/inline-modified-file-row.svelte";
 import { buildKeepAllReviewEntries } from "./logic/keep-all-review-progress.js";
-import { DEFAULT_SHIP_INSTRUCTIONS } from "./logic/build-pr-prompt-preview.js";
+import {
+	DEFAULT_SHIP_INSTRUCTIONS,
+	normalizeCustomShipInstructions,
+} from "./logic/build-pr-prompt-preview.js";
 import {
 	buildPrGenerationPrefsForAgentSelection,
 	buildPrGenerationRequestConfig,
 	getValidPrGenerationModelId,
 } from "./logic/pr-generation-preferences.js";
-import { getReviewStatusByFilePath } from "./logic/review-progress.js";
+import { getReviewStatusByFilePath, hasKeepAllBeenApplied } from "./logic/review-progress.js";
 import type { ModifiedFilesState } from "./types/modified-files-state.js";
 
 /**
@@ -134,8 +138,9 @@ const effectiveAgentIcon = $derived.by(() => {
 });
 
 const promptEditorBaseline = $derived.by(() => {
-	if (prPrefs.customPrompt) {
-		return prPrefs.customPrompt;
+	const normalizedSavedPrompt = normalizeCustomShipInstructions(prPrefs.customPrompt);
+	if (normalizedSavedPrompt) {
+		return normalizedSavedPrompt;
 	}
 
 	return DEFAULT_SHIP_INSTRUCTIONS;
@@ -159,7 +164,9 @@ const canSavePrompt = $derived(
 	hasUnsavedPromptChanges && resolvedPromptEditorValue.trim().length > 0
 );
 
-const canResetPrompt = $derived(hasPromptDraft || Boolean(prPrefs.customPrompt));
+const canResetPrompt = $derived(
+	hasPromptDraft || Boolean(normalizeCustomShipInstructions(prPrefs.customPrompt))
+);
 
 const totalAdded = $derived(
 	modifiedFilesState ? modifiedFilesState.files.reduce((sum, f) => sum + f.totalAdded, 0) : 0
@@ -190,12 +197,35 @@ const reviewedFileCount = $derived.by(() => {
 	}, 0);
 });
 
+const isKeepAllApplied = $derived.by(() => {
+	if (!modifiedFilesState) {
+		return false;
+	}
+
+	if (!sessionId) {
+		return false;
+	}
+
+	if (!sessionReviewStateStore.isLoaded(sessionId)) {
+		return false;
+	}
+
+	return hasKeepAllBeenApplied(
+		modifiedFilesState.files,
+		sessionReviewStateStore.getState(sessionId)
+	);
+});
+
 const canKeepAll = $derived.by(() => {
 	if (!sessionId) {
 		return false;
 	}
 
-	return sessionReviewStateStore.isLoaded(sessionId);
+	if (!sessionReviewStateStore.isLoaded(sessionId)) {
+		return false;
+	}
+
+	return !isKeepAllApplied;
 });
 
 $effect(() => {
@@ -265,7 +295,7 @@ function handleAgentPickerChange(value: string): void {
 		buildPrGenerationPrefsForAgentSelection(
 			value,
 			prPrefs.modelId,
-			prPrefs.customPrompt,
+			normalizeCustomShipInstructions(prPrefs.customPrompt),
 			nextModels,
 		),
 	);
@@ -279,7 +309,7 @@ function handleModelPickerChange(value: string): void {
 	agentModelPrefs.setPrGenerationPrefs({
 		agentId: prPrefs.agentId,
 		modelId: value,
-		customPrompt: prPrefs.customPrompt,
+		customPrompt: normalizeCustomShipInstructions(prPrefs.customPrompt),
 	});
 }
 
@@ -290,15 +320,10 @@ function handlePromptChange(e: Event): void {
 
 function resolveCustomPrompt(): string | undefined {
 	if (hasPromptDraft) {
-		const draft = promptDraft.trim();
-		return draft.length > 0 ? draft : undefined;
+		return normalizeCustomShipInstructions(promptDraft);
 	}
 
-	if (prPrefs.customPrompt) {
-		return prPrefs.customPrompt;
-	}
-
-	return undefined;
+	return normalizeCustomShipInstructions(prPrefs.customPrompt);
 }
 
 function handlePromptSaveClick(): void {
@@ -306,13 +331,14 @@ function handlePromptSaveClick(): void {
 	if (nextPrompt.length === 0) {
 		return;
 	}
+	const normalizedNextPrompt = normalizeCustomShipInstructions(nextPrompt);
 
 	hasPromptDraft = false;
 	promptDraft = "";
 	agentModelPrefs.setPrGenerationPrefs({
 		agentId: prPrefs.agentId,
 		modelId: prPrefs.modelId,
-		customPrompt: nextPrompt,
+		customPrompt: normalizedNextPrompt,
 	});
 }
 
@@ -585,18 +611,28 @@ function handlePromptResetClick(): void {
 					</DropdownMenu.Content>
 				</DropdownMenu.Root>
 
-				<button
-					type="button"
-					disabled={!canKeepAll}
-					onclick={(e: MouseEvent) => {
-						e.stopPropagation();
-						handleKeepAllClick();
-					}}
-					class="flex items-center gap-1 rounded border border-[#E5A96D] bg-[#FFC799] px-2 py-0.5 text-[0.6875rem] font-medium text-[#5B3818] transition-colors hover:bg-[#FFB86B] disabled:cursor-not-allowed disabled:opacity-50"
-				>
-					<Check size={11} weight="bold" class="shrink-0" />
-					{m.review_keep()}
-				</button>
+				<div role="none" onclick={(e: MouseEvent) => e.stopPropagation()}>
+					{#if isKeepAllApplied}
+						<button
+							type="button"
+							disabled
+							class="flex items-center gap-1 rounded border border-success/30 bg-success/10 px-2 py-0.5 text-[0.6875rem] font-medium text-success disabled:cursor-not-allowed disabled:opacity-100"
+						>
+							<CheckCircle size={11} weight="fill" class="shrink-0" />
+							{m.review_applied()}
+						</button>
+					{:else}
+						<button
+							type="button"
+							disabled={!canKeepAll}
+							onclick={handleKeepAllClick}
+							class="flex items-center gap-1 rounded border border-[#E5A96D] bg-[#FFC799] px-2 py-0.5 text-[0.6875rem] font-medium text-[#5B3818] transition-colors hover:bg-[#FFB86B] disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							<Check size={11} weight="bold" class="shrink-0" />
+							{m.review_keep()}
+						</button>
+					{/if}
+				</div>
 
 				<!-- Reviewed count -->
 				<span class="text-muted-foreground tabular-nums text-[0.6875rem]">
