@@ -21,3 +21,22 @@ export function getReviewStatusByFilePath(
 		})
 	);
 }
+
+export function hasKeepAllBeenApplied(
+	files: ReadonlyArray<ModifiedFileEntry>,
+	state: SessionReviewState | null
+): boolean {
+	if (files.length === 0) {
+		return false;
+	}
+
+	const statusByFilePath = getReviewStatusByFilePath(files, state);
+
+	for (const file of files) {
+		if (statusByFilePath.get(file.filePath) !== "accepted") {
+			return false;
+		}
+	}
+
+	return true;
+}

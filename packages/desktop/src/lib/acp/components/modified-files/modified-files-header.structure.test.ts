@@ -26,6 +26,13 @@ describe("modified-files-header structure", () => {
 		expect(source).toContain("m.review_keep()");
 	});
 
+	it("renders an applied keep-all state with a success icon once every file is accepted", () => {
+		expect(source).toContain("const isKeepAllApplied = $derived.by(() => {");
+		expect(source).not.toContain('from "$lib/paraglide/messages/review_applied.js"');
+		expect(source).toContain("m.review_applied()");
+		expect(source).toContain("<CheckCircle");
+	});
+
 	it("renders review before keep in the right-side action cluster", () => {
 		const reviewButtonIndex = source.indexOf("{m.modified_files_review_button()}");
 		const keepButtonIndex = source.indexOf("{m.review_keep()}");

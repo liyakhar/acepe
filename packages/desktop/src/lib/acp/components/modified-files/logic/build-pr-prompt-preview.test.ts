@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ModifiedFileEntry } from "../../../types/modified-file-entry.js";
-import { buildPrPromptPreview, DEFAULT_SHIP_INSTRUCTIONS } from "./build-pr-prompt-preview.js";
+import {
+	buildPrPromptPreview,
+	DEFAULT_SHIP_INSTRUCTIONS,
+	LEGACY_DEFAULT_SHIP_INSTRUCTIONS,
+	normalizeCustomShipInstructions,
+} from "./build-pr-prompt-preview.js";
 
 const modifiedFiles: readonly ModifiedFileEntry[] = [
 	{
@@ -25,6 +30,22 @@ const modifiedFiles: readonly ModifiedFileEntry[] = [
 ];
 
 describe("buildPrPromptPreview", () => {
+	it("exposes the richer reviewer guidance in the default editable instructions", () => {
+		expect(DEFAULT_SHIP_INSTRUCTIONS).toContain("## Abstract");
+		expect(DEFAULT_SHIP_INSTRUCTIONS).toContain("## Problem");
+		expect(DEFAULT_SHIP_INSTRUCTIONS).toContain("## Solution");
+		expect(DEFAULT_SHIP_INSTRUCTIONS).toContain("ASCII diagram");
+		expect(DEFAULT_SHIP_INSTRUCTIONS).toContain("before/after example");
+	});
+
+	it("normalizes the legacy short default so it no longer acts like a custom override", () => {
+		expect(normalizeCustomShipInstructions(LEGACY_DEFAULT_SHIP_INSTRUCTIONS)).toBeUndefined();
+		expect(normalizeCustomShipInstructions(DEFAULT_SHIP_INSTRUCTIONS)).toBeUndefined();
+		expect(normalizeCustomShipInstructions("Custom reviewer guidance")).toBe(
+			"Custom reviewer guidance",
+		);
+	});
+
 	it("builds a full prompt with branch, summary, and unified diff", () => {
 		const prompt = buildPrPromptPreview({
 			branch: "feature/prompt-preview",
