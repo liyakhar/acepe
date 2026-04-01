@@ -172,6 +172,26 @@ pub fn log_streaming_event(session_id: &str, raw_json: &Value) {
     write_log_entry(session_id, &entry);
 }
 
+/// Log a structured debug event to the session streaming log.
+/// Only active in debug builds.
+#[cfg(debug_assertions)]
+pub fn log_debug_event(session_id: &str, event: &str, payload: &Value) {
+    let mut data = serde_json::Map::from_iter([(
+        "event".to_string(),
+        Value::String(event.to_string()),
+    )]);
+
+    if let Some(object) = payload.as_object() {
+        for (key, value) in object {
+            data.insert(key.clone(), value.clone());
+        }
+    } else {
+        data.insert("payload".to_string(), payload.clone());
+    }
+
+    log_streaming_event(session_id, &Value::Object(data));
+}
+
 /// Log a normalized ACP event emitted to the frontend (direction: "out").
 /// Only active in debug builds.
 #[cfg(debug_assertions)]
@@ -187,6 +207,10 @@ pub fn log_emitted_event(session_id: &str, update: &impl serde::Serialize) {
 /// No-op in release builds
 #[cfg(not(debug_assertions))]
 pub fn log_streaming_event(_session_id: &str, _raw_json: &Value) {}
+
+/// No-op in release builds.
+#[cfg(not(debug_assertions))]
+pub fn log_debug_event(_session_id: &str, _event: &str, _payload: &Value) {}
 
 /// No-op in release builds
 #[cfg(not(debug_assertions))]
@@ -244,4 +268,42 @@ pub fn clear_session_log(session_id: &str) -> std::io::Result<()> {
 #[cfg(not(debug_assertions))]
 pub fn clear_session_log(_session_id: &str) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn log_debug_event_writes_named_payload_to_session_log() {
+        let session_id = "streaming-log-debug-event-test";
+        let _ = clear_session_log(session_id);
+
+        log_debug_event(
+            session_id,
+            "permission.callback.received",
+            &json!({
+                "source": "can_use_tool",
+                "toolCallId": "toolu_123"
+            }),
+        );
+
+        let path = get_log_file_path(session_id).expect("log file path should exist");
+        let contents = std::fs::read_to_string(&path).expect("should read log file");
+        let entry: Value = serde_json::from_str(
+            contents
+                .lines()
+                .last()
+                .expect("log file should contain an entry"),
+        )
+        .expect("log entry should parse as json");
+
+        assert_eq!(entry["direction"], "in");
+        assert_eq!(entry["data"]["event"], "permission.callback.received");
+        assert_eq!(entry["data"]["source"], "can_use_tool");
+        assert_eq!(entry["data"]["toolCallId"], "toolu_123");
+
+        let _ = clear_session_log(session_id);
+    }
 }

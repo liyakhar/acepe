@@ -36,7 +36,7 @@ use crate::acp::session_update::{
     RawToolCallUpdateInput, SessionUpdate, ToolCallStatus, ToolCallUpdateData, ToolReference,
     TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
 };
-use crate::acp::streaming_log::{log_emitted_event, log_streaming_event};
+use crate::acp::streaming_log::{log_debug_event, log_emitted_event, log_streaming_event};
 use crate::acp::task_reconciler::TaskReconciler;
 use crate::acp::types::{ContentBlock, PromptRequest};
 use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher, DispatchPolicy};
@@ -469,6 +469,14 @@ impl ApprovalCallbackTracker {
             tool_call_id = %tool_call_id,
             "cc-sdk approval diagnostics: tool use started; awaiting permission callback"
         );
+        log_debug_event(
+            session_id,
+            "permission.callback.expected",
+            &serde_json::json!({
+                "toolName": tool_name,
+                "toolCallId": tool_call_id,
+            }),
+        );
     }
 
     async fn note_callback_received(
@@ -479,13 +487,24 @@ impl ApprovalCallbackTracker {
         source: &str,
     ) {
         let removed = self.pending.lock().await.remove(tool_call_id);
+        let had_pending_diagnostic = removed.is_some();
         tracing::info!(
             session_id = %session_id,
             tool_name = %tool_name,
             tool_call_id = %tool_call_id,
             source = %source,
-            had_pending_diagnostic = removed.is_some(),
+            had_pending_diagnostic = had_pending_diagnostic,
             "cc-sdk approval diagnostics: permission callback received"
+        );
+        log_debug_event(
+            session_id,
+            "permission.callback.received",
+            &serde_json::json!({
+                "toolName": tool_name,
+                "toolCallId": tool_call_id,
+                "source": source,
+                "hadPendingDiagnostic": had_pending_diagnostic,
+            }),
         );
     }
 
@@ -497,6 +516,14 @@ impl ApprovalCallbackTracker {
                 tool_name = %pending.tool_name,
                 tool_call_id = %tool_call_id,
                 "cc-sdk approval diagnostics: tool use is still waiting for can_use_tool/PermissionRequest callback"
+            );
+            log_debug_event(
+                session_id,
+                "permission.callback.missing",
+                &serde_json::json!({
+                    "toolName": pending.tool_name,
+                    "toolCallId": tool_call_id,
+                }),
             );
         }
     }
@@ -536,6 +563,14 @@ fn tool_name_expects_permission_callback(tool_name: &str) -> bool {
     )
 }
 
+fn permission_kind_label(kind: &PendingPermissionKind) -> &'static str {
+    match kind {
+        PendingPermissionKind::Tool { .. } => "tool",
+        PendingPermissionKind::Question { .. } => "question",
+        PendingPermissionKind::Hook { .. } => "hook",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AcepePermissionHandler
 // ---------------------------------------------------------------------------
@@ -565,11 +600,9 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
         // The streaming bridge records it on content_block_start before the
         // CLI's control channel fires can_use_tool. Fall back to a synthetic
         // ID if the tracker somehow missed it.
-        let tool_call_id = self
-            .tool_call_tracker
-            .take(tool_name)
-            .await
-            .unwrap_or_else(|| format!("cc-sdk-{}", request_id));
+        let tracked_tool_call_id = self.tool_call_tracker.take(tool_name).await;
+        let tracker_miss = tracked_tool_call_id.is_none();
+        let tool_call_id = tracked_tool_call_id.unwrap_or_else(|| format!("cc-sdk-{}", request_id));
 
         self.approval_callback_tracker
             .note_callback_received(&self.session_id, tool_name, &tool_call_id, "can_use_tool")
@@ -695,6 +728,19 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
             .suggestions
             .iter()
             .any(permission_suggestion_supports_always);
+        log_debug_event(
+            &self.session_id,
+            "permission.can_use_tool.registered",
+            &serde_json::json!({
+                "requestId": request_id,
+                "toolName": tool_name,
+                "toolCallId": tool_call_id,
+                "trackerMiss": tracker_miss,
+                "shouldEmitUi": registration.should_emit_ui,
+                "suggestionCount": _ctx.suggestions.len(),
+                "patterns": build_permission_patterns(input),
+            }),
+        );
         if registration.should_emit_ui {
             tracing::info!(
                 session_id = %self.session_id,
@@ -702,6 +748,17 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 tool_name = %tool_name,
                 tool_call_id = %tool_call_id,
                 "cc-sdk permission request emitted"
+            );
+            log_debug_event(
+                &self.session_id,
+                "permission.ui.emit",
+                &serde_json::json!({
+                    "source": "can_use_tool",
+                    "channel": "inbound_request",
+                    "requestId": request_id,
+                    "toolName": tool_name,
+                    "toolCallId": tool_call_id,
+                }),
             );
             let mut permission_json = serde_json::json!({
                 "jsonrpc": "2.0",
@@ -737,6 +794,16 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 tool_name = %tool_name,
                 tool_call_id = %tool_call_id,
                 "cc-sdk permission request joined existing pending approval"
+            );
+            log_debug_event(
+                &self.session_id,
+                "permission.ui.join",
+                &serde_json::json!({
+                    "source": "can_use_tool",
+                    "requestId": request_id,
+                    "toolName": tool_name,
+                    "toolCallId": tool_call_id,
+                }),
             );
         }
 
@@ -827,6 +894,18 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
             )
             .await;
         let rx = registration.receiver;
+        log_debug_event(
+            &self.session_id,
+            "permission.hook.registered",
+            &serde_json::json!({
+                "requestId": request_id,
+                "toolName": request.tool_name,
+                "toolCallId": tool_call_id,
+                "shouldEmitUi": registration.should_emit_ui,
+                "suggestionCount": permission_suggestions.len(),
+                "patterns": build_permission_patterns(&request.tool_input),
+            }),
+        );
 
         if registration.should_emit_ui {
             tracing::info!(
@@ -836,6 +915,17 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
                 tool_call_id = %tool_call_id,
                 suggestion_count = permission_suggestions.len(),
                 "cc-sdk PermissionRequest hook emitted"
+            );
+            log_debug_event(
+                &self.session_id,
+                "permission.ui.emit",
+                &serde_json::json!({
+                    "source": "PermissionRequest",
+                    "channel": "session_update",
+                    "requestId": request_id,
+                    "toolName": request.tool_name,
+                    "toolCallId": tool_call_id,
+                }),
             );
 
             self.dispatcher
@@ -856,6 +946,16 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
                 tool_call_id = %tool_call_id,
                 suggestion_count = permission_suggestions.len(),
                 "cc-sdk PermissionRequest hook joined existing pending approval"
+            );
+            log_debug_event(
+                &self.session_id,
+                "permission.ui.join",
+                &serde_json::json!({
+                    "source": "PermissionRequest",
+                    "requestId": request_id,
+                    "toolName": request.tool_name,
+                    "toolCallId": tool_call_id,
+                }),
             );
         }
 
@@ -2624,6 +2724,24 @@ impl AgentClient for CcSdkClaudeClient {
             .permission_bridge
             .resolve_from_ui_result(request_id, &result)
             .await;
+
+        if let Some(kind) = resolved_kind.as_ref() {
+            if !kind.is_question() {
+                if let Some(session_id) = self.session_id.as_deref() {
+                    log_debug_event(
+                        session_id,
+                        "permission.ui.resolved",
+                        &serde_json::json!({
+                            "requestId": request_id,
+                            "kind": permission_kind_label(kind),
+                            "toolCallId": kind.tool_call_id(),
+                            "allowed": response_outcome_allows(&result),
+                            "optionId": selected_option_id(&result),
+                        }),
+                    );
+                }
+            }
+        }
 
         if let Some((tool_call_id, question_state)) = question_resolution {
             if !response_outcome_allows(&result) {
