@@ -1,11 +1,17 @@
 <script lang="ts">
 	import * as m from "$lib/paraglide/messages.js";
 	import Header from "$lib/components/header.svelte";
+	import {
+		attentionQueueBlogPost,
+		checkpointsBlogPost,
+		sqlStudioBlogPost,
+	} from '$lib/blog/posts.js';
 	import { Check, X, ArrowRight, Minus } from "@lucide/svelte";
 	import type { ComparisonFeatureRow } from "$lib/compare/types.js";
 
 	let { data } = $props();
 	const comparison = $derived(data.comparison);
+	const proofPosts = [attentionQueueBlogPost, checkpointsBlogPost, sqlStudioBlogPost];
 
 	const featuresByCategory = $derived.by((): ReadonlyMap<string, readonly ComparisonFeatureRow[]> => {
 		const map = new Map<string, ComparisonFeatureRow[]>();
@@ -220,6 +226,38 @@
 						<p class="text-sm leading-relaxed text-muted-foreground">{diff.description}</p>
 					</div>
 				{/each}
+			</div>
+		</section>
+
+		<!-- Product Proof -->
+		<section class="mx-auto max-w-4xl px-4 pb-20 md:px-6">
+			<div class="rounded-2xl border border-border/50 bg-card/20 p-6 md:p-8">
+				<div class="max-w-2xl">
+					<h2 class="text-2xl font-semibold tracking-tight md:text-3xl">
+						{m.compare_resources_title()}
+					</h2>
+					<p class="mt-3 text-sm leading-relaxed text-muted-foreground md:text-base">
+						{m.compare_resources_description()}
+					</p>
+				</div>
+				<div class="mt-6 grid gap-4 md:grid-cols-3">
+					{#each proofPosts as post}
+						<a
+							href="/blog/{post.slug}"
+							class="group rounded-xl border border-border/40 bg-background/40 p-5 transition-colors hover:bg-background/70"
+						>
+							<div class="flex items-start justify-between gap-4">
+								<div>
+									<h3 class="text-base font-semibold text-foreground">{post.title}</h3>
+									<p class="mt-2 text-sm leading-relaxed text-muted-foreground">
+										{post.description}
+									</p>
+								</div>
+								<ArrowRight class="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-1" />
+							</div>
+						</a>
+					{/each}
+				</div>
 			</div>
 		</section>
 

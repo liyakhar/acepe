@@ -27,6 +27,13 @@ describe('pricing FAQ comparison links', () => {
 					href: '/compare/t3',
 					label: 'See Acepe vs T3'
 				}
+			}),
+			expect.objectContaining({
+				q: 'How does Acepe compare to Conductor?',
+				comparisonLink: {
+					href: '/compare/conductor',
+					label: 'See Acepe vs Conductor'
+				}
 			})
 		]);
 	});

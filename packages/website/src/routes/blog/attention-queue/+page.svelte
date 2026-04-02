@@ -1,5 +1,6 @@
 <script lang="ts">
 	import BlogPostLayout from '$lib/blog/blog-post-layout.svelte';
+	import { attentionQueueBlogPost as metadata } from '$lib/blog/posts.js';
 	import { MarkdownDisplay } from '@acepe/ui';
 	import FullQueueDemo from '$lib/blog/demos/queue-full-demo.svelte';
 	import AnswerNeededDemo from '$lib/blog/demos/queue-answer-needed-demo.svelte';
@@ -9,16 +10,6 @@
 	import FinishedDemo from '$lib/blog/demos/queue-finished-demo.svelte';
 
 	let { data } = $props();
-
-	const metadata = {
-		title: 'Understanding the Attention Queue',
-		description:
-			"Learn how Acepe's attention queue helps you manage AI agent interactions by prioritizing what needs your attention most.",
-		date: '2026-02-20',
-		slug: 'attention-queue',
-		readingTimeMinutes: 8,
-		category: 'Product'
-	};
 </script>
 
 <BlogPostLayout

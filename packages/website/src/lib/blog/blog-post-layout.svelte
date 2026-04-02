@@ -97,6 +97,35 @@
 		<div class="blog-content space-y-8">
 			{@render children()}
 		</div>
+
+		{#if metadata.relatedLinks && metadata.relatedLinks.length > 0}
+			<section class="mt-16 rounded-xl border border-border/50 bg-card/20 p-6 md:p-8">
+				<div class="max-w-2xl">
+					<h2 class="text-2xl font-semibold tracking-tight">{m.blog_related_links_title()}</h2>
+					<p class="mt-3 text-sm leading-relaxed text-muted-foreground">
+						{m.blog_related_links_description()}
+					</p>
+				</div>
+				<div class="mt-6 grid gap-4 md:grid-cols-2">
+					{#each metadata.relatedLinks as link}
+						<a
+							href={link.href}
+							class="group rounded-xl border border-border/40 bg-background/40 p-5 transition-colors hover:bg-background/70"
+						>
+							<div class="flex items-start justify-between gap-4">
+								<div>
+									<h3 class="text-base font-semibold text-foreground">{link.title}</h3>
+									<p class="mt-2 text-sm leading-relaxed text-muted-foreground">
+										{link.description}
+									</p>
+								</div>
+								<ArrowLeft class="h-4 w-4 shrink-0 rotate-180 text-muted-foreground transition-transform group-hover:translate-x-1" />
+							</div>
+						</a>
+					{/each}
+				</div>
+			</section>
+		{/if}
 	</article>
 </main>
 

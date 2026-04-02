@@ -1,5 +1,6 @@
 <script lang="ts">
 	import BlogPostLayout from '$lib/blog/blog-post-layout.svelte';
+	import { gitPanelBlogPost as metadata } from '$lib/blog/posts.js';
 	import Card from '$lib/components/ui/card/card.svelte';
 	import { MarkdownDisplay } from '@acepe/ui';
 	import GitPanelDemo from '$lib/blog/demos/git-panel-demo.svelte';
@@ -17,16 +18,6 @@
 	} from '@acepe/ui/git-panel';
 
 	let { data } = $props();
-
-	const metadata = {
-		title: 'Git Panel: A Full Git Workflow Without Leaving Acepe',
-		description:
-			'Stage files, write commits, push and pull, browse history and stash — all from a dedicated panel inside Acepe.',
-		date: '2026-02-24',
-		slug: 'git-panel',
-		readingTimeMinutes: 4,
-		category: 'Features'
-	};
 
 	// --- Demo state for individual components ---
 
@@ -167,7 +158,7 @@ Write a commit message and hit Commit (or \`Cmd+Enter\`). The button disables wh
 		{:else}
 			<GitCommitBox
 				message={commitMessage}
-				onMessageChange={(msg) => (commitMessage = msg)}
+				onMessageChange={(msg: string) => (commitMessage = msg)}
 				onCommit={() => { commitCommitted = true; }}
 			/>
 		{/if}

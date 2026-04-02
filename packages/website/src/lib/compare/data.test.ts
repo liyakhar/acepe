@@ -4,7 +4,7 @@ import { getAllComparisonSlugs, getComparison } from './data.js';
 
 describe('comparison registry', () => {
 	it('only exposes comparisons that have been publicly verified', () => {
-		expect(getAllComparisonSlugs()).toEqual(['cursor', 'superset', '1code', 't3']);
+		expect(getAllComparisonSlugs()).toEqual(['cursor', 'superset', '1code', 't3', 'conductor']);
 	});
 
 	it('returns the public competitor data for verified comparison slugs', () => {
@@ -12,6 +12,7 @@ describe('comparison registry', () => {
 		expect(getComparison('superset')?.competitorName).toBe('Superset');
 		expect(getComparison('1code')?.competitorName).toBe('1Code');
 		expect(getComparison('t3')?.competitorName).toBe('T3');
+		expect(getComparison('conductor')?.competitorName).toBe('Conductor');
 	});
 
 	it('requires source notes and avoids unsupported hard-negative competitor rows', () => {

@@ -1,21 +1,12 @@
 <script lang="ts">
 	import BlogPostLayout from '$lib/blog/blog-post-layout.svelte';
+	import { checkpointsBlogPost as metadata } from '$lib/blog/posts.js';
 	import { MarkdownDisplay } from '@acepe/ui';
 	import CheckpointFullDemo from '$lib/blog/demos/checkpoint-full-demo.svelte';
 	import CheckpointCardDemo from '$lib/blog/demos/checkpoint-card-demo.svelte';
 	import CheckpointRevertDemo from '$lib/blog/demos/checkpoint-revert-demo.svelte';
 
 	let { data } = $props();
-
-	const metadata = {
-		title: 'Checkpoints: Time-Travel Debugging for AI Agents',
-		description:
-			"Learn how Acepe's checkpoint system creates point-in-time snapshots of file changes, letting you revert mistakes and track history with file-level granularity.",
-		date: '2026-02-20',
-		slug: 'checkpoints',
-		readingTimeMinutes: 7,
-		category: 'Features'
-	};
 </script>
 
 <BlogPostLayout

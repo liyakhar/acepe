@@ -5,6 +5,9 @@
  * SEO, post listing, and post rendering.
  */
 export interface BlogPostMetadata {
+	/** Optional related internal links that continue the discoverability funnel */
+	readonly relatedLinks?: readonly BlogPostRelatedLink[];
+
 	/** Post title (used in <title> tag and heading) */
 	readonly title: string;
 
@@ -31,4 +34,10 @@ export interface BlogPostMetadata {
 
 	/** Optional character count of the article (for diff-style display) */
 	readonly characterCount?: number;
+}
+
+export interface BlogPostRelatedLink {
+	readonly href: string;
+	readonly title: string;
+	readonly description: string;
 }

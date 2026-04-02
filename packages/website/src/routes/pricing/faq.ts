@@ -70,6 +70,14 @@ export const pricingFaqItems: readonly PricingFaqItem[] = [
 		},
 	},
 	{
+		q: 'How does Acepe compare to Conductor?',
+		a: 'Conductor publicly emphasizes Mac-native Claude Code and Codex workspaces with isolated worktrees, review flows, and strong multi-workspace UX. Acepe differentiates with broader built-in agent coverage, a dedicated attention queue, checkpoints, and built-in SQL Studio.',
+		comparisonLink: {
+			href: '/compare/conductor',
+			label: 'See Acepe vs Conductor',
+		},
+	},
+	{
 		q: 'How is this different from just using multiple terminals?',
 		a: "Terminals don't track what each agent is doing, snapshot file changes, or tell you which session needs your attention. Acepe does.",
 		comparisonLink: null,

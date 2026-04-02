@@ -1,5 +1,6 @@
 <script lang="ts">
 	import BlogPostLayout from '$lib/blog/blog-post-layout.svelte';
+	import { sqlStudioBlogPost as metadata } from '$lib/blog/posts.js';
 	import Card from '$lib/components/ui/card/card.svelte';
 	import { MarkdownDisplay } from '@acepe/ui';
 	import SqlStudioDemo from '$lib/blog/demos/sql-studio-demo.svelte';
@@ -14,16 +15,6 @@
 	} from '@acepe/ui/sql-studio';
 
 	let { data } = $props();
-
-	const metadata = {
-		title: 'SQL Studio: Browse Databases Without Leaving Acepe',
-		description:
-			'Connect to Postgres, MySQL, or SQLite databases. Browse schemas, explore tables, filter and sort rows, edit cells, and run raw SQL — all inside Acepe.',
-		date: '2026-02-24',
-		slug: 'sql-studio',
-		readingTimeMinutes: 4,
-		category: 'Features'
-	};
 
 	// --- Demo state for individual component showcases ---
 
@@ -188,8 +179,8 @@ Compact monospace data table with sortable column headers, clickable cells, NULL
 			sortColumn="id"
 			sortDirection="asc"
 			readOnly={false}
-			isCellDirty={(rowIndex, columnName) => rowIndex === 2 && columnName === 'name'}
-			getCellValue={(rowIndex, columnName) => {
+			isCellDirty={(rowIndex: number, columnName: string) => rowIndex === 2 && columnName === 'name'}
+			getCellValue={(rowIndex: number, columnName: string) => {
 				const colIdx = demoColumns.indexOf(columnName);
 				return demoRows[rowIndex]?.cells[colIdx] ?? '';
 			}}

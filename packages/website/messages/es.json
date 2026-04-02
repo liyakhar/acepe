@@ -135,7 +135,11 @@
 		"compare_verification_description": "Esta página solo publica afirmaciones respaldadas por materiales públicos del producto o evidencia pública del repositorio.",
 		"compare_verification_last_verified": "Última verificación",
 		"compare_verification_sources": "Fuentes",
+		"compare_resources_title": "Mira las funciones de Acepe detrás de esta comparación",
+		"compare_resources_description": "Estos artículos explican la cola de atención, los checkpoints y los flujos SQL que aparecen como diferenciadores en la comparación.",
         "compare_index_title": "Compara Acepe",
         "compare_index_description": "Descubre cómo Acepe se compara con otras herramientas de desarrollo, función por función.",
+		"blog_related_links_title": "Siguientes pasos",
+		"blog_related_links_description": "Sigue el recorrido desde la función que acabas de explorar hacia la comparación, los precios y la descarga.",
         "landing_cta_compare": "Mira cómo se compara Acepe →"
 }

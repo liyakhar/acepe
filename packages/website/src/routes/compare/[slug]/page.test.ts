@@ -40,5 +40,9 @@ describe('compare page verification signals', () => {
 		expect(body).toContain('Sources');
 		expect(body).toContain('https://github.com/21st-dev/1Code');
 		expect(body).toContain('Verified 1Code public README and repository structure');
+		expect(body).toContain('See Acepe features behind this comparison');
+		expect(body).toContain('/blog/attention-queue');
+		expect(body).toContain('/blog/checkpoints');
+		expect(body).toContain('/blog/sql-studio');
 	});
 });

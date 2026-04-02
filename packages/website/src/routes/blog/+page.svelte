@@ -3,6 +3,7 @@
 	import { DiffPill } from '@acepe/ui';
 	import Header from '$lib/components/header.svelte';
 	import type { BlogPostMetadata } from '$lib/blog/types.js';
+	import { getAllBlogPosts } from '$lib/blog/posts.js';
 	import type { Component } from 'svelte';
 	import { ArrowRight } from '@lucide/svelte';
 	import {
@@ -17,59 +18,25 @@
 
 	type Post = BlogPostMetadata & { icon: Component };
 
-	// Manual post listing (YAGNI: add auto-discovery when we have 3+ posts)
-	const posts: Post[] = [
-		{
-			title: 'SQL Studio: Browse Databases Without Leaving Acepe',
-			description:
-				'Connect to Postgres, MySQL, or SQLite databases. Browse schemas, explore tables, filter and sort rows, edit cells, and run raw SQL — all inside Acepe.',
-			date: '2026-02-24',
-			slug: 'sql-studio',
-			category: 'Features',
-			characterCount: 4500,
-			icon: HardDrives
-		},
-		{
-			title: 'Git Viewer: Beautiful Inline Diffs for Commits and PRs',
-			description:
-				"Browse commits and pull requests with a compact file tree, syntax-highlighted diffs, and inline stats — without leaving your agent session.",
-			date: '2026-02-24',
-			slug: 'git-viewer',
-			category: 'Features',
-			characterCount: 4100,
-			icon: Eye
-		},
-		{
-			title: 'Git Panel: A Full Git Workflow Without Leaving Acepe',
-			description:
-				'Stage files, write commits, push and pull, browse history and stash — all from a dedicated panel inside Acepe.',
-			date: '2026-02-24',
-			slug: 'git-panel',
-			category: 'Features',
-			characterCount: 3200,
-			icon: GitBranch
-		},
-		{
-			title: 'Checkpoints: Time-Travel Debugging for AI Agents',
-			description:
-				"Learn how Acepe's checkpoint system creates point-in-time snapshots of file changes, letting you revert mistakes and track history with file-level granularity.",
-			date: '2026-02-20',
-			slug: 'checkpoints',
-			category: 'Features',
-			characterCount: 3500,
-			icon: ClockCounterClockwise
-		},
-		{
-			title: 'Understanding the Attention Queue',
-			description:
-				"Learn how Acepe's attention queue helps you manage AI agent interactions by prioritizing what needs your attention most.",
-			date: '2026-02-20',
-			slug: 'attention-queue',
-			category: 'Product',
-			characterCount: 4200,
-			icon: BellRinging
-		}
-	];
+	const postIcons = new Map<string, Component>([
+		['sql-studio', HardDrives],
+		['git-viewer', Eye],
+		['git-panel', GitBranch],
+		['checkpoints', ClockCounterClockwise],
+		['attention-queue', BellRinging],
+	]);
+
+	const posts: Post[] = getAllBlogPosts().map((post) => ({
+		title: post.title,
+		description: post.description,
+		date: post.date,
+		slug: post.slug,
+		category: post.category,
+		characterCount: post.characterCount,
+		readingTimeMinutes: post.readingTimeMinutes,
+		relatedLinks: post.relatedLinks,
+		icon: postIcons.get(post.slug) ?? BellRinging,
+	}));
 
 	function formatDate(isoDate: string): string {
 		const date = new Date(isoDate);

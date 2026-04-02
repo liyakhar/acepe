@@ -1,21 +1,12 @@
 <script lang="ts">
 	import BlogPostLayout from '$lib/blog/blog-post-layout.svelte';
+	import { gitViewerBlogPost as metadata } from '$lib/blog/posts.js';
 	import Card from '$lib/components/ui/card/card.svelte';
 	import { MarkdownDisplay } from '@acepe/ui';
 	import GitCommitDemo from '$lib/blog/demos/git-commit-demo.svelte';
 	import GitPrDemo from '$lib/blog/demos/git-pr-demo.svelte';
 
 	let { data } = $props();
-
-	const metadata = {
-		title: 'Git Viewer: Beautiful Inline Diffs for Commits and PRs',
-		description:
-			"Acepe's git viewer lets you browse commits and pull requests with a compact file tree, syntax-highlighted diffs, and inline stats — without leaving your agent session.",
-		date: '2026-02-24',
-		slug: 'git-viewer',
-		readingTimeMinutes: 5,
-		category: 'Features'
-	};
 </script>
 
 <BlogPostLayout

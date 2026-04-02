@@ -1,6 +1,7 @@
 import type { RequestHandler } from './$types';
 import { baseLocale, locales } from '$lib/paraglide/runtime';
-import { getAllComparisonSlugs } from '$lib/compare/data.js';
+import { getAllComparisonSlugs, getComparison } from '$lib/compare/data.js';
+import { getAllBlogPosts } from '$lib/blog/posts.js';
 
 const baseUrl = 'https://acepe.dev';
 
@@ -8,7 +9,10 @@ interface Route {
 	path: string;
 	priority: string;
 	changefreq: string;
+	lastmod?: string;
 }
+
+	const today = new Date().toISOString().split('T')[0];
 
 const publicRoutes: Route[] = [
 	{ path: '/', priority: '1.0', changefreq: 'weekly' },
@@ -18,13 +22,27 @@ const publicRoutes: Route[] = [
 	{ path: '/pricing', priority: '0.8', changefreq: 'weekly' },
 	{ path: '/compare', priority: '0.8', changefreq: 'weekly' },
 	{ path: '/roadmap', priority: '0.7', changefreq: 'daily' }
-].concat(
-	getAllComparisonSlugs().map((slug) => ({
-		path: `/compare/${slug}`,
-		priority: '0.8',
-		changefreq: 'weekly',
-	}))
-);
+]
+	.concat(
+		getAllBlogPosts().map((post) => ({
+			path: `/blog/${post.slug}`,
+			priority: '0.7',
+			changefreq: 'monthly',
+			lastmod: post.date,
+		}))
+	)
+	.concat(
+		getAllComparisonSlugs().map((slug) => {
+			const comparison = getComparison(slug);
+
+			return {
+				path: `/compare/${slug}`,
+				priority: '0.8',
+				changefreq: 'weekly',
+				lastmod: comparison?.lastVerifiedOn ?? today,
+			};
+		})
+	);
 
 interface SitemapEntry {
 	loc: string;
@@ -40,7 +58,7 @@ export const GET: RequestHandler = async () => {
 
 			return {
 				loc: `${baseUrl}${localizedPath}`,
-				lastmod: new Date().toISOString().split('T')[0],
+				lastmod: route.lastmod ?? today,
 				priority: route.priority,
 				changefreq: route.changefreq
 			};

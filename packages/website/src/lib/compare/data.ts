@@ -1,4 +1,5 @@
 import type { ComparisonData } from "./types.js";
+import { conductorComparison } from './conductor.js';
 import { cursorComparison } from "./cursor.js";
 import { onecodeComparison } from './onecode.js';
 import { supersetComparison } from './superset.js';
@@ -9,6 +10,7 @@ const allComparisons: readonly ComparisonData[] = [
 	supersetComparison,
 	onecodeComparison,
 	t3Comparison,
+	conductorComparison,
 ];
 
 const comparisons: ReadonlyMap<string, ComparisonData> = new Map(
