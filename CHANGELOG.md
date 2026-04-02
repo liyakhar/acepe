@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.4.2] - 2026-04-02
+
+### Added
+- Shared kanban board and card primitives are now exported from `@acepe/ui`, and the desktop design system overlay includes dedicated button and kanban specimens
+- Press Cmd+. to cycle composer modes, with a Cmd+Shift+. fallback for keyboard layouts where period requires Shift
+
+### Changed
+- Kanban view now uses an inline New Agent dialog, keeps the board visible after session creation, and always renders the answer needed, planning, working, and finished columns
+- Composer, permission prompts, and toolbar controls now use compact shared header and toolbar button styles, and the model selector trigger is simplified
+- The website header surfaces GitHub star counts more consistently, and Railway builds now target the website package only
+
+## [2026.4.1] - 2026-03-31
+
 ### Added
 - GitHub Copilot CLI can now be installed and launched as a built-in Acepe agent, with ACP-backed session listing and replay in history
 - Supported live sessions now expose an Autonomous toolbar toggle that switches execution profiles for hands-off runs
