@@ -475,7 +475,7 @@ function handleNextQuestion() {
 		{agentBadge}
 	>
 		{#snippet actionBar()}
-			<PermissionActionBar permission={pendingPermission} />
+			<PermissionActionBar permission={pendingPermission} compact />
 		{/snippet}
 	</PermissionFeedItem>
 {:else if isPlanApproval}

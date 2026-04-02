@@ -7,110 +7,119 @@ topic: kanban-view
 
 ## Problem Frame
 
-Acepe currently shows active sessions in a compact attention queue (sidebar/overlay) grouped into sections by state: answer needed, working, finished, and error. This works well for quick triage but does not give the user a spatial, persistent overview of all active work. Power users running multiple agents across projects need a bird's-eye layout where sessions are organized as cards in columns by state, like a kanban board.
+Acepe currently has two different presentations of agent work: the normal layouts render real agent panels, while the attention surfaces render queue-derived summaries. That split makes view changes feel lossy. A user can see live tool calls and activity in kanban, but switching views or opening the thread can still feel like moving between two different systems.
 
-The kanban view is a new view mode alongside single, project, and multi. It reuses the existing queue section model and QueueItem data rather than inventing a parallel classification system.
+The desired model is that kanban, single, project, and multi are all different presentations of the same live thread state. A live session should quietly join the normal panel system in the background, kanban should show that same live thread, and opening a thread from kanban should show the full normal thread UI without changing layouts.
 
 ## Requirements
 
+**Shared Panel State**
+
+- R1. Every live session must have a real backing agent panel in the normal panel system, even when that panel is added without taking focus.
+- R2. When a session becomes live, Acepe must add its panel quietly in the background without stealing focus, forcing fullscreen, or changing the current layout.
+- R3. In non-kanban layouts, these live panels may be hidden because another project is selected or another session is fullscreen, but they still exist in the normal panel layout.
+- R4. Switching between kanban and the normal layouts must not change thread state. The same live tool calls, drafts, pending input, review state, sidebars, optimistic first-send state, and thread metadata must remain available across both presentations.
+- R5. Kanban, normal panels, and the attention queue must read from the same panel-backed live thread model rather than maintaining separate runtime models.
+
 **View Mode Integration**
 
-- R1. Kanban must be a new value in the existing `ViewMode` union, selectable from the same layout menu that offers single, project, and multi.
-- R2. When kanban is active, the attention queue sidebar/overlay must hide — the board replaces it as the primary attention surface.
-- R3. Switching away from kanban to another view mode must preserve the user's panel and focus state exactly as it was before entering kanban.
-- R4. Kanban must be persisted and restored via the same workspace state mechanism used by the other view modes.
+- R6. Kanban must remain a value in the existing `ViewMode` union, selectable from the same layout menu that offers single, project, and multi.
+- R7. When kanban is active, the attention queue sidebar/overlay must hide — the board replaces it as the primary attention surface.
+- R8. Switching away from kanban to another view mode must preserve the user's panel and focus state exactly as it was before entering kanban.
+- R9. Kanban must be persisted and restored via the same workspace state mechanism used by the other view modes.
 
 **Board Layout**
 
-- R5. The board must render as horizontal columns, one per queue section, in the standard section order: Answer Needed → Planning → Working → Finished → Error.
-- R6. Each column must show its section label, color accent, and a count of items in that column.
-- R7. Empty columns must remain visible with an empty-state indicator so the spatial layout stays stable.
-- R8. Columns must scroll vertically when their items exceed the visible height.
-- R9. The board must be horizontally scrollable or responsive so it works when the window is narrow enough that not all four columns fit.
+- R10. The board must render as horizontal columns in this order: Answer Needed → Planning → Working → Finished → Idle → Error.
+- R11. Each column must show its section label, color accent, and a count of items in that column.
+- R12. Empty columns must remain visible with an empty-state indicator so the spatial layout stays stable.
+- R13. Columns must scroll vertically when their items exceed the visible height.
+- R14. The board must be horizontally scrollable or responsive so it works when the window is narrow enough that not all columns fit.
 
-**Planning Column**
+**Planning And Idle Status**
 
-- R25. The queue classifier must split the current "working" section so that sessions in plan mode (`currentModeId === "plan"`) with active streaming or thinking activity are classified as `"planning"` instead of `"working"`.
-- R26. The planning column must use the existing `SectionedFeedSectionId` value `"planning"` with its purple color and hammer icon — this value already exists in the UI type system but is not currently produced by the classifier.
-- R27. Sessions in plan mode that are idle, paused, or have pending input must still classify into their normal priority section (answer_needed, finished, etc.) — only actively streaming/thinking plan-mode sessions move to the planning column.
+- R15. The classifier must split the current "working" section so that sessions in plan mode with active streaming or thinking activity are classified as Planning instead of Working.
+- R16. Planning must keep the existing purple visual language already associated with plan-mode work.
+- R17. Idle must be a first-class visible status and column.
+- R18. Finished must mean a thread has newly completed work that the user has not yet seen.
+- R19. Idle must mean the thread exists and is resting with no special attention required.
+- R20. A thread must move from Finished to Idle once its completion has been seen.
+- R21. Threads in Idle must remain part of the normal panel layout until the user closes them.
 
 **Card Design**
 
-- R10. Cards must replicate the `AttentionQueueSubagentCard` visual style at a larger scale: `rounded-sm` corners, `border border-border/60`, `bg-accent/30` background, and a violet (`Colors.purple` / `#9858FF`) left accent strip (`w-0.5 self-stretch rounded-full`).
-- R10a. Each card must show a Phosphor `Robot` icon in violet (`weight="fill"`, `Colors.purple`) at the top-left of the card header, matching the subagent card's icon treatment but sized up for the larger card context.
-- R10b. Streaming activity text on cards must use `TextShimmer` for the shimmer effect, matching the subagent card's streaming state.
-- R11. The card body must show: session title (or fallback), agent badge, project name with color badge, and a time-ago label.
-- R12. Cards in the "working" and "planning" columns must show the current activity indicator: the active tool kind or a streaming/thinking shimmer via `TextShimmer`.
-- R13. Cards in the "finished" column must show the diff pill (insertions/deletions) when the session has code changes.
-- R14. Cards in the "error" column must show the connection error text.
-- R15. Cards must show todo progress when the session has active todos.
-- R16. Cards must show the current mode (e.g. plan/build) as a small badge.
+- R22. Cards must replicate the existing kanban/subagent visual language: compact bordered surfaces, left accent strip, and the violet Robot treatment already used for subagent work.
+- R23. The card body must show session title (or fallback), agent badge, project name with color badge, time-ago label, and current mode.
+- R24. Cards in Planning and Working must show the current activity indicator, including live tool-call or thinking state.
+- R25. Cards in Finished must show completion-oriented information such as diff stats when available.
+- R26. Cards in Error must show the connection error text.
+- R27. Cards must show todo progress when the session has active todos.
+- R28. Idle cards must remain visibly connected to the same thread system, but should read as resting rather than actively running.
 
-**Embedded Queue Item for Pending Input**
+**Embedded Queue And Full Thread Interaction**
 
-- R28. When a card has pending input (permission or question), the card must embed the compact queue-item UI from the existing attention queue at the bottom of the card — the same inline approval/answer controls the user already knows.
-- R29. The embedded queue-item footer must support inline permission approval (approve/reject) and inline question answering directly on the card, without leaving the board.
-- R30. The embedded footer must reuse or wrap the existing `PermissionFeedItem` and question UI components rather than rebuilding approval controls from scratch.
-
-**Card Interaction**
-
-- R17. Clicking a card (outside the embedded queue-item footer) must navigate to that session's panel in single view mode, exactly like clicking a queue item does today.
-- R18. Inline approval and question answering must work directly inside the embedded queue-item footer without navigating away from the board.
-- R19. Cards must not support drag-and-drop between columns — session state is derived from runtime activity, not user-assigned status.
+- R29. When a card has pending input (permission or question), the card must embed the compact approval or answer controls already used for attention actions.
+- R30. Inline permission approval and question answering must work directly on the card without requiring a layout switch.
+- R31. Clicking a card outside those inline controls must open the full normal thread UI in a dialog without leaving kanban.
+- R32. The kanban dialog must use the same shared thread surface as the normal panel, not a kanban-specific quick view.
+- R33. Interacting with a thread from kanban must immediately affect the same underlying panel state that appears in the normal layouts.
+- R34. Users must be able to return to single, project, or multi and see the same thread state there with no rehydration gap or divergent UI behavior.
 
 **Data Source**
 
-- R20. The board must consume the same `QueueItem[]` and `groupIntoSections()` pipeline that the existing attention queue uses.
-- R21. The board must update in real time as sessions change state, with cards moving between columns automatically.
-- R22. The board must show all sessions that currently appear in the attention queue — no additional filtering or session discovery logic.
+- R35. The board must no longer be limited to the existing attention queue grouping alone.
+- R36. Any compact card summary used in kanban must be derived from the shared live panel/thread model rather than from a separate queue-only model.
+- R37. The attention queue and kanban may still present filtered or grouped views, but neither may own a distinct runtime truth about a thread.
+- R38. The normal panel layout remains the canonical place where live sessions are materially displayed, even when some are currently hidden by project filtering or fullscreen focus.
 
 **UI Component Location**
 
-- R23. The board layout component and card component must live in `packages/ui` as presentational components, consistent with the existing attention queue components there.
-- R24. The desktop-specific wiring (store access, navigation callbacks, permission handlers) must live in `packages/desktop`.
+- R39. The reusable live thread surface shared by kanban and the normal layouts must be implemented once and reused across both shells.
+- R40. Desktop-specific wiring for store access, panel lifecycle, navigation, and layout visibility must remain in `packages/desktop`.
+- R41. Pure board and card presentation components may continue to live in `packages/ui`.
 
 ## Success Criteria
 
-- A user can switch to the kanban view from the layout menu and see all active sessions organized by state in a horizontal board.
-- Sessions move between columns automatically as their state changes — including moving from "working" to "planning" when a session enters plan mode.
-- Clicking a card jumps to that session in single view.
-- Permissions can be approved and questions answered inline from the embedded queue-item footer on any card that has pending input.
-- The board replaces the attention queue overlay when active, so the user is not seeing the same information twice.
-- Switching back to another view mode restores prior panel/focus state.
+- A live session quietly becomes part of the normal panel system without changing the user's current focus or layout.
+- Switching between kanban and the normal layouts does not change the thread's live information or interactivity.
+- Opening a card from kanban shows the full normal thread UI in a dialog.
+- Finished threads clearly represent unseen completed work, and seen completed threads settle into Idle.
+- Idle threads remain visible on the board and in the normal panel system until the user closes them.
+- The attention queue, kanban, and normal layouts behave like different presentations of the same underlying live thread state.
 
 ## Scope Boundaries
 
-- No drag-and-drop between columns — session state is derived, not manually assigned.
+- No separate kanban-only thread runtime or quick-view implementation.
+- No drag-and-drop between columns; thread state remains runtime-derived.
+- No manual status assignment by the user.
+- No automatic removal of a panel from the normal layout just because a live thread becomes idle.
 - No custom column ordering, hiding, or filtering in this version.
-- No inline chat or message composition from the board — only triage actions (approve, reject, navigate).
-- No additional queue sections beyond the five defined here (answer_needed, planning, working, finished, error).
-- No WIP limits or column policies.
 
 ## Key Decisions
 
-- **View mode, not a panel**: Kanban is a layout mode like single/project/multi, not a new panel type. It replaces the content area.
-- **Same data source**: Reuses `groupIntoSections()` and `QueueItem` — no parallel classification system.
-- **No drag-and-drop**: Session state is runtime-derived. Manual column assignment would fight the automation model.
-- **Embedded queue-item UI**: Cards embed the existing compact queue-item controls for permissions and questions rather than building separate kanban-specific approval UI.
-- **Planning column via classifier change**: Plan-mode streaming sessions are split from "working" into "planning" using the already-defined `SectionedFeedSectionId` value.
-- **Subagent card visual language**: Cards follow the compact bordered-card-with-accent-strip pattern established by `AttentionQueueSubagentCard`.
-- **Hide queue overlay**: When kanban is active, the queue overlay would be redundant.
+- **View mode, not a separate thread system**: Kanban remains a layout mode, but it presents the same live thread state as the normal panel layouts.
+- **Panel-backed live sessions**: Every live session gets a real agent panel in the background, even before the user focuses it.
+- **Hidden does not mean absent**: A normal-layout panel may exist but be hidden by project focus or fullscreen selection.
+- **Full thread dialog from kanban**: Card click opens the real thread UI, not a lighter quick view.
+- **Idle is first-class**: Kanban shows Idle as its own visible column.
+- **Finished then Idle**: Completed work first appears as Finished, then becomes Idle after the user has seen it.
+- **Panels persist until user close**: Auto-created live panels stay in the normal layout until explicitly closed.
 
 ## Dependencies / Assumptions
 
-- The `ViewMode` union and persistence path can accept a fourth value without breaking restore compatibility.
-- The `groupIntoSections()` pipeline and `QueueItem` type are stable enough to build a view on top of.
-- The `@acepe/ui` package can host a new board component alongside the existing `SectionedFeed`.
+- Panel lifecycle can be separated from layout visibility and focus.
+- The normal agent thread UI can be split into a reusable shared surface that both normal layouts and kanban can host.
+- Existing attention and unseen-completion signals can be reattached to the shared panel-backed live thread model.
 
 ## Outstanding Questions
 
 ### Deferred to Planning
 
-- [Affects R5][Technical] Whether columns should be fixed-width or flex equally, and how the layout degrades below ~900px.
-- [Affects R28-R30][Technical] How the embedded queue-item footer wraps the existing `PermissionFeedItem` and question UI components — whether it instantiates them directly or uses a shared wrapper that adapts sizing for the card context.
-- [Affects R25-R27][Technical] Whether the planning classification change should live in `classifyItem()` directly or as a post-classification split so the existing four-section consumers are not affected.
-- [Affects R2][Technical] Whether the attention queue overlay should be fully unmounted in kanban mode or just visually hidden.
-- [Affects R4][Technical] How workspace restore handles the kanban view mode when the saved state references it but the board has no focused panel.
+- [Affects R1-R5][Technical] Where the shared panel-backed live thread projection should live so SessionStore and PanelStore keep clear responsibilities.
+- [Affects R1-R3][Technical] Whether the system needs a separate registry for background live panels versus visibly laid-out panels, or whether the existing panel model can represent both cleanly.
+- [Affects R31-R33][Technical] How to extract the shared live thread surface from the current AgentPanel shell without regressing fullscreen and normal layout behavior.
+- [Affects R35-R38][Technical] How the existing attention queue should migrate from QueueItem-first derivation to the shared panel/thread model without breaking current notification and pending-input flows.
+- [Affects R10-R14][Technical] How the added Idle column changes responsive board width and narrow-window behavior.
 
 ## Next Steps
 

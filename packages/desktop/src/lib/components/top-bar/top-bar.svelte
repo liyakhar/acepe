@@ -3,6 +3,7 @@ import { AppTopBar } from "@acepe/ui/app-layout";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { EmbeddedIconButton, HeaderCell } from "@acepe/ui/panel-header";
 import { PillButton } from "@acepe/ui";
+import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Bug from "phosphor-svelte/lib/Bug";
 import Columns from "phosphor-svelte/lib/Columns";
@@ -11,6 +12,7 @@ import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
 import GithubLogo from "phosphor-svelte/lib/GithubLogo";
 import HardDrives from "phosphor-svelte/lib/HardDrives";
 import Kanban from "phosphor-svelte/lib/Kanban";
+import Palette from "phosphor-svelte/lib/Palette";
 import Rows from "phosphor-svelte/lib/Rows";
 import Sidebar from "phosphor-svelte/lib/Sidebar";
 import SlidersHorizontal from "phosphor-svelte/lib/SlidersHorizontal";
@@ -36,6 +38,7 @@ interface Props {
 	onUpdateClick?: () => void;
 	onRetryUpdateClick?: () => void;
 	onDevShowUpdatePage?: () => void;
+	onDevShowDesignSystem?: () => void;
 }
 
 let {
@@ -45,10 +48,18 @@ let {
 	onUpdateClick,
 	onRetryUpdateClick,
 	onDevShowUpdatePage,
+	onDevShowDesignSystem,
 }: Props = $props();
 
 const panelStore = getPanelStore();
 const UPDATE_BUTTON_SEGMENT_COUNT = 16;
+type DropdownMenuTriggerChildProps = NonNullable<
+	DropdownMenuPrimitive.TriggerProps["child"]
+> extends Snippet<[
+	infer T,
+]>
+	? T
+	: never;
 
 const updateDownloadPercent = $derived(
 	updaterState?.kind === "installing"
@@ -71,6 +82,10 @@ const viewModes: { value: ViewMode; label: string; color: string }[] = [
 	{ value: "multi", label: "Multi", color: "var(--success)" },
 	{ value: "kanban", label: "Kanban", color: "#3B82F6" },
 ];
+
+function preventDropdownItemSelection(event: Event): void {
+	event.preventDefault();
+}
 </script>
 
 <AppTopBar
@@ -130,7 +145,7 @@ const viewModes: { value: ViewMode; label: string; color: string }[] = [
 		<HeaderCell withDivider={false}>
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
-					{#snippet child({ props })}
+					{#snippet child({ props }: DropdownMenuTriggerChildProps)}
 						<Tooltip.Root>
 							<Tooltip.Trigger>
 								<EmbeddedIconButton {...props} title="Layout" ariaLabel="Layout Settings">
@@ -149,7 +164,7 @@ const viewModes: { value: ViewMode; label: string; color: string }[] = [
 						>
 						<DropdownMenu.Item
 							class="cursor-pointer rounded-none border-b border-border/20 px-2 py-1 text-[11px]"
-							onSelect={(e) => e.preventDefault()}
+							onSelect={preventDropdownItemSelection}
 							onclick={() => viewState.setSidebarOpen(!viewState.sidebarOpen)}
 						>
 							<Sidebar class="size-4" weight="fill" />
@@ -161,7 +176,7 @@ const viewModes: { value: ViewMode; label: string; color: string }[] = [
 						</DropdownMenu.Item>
 						<DropdownMenu.Item
 							class="cursor-pointer rounded-none border-b border-border/20 px-2 py-1 text-[11px]"
-							onSelect={(e) => e.preventDefault()}
+							onSelect={preventDropdownItemSelection}
 							onclick={() => viewState.setTopBarVisible(!viewState.topBarVisible)}
 						>
 							<Rows class="size-4" weight="fill" />
@@ -246,11 +261,11 @@ const viewModes: { value: ViewMode; label: string; color: string }[] = [
 		<HeaderCell withDivider={false}>
 			<ThemeToggle />
 		</HeaderCell>
-		{#if import.meta.env.DEV && onDevShowUpdatePage}
+		{#if import.meta.env.DEV && (onDevShowUpdatePage || onDevShowDesignSystem)}
 			<HeaderCell withDivider={false}>
 				<DropdownMenu.Root>
 					<DropdownMenu.Trigger>
-						{#snippet child({ props })}
+						{#snippet child({ props }: DropdownMenuTriggerChildProps)}
 							<Tooltip.Root>
 								<Tooltip.Trigger>
 									<EmbeddedIconButton {...props} title="Dev Tools" ariaLabel="Dev Tools">
@@ -266,13 +281,24 @@ const viewModes: { value: ViewMode; label: string; color: string }[] = [
 							<DropdownMenu.GroupHeading
 								class="px-2 py-1 text-[11px] font-semibold text-muted-foreground border-b border-border/20"
 							>Dev Overlays</DropdownMenu.GroupHeading>
-							<DropdownMenu.Item
-								class="cursor-pointer rounded-none px-2 py-1 text-[11px]"
-								onclick={onDevShowUpdatePage}
-							>
-								<DownloadSimple class="size-4" weight="fill" />
-								<span>Update Page</span>
-							</DropdownMenu.Item>
+							{#if onDevShowUpdatePage}
+								<DropdownMenu.Item
+									class="cursor-pointer rounded-none px-2 py-1 text-[11px]"
+									onclick={onDevShowUpdatePage}
+								>
+									<DownloadSimple class="size-4" weight="fill" />
+									<span>Update Page</span>
+								</DropdownMenu.Item>
+							{/if}
+							{#if onDevShowDesignSystem}
+								<DropdownMenu.Item
+									class="cursor-pointer rounded-none px-2 py-1 text-[11px]"
+									onclick={onDevShowDesignSystem}
+								>
+									<Palette class="size-4" weight="fill" />
+									<span>Design System</span>
+								</DropdownMenu.Item>
+							{/if}
 						</DropdownMenu.Group>
 					</DropdownMenu.Content>
 				</DropdownMenu.Root>

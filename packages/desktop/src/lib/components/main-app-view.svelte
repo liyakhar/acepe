@@ -44,6 +44,7 @@ import { DEFAULT_PANEL_WIDTH } from "$lib/acp/store/types.js";
 import type { QuestionRequest } from "$lib/acp/types/question.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
 import { ThemeProvider } from "$lib/components/theme/index.js";
+import DesignSystemShowcase from "$lib/components/dev/design-system-showcase.svelte";
 import { KEYBINDING_ACTIONS } from "$lib/keybindings/constants.js";
 import { getKeybindingsService } from "$lib/keybindings/index.js";
 import {
@@ -891,6 +892,9 @@ onDestroy(() => {
 				onDevShowUpdatePage={() => {
 					startDevUpdateSimulation();
 				}}
+				onDevShowDesignSystem={() => {
+					viewState.designSystemOpen = true;
+				}}
 			>
 				{#snippet addProjectButton()}
 					<EmbeddedIconButton
@@ -939,6 +943,12 @@ onDestroy(() => {
 		{/if}
 	</div>
 	<AppOverlays state={viewState} {commandPalette} />
+	<DesignSystemShowcase
+		open={viewState.designSystemOpen}
+		onOpenChange={(open) => {
+			viewState.designSystemOpen = open;
+		}}
+	/>
 
 	<OpenProjectDialog
 		open={addProjectDialogOpen}
