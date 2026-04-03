@@ -65,7 +65,6 @@
 		todoProgress: { current: 3, total: 5, label: "Implement" },
 		taskCard: null,
 		latestTool: null,
-		toolCalls: [],
 	};
 
 	const demoCardStreaming: KanbanCardData = {
@@ -86,7 +85,6 @@
 		todoProgress: null,
 		taskCard: null,
 		latestTool: null,
-		toolCalls: [],
 	};
 
 	const demoCardWithTool: KanbanCardData = {
@@ -113,7 +111,6 @@
 			filePath: "src/lib/auth.ts",
 			status: "done",
 		},
-		toolCalls: [],
 	};
 
 	const demoCardError: KanbanCardData = {
@@ -134,7 +131,6 @@
 		todoProgress: null,
 		taskCard: null,
 		latestTool: null,
-		toolCalls: [],
 	};
 
 	const demoSubagentToolCalls: readonly AgentToolEntry[] = [
@@ -185,7 +181,6 @@
 			toolCalls: demoSubagentToolCalls,
 		},
 		latestTool: null,
-		toolCalls: [],
 	};
 
 	const demoPermissionReq: PermissionRequest = {

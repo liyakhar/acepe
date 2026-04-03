@@ -20,7 +20,8 @@
 	} from "@acepe/ui";
 	import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 	import { Colors } from "@acepe/ui/colors";
-	import { onDestroy } from "svelte";
+	import { onDestroy, onMount } from "svelte";
+	import { SvelteMap } from "svelte/reactivity";
 	import type { SessionStatus } from "$lib/acp/application/dto/session-status.js";
 	import type { SessionEntry } from "$lib/acp/application/dto/session-entry.js";
 	import type { AgentInfo } from "$lib/acp/logic/agent-manager.js";
@@ -66,6 +67,7 @@
 	import type { PermissionRequest } from "$lib/acp/types/permission.js";
 	import type { QuestionRequest } from "$lib/acp/types/question.js";
 	import { AGENT_IDS } from "$lib/acp/types/agent-id.js";
+	import { CanonicalModeId } from "$lib/acp/types/canonical-mode-id.js";
 	import { formatTimeAgo } from "$lib/acp/utils/time-utils.js";
 	import { sessionEntriesToMarkdown } from "$lib/acp/utils/session-to-markdown.js";
 	import { useTheme } from "$lib/components/theme/context.svelte.js";
@@ -113,7 +115,7 @@
 
 	const KANBAN_NEW_SESSION_PANEL_ID = "kanban-new-session-dialog";
 
-	const cardDrafts = new Map<string, string>();
+	let cardDrafts = $state(new SvelteMap<string, string>());
 	const cardVoiceStates = new Map<string, VoiceInputState>();
 
 	function getOrCreateVoiceState(sessionId: string): VoiceInputState {
@@ -143,6 +145,23 @@
 			vs.dispose();
 		}
 		cardVoiceStates.clear();
+	});
+
+	onMount(() => {
+		const handleWindowKeyUp = (event: KeyboardEvent) => {
+			for (const voiceState of cardVoiceStates.values()) {
+				if (shouldStopVoiceHold(event, voiceState.isPressAndHold)) {
+					event.preventDefault();
+					voiceState.onKeyboardHoldEnd();
+				}
+			}
+		};
+
+		window.addEventListener("keyup", handleWindowKeyUp);
+
+		return () => {
+			window.removeEventListener("keyup", handleWindowKeyUp);
+		};
 	});
 
 	function handleComposerKeydown(sessionId: string, event: KeyboardEvent): void {
@@ -525,7 +544,6 @@
 				: null,
 			taskCard,
 			latestTool,
-			toolCalls: [],
 		};
 	}
 
@@ -789,6 +807,7 @@
 
 	function isComposerVisible(item: ThreadBoardItem): boolean {
 		return (
+			item.status === "idle" &&
 			item.state.connection === "connected" &&
 			item.state.activity.kind === "idle" &&
 			item.state.pendingInput.kind === "none"
@@ -796,7 +815,20 @@
 	}
 
 	function getComposerModeLabel(item: ThreadBoardItem): string {
-		return item.currentModeId ? item.currentModeId : "code";
+		return item.currentModeId === CanonicalModeId.PLAN ? CanonicalModeId.PLAN : CanonicalModeId.BUILD;
+	}
+
+	function handleComposerModeToggle(sessionId: string, currentModeId: string): void {
+		const nextModeId =
+			currentModeId === CanonicalModeId.PLAN ? CanonicalModeId.BUILD : CanonicalModeId.PLAN;
+
+		void sessionStore.setMode(sessionId, nextModeId).match(
+			() => undefined,
+			() => {
+				toast.error("Failed to switch mode.");
+				return undefined;
+			}
+		);
 	}
 
 	function handleComposerInput(sessionId: string, value: string): void {
@@ -942,9 +974,14 @@
 				{@const isClaudeCode = item ? item.agentId === AGENT_IDS.CLAUDE_CODE : false}
 				{@const showUsage = hasVisibleModelSelectorMetrics(usageTelemetry, isClaudeCode)}
 				{@const showComposer = item ? isComposerVisible(item) : false}
-				{@const showFooter = permission !== null || question !== null || showUsage || showComposer}
+				{@const showFooter = permission !== null || question !== null || showComposer}
 				{#if item}
-					<KanbanCard {card} onclick={() => handleCardClick(card.id)} showFooter={showFooter} flushFooter={showComposer}>
+					<KanbanCard {card} onclick={() => handleCardClick(card.id)} showFooter={showFooter} showTally={showUsage} flushFooter={showComposer}>
+						{#snippet tally()}
+							{#if showUsage}
+								<ModelSelectorMetricsChip sessionId={card.id} agentId={item.agentId} compact={true} hideLabel={true} />
+							{/if}
+						{/snippet}
 						{#snippet menu()}
 							<DropdownMenu.Root>
 								<DropdownMenu.Trigger
@@ -1036,18 +1073,6 @@
 								data-is-claude-code={isClaudeCode ? "true" : "false"}
 								data-show-composer={showComposer ? "true" : "false"}
 							>
-								{#if showComposer}
-									<KanbanCompactComposer
-										modeLabel={item ? getComposerModeLabel(item) : "code"}
-										value={cardDrafts.get(card.id) ? cardDrafts.get(card.id)! : ""}
-										canSubmit={(cardDrafts.get(card.id) ? cardDrafts.get(card.id)! : "").trim().length > 0}
-										onInput={(v) => handleComposerInput(card.id, v)}
-										onSubmit={() => handleComposerSubmit(card.id)}
-									/>
-								{/if}
-								{#if showUsage}
-									<ModelSelectorMetricsChip sessionId={card.id} agentId={item.agentId} compact={true} hideLabel={true} />
-								{/if}
 								{#if permission}
 									<PermissionActionBar permission={permission} compact projectPath={item.projectPath} />
 								{:else if question}
@@ -1056,6 +1081,76 @@
 										onSelectOption={(i: number) => handleSelectOption(card.id, i)}
 										onSubmit={() => handleSubmitQuestion(card.id)}
 									/>
+								{/if}
+								{#if showComposer}
+									{@const composerDraft = cardDrafts.get(card.id)}
+									{@const composerValue = composerDraft ? composerDraft : ""}
+									{@const canSubmitComposer = composerValue.trim().length > 0}
+									{@const composerVoiceState = voiceEnabled ? getOrCreateVoiceState(card.id) : null}
+									{@const isVoiceComposerMode = composerVoiceState !== null && (composerVoiceState.phase === "checking_permission" || composerVoiceState.phase === "recording")}
+									<KanbanCompactComposer
+										embedded={true}
+										modeLabel={item ? getComposerModeLabel(item) : CanonicalModeId.BUILD}
+										value={composerValue}
+										voiceMode={isVoiceComposerMode}
+										onModeToggle={() => handleComposerModeToggle(card.id, item ? getComposerModeLabel(item) : CanonicalModeId.BUILD)}
+										onInput={(v) => handleComposerInput(card.id, v)}
+										onSubmit={() => handleComposerSubmit(card.id)}
+										onKeydown={(e) => handleComposerKeydown(card.id, e)}
+										onKeyup={(e) => handleComposerKeyup(card.id, e)}
+									>
+										{#snippet voiceContent()}
+											{#if composerVoiceState}
+												<div class="flex h-7 min-w-0 flex-1 items-center overflow-hidden">
+													<div class="kanban-voice-meter flex w-full items-center justify-center gap-px motion-reduce:hidden" aria-hidden="true">
+														{#each composerVoiceState.waveform.meterLevels as level, index (index)}
+															{@const dist = Math.abs(index - Math.floor(composerVoiceState.waveform.barCount / 2))}
+															{@const maxH = 18 - dist * 0.7}
+															<div
+																class="kanban-voice-bar rounded-full"
+																style:width="1.5px"
+																style:height="{level > 0.005 ? 1.5 + level * (maxH - 1.5) : 0}px"
+																style:background-color="#F9C396"
+															></div>
+														{/each}
+													</div>
+												</div>
+											{/if}
+										{/snippet}
+										{#snippet voiceTrailing()}
+											{#if composerVoiceState && composerVoiceState.recordingElapsedLabel}
+												<span class="font-mono text-[10px] text-muted-foreground tabular-nums">
+													{composerVoiceState.recordingElapsedLabel}
+												</span>
+											{/if}
+											{#if composerVoiceState}
+												<MicButton voiceState={composerVoiceState} disabled={false} />
+											{/if}
+										{/snippet}
+										{#snippet micButton()}
+											{#if composerVoiceState}
+												<MicButton
+													voiceState={composerVoiceState}
+													disabled={!canStartVoiceInteraction(composerVoiceState.phase, false) && composerVoiceState.phase !== "recording"}
+												/>
+											{/if}
+										{/snippet}
+										{#snippet submitButton()}
+											<Button
+												type="button"
+												size="icon"
+												onclick={(e) => {
+													e.stopPropagation();
+													handleComposerSubmit(card.id);
+												}}
+												disabled={!canSubmitComposer}
+												class="h-[17.6px] w-[17.6px] shrink-0 cursor-pointer rounded-full bg-foreground text-background hover:bg-foreground/85"
+											>
+												<IconArrowUp class="h-[8.8px] w-[8.8px]" />
+												<span class="sr-only">{m.agent_input_send_message()}</span>
+											</Button>
+										{/snippet}
+									</KanbanCompactComposer>
 								{/if}
 							</div>
 						{/snippet}
@@ -1074,3 +1169,13 @@
 		onClose={() => (activeDialogPanelId = null)}
 	/>
 </div>
+
+<style>
+	.kanban-voice-meter {
+		min-height: 18px;
+	}
+
+	.kanban-voice-bar {
+		transition: height 90ms linear;
+	}
+</style>

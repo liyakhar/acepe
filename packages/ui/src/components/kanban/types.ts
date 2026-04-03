@@ -1,12 +1,16 @@
-import type { AgentToolEntry } from "../agent-panel/types.js";
+import type {
+	AgentToolEntry,
+	AgentToolKind,
+	AgentToolStatus,
+} from "../agent-panel/types.js";
 import type { SectionedFeedSectionId } from "../attention-queue/types.js";
 
 export interface KanbanToolData {
 	readonly id: string;
-	readonly kind?: string;
+	readonly kind?: AgentToolKind;
 	readonly title: string;
 	readonly filePath?: string;
-	readonly status: "pending" | "running" | "done" | "error";
+	readonly status: AgentToolStatus;
 }
 
 export interface KanbanTaskCardData {
@@ -34,7 +38,6 @@ export interface KanbanCardData {
 	readonly todoProgress: { current: number; total: number; label: string } | null;
 	readonly taskCard: KanbanTaskCardData | null;
 	readonly latestTool: KanbanToolData | null;
-	readonly toolCalls: readonly AgentToolEntry[];
 }
 
 export interface KanbanColumnGroup {

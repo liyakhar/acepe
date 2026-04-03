@@ -24,6 +24,16 @@
 		micButton?: Snippet;
 		/** Slot for the submit button (rendered by the host). */
 		submitButton?: Snippet;
+		/** Toggle between the available plan/build modes. */
+		onModeToggle?: () => void;
+		/** Render without the boxed composer chrome so the footer can blend into the card edge. */
+		embedded?: boolean;
+		/** Swap the normal input layout for live voice content. */
+		voiceMode?: boolean;
+		/** Slot for the live voice waveform content. */
+		voiceContent?: Snippet;
+		/** Slot for the right-side voice controls, such as timer and stop button. */
+		voiceTrailing?: Snippet;
 	}
 
 	let {
@@ -37,7 +47,16 @@
 		onKeyup,
 		micButton,
 		submitButton,
+		onModeToggle,
+		embedded = false,
+		voiceMode = false,
+		voiceContent,
+		voiceTrailing,
 	}: Props = $props();
+
+	const modeToggleLabel = $derived(
+		modeLabel === "plan" ? "Switch to build mode" : "Switch to plan mode"
+	);
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (disabled) return;
@@ -61,43 +80,79 @@
 		const target = e.target as HTMLInputElement;
 		onInput(target.value);
 	}
+
+	function handleModeToggle(event: MouseEvent): void {
+		event.stopPropagation();
+		if (onModeToggle) {
+			onModeToggle();
+		}
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-	class="flex items-center gap-1.5 rounded-md bg-background/60 px-1.5 py-1"
+	class="flex w-full min-w-0 items-center {embedded ? 'gap-1.5 bg-background/90 px-2 py-0.5' : 'gap-1.5 rounded-md bg-background/60 px-1.5 py-1'}"
 	onclick={(e) => e.stopPropagation()}
 	onkeydown={(e) => e.stopPropagation()}
 	data-testid="kanban-compact-composer"
 >
-	<!-- Mode icon -->
-	<span class="flex shrink-0 items-center justify-center">
-		{#if modeLabel === "plan"}
-			<PlanIcon size="sm" />
-		{:else if modeLabel === "build"}
-			<BuildIcon size="sm" />
+	{#if voiceMode}
+		<div class="flex min-w-0 flex-1 items-center overflow-hidden">
+			{#if voiceContent}
+				{@render voiceContent()}
+			{/if}
+		</div>
+
+		{#if voiceTrailing}
+			<div class="ml-auto flex shrink-0 items-center gap-1">
+				{@render voiceTrailing()}
+			</div>
 		{/if}
-	</span>
+	{:else}
+		<!-- Mode icon -->
+		{#if onModeToggle}
+			<button
+				type="button"
+				class="flex shrink-0 items-center justify-center rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+				aria-label={modeToggleLabel}
+				onclick={handleModeToggle}
+			>
+				{#if modeLabel === "plan"}
+					<PlanIcon size="sm" />
+				{:else if modeLabel === "build"}
+					<BuildIcon size="sm" />
+				{/if}
+			</button>
+		{:else}
+			<span class="flex shrink-0 items-center justify-center">
+				{#if modeLabel === "plan"}
+					<PlanIcon size="sm" />
+				{:else if modeLabel === "build"}
+					<BuildIcon size="sm" />
+				{/if}
+			</span>
+		{/if}
 
-	<!-- Input -->
-	<input
-		type="text"
-		class="min-w-0 flex-1 border-none bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50"
-		{placeholder}
-		{value}
-		{disabled}
-		oninput={handleInput}
-		onkeydown={handleKeydown}
-		onkeyup={handleKeyup}
-	/>
+		<!-- Input -->
+		<input
+			type="text"
+			class="min-w-0 flex-1 border-none bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50"
+			{placeholder}
+			{value}
+			{disabled}
+			oninput={handleInput}
+			onkeydown={handleKeydown}
+			onkeyup={handleKeyup}
+		/>
 
-	<!-- Mic button slot -->
-	{#if micButton}
-		{@render micButton()}
-	{/if}
+		<!-- Mic button slot -->
+		{#if micButton}
+			{@render micButton()}
+		{/if}
 
-	<!-- Submit button slot -->
-	{#if submitButton}
-		{@render submitButton()}
+		<!-- Submit button slot -->
+		{#if submitButton}
+			{@render submitButton()}
+		{/if}
 	{/if}
 </div>

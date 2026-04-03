@@ -174,9 +174,9 @@ function handleRenameKeydown(event: KeyboardEvent): void {
 										{...menuProps}
 										ariaLabel="Worktree menu"
 										title="Worktree menu"
-										class="shrink-0 {variant === 'minimal' ? '!w-5 rounded-md hover:rounded-full' : ''}"
+										class="shrink-0 !h-auto !w-auto !p-0 hover:!bg-transparent {variant === 'minimal' ? 'rounded-md hover:rounded-full' : ''}"
 									>
-										<DotsThreeVertical class="size-3" weight="bold" />
+										<DotsThreeVertical class="size-3 text-muted-foreground transition-colors hover:text-foreground" weight="bold" />
 									</EmbeddedIconButton>
 								{/snippet}
 							</DropdownMenu.Trigger>

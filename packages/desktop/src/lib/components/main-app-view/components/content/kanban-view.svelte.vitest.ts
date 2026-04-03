@@ -6,6 +6,10 @@ const kanbanViewPath = resolve(
 	process.cwd(),
 	"src/lib/components/main-app-view/components/content/kanban-view.svelte"
 );
+const kanbanCompactComposerPath = resolve(
+	process.cwd(),
+	"../ui/src/components/kanban/kanban-compact-composer.svelte"
+);
 
 describe("kanban empty-column contract", () => {
 	it("builds groups from a fixed board order with idle", () => {
@@ -76,9 +80,12 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("{@const isClaudeCode = item ? item.agentId === AGENT_IDS.CLAUDE_CODE : false}");
 		expect(source).toContain("{@const showUsage = hasVisibleModelSelectorMetrics(usageTelemetry, isClaudeCode)}");
 		expect(source).toContain("{@const showComposer = item ? isComposerVisible(item) : false}");
-		expect(source).toContain("{@const showFooter = permission !== null || question !== null || showUsage || showComposer}");
+		expect(source).toContain("{@const showFooter = permission !== null || question !== null || showComposer}");
 		expect(source).toContain('{#if item}');
-		expect(source).toContain('<KanbanCard {card} onclick={() => handleCardClick(card.id)} showFooter={showFooter}>');
+		expect(source).toContain('<KanbanCard {card} onclick={() => handleCardClick(card.id)}');
+		expect(source).toContain('showFooter={showFooter}');
+		expect(source).toContain('showTally={showUsage}');
+		expect(source).toContain('flushFooter={showComposer}');
 		expect(source).not.toContain('{#snippet footer()}\n\t\t\t\t\t\t{#if item}');
 	});
 
@@ -108,7 +115,56 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("sessionId={card.id}");
 		expect(source).toContain("agentId={item.agentId}");
 		expect(source).toContain("compact={true}");
+		expect(source).toContain("{#snippet tally()}");
 		expect(source).toContain("{#if showUsage}");
+	});
+
+	it("keeps the tally context above the composer so the composer stays bottom-most", () => {
+		expect(existsSync(kanbanViewPath)).toBe(true);
+		if (!existsSync(kanbanViewPath)) return;
+
+		const source = readFileSync(kanbanViewPath, "utf8");
+		const tallyIndex = source.indexOf("{#snippet tally()}");
+		const composerIndex = source.indexOf("<KanbanCompactComposer");
+
+		expect(source).toContain('<KanbanCard {card} onclick={() => handleCardClick(card.id)}');
+		expect(source).toContain('showFooter={showFooter}');
+		expect(source).toContain('showTally={showUsage}');
+		expect(source).toContain('flushFooter={showComposer}');
+		expect(tallyIndex).toBeGreaterThan(-1);
+		expect(composerIndex).toBeGreaterThan(-1);
+		expect(tallyIndex).toBeLessThan(composerIndex);
+	});
+
+	it("renders the compact composer in an embedded voice layout with a smaller submit button", () => {
+		expect(existsSync(kanbanViewPath)).toBe(true);
+		expect(existsSync(kanbanCompactComposerPath)).toBe(true);
+		if (!existsSync(kanbanViewPath) || !existsSync(kanbanCompactComposerPath)) return;
+
+		const source = readFileSync(kanbanViewPath, "utf8");
+		const composerSource = readFileSync(kanbanCompactComposerPath, "utf8");
+
+		expect(source).toContain('import { CanonicalModeId } from "$lib/acp/types/canonical-mode-id.js"');
+		expect(source).toContain('import { SvelteMap } from "svelte/reactivity"');
+		expect(source).toContain('let cardDrafts = $state(new SvelteMap<string, string>());');
+		expect(source).toContain('item.status === "idle"');
+		expect(source).toContain('function handleComposerModeToggle(sessionId: string, currentModeId: string): void {');
+		expect(source).toContain('currentModeId === CanonicalModeId.PLAN ? CanonicalModeId.BUILD : CanonicalModeId.PLAN');
+		expect(source).toContain('void sessionStore.setMode(sessionId, nextModeId).match(');
+		expect(source).toContain(
+			'{@const isVoiceComposerMode = composerVoiceState !== null && (composerVoiceState.phase === "checking_permission" || composerVoiceState.phase === "recording")}'
+		);
+		expect(source).toContain('onModeToggle={() => handleComposerModeToggle(card.id, item ? getComposerModeLabel(item) : CanonicalModeId.BUILD)}');
+		expect(source).toContain('voiceMode={isVoiceComposerMode}');
+		expect(source).toContain('{#each composerVoiceState.waveform.meterLevels as level, index (index)}');
+		expect(source).toContain('class="kanban-voice-meter flex w-full items-center justify-center gap-px motion-reduce:hidden"');
+		expect(source).toContain('{composerVoiceState.recordingElapsedLabel}');
+		expect(source).toContain('class="h-[17.6px] w-[17.6px] shrink-0 cursor-pointer rounded-full bg-foreground text-background hover:bg-foreground/85"');
+		expect(source).toContain('<IconArrowUp class="h-[8.8px] w-[8.8px]" />');
+		expect(composerSource).toContain("onModeToggle?: () => void;");
+		expect(composerSource).toContain("bg-background/90");
+		expect(composerSource).toContain("px-2");
+		expect(composerSource).toContain("py-0.5");
 	});
 
 	it("renders a compact header session actions menu for kanban cards", () => {

@@ -44,11 +44,13 @@ describe("kanban UI contract", () => {
 		const cardSource = readFileSync(kanbanCardPath, "utf8");
 
 		expect(cardSource).toContain("ProjectLetterBadge");
+		expect(cardSource).toContain("EmbeddedPanelHeader");
+		expect(cardSource).toContain("HeaderCell");
+		expect(cardSource).toContain("HeaderTitleCell");
 		expect(cardSource).toContain("MarkdownDisplay");
 		expect(cardSource).toContain("SegmentedProgress");
 		expect(cardSource).toContain("DiffPill");
 		expect(cardSource).toContain("AgentToolRow");
-		expect(cardSource).toContain("ToolTally");
 		expect(cardSource).toContain("TextShimmer");
 		expect(cardSource).toContain("cursor-pointer");
 		expect(cardSource).toContain("hover:border-border");
@@ -59,7 +61,13 @@ describe("kanban UI contract", () => {
 		expect(cardSource).toContain(
 			'<MarkdownDisplay content={card.previewMarkdown} scrollable={true} class="kanban-markdown-preview text-[10px]" />'
 		);
-		expect(cardSource).toContain('class="flex flex-col gap-1 border-t border-border/40 px-1 py-1.5"');
+		expect(cardSource).toContain('<EmbeddedPanelHeader class="bg-card/50">');
+		expect(cardSource).toContain('<HeaderCell withDivider={false}>');
+		expect(cardSource).toContain('<HeaderTitleCell compactPadding>');
+		expect(cardSource).not.toContain('class="flex items-center gap-1.5 px-2 py-1.5"');
+		expect(cardSource).toContain('class="flex flex-col gap-1 px-1"');
+		expect(cardSource).not.toContain('class="flex flex-col gap-1 border-t border-border/40 px-1"');
+		expect(cardSource).not.toContain('class="flex flex-col gap-1 border-t border-border/40 px-1 py-1.5"');
 		expect(cardSource).not.toContain('class="flex flex-col gap-1 border-t border-border/40 py-1.5"');
 		expect(cardSource).not.toContain(
 			'kanban-markdown-preview overflow-hidden rounded-sm border border-border/40 bg-background/40'
@@ -76,6 +84,7 @@ describe("kanban UI contract", () => {
 		expect(cardSource).toContain("latestTool={card.taskCard.latestTool}");
 		expect(cardSource).toContain("toolCalls={[...card.taskCard.toolCalls]}");
 		expect(cardSource).toContain("{card.todoProgress.label}");
+		expect(cardSource).not.toContain("ToolTally toolCalls={[...card.toolCalls]}");
 		expect(cardSource).not.toContain("AgentToolTask");
 	});
 
@@ -84,13 +93,20 @@ describe("kanban UI contract", () => {
 		if (!existsSync(kanbanCardPath)) return;
 
 		const cardSource = readFileSync(kanbanCardPath, "utf8");
-
 		expect(cardSource).toContain("showFooter?: boolean;");
 		expect(cardSource).toContain("showFooter = false");
+		expect(cardSource).toContain("tally?: Snippet;");
+		expect(cardSource).toContain("showTally?: boolean;");
+		expect(cardSource).toContain("showTally = false");
 		expect(cardSource).toContain("const hasFooterContent = $derived(");
-		expect(cardSource).toContain("hasDiff || card.todoProgress !== null || card.toolCalls.length > 0");
+		expect(cardSource).toContain("hasDiff || card.todoProgress !== null || showTally");
+		expect(cardSource).not.toContain("card.toolCalls.length");
 		expect(cardSource).toContain("{#if showFooter && footer}");
 		expect(cardSource).toContain("{#if hasFooterContent}");
+		expect(cardSource).toContain("{#if tally}");
+		expect(cardSource).toContain("{@render tally()}");
+		expect(cardSource).toContain("{#if flushFooter}");
+		expect(cardSource).not.toContain("card.toolCalls");
 	});
 
 	it("makes the kanban board claim the available width in flex layouts", () => {
