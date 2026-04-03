@@ -70,6 +70,8 @@ export class PanelStore {
 
 	// Track in-flight opens
 	private openingSessionIds = new SvelteSet<string>();
+	private suppressedAutoSessionSignals = new SvelteMap<string, string>();
+	private latestLiveSessionSignals = new SvelteMap<string, string>();
 	private activeFilePanelIdByOwnerPanelId = new SvelteMap<string, string>();
 	private nextTerminalTabCreatedAt = 1;
 
@@ -387,15 +389,90 @@ export class PanelStore {
 		return { ...panel, ...hot };
 	}
 
+	private createSessionPanel(sessionId: string, width: number, autoCreated: boolean): Panel {
+		const session = this.sessionStore.getSessionCold(sessionId);
+		const selectedAgentId = session ? session.agentId : this.agentStore.getDefaultAgentId();
+
+		return {
+			id: crypto.randomUUID(),
+			kind: "agent",
+			ownerPanelId: null,
+			sessionId,
+			autoCreated,
+			width,
+			pendingProjectSelection: false,
+			selectedAgentId,
+			projectPath: session ? session.projectPath : null,
+			agentId: session ? session.agentId : null,
+			sourcePath: session ? session.sourcePath : null,
+			worktreePath: session ? session.worktreePath : null,
+			sessionTitle: session ? session.title : null,
+		};
+	}
+
+	private setPanelAutoCreated(panelId: string, autoCreated: boolean): Panel | null {
+		let updatedPanel: Panel | null = null;
+		this.panels = this.panels.map((panel) => {
+			if (panel.id !== panelId) {
+				return panel;
+			}
+
+			updatedPanel = {
+				id: panel.id,
+				kind: panel.kind,
+				ownerPanelId: panel.ownerPanelId,
+				sessionId: panel.sessionId,
+				autoCreated,
+				width: panel.width,
+				pendingProjectSelection: panel.pendingProjectSelection,
+				selectedAgentId: panel.selectedAgentId,
+				projectPath: panel.projectPath,
+				agentId: panel.agentId,
+				sourcePath: panel.sourcePath,
+				worktreePath: panel.worktreePath,
+				sessionTitle: panel.sessionTitle,
+			};
+
+			return updatedPanel;
+		});
+
+		return updatedPanel;
+	}
+
+	clearAutoSessionSuppression(sessionId: string): void {
+		this.suppressedAutoSessionSignals.delete(sessionId);
+	}
+
+	syncAutoSessionSuppression(sessionId: string, signal: string): boolean {
+		this.latestLiveSessionSignals.set(sessionId, signal);
+		const suppressedSignal = this.suppressedAutoSessionSignals.get(sessionId);
+		if (suppressedSignal === undefined) {
+			return false;
+		}
+		if (suppressedSignal === signal) {
+			return true;
+		}
+		this.suppressedAutoSessionSignals.delete(sessionId);
+		return false;
+	}
+
 	/**
 	 * Open a session in a panel.
 	 * If already open, focuses the existing panel.
 	 */
 	openSession(sessionId: string, width: number): Panel | null {
 		const t0 = performance.now();
+		this.clearAutoSessionSuppression(sessionId);
+
 		// Check if already open
-		const existing = this.panelBySessionId.get(sessionId);
+		let existing = this.panelBySessionId.get(sessionId);
 		if (existing) {
+			if (existing.autoCreated === true) {
+				const promoted = this.setPanelAutoCreated(existing.id, false);
+				if (promoted) {
+					existing = promoted;
+				}
+			}
 			this.focusedPanelId = existing.id;
 			if (this.viewMode === "single" || this.fullscreenPanelId !== null) {
 				this.switchFullscreen(existing.id);
@@ -410,26 +487,9 @@ export class PanelStore {
 		}
 		this.openingSessionIds.add(sessionId);
 
-		// Get agent ID from session if available, otherwise use default
-		const session = this.sessionStore.getSessionCold(sessionId);
-		const selectedAgentId = session?.agentId ?? this.agentStore.getDefaultAgentId();
+		const panel = this.createSessionPanel(sessionId, width, false);
 
-		const panel: Panel = {
-			id: crypto.randomUUID(),
-			kind: "agent",
-			ownerPanelId: null,
-			sessionId,
-			width,
-			pendingProjectSelection: false,
-			selectedAgentId,
-			projectPath: session?.projectPath ?? null,
-			agentId: session?.agentId ?? null,
-			sourcePath: session?.sourcePath ?? null,
-			worktreePath: session?.worktreePath ?? null,
-			sessionTitle: session?.title ?? null,
-		};
-
-		this.panels = [panel, ...this.panels];
+		this.panels = [panel].concat(this.panels);
 		this.focusedPanelId = panel.id;
 
 		// If in fullscreen mode, switch fullscreen to the new panel
@@ -447,6 +507,39 @@ export class PanelStore {
 			sessionId,
 			panelId: panel.id,
 			elapsed_ms: Math.round(performance.now() - t0),
+		});
+		return panel;
+	}
+
+	/**
+	 * Ensure a session has a backing panel without changing focus or layout.
+	 * If already open, returns the existing panel.
+	 */
+	materializeSessionPanel(sessionId: string, width: number): Panel | null {
+		const existing = this.panelBySessionId.get(sessionId);
+		if (existing) {
+			return existing;
+		}
+
+		if (this.openingSessionIds.has(sessionId)) {
+			logger.debug("Panel already being opened, skipping duplicate background materialization", {
+				sessionId,
+			});
+			return null;
+		}
+		this.openingSessionIds.add(sessionId);
+
+		const panel = this.createSessionPanel(sessionId, width, true);
+		this.panels = this.panels.concat(panel);
+		this.onPersist();
+
+		queueMicrotask(() => {
+			this.openingSessionIds.delete(sessionId);
+		});
+
+		logger.debug("Materialized session panel in background", {
+			sessionId,
+			panelId: panel.id,
 		});
 		return panel;
 	}
@@ -533,6 +626,17 @@ export class PanelStore {
 		if (panel.kind === "browser") {
 			this.closeBrowserPanel(panelId);
 			return;
+		}
+
+		if (panel.kind === "agent" && panel.autoCreated === true && panel.sessionId) {
+			const signal = this.latestLiveSessionSignals.get(panel.sessionId);
+			if (signal !== undefined) {
+				this.suppressedAutoSessionSignals.set(panel.sessionId, signal);
+			}
+		}
+
+		if (panel.kind === "agent" && panel.sessionId) {
+			this.openingSessionIds.delete(panel.sessionId);
 		}
 
 		if (!this.panels.some((candidate) => candidate.id === panelId)) return;

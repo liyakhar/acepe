@@ -44,7 +44,7 @@ export class PanelHandler {
 		const panel = this.panelStore.workspacePanels.find((candidate) => candidate.id === panelId);
 
 		// Disconnect session if panel has one
-		if (panel?.kind === "agent" && panel.sessionId) {
+		if (panel?.kind === "agent" && panel.sessionId && panel.autoCreated !== true) {
 			this.sessionStore.disconnectSession(panel.sessionId);
 		}
 

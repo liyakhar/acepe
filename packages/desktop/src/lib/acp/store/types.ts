@@ -199,6 +199,7 @@ export interface Panel {
 	readonly kind: "agent";
 	readonly ownerPanelId: null;
 	readonly sessionId: string | null;
+	readonly autoCreated?: boolean;
 	readonly width: number;
 	readonly pendingProjectSelection: boolean;
 	readonly selectedAgentId: string | null;
@@ -225,6 +226,7 @@ export interface AgentWorkspacePanel extends WorkspacePanelBase {
 	readonly kind: "agent";
 	readonly ownerPanelId: null;
 	readonly sessionId: string | null;
+	readonly autoCreated?: boolean;
 	readonly pendingProjectSelection: boolean;
 	readonly selectedAgentId: string | null;
 	readonly agentId: string | null;
@@ -312,6 +314,7 @@ export interface PersistedAgentWorkspacePanelState extends PersistedWorkspacePan
 	readonly kind: "agent";
 	readonly ownerPanelId: null;
 	readonly sessionId: string | null;
+	readonly autoCreated?: boolean;
 	readonly pendingProjectSelection: boolean;
 	readonly selectedAgentId: string | null;
 	readonly agentId: string | null;
@@ -535,6 +538,7 @@ export interface PersistedReviewFullscreenState {
 export interface PersistedPanelState {
 	readonly id?: string;
 	readonly sessionId: string | null;
+	readonly autoCreated?: boolean;
 	readonly width: number;
 	readonly pendingProjectSelection: boolean;
 	readonly selectedAgentId: string | null;

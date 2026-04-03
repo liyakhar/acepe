@@ -235,6 +235,7 @@ export function serializeWorkspacePanels(
 				width: panel.width,
 				ownerPanelId: panel.ownerPanelId,
 				sessionId: panel.sessionId,
+				autoCreated: panel.autoCreated === true ? true : undefined,
 				pendingProjectSelection: panel.pendingProjectSelection,
 				selectedAgentId: panel.selectedAgentId,
 				agentId: panel.agentId,
@@ -323,6 +324,7 @@ export function hydratePersistedWorkspacePanels(
 				width: clampedWidth,
 				ownerPanelId: panel.ownerPanelId,
 				sessionId: panel.sessionId,
+				autoCreated: panel.autoCreated === true ? true : undefined,
 				pendingProjectSelection: panel.pendingProjectSelection,
 				selectedAgentId: panel.selectedAgentId,
 				agentId: panel.agentId,
@@ -474,7 +476,7 @@ export class WorkspaceStore {
 				(panel) => panel.kind === "agent" || panel.ownerPanelId === null
 			);
 			const state: PersistedWorkspaceState = {
-				version: 11,
+				version: 12,
 				workspacePanels: serializeWorkspacePanels(this.panelStore.workspacePanels),
 				panels: this.panelStore.panels.map((p) => {
 					// Use immutable session identity when possible to avoid reconstructing full session objects.
@@ -489,6 +491,7 @@ export class WorkspaceStore {
 					return {
 						id: p.id,
 						sessionId: p.sessionId,
+						autoCreated: p.autoCreated === true ? true : undefined,
 						width: p.width,
 						pendingProjectSelection: p.pendingProjectSelection,
 						selectedAgentId: p.selectedAgentId,
@@ -686,6 +689,7 @@ export class WorkspaceStore {
 				kind: "agent",
 				ownerPanelId: null,
 				sessionId: p.sessionId,
+				autoCreated: p.autoCreated === true ? true : undefined,
 				width: p.width,
 				pendingProjectSelection: p.pendingProjectSelection || false,
 				// For panels without a session, don't restore agent - let user select via buttons

@@ -178,6 +178,19 @@ panelStore.onPanelFocused = (panelId) => {
 // Get connection store (created earlier, now accessible)
 const connectionStore = getConnectionStore();
 
+function focusOrOpenSessionPanel(sessionId: string): void {
+const existingPanel = panelStore.getPanelBySessionId(sessionId);
+if (existingPanel) {
+panelStore.focusPanel(existingPanel.id);
+return;
+}
+
+const openedPanel = panelStore.openSession(sessionId, DEFAULT_PANEL_WIDTH);
+if (openedPanel) {
+panelStore.focusPanel(openedPanel.id);
+}
+}
+
 function registerQuestion(question: QuestionRequest): void {
 	const backfill = getQuestionToolCallBackfill(
 		question,
@@ -214,8 +227,7 @@ sessionStore.setCallbacks({
 				} else if (actionId === "deny") {
 					permissionStore.reply(permission.id, "reject");
 				} else if (actionId === "view") {
-					const panel = panelStore.getPanelBySessionId(permission.sessionId);
-					if (panel) panelStore.focusPanel(panel.id);
+					focusOrOpenSessionPanel(permission.sessionId);
 				}
 			},
 			{
@@ -306,7 +318,7 @@ sessionStore.setCallbacks({
 			},
 			(actionId) => {
 				if (actionId === "view") {
-					panelStore.focusPanel(panel.id);
+					focusOrOpenSessionPanel(sessionId);
 				}
 			},
 			{

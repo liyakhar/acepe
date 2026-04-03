@@ -76,6 +76,25 @@ describe("PanelHandler", () => {
 			expect(mockPanelStore.closePanel).toHaveBeenCalledWith("panel-2");
 		});
 
+		it("does not disconnect an auto-created live panel session when dismissing it", () => {
+			mockPanelStore.panels = [{ id: "panel-3", sessionId: "session-3", autoCreated: true }] as any;
+			(mockPanelStore as any).workspacePanels = [
+				{
+					id: "panel-3",
+					sessionId: "session-3",
+					autoCreated: true,
+					kind: "agent",
+					ownerPanelId: null,
+				},
+			];
+
+			handler.closePanel("panel-3");
+
+			expect(mockSessionStore.disconnectSession).not.toHaveBeenCalled();
+			expect(mockConnectionStore.destroy).toHaveBeenCalledWith("panel-3");
+			expect(mockPanelStore.closePanel).toHaveBeenCalledWith("panel-3");
+		});
+
 		it("should handle non-existent panel gracefully", () => {
 			mockPanelStore.panels = [];
 			(mockPanelStore as any).workspacePanels = [];
