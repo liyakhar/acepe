@@ -11,6 +11,7 @@ import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";
 import type { ToolKind } from "../../types/tool-kind.js";
 import { getToolStatus } from "../../utils/tool-state-utils.js";
+import { toAgentToolKind } from "./tool-kind-to-agent-tool-kind.js";
 
 interface Props {
 	toolCall: ToolCall;
@@ -31,23 +32,7 @@ const title = $derived(getToolKindTitle(resolvedKind, toolCall, turnState));
 const subtitle = $derived(getToolKindSubtitle(resolvedKind, toolCall));
 const filePath = $derived(getToolKindFilePath(resolvedKind, toolCall));
 
-// Map desktop ToolKind to shared AgentToolKind
-const SHARED_KINDS = new Set<string>([
-	"read",
-	"edit",
-	"write",
-	"execute",
-	"search",
-	"fetch",
-	"web_search",
-	"think",
-	"task",
-	"other",
-]);
-
-const agentKind = $derived<AgentToolKind>(
-	SHARED_KINDS.has(resolvedKind) ? (resolvedKind as AgentToolKind) : "other"
-);
+const agentKind = $derived<AgentToolKind>(toAgentToolKind(resolvedKind));
 
 // Map tool status to AgentToolStatus
 const agentStatus = $derived.by(() => {

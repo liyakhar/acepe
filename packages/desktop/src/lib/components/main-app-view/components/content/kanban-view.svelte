@@ -47,6 +47,7 @@
 	import { WorktreeToggleControl } from "$lib/acp/components/worktree-toggle/index.js";
 	import { getWorktreeDefaultStore } from "$lib/acp/components/worktree-toggle/worktree-default-store.svelte.js";
 	import { loadWorktreeEnabled } from "$lib/acp/components/worktree-toggle/worktree-storage.js";
+	import { toAgentToolKind } from "$lib/acp/components/tool-calls/tool-kind-to-agent-tool-kind.js";
 	import { getToolCompactDisplayText } from "$lib/acp/registry/tool-kind-ui-registry.js";
 	import { normalizeTitleForDisplay } from "$lib/acp/store/session-title-policy.js";
 	import {
@@ -517,7 +518,7 @@
 				: "pending" as const;
 			return {
 				id: tc.id,
-				kind: toolDisplay.toolKind ? toolDisplay.toolKind : undefined,
+				kind: toAgentToolKind(toolDisplay.toolKind),
 				title: displayTitle ? displayTitle : tc.name,
 				filePath,
 				status,
