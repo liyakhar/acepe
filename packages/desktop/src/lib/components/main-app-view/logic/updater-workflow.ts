@@ -14,6 +14,20 @@ export function predownloadUpdate(
 	return ResultAsync.fromPromise(update.download(onEvent), toError).map(() => update.version);
 }
 
+export function downloadAndInstallUpdate(
+	update: PreparedUpdateHandle,
+	onEvent: (event: DownloadEvent) => void,
+	relaunchApp: () => Promise<void>
+): ResultAsync<string, Error> {
+	return ResultAsync.fromPromise(update.download(onEvent), toError)
+		.map(() => update.version)
+		.andThen((version) =>
+			ResultAsync.fromPromise(update.install(), toError)
+				.andThen(() => ResultAsync.fromPromise(relaunchApp(), toError))
+				.map(() => version)
+		);
+}
+
 export function installDownloadedUpdate(
 	update: PreparedUpdateHandle,
 	relaunchApp: () => Promise<void>

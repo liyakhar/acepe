@@ -1,6 +1,6 @@
 import { ResultAsync } from "neverthrow";
 
-import type { SoundEffect } from "../types/sounds.js";
+import { SoundEffect } from "../types/sounds.js";
 
 /**
  * Pre-decoded audio buffer cache.
@@ -26,6 +26,13 @@ function getAudioContext(): AudioContext {
 	}
 	warmAudioContext(audioContext);
 	return audioContext;
+}
+
+export function shouldPlaySound(
+	sound: SoundEffect,
+	isDevMode: boolean = import.meta.env.DEV,
+): boolean {
+	return !(isDevMode && sound === SoundEffect.AppStart);
 }
 
 /**
@@ -59,6 +66,10 @@ export function preloadSound(sound: SoundEffect): void {
  * Sound files are located in /static/sounds/
  */
 export function playSound(sound: SoundEffect): void {
+	if (!shouldPlaySound(sound)) {
+		return;
+	}
+
 	const cached = bufferCache.get(sound);
 	if (cached) {
 		const ctx = getAudioContext();

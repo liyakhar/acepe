@@ -10,4 +10,12 @@ describe("update available page structure", () => {
 		expect(source).not.toContain("const UPDATE_PROGRESS_SEGMENT_COUNT = 72;");
 		expect(source).toContain("fillWidth={true}");
 	});
+
+	it("only shows install copy when the install phase has actually started", () => {
+		expect(source).toContain("isUpdaterInstallInProgress(updaterState)");
+		expect(source).not.toContain(
+			"updaterState.kind === \"installing\" || (downloadPercent !== null && downloadPercent >= 100)"
+		);
+		expect(source).not.toContain("{#if downloadPercent !== null && downloadPercent >= 100}");
+	});
 });

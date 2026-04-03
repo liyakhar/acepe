@@ -11,7 +11,10 @@
 	} from "@paper-design/shaders";
 	import RefreshCw from "@lucide/svelte/icons/refresh-cw";
 	import { onDestroy, onMount } from "svelte";
-	import type { UpdaterBannerState } from "$lib/components/main-app-view/logic/updater-state.js";
+	import {
+		isUpdaterInstallInProgress,
+		type UpdaterBannerState,
+	} from "$lib/components/main-app-view/logic/updater-state.js";
 	import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Spinner } from "$lib/components/ui/spinner/index.js";
@@ -43,7 +46,7 @@
 	);
 
 	const isInstalling = $derived(
-		updaterState.kind === "installing" || (downloadPercent !== null && downloadPercent >= 100)
+		isUpdaterInstallInProgress(updaterState)
 	);
 
 	function formatBytes(bytes: number): string {
@@ -179,7 +182,7 @@
 							<span class="tabular-nums">
 								{formatBytes(updaterState.downloadedBytes)}{#if updaterState.totalBytes} / {formatBytes(updaterState.totalBytes)}{/if}
 							</span>
-							{#if downloadPercent !== null && downloadPercent >= 100}
+							{#if isInstalling}
 								<span>{m.update_installing()}</span>
 							{/if}
 						</div>

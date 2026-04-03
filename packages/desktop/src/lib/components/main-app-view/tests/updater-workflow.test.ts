@@ -2,6 +2,7 @@ import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import { describe, expect, it } from "bun:test";
 
 import {
+	downloadAndInstallUpdate,
 	installDownloadedUpdate,
 	predownloadUpdate,
 	type PreparedUpdateHandle,
@@ -59,5 +60,36 @@ describe("updater-workflow", () => {
 		);
 
 		expect(order).toEqual(["install", "relaunch"]);
+	});
+
+	it("downloads installs and relaunches for startup updates", async () => {
+		const order: string[] = [];
+		const events: DownloadEvent[] = [];
+		const update: PreparedUpdateHandle = {
+			version: "1.2.3",
+			download: async (onEvent) => {
+				order.push("download");
+				onEvent?.({ event: "Started", data: { contentLength: 100 } });
+				onEvent?.({ event: "Finished" });
+			},
+			install: async () => {
+				order.push("install");
+			},
+		};
+
+		const version = await downloadAndInstallUpdate(update, (event) => {
+			events.push(event);
+		}, async () => {
+			order.push("relaunch");
+		}).match(
+			(result) => result,
+			(error) => {
+				throw error;
+			}
+		);
+
+		expect(version).toBe("1.2.3");
+		expect(order).toEqual(["download", "install", "relaunch"]);
+		expect(events.map((event) => event.event)).toEqual(["Started", "Finished"]);
 	});
 });

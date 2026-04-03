@@ -84,10 +84,11 @@ import {
 	createDownloadingUpdaterState,
 	createInstallingUpdaterState,
 	getUpdaterPrimaryAction,
-	shouldShowUpdateAvailableOverlay,
+	shouldShowBlockingUpdaterOverlay,
 	type UpdaterBannerState,
 } from "./main-app-view/logic/updater-state.js";
 import {
+	downloadAndInstallUpdate,
 	installDownloadedUpdate,
 	predownloadUpdate,
 } from "./main-app-view/logic/updater-workflow.js";
@@ -179,16 +180,16 @@ panelStore.onPanelFocused = (panelId) => {
 const connectionStore = getConnectionStore();
 
 function focusOrOpenSessionPanel(sessionId: string): void {
-const existingPanel = panelStore.getPanelBySessionId(sessionId);
-if (existingPanel) {
-panelStore.focusPanel(existingPanel.id);
-return;
-}
+	const existingPanel = panelStore.getPanelBySessionId(sessionId);
+	if (existingPanel) {
+		panelStore.focusPanel(existingPanel.id);
+		return;
+	}
 
-const openedPanel = panelStore.openSession(sessionId, DEFAULT_PANEL_WIDTH);
-if (openedPanel) {
-panelStore.focusPanel(openedPanel.id);
-}
+	const openedPanel = panelStore.openSession(sessionId, DEFAULT_PANEL_WIDTH);
+	if (openedPanel) {
+		panelStore.focusPanel(openedPanel.id);
+	}
 }
 
 function registerQuestion(question: QuestionRequest): void {
@@ -255,8 +256,7 @@ sessionStore.setCallbacks({
 			(actionId) => {
 				if (!questionStore.pending.has(question.id)) return; // stale
 				if (actionId === "view") {
-					const panel = panelStore.getPanelBySessionId(question.sessionId);
-					if (panel) panelStore.focusPanel(panel.id);
+					focusOrOpenSessionPanel(question.sessionId);
 				}
 			},
 			{
@@ -471,11 +471,13 @@ async function handleOpenFolder() {
 // Start with null - will be set to "checking" when update check runs (only in production)
 let appVersion = $state<string | null>(null);
 let updaterState = $state<UpdaterBannerState>(createIdleUpdaterState());
-let showUpdateAvailable = $state(false);
+let blockAppForUpdate = $state(false);
 let availableUpdate = $state<Awaited<ReturnType<typeof check>> | null>(null);
 let updatePollTimer = $state<ReturnType<typeof setInterval> | null>(null);
 let devUpdateStartTimer = $state<ReturnType<typeof setTimeout> | null>(null);
 let devUpdateStepTimer = $state<ReturnType<typeof setInterval> | null>(null);
+
+type UpdateCheckTrigger = "startup" | "polling";
 
 const DEV_UPDATE_VERSION = "0.0.0-dev";
 const DEV_UPDATE_TOTAL_BYTES = 48 * 1024 * 1024;
@@ -496,7 +498,7 @@ function clearDevUpdateSimulation(): void {
 
 function startDevUpdateSimulation(): void {
 	clearDevUpdateSimulation();
-	showUpdateAvailable = true;
+	blockAppForUpdate = true;
 	updaterState = createCheckingUpdaterState();
 
 	devUpdateStartTimer = setTimeout(() => {
@@ -532,6 +534,7 @@ function startDevUpdateSimulation(): void {
 					clearInterval(timer);
 				}
 				devUpdateStepTimer = null;
+				updaterState = createInstallingUpdaterState(DEV_UPDATE_VERSION);
 			}
 		}, DEV_UPDATE_STEP_DELAY_MS);
 	}, DEV_UPDATE_START_DELAY_MS);
@@ -593,7 +596,8 @@ const commandPalette = useAdvancedCommandPalette({
 	},
 });
 
-async function checkForAppUpdate(): Promise<void> {
+async function checkForAppUpdate(trigger: UpdateCheckTrigger): Promise<void> {
+	blockAppForUpdate = trigger === "startup";
 	updaterState = createCheckingUpdaterState();
 	const result = await ResultAsync.fromPromise(check(), (e) => e as Error).match(
 		(update) => update,
@@ -608,13 +612,22 @@ async function checkForAppUpdate(): Promise<void> {
 		availableUpdate = null;
 		if (updaterState.kind !== "error") {
 			updaterState = createIdleUpdaterState();
-			showUpdateAvailable = false;
+		}
+		if (trigger !== "startup") {
+			blockAppForUpdate = false;
+		}
+		if (updaterState.kind === "idle") {
+			blockAppForUpdate = false;
 		}
 		return;
 	}
 
 	availableUpdate = result;
 	logger.info("Update available", { version: result.version });
+	if (trigger === "startup") {
+		await downloadAndInstallAvailableUpdate();
+		return;
+	}
 	void predownloadAvailableUpdate();
 }
 
@@ -623,7 +636,7 @@ async function predownloadAvailableUpdate(): Promise<void> {
 		return;
 	}
 
-	showUpdateAvailable = true;
+	blockAppForUpdate = false;
 	updaterState = createDownloadingUpdaterState(availableUpdate.version);
 	await predownloadUpdate(availableUpdate, (event: DownloadEvent) => {
 		updaterState = applyUpdaterDownloadEvent(updaterState, event);
@@ -631,7 +644,6 @@ async function predownloadAvailableUpdate(): Promise<void> {
 		(version) => {
 			logger.info("Update download finished", { version });
 			updaterState = createAvailableUpdaterState(version);
-			showUpdateAvailable = false;
 		},
 		(error) => {
 			availableUpdate = null;
@@ -641,12 +653,38 @@ async function predownloadAvailableUpdate(): Promise<void> {
 	);
 }
 
+async function downloadAndInstallAvailableUpdate(): Promise<void> {
+	if (!availableUpdate) {
+		return;
+	}
+
+	const update = availableUpdate;
+	updaterState = createDownloadingUpdaterState(update.version);
+	await downloadAndInstallUpdate(update, (event: DownloadEvent) => {
+		if (event.event === "Finished") {
+			updaterState = createInstallingUpdaterState(update.version);
+			return;
+		}
+
+		updaterState = applyUpdaterDownloadEvent(updaterState, event);
+	}, relaunch).match(
+		(version) => {
+			logger.info("Startup update installed", { version });
+		},
+		(error) => {
+			availableUpdate = null;
+			updaterState = createErrorUpdaterState(error.message);
+			logger.error("Startup update install failed", { error: error.message });
+		}
+	);
+}
+
 async function installAvailableUpdate(): Promise<void> {
 	if (!availableUpdate) {
 		return;
 	}
 
-	showUpdateAvailable = true;
+	blockAppForUpdate = false;
 	updaterState = createInstallingUpdaterState(availableUpdate.version);
 	await installDownloadedUpdate(availableUpdate, relaunch).match(
 		() => undefined,
@@ -676,18 +714,18 @@ onMount(async () => {
 	if (import.meta.env.DEV) {
 		updaterState = createAvailableUpdaterState(DEV_UPDATE_VERSION);
 	} else {
-		await checkForAppUpdate();
+		await checkForAppUpdate("startup");
 		updatePollTimer = setInterval(
 			() => {
 				if (
 					updaterState.kind === "downloading" ||
 					updaterState.kind === "installing" ||
-					showUpdateAvailable ||
+					blockAppForUpdate ||
 					availableUpdate !== null
 				) {
 					return;
 				}
-				void checkForAppUpdate();
+				void checkForAppUpdate("polling");
 			},
 			10 * 60 * 1000
 		);
@@ -899,7 +937,7 @@ onDestroy(() => {
 					void installAvailableUpdate();
 				}}
 				onRetryUpdateClick={() => {
-					void checkForAppUpdate();
+					void checkForAppUpdate("polling");
 				}}
 				onDevShowUpdatePage={() => {
 					startDevUpdateSimulation();
@@ -982,7 +1020,7 @@ onDestroy(() => {
 	<!-- Database Manager Modal -->
 	{#if viewState.sqlStudioModalOpen}
 		<div
-			class="fixed inset-0 z-[9997] flex items-center justify-center bg-black/55 p-2 sm:p-4 md:p-5"
+			class="fixed inset-0 z-[var(--app-modal-z)] flex items-center justify-center bg-black/55 p-2 sm:p-4 md:p-5"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Database Manager"
@@ -1012,7 +1050,7 @@ onDestroy(() => {
 	{#if viewState.reviewFullscreenSessionId}
 		{#key viewState.reviewFullscreenSessionId}
 			<div
-				class="fixed inset-0 z-[9997] bg-background"
+				class="fixed inset-0 z-[var(--app-modal-z)] bg-background"
 				role="dialog"
 				aria-modal={viewState.reviewFullscreenOpen ? "true" : undefined}
 				aria-label="Review changes"
@@ -1039,7 +1077,7 @@ onDestroy(() => {
 	<!-- Settings Modal -->
 	{#if viewState.settingsModalOpen}
 		<div
-			class="fixed inset-0 z-[9997] flex items-center justify-center bg-black/55 p-2 sm:p-4 md:p-5"
+			class="fixed inset-0 z-[var(--app-modal-z)] flex items-center justify-center bg-black/55 p-2 sm:p-4 md:p-5"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Settings"
@@ -1081,7 +1119,7 @@ onDestroy(() => {
 	<!-- Onboarding Overlay (shows on first launch: splash → agents → projects → done) -->
 	{#if viewState.showSplash === true}
 		<div
-			class="fixed inset-0 z-[9999]"
+			class="fixed inset-0 z-[var(--app-blocking-z)]"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Welcome to Acepe"
@@ -1095,14 +1133,16 @@ onDestroy(() => {
 		</div>
 	{/if}
 
-	<!-- Auto-update overlay (shows during checking, downloading, error) -->
-	{#if showUpdateAvailable && shouldShowUpdateAvailableOverlay(updaterState)}
+	<!-- Blocking startup update overlay (startup and dev simulation only) -->
+	{#if blockAppForUpdate && shouldShowBlockingUpdaterOverlay(updaterState)}
 		<div
-			class="fixed inset-0 z-[9998]"
+			class="fixed inset-0 z-[var(--app-elevated-z)]"
 			role="dialog"
 			aria-modal="true"
 			aria-label={updaterState.kind === "checking"
 				? m.update_checking()
+				: updaterState.kind === "installing"
+					? m.update_installing()
 				: updaterState.kind === "error"
 					? m.update_error()
 					: m.update_downloading()}
@@ -1114,11 +1154,11 @@ onDestroy(() => {
 						startDevUpdateSimulation();
 						return;
 					}
-					void checkForAppUpdate();
+					void checkForAppUpdate("startup");
 				}}
 				onDismiss={import.meta.env.DEV ? () => {
 					clearDevUpdateSimulation();
-					showUpdateAvailable = false;
+					blockAppForUpdate = false;
 					updaterState = createAvailableUpdaterState(DEV_UPDATE_VERSION);
 				} : undefined}
 			/>

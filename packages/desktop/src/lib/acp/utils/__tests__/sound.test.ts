@@ -33,6 +33,14 @@ describe("sound utilities", () => {
 		delete (globalThis as Record<string, unknown>).Audio;
 	});
 
+	it("skips the startup sound in dev mode without muting other sounds", async () => {
+		const { shouldPlaySound } = await import(`../sound.js?case=dev-guard-${Date.now()}`);
+
+		expect(shouldPlaySound(SoundEffect.AppStart, true)).toBe(false);
+		expect(shouldPlaySound(SoundEffect.Notification, true)).toBe(true);
+		expect(shouldPlaySound(SoundEffect.AppStart, false)).toBe(true);
+	});
+
 	it("warms suspended audio context before cached playback", async () => {
 		const fakeContext = new FakeAudioContext();
 		const fetchMock = vi.fn(async () => ({
