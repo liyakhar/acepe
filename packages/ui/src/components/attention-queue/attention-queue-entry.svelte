@@ -28,6 +28,7 @@ interface Props {
 		filePath?: string;
 		status: AgentToolStatus;
 	} | null;
+	taskSubagentTools?: readonly AgentToolEntry[];
 	selected?: boolean;
 	onSelect: () => void;
 	mode: ActivityEntryMode;
@@ -80,6 +81,7 @@ interface Props {
 let {
 	selected = false,
 	latestTaskSubagentTool = null,
+	taskSubagentTools = [],
 	onSelect,
 	mode,
 	title,
@@ -136,7 +138,11 @@ const taskWidgetSummary = $derived.by(() => {
 
 	return null;
 });
-const taskTallyToolCalls = $derived.by((): AgentToolEntry[] => {
+const taskWidgetToolCalls = $derived.by((): AgentToolEntry[] => {
+	if (taskSubagentTools.length > 0) {
+		return [...taskSubagentTools];
+	}
+
 	if (!showTaskSubagentList || taskSubagentSummaries.length === 0) {
 		return [];
 	}
@@ -157,7 +163,7 @@ const hasMainRowContent = $derived(
 			toolContent ||
 			statusText ||
 			todoProgress ||
-			taskTallyToolCalls.length > 0
+			taskWidgetToolCalls.length > 0
 	)
 );
 const questionIconClassName = $derived(currentQuestionAnswered ? "text-success" : "text-primary");
@@ -210,7 +216,7 @@ const showTaskWidget = $derived(taskWidgetSummary !== null);
 							summary={taskWidgetSummary}
 							isStreaming={isStreaming}
 							latestTool={latestTaskSubagentTool}
-							toolCalls={taskTallyToolCalls}
+							toolCalls={taskWidgetToolCalls}
 						/>
 					</div>
 

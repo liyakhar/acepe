@@ -1,5 +1,6 @@
 import type { ToolArguments } from "../../../services/converted-session-types.js";
 import type { PermissionRequest } from "../../types/permission.js";
+import { makeWorkspaceRelative } from "../../utils/path-utils.js";
 
 type PermissionRawInput = {
 	command?: string | null;
@@ -58,6 +59,12 @@ const TOOL_KIND_LABELS: Record<string, string> = {
 	planMode: "Plan",
 	toolSearch: "Tool Search",
 };
+
+export interface CompactPermissionDisplay {
+	readonly label: string;
+	readonly command: string | null;
+	readonly filePath: string | null;
+}
 
 export function extractPermissionToolKind(permission: PermissionRequest): string {
 	const metadata = getMetadata(permission);
@@ -118,4 +125,21 @@ export function extractPermissionFilePath(permission: PermissionRequest): string
 	if (rawInputPath) return rawInputPath;
 
 	return extractPathFromPermissionLabel(permission.permission);
+}
+
+export function extractCompactPermissionDisplay(
+	permission: PermissionRequest,
+	projectPath?: string | null,
+): CompactPermissionDisplay {
+	const command = extractPermissionCommand(permission);
+	const rawFilePath = command ? null : extractPermissionFilePath(permission);
+	const filePath = rawFilePath
+		? makeWorkspaceRelative(rawFilePath, projectPath ? projectPath : "")
+		: null;
+
+	return {
+		label: extractPermissionToolKind(permission),
+		command,
+		filePath,
+	};
 }

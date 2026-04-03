@@ -9,14 +9,17 @@ import {
 	formatTokenCountCompact,
 	formatTokenUsageCompact,
 	getContextUsagePercent,
+	hasVisibleModelSelectorMetrics,
 } from "./model-selector.metrics-chip.logic.js";
 
 interface Props {
 	sessionId: string | null;
 	agentId?: string | null;
+	compact?: boolean;
+	hideLabel?: boolean;
 }
 
-let { sessionId, agentId = null }: Props = $props();
+let { sessionId, agentId = null, compact = false, hideLabel = false }: Props = $props();
 
 const sessionStore = getSessionStore();
 
@@ -28,7 +31,7 @@ const usageTelemetry = $derived.by(() => {
 const contextWindow = $derived(usageTelemetry?.contextWindowSize ?? null);
 const isClaudeCode = $derived(agentId === AGENT_IDS.CLAUDE_CODE);
 
-const showChip = $derived(usageTelemetry != null);
+const showChip = $derived(hasVisibleModelSelectorMetrics(usageTelemetry, isClaudeCode));
 const showSpend = $derived(usageTelemetry != null && usageTelemetry.sessionSpendUsd > 0);
 const spendText = $derived(
 	usageTelemetry != null ? `$${usageTelemetry.sessionSpendUsd.toFixed(2)}` : ""
@@ -46,7 +49,7 @@ const claudeUsageText = $derived.by(() => {
 	if (total != null && total >= 0) return formatTokenCountCompact(total);
 	return "0";
 });
-const usageSegments = $derived(createContextUsageSegments(percent, 10));
+const usageSegments = $derived(createContextUsageSegments(percent, compact ? 8 : 10));
 const statusLabel = $derived(
 	isClaudeCode ? "Context window usage" : "Session spend and context usage"
 );
@@ -73,48 +76,65 @@ const tooltipLines = $derived.by(() => {
 });
 </script>
 
-{#if showChip}
-	<Tooltip.Root>
-		<Tooltip.Trigger>
-			<div
-				class="flex h-7 items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground"
-				role="status"
-				aria-label={statusLabel}
-			>
-				{#if isClaudeCode}
-					<span class="font-mono font-medium tabular-nums">{claudeUsageText}</span>
-				{:else if showSpend}
-					<span class="font-mono font-medium tabular-nums">{spendText}</span>
-				{/if}
-				{#if hasContextUsage}
-					<div class="context-tally flex items-center gap-[2px]" aria-hidden="true">
-						{#each usageSegments as isFilled, index (index)}
-							<span
-								class="context-tally-bar"
-								class:is-filled={isFilled}
-								style={isFilled ? `background-color: ${Colors.purple};` : undefined}
-							></span>
-						{/each}
-					</div>
-				{/if}
-			</div>
-		</Tooltip.Trigger>
-		<Tooltip.Content>
-			<div class="flex flex-col gap-0.5 text-xs">
-				{#if hasContextUsage}
-					<span class="font-medium text-foreground">Context window</span>
-				{/if}
-				{#each tooltipLines as line, i (i)}
-					<span>{line}</span>
+{#snippet chipContent()}
+	<div
+		class="flex items-center text-muted-foreground {compact
+			? 'h-5 gap-1 px-0.5 text-[10px]'
+			: 'h-7 gap-1.5 px-1.5 text-[11px]'}"
+		role="status"
+		aria-label={statusLabel}
+	>
+		{#if !hideLabel}
+			{#if isClaudeCode}
+				<span class="font-mono font-medium tabular-nums">{claudeUsageText}</span>
+			{:else if showSpend}
+				<span class="font-mono font-medium tabular-nums">{spendText}</span>
+			{/if}
+		{/if}
+		{#if hasContextUsage}
+			<div class="context-tally flex items-center gap-[2px]" class:context-tally-compact={compact} aria-hidden="true">
+				{#each usageSegments as isFilled, index (index)}
+					<span
+						class="context-tally-bar"
+						class:context-tally-bar-compact={compact}
+						class:is-filled={isFilled}
+						style={isFilled ? `background-color: ${Colors.purple};` : undefined}
+					></span>
 				{/each}
 			</div>
-		</Tooltip.Content>
-	</Tooltip.Root>
+		{/if}
+	</div>
+{/snippet}
+
+{#if showChip}
+	{#if compact}
+		{@render chipContent()}
+	{:else}
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				{@render chipContent()}
+			</Tooltip.Trigger>
+			<Tooltip.Content>
+				<div class="flex flex-col gap-0.5 text-xs">
+					{#if hasContextUsage}
+						<span class="font-medium text-foreground">Context window</span>
+					{/if}
+					{#each tooltipLines as line, i (i)}
+						<span>{line}</span>
+					{/each}
+				</div>
+			</Tooltip.Content>
+		</Tooltip.Root>
+	{/if}
 {/if}
 
 <style>
 	.context-tally {
 		min-width: fit-content;
+	}
+
+	.context-tally-compact {
+		gap: 1px;
 	}
 
 	.context-tally-bar {
@@ -124,6 +144,11 @@ const tooltipLines = $derived.by(() => {
 		background-color: color-mix(in srgb, var(--border) 55%, transparent);
 		transition: background-color 160ms ease-out, opacity 160ms ease-out, transform 160ms ease-out;
 		opacity: 0.55;
+	}
+
+	.context-tally-bar-compact {
+		width: 2px;
+		height: 8px;
 	}
 
 	.context-tally-bar.is-filled {

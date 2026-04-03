@@ -1,3 +1,5 @@
+import type { SessionUsageTelemetry } from "$lib/acp/store/types.js";
+
 export function formatTokenCountCompact(tokens: number): string {
 	if (!Number.isFinite(tokens)) return "0";
 
@@ -66,4 +68,23 @@ export function createContextUsageSegments(
 	const normalizedPercent = percent == null ? 0 : Math.min(100, Math.max(0, percent));
 	const filledCount = Math.round((normalizedPercent / 100) * segmentCount);
 	return Array.from({ length: segmentCount }, (_, index) => index < filledCount);
+}
+
+export function hasVisibleModelSelectorMetrics(
+	usageTelemetry: SessionUsageTelemetry | null,
+	isClaudeCode: boolean
+): boolean {
+	if (usageTelemetry === null) {
+		return false;
+	}
+
+	if (isClaudeCode) {
+		return true;
+	}
+
+	const hasSpend = usageTelemetry.sessionSpendUsd > 0;
+	const hasContextUsage =
+		getContextUsagePercent(usageTelemetry.latestTokensTotal, usageTelemetry.contextWindowSize) !== null;
+
+	return hasSpend ? true : hasContextUsage;
 }

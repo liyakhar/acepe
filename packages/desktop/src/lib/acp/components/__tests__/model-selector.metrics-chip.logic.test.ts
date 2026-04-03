@@ -5,6 +5,7 @@ import {
 	formatTokenCountCompact,
 	formatTokenUsageCompact,
 	getContextUsagePercent,
+	hasVisibleModelSelectorMetrics,
 } from "../model-selector.metrics-chip.logic.js";
 
 describe("formatTokenCountCompact", () => {
@@ -52,5 +53,74 @@ describe("createContextUsageSegments", () => {
 
 	it("returns an empty list for invalid segment counts", () => {
 		expect(createContextUsageSegments(50, 0)).toEqual([]);
+	});
+});
+
+describe("hasVisibleModelSelectorMetrics", () => {
+	it("returns false when telemetry is missing", () => {
+		expect(hasVisibleModelSelectorMetrics(null, false)).toBe(false);
+	});
+
+	it("keeps claude code metrics visible when telemetry exists", () => {
+		expect(
+			hasVisibleModelSelectorMetrics(
+				{
+					contextWindowSize: null,
+					lastTelemetryEventId: null,
+					latestStepCostUsd: null,
+					latestTokensCacheRead: null,
+					latestTokensCacheWrite: null,
+					latestTokensInput: null,
+					latestTokensOutput: null,
+					latestTokensReasoning: null,
+					latestTokensTotal: null,
+					sessionSpendUsd: 0,
+					updatedAt: 0,
+				},
+				true
+			)
+		).toBe(true);
+	});
+
+	it("returns false for non-claude telemetry with no visible spend or context", () => {
+		expect(
+			hasVisibleModelSelectorMetrics(
+				{
+					contextWindowSize: null,
+					lastTelemetryEventId: null,
+					latestStepCostUsd: 0,
+					latestTokensCacheRead: null,
+					latestTokensCacheWrite: null,
+					latestTokensInput: null,
+					latestTokensOutput: null,
+					latestTokensReasoning: null,
+					latestTokensTotal: null,
+					sessionSpendUsd: 0,
+					updatedAt: 0,
+				},
+				false
+			)
+		).toBe(false);
+	});
+
+	it("returns true for non-claude telemetry with context usage", () => {
+		expect(
+			hasVisibleModelSelectorMetrics(
+				{
+					contextWindowSize: 200000,
+					lastTelemetryEventId: null,
+					latestStepCostUsd: null,
+					latestTokensCacheRead: null,
+					latestTokensCacheWrite: null,
+					latestTokensInput: null,
+					latestTokensOutput: null,
+					latestTokensReasoning: null,
+					latestTokensTotal: 50000,
+					sessionSpendUsd: 0,
+					updatedAt: 0,
+				},
+				false
+			)
+		).toBe(true);
 	});
 });

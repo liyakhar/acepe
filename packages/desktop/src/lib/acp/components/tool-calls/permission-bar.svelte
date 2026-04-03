@@ -4,12 +4,11 @@
 	import { getPermissionStore } from "../../store/permission-store.svelte.js";
 	import { getSessionStore } from "../../store/session-store.svelte.js";
 	import type { PermissionRequest } from "../../types/permission.js";
-	import { makeWorkspaceRelative } from "../../utils/path-utils.js";
 	import { Colors, COLOR_NAMES } from "../../utils/colors.js";
 	import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
 	import { shouldHidePermissionBarForExitPlan } from "./exit-plan-helpers.js";
 	import PermissionActionBar from "./permission-action-bar.svelte";
-	import { extractPermissionCommand, extractPermissionFilePath, extractPermissionToolKind } from "./permission-display.js";
+	import { extractCompactPermissionDisplay } from "./permission-display.js";
 
  	interface Props {
 		sessionId: string;
@@ -50,27 +49,14 @@
 		return `Permission ${currentStep} of ${sessionProgress.total}`;
 	});
 
-	function extractCommand(permission: PermissionRequest): string | null {
-		return extractPermissionCommand(permission);
-	}
-
-	function extractFilePath(permission: PermissionRequest): string | null {
-		const path = extractPermissionFilePath(permission);
-		if (!path) return null;
-		const basePath = projectPath ? projectPath : "";
-		return makeWorkspaceRelative(path, basePath);
-	}
-
-	function extractVerb(permission: PermissionRequest): string {
-		return extractPermissionToolKind(permission);
-	}
 </script>
 
 
 {#if currentPermission}
-	{@const command = extractCommand(currentPermission)}
-	{@const filePath = command ? null : extractFilePath(currentPermission)}
-	{@const verb = extractVerb(currentPermission)}
+	{@const compactDisplay = extractCompactPermissionDisplay(currentPermission, projectPath)}
+	{@const command = compactDisplay.command}
+	{@const filePath = compactDisplay.filePath}
+	{@const verb = compactDisplay.label}
 	{@const purpleColor = Colors[COLOR_NAMES.PURPLE]}
 	<div class="mx-auto w-full max-w-[320px] px-3">
 		<div class="flex min-w-0 flex-col gap-1 overflow-hidden rounded-sm border border-border/60 bg-accent/30 px-1.5 py-1 permission-card-enter">
@@ -80,7 +66,7 @@
 				<span class="text-[10px] font-mono font-medium text-muted-foreground shrink-0">{verb}</span>
 				{#if filePath}
 					<div class="min-w-0 flex-1">
-						<FilePathBadge {filePath} iconBasePath="/svgs/icons" interactive={false} size="sm" />
+						<FilePathBadge {filePath} interactive={false} size="sm" />
 					</div>
 				{/if}
 				{#if sessionProgress}

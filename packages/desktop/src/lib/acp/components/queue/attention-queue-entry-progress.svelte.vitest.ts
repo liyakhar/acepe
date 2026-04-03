@@ -84,6 +84,32 @@ describe("ActivityEntry todo progress", () => {
 		const { container, getByText, queryByText } = render(ActivityEntry, {
 			selected: false,
 			latestTaskSubagentTool: null,
+			taskSubagentTools: [
+				{
+					id: "child-1",
+					type: "tool_call",
+					kind: "search",
+					title: "Grep",
+					subtitle: "github.com",
+					status: "done",
+				},
+				{
+					id: "child-2",
+					type: "tool_call",
+					kind: "fetch",
+					title: "Fetch",
+					subtitle: "raw.githubusercontent.com",
+					status: "done",
+				},
+				{
+					id: "child-3",
+					type: "tool_call",
+					kind: "search",
+					title: "Grep",
+					subtitle: "api.github.com",
+					status: "running",
+				},
+			],
 			onSelect: vi.fn(),
 			mode: null,
 			title: "Queue item",
@@ -129,9 +155,9 @@ describe("ActivityEntry todo progress", () => {
 
 		expect(container.querySelectorAll("[data-testid='queue-subagent-card']")).toHaveLength(1);
 		expect(getByText("Explore GitHub endpoints")).toBeTruthy();
-		expect(queryByText("api.github.com")).toBeNull();
-		expect(queryByText("github.com")).toBeNull();
-		expect(queryByText("raw.githubusercontent.com")).toBeNull();
+		expect(queryByText("github.com")).toBeTruthy();
+		expect(queryByText("raw.githubusercontent.com")).toBeTruthy();
+		expect(queryByText("api.github.com")).toBeTruthy();
 
 		const card = container.querySelector("[data-testid='queue-subagent-card']");
 		expect(card?.querySelector('[title="3 tool calls"]')).toBeTruthy();
@@ -159,6 +185,24 @@ describe("ActivityEntry todo progress", () => {
 			isStreaming: true,
 			taskDescription: "Explore parser regression",
 			taskSubagentSummaries: ["Investigate parser regression", fullPath],
+			taskSubagentTools: [
+				{
+					id: "child-1",
+					type: "tool_call",
+					kind: "search",
+					title: "Grep",
+					subtitle: "Investigate parser regression",
+					status: "done",
+				},
+				{
+					id: "child-2",
+					type: "tool_call",
+					kind: "read",
+					title: "Reading",
+					filePath: fullPath,
+					status: "running",
+				},
+			],
 			latestTaskSubagentTool: {
 				id: "child-2",
 				kind: "read",
@@ -204,6 +248,7 @@ describe("ActivityEntry todo progress", () => {
 		expect(card?.firstElementChild?.textContent).toContain("Explore parser regression");
 		expect(card?.firstElementChild?.querySelector(fileChipSelector)).toBeNull();
 		expect(card?.children[1]?.querySelector(fileChipSelector)).toBeTruthy();
+		expect(card?.children[2]?.querySelector(fileChipSelector)).toBeNull();
 		expect(fileChip?.textContent).toContain("claude_code_parser.rs");
 		expect(card?.querySelector("img.file-icon")?.getAttribute("src")).toContain("/svgs/icons/");
 		expect(queryByText(fullPath)).toBeNull();

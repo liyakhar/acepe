@@ -23,6 +23,7 @@ export interface QueueItemToolDisplay {
 export interface QueueItemTaskDisplay {
 	readonly taskDescription: string | null;
 	readonly taskSubagentSummaries: readonly string[];
+	readonly taskSubagentTools: readonly AgentToolEntry[];
 	readonly latestTaskSubagentTool: Pick<
 		AgentToolEntry,
 		"id" | "kind" | "title" | "filePath" | "status"
@@ -35,6 +36,19 @@ export function getQueueItemToolDisplay(
 ): QueueItemToolDisplay | null {
 	if (input.activityKind === "thinking") {
 		return null;
+	}
+
+	if (
+		input.activityKind === "streaming" &&
+		input.currentStreamingToolCall &&
+		input.currentToolKind
+	) {
+		return {
+			toolCall: input.currentStreamingToolCall,
+			toolKind: input.currentToolKind,
+			isStreaming: true,
+			turnState: "streaming",
+		};
 	}
 
 	if (!input.lastToolCall || !input.lastToolKind) {
@@ -113,6 +127,7 @@ export function getQueueItemTaskDisplay(
 		return {
 			taskDescription: null,
 			taskSubagentSummaries: [],
+			taskSubagentTools: [],
 			latestTaskSubagentTool: null,
 			showTaskSubagentList: false,
 		};
@@ -135,6 +150,7 @@ export function getQueueItemTaskDisplay(
 		return {
 			taskDescription: getTaskDescription(toolCall),
 			taskSubagentSummaries,
+			taskSubagentTools: convertedChildren,
 			latestTaskSubagentTool,
 			showTaskSubagentList: true,
 		};
@@ -143,6 +159,7 @@ export function getQueueItemTaskDisplay(
 	return {
 		taskDescription: getTaskDescription(toolCall),
 		taskSubagentSummaries: [],
+		taskSubagentTools: [],
 		latestTaskSubagentTool,
 		showTaskSubagentList: false,
 	};

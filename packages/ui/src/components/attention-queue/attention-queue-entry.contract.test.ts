@@ -9,4 +9,10 @@ describe("attention queue entry contract", () => {
 		expect(source).toContain("latestTaskSubagentTool?:");
 		expect(source).toContain("latestTaskSubagentTool = null");
 	});
+
+	it("accepts actual task subagent tool rows for shared queue and kanban rendering", () => {
+		expect(source).toContain("taskSubagentTools?: readonly AgentToolEntry[];");
+		expect(source).toContain("taskSubagentTools = []");
+		expect(source).toContain("toolCalls={taskWidgetToolCalls}");
+	});
 });

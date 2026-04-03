@@ -111,6 +111,26 @@ describe("getQueueItemTaskDisplay", () => {
 				"Explore community board and email notification code",
 				"Trace queue item rendering for task tools",
 			],
+			taskSubagentTools: [
+				{
+					id: "child-1",
+					type: "tool_call",
+					kind: "task",
+					title: "Task completed",
+					subtitle: "Explore community board and email notification ...",
+					filePath: undefined,
+					status: "done",
+				},
+				{
+					id: "child-2",
+					type: "tool_call",
+					kind: "task",
+					title: "Task completed",
+					subtitle: "Trace queue item rendering for task tools",
+					filePath: undefined,
+					status: "done",
+				},
+			],
 			latestTaskSubagentTool: {
 				id: "child-2",
 				kind: "task",
@@ -137,6 +157,26 @@ describe("getQueueItemTaskDisplay", () => {
 			filePath: "/repo/child-2.ts",
 			status: "running",
 		});
+		expect(display.taskSubagentTools).toEqual([
+			{
+				id: "child-1",
+				type: "tool_call",
+				kind: "search",
+				title: "Grep",
+				subtitle: "taskChildren",
+				filePath: undefined,
+				status: "done",
+			},
+			{
+				id: "child-2",
+				type: "tool_call",
+				kind: "read",
+				title: "Reading",
+				subtitle: "/repo/child-2.ts",
+				filePath: "/repo/child-2.ts",
+				status: "running",
+			},
+		]);
 	});
 
 	it("falls back to the parent task description when no child subagents exist", () => {
@@ -148,12 +188,35 @@ describe("getQueueItemTaskDisplay", () => {
 			taskDescription: "Parent task",
 			taskSubagentSummaries: [],
 			latestTaskSubagentTool: null,
+			taskSubagentTools: [],
 			showTaskSubagentList: false,
 		});
 	});
 });
 
 describe("getQueueItemToolDisplay", () => {
+	it("prefers the live streaming tool over the previous completed tool", () => {
+		const lastToolCall = createReadToolCall("last-tool", "completed");
+		const liveToolCall = createSearchToolCall("live-tool", "in_progress");
+
+		const display = getQueueItemToolDisplay(
+			createToolDisplayInput({
+				activityKind: "streaming",
+				currentStreamingToolCall: liveToolCall,
+				currentToolKind: "search",
+				lastToolCall,
+				lastToolKind: "read",
+			})
+		);
+
+		expect(display).toEqual({
+			toolCall: liveToolCall,
+			toolKind: "search",
+			isStreaming: true,
+			turnState: "streaming",
+		});
+	});
+
 	it("falls back to the last completed tool when no live tool is streaming", () => {
 		const lastToolCall = createReadToolCall("last-tool", "completed");
 
