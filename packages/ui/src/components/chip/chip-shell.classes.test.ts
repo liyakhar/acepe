@@ -1,0 +1,44 @@
+import { describe, expect, it } from "bun:test";
+
+import { buildChipShellClassName } from "./chip-shell.classes.js";
+
+describe("buildChipShellClassName", () => {
+	it("uses rounded-sm shared badge chrome for interactive file and github chips", () => {
+		const className = buildChipShellClassName({ density: "badge", interactive: true });
+
+		expect(className).toContain("rounded-sm");
+		expect(className).toContain("border");
+		expect(className).toContain("border-border/50");
+		expect(className).toContain("bg-muted");
+		expect(className).toContain("hover:bg-accent");
+		expect(className).toContain("hover:text-accent-foreground");
+		expect(className).toContain("px-1");
+		expect(className).toContain("py-0.5");
+	});
+
+	it("supports compact badge sizing for small file chips", () => {
+		const className = buildChipShellClassName({ density: "badge", size: "sm" });
+
+		expect(className).toContain("rounded-sm");
+		expect(className).toContain("px-0.5");
+		expect(className).toContain("py-px");
+		expect(className).toContain("text-[0.625rem]");
+	});
+
+	it("supports inline artefact spacing while sharing the same chip shell chrome", () => {
+		const className = buildChipShellClassName({ density: "inline" });
+
+		expect(className).toContain("rounded-sm");
+		expect(className).toContain("border");
+		expect(className).toContain("px-1");
+		expect(className).toContain("py-0.5");
+		expect(className).toContain("text-[11px]");
+	});
+
+	it("supports selected chips", () => {
+		const className = buildChipShellClassName({ density: "badge", selected: true });
+
+		expect(className).toContain("bg-accent");
+		expect(className).toContain("text-accent-foreground");
+	});
+});

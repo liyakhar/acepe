@@ -54,7 +54,6 @@ const reviewIndicator = $derived.by(() => {
 	<FilePathBadge
 		filePath={file.filePath}
 		fileName={file.fileName}
-		iconBasePath="/svgs/icons"
 		interactive={false}
 	/>
 

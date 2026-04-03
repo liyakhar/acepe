@@ -618,7 +618,7 @@ function handlePromptResetClick(): void {
 							disabled
 							class="flex items-center gap-1 rounded border border-border/50 bg-muted px-2 py-0.5 text-[0.6875rem] font-medium text-foreground/80 disabled:cursor-not-allowed disabled:opacity-100"
 						>
-							<CheckCircle size={11} weight="fill" class="shrink-0" />
+							<CheckCircle size={11} weight="fill" class="shrink-0 text-success" />
 							{m.review_applied()}
 						</button>
 					{:else}

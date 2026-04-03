@@ -73,7 +73,6 @@ function getStatusTooltip(status: FileReviewStatus): string {
 						linesAdded={file.totalAdded}
 						linesRemoved={file.totalRemoved}
 						selected={selectedIndex === index}
-						iconBasePath="/svgs/icons"
 						interactive={false}
 					/>
 				</span>

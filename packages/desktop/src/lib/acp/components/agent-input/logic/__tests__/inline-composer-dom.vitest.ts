@@ -116,4 +116,37 @@ describe("inline-composer-dom", () => {
 
 		expect(serializeInlineComposerMessage(editor)).toBe("");
 	});
+
+	it("uses shared chip chrome and artefact accents for live composer tokens", () => {
+		const editor = document.createElement("div");
+		const message = "@[command:/review] @[skill:/Plan_review] @[text_ref:ref-123] @[file:src/main.ts]";
+
+		renderInlineComposerMessage(editor, message);
+
+		const commandToken = editor.querySelector('[data-inline-token-type="command"]') as HTMLElement | null;
+		const skillToken = editor.querySelector('[data-inline-token-type="skill"]') as HTMLElement | null;
+		const textToken = editor.querySelector('[data-inline-token-type="text_ref"]') as HTMLElement | null;
+		const fileToken = editor.querySelector('[data-inline-token-type="file"]') as HTMLElement | null;
+
+		expect(commandToken).not.toBeNull();
+		expect(skillToken).not.toBeNull();
+		expect(textToken).not.toBeNull();
+		expect(fileToken).not.toBeNull();
+
+		expect(commandToken?.className).toContain("rounded-sm");
+		expect(commandToken?.className).toContain("border");
+		expect(commandToken?.className).toContain("border-border/50");
+		expect(commandToken?.className).toContain("px-1");
+		expect(commandToken?.className).toContain("py-0.5");
+		expect(fileToken?.className).toContain("px-1");
+		expect(fileToken?.className).toContain("py-0.5");
+
+		const commandIcon = commandToken?.querySelector("svg");
+		const skillIcon = skillToken?.querySelector("svg");
+		const textIcon = textToken?.querySelector("svg");
+
+		expect(commandIcon?.getAttribute("class") ?? "").toContain("text-violet-500");
+		expect(skillIcon?.getAttribute("class") ?? "").toContain("text-violet-500");
+		expect(textIcon?.getAttribute("class") ?? "").toContain("text-success");
+	});
 });

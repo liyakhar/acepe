@@ -39,7 +39,6 @@ const hasNextFile = $derived(selectedFileIndex < modifiedFilesState.files.length
 					linesAdded={file.totalAdded}
 					linesRemoved={file.totalRemoved}
 					selected={selectedFileIndex === index}
-					iconBasePath="/svgs/icons"
 					onSelect={() => onSelectFile(index)}
 				/>
 			{/each}

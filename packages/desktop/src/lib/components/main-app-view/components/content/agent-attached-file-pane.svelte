@@ -122,7 +122,6 @@ function getGitDiffStats(filePanel: FilePanelType): { added: number; removed: nu
 						<FilePathBadge
 							filePath={filePanel.filePath}
 							{fileName}
-							iconBasePath="/svgs/icons"
 							linesAdded={diffStats.added}
 							linesRemoved={diffStats.removed}
 							interactive={false}

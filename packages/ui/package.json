@@ -16,6 +16,10 @@
       "svelte": "./src/components/button/index.ts",
       "default": "./src/components/button/index.ts"
     },
+    "./chip": {
+      "svelte": "./src/components/chip/index.ts",
+      "default": "./src/components/chip/index.ts"
+    },
     "./input": {
       "svelte": "./src/components/input/index.ts",
       "default": "./src/components/input/index.ts"

@@ -56,7 +56,6 @@ function formatFileSize(bytes: number): string {
 					filePath={file.filePath}
 					linesAdded={file.linesAdded ?? 0}
 					linesRemoved={file.linesRemoved ?? 0}
-					iconBasePath="/svgs/icons"
 					interactive={false}
 				/>
 				{#if file.linesAdded === null && file.linesRemoved === null && file.fileSize !== undefined}

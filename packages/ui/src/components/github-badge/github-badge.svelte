@@ -11,6 +11,7 @@
 	import type { Snippet } from 'svelte';
 	import { GitCommit, GitMerge, GitPullRequest } from 'phosphor-svelte';
 
+	import { ChipShell } from '../chip/index.js';
 	import { DiffPill } from '../diff-pill/index.js';
 	import { Colors } from '../../lib/colors.js';
 	import { getGitHubLabel, type GitHubReference } from '../../lib/markdown/github-badge.js';
@@ -54,13 +55,7 @@
 					: Colors.green
 	);
 	const showDiff = $derived(insertions > 0 || deletions > 0);
-
-	const baseClass =
-		'github-badge inline-flex min-w-0 items-center gap-1.5 rounded-sm bg-muted px-1 py-0.5 ' +
-		'text-muted-foreground';
-	const interactiveClass =
-		'hover:bg-accent hover:text-accent-foreground active:opacity-80 ' +
-		'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 cursor-pointer';
+	const chipClassName = $derived(className ? `github-badge ${className}` : 'github-badge');
 </script>
 
 {#snippet content()}
@@ -91,32 +86,27 @@
 {/snippet}
 
 {#if href}
-	<a
+	<ChipShell
+		as="a"
 		{href}
 		target="_blank"
 		rel="noopener noreferrer"
-		class="{baseClass} {interactiveClass} no-underline text-xs {className}"
+		class={chipClassName}
 		title={label}
 	>
 		{@render content()}
-	</a>
+	</ChipShell>
 {:else if onclick}
-	<button
-		type="button"
-		class="{baseClass} {interactiveClass} border-none text-xs {className}"
+	<ChipShell
+		as="button"
+		class={chipClassName}
 		title={label}
 		{onclick}
-		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				onclick(e as unknown as MouseEvent);
-			}
-		}}
 	>
 		{@render content()}
-	</button>
+	</ChipShell>
 {:else}
-	<span class="{baseClass} text-xs {className}" title={label}>
+	<ChipShell class={chipClassName} title={label}>
 		{@render content()}
-	</span>
+	</ChipShell>
 {/if}

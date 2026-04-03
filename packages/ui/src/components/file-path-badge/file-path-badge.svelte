@@ -3,6 +3,7 @@
 	 * FilePathBadge - Dumb, presentational chip for file display.
 	 * Renders icon + filename + optional diff pill. Parent passes what it has.
 	 */
+	import { ChipShell } from "../chip/index.js";
 	import { DiffPill } from "../diff-pill/index.js";
 	import { getFileIconSrc, getFallbackIconSrc } from "../../lib/file-icon/index.js";
 	import { getIconBasePath } from "../../lib/icon-context.js";
@@ -61,20 +62,13 @@
 	}: Props = $props();
 
 	const isSm = $derived(size === "sm");
-
 	const displayFileName = $derived(fileNameProp ?? getFileName(filePath));
 	const showDiff = $derived(linesAdded > 0 || linesRemoved > 0);
-
 	const useSvgIcons = $derived(Boolean(iconBasePath));
-	const iconSrc = $derived(
-		useSvgIcons ? getFileIconSrc(filePath, iconBasePath) : ""
-	);
-	const fallbackIconSrc = $derived(
-		useSvgIcons ? getFallbackIconSrc(iconBasePath) : ""
-	);
-	const coloredDotColor = $derived(
-		EXTENSION_COLORS[getExtension(filePath)] ?? "#83838b"
-	);
+	const iconSrc = $derived(useSvgIcons ? getFileIconSrc(filePath, iconBasePath) : "");
+	const fallbackIconSrc = $derived(useSvgIcons ? getFallbackIconSrc(iconBasePath) : "");
+	const coloredDotColor = $derived(EXTENSION_COLORS[getExtension(filePath)] ?? "#83838b");
+	const chipClassName = $derived(className ? `file-path-badge ${className}` : "file-path-badge");
 
 	function handleIconError(e: Event) {
 		const img = e.target as HTMLImageElement;
@@ -110,48 +104,24 @@
 	{/if}
 {/snippet}
 
-{#if interactive}
-	<button
-		type="button"
-		class="file-path-badge inline-flex min-w-0 items-center gap-1.5 rounded-sm border-none bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:opacity-80 {isSm
-			? 'px-0.5 py-px text-[0.625rem]'
-			: 'px-1 py-0.5 text-xs'} {selected
-			? 'file-path-badge-selected bg-accent text-accent-foreground'
-			: ''} cursor-pointer {className}"
-		data-file-path={filePath}
-		title={displayFileName}
-		onclick={onSelect}
+<ChipShell
+	as={interactive ? "button" : "span"}
+	class={chipClassName}
+	dataFilePath={filePath}
+	title={displayFileName}
+	ariaLabel={interactive ? undefined : displayFileName}
+	role={interactive ? undefined : "img"}
+	size={size}
+	selected={selected}
+	onclick={onSelect}
+>
+	{@render fileIcon()}
+	<span class="file-name min-w-0 truncate font-mono leading-none {isSm ? 'text-[0.625rem]' : 'text-[0.6875rem]'}"
+		>{displayFileName}</span
 	>
-		{@render fileIcon()}
-		<span class="file-name min-w-0 truncate font-mono leading-none {isSm ? 'text-[0.625rem]' : 'text-[0.6875rem]'}"
-			>{displayFileName}</span
-		>
-		{#if showDiff}
-			<span class="file-chip-diff-pill ml-0.5 !p-0 !bg-transparent inline-flex items-center">
-				<DiffPill insertions={linesAdded} deletions={linesRemoved} variant="plain" />
-			</span>
-		{/if}
-	</button>
-{:else}
-	<span
-		class="file-path-badge inline-flex min-w-0 items-center gap-1.5 rounded-sm bg-muted text-muted-foreground cursor-pointer {isSm
-			? 'px-0.5 py-px text-[0.625rem]'
-			: 'px-1 py-0.5 text-xs'} {selected
-			? 'file-path-badge-selected bg-accent text-accent-foreground'
-			: ''} {className}"
-		data-file-path={filePath}
-		title={displayFileName}
-		role="img"
-		aria-label={displayFileName}
-	>
-		{@render fileIcon()}
-		<span class="file-name min-w-0 truncate font-mono leading-none {isSm ? 'text-[0.625rem]' : 'text-[0.6875rem]'}"
-			>{displayFileName}</span
-		>
-		{#if showDiff}
-			<span class="file-chip-diff-pill ml-0.5 !p-0 !bg-transparent inline-flex items-center">
-				<DiffPill insertions={linesAdded} deletions={linesRemoved} variant="plain" />
-			</span>
-		{/if}
-	</span>
-{/if}
+	{#if showDiff}
+		<span class="file-chip-diff-pill ml-0.5 !p-0 !bg-transparent inline-flex items-center">
+			<DiffPill insertions={linesAdded} deletions={linesRemoved} variant="plain" />
+		</span>
+	{/if}
+</ChipShell>

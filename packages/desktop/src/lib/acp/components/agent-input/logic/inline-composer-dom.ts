@@ -1,5 +1,11 @@
 import { getFallbackIconSrc, getFileIconSrc } from "$lib/components/ui/file-icon/extension-map.js";
-import { Colors } from "@acepe/ui/colors";
+import {
+	buildChipShellClassName,
+	buildInlineArtefactIconClassName,
+	buildInlineArtefactLabelClassName,
+	INLINE_ARTEFACT_CLIPBOARD_PATH,
+	INLINE_ARTEFACT_PACKAGE_PATH,
+} from "@acepe/ui";
 
 import {
 	type InlineArtefactTokenType,
@@ -63,24 +69,15 @@ function createTokenElement(
 	element.setAttribute(TOKEN_ATTR_TYPE, tokenType);
 	element.setAttribute(TOKEN_ATTR_VALUE, value);
 	element.setAttribute("contenteditable", "false");
-	const isSlashItem = tokenType === "command" || tokenType === "skill";
-	const isFile = tokenType === "file";
+	const isFile = tokenType === "file" || tokenType === "image";
 	const isTextRef = tokenType === "text_ref";
 
-	if (isSlashItem) {
-		element.className =
-			"inline-flex items-center gap-1 p-1 rounded-md bg-muted text-[11px] align-middle";
-	} else {
-		element.className =
-			`inline-flex items-center gap-1 p-1 rounded-md bg-muted text-[11px] align-middle ${isFile ? "cursor-pointer" : ""}`.trim();
-	}
+	element.className = buildChipShellClassName({ density: "inline", interactive: isFile });
 
 	const icon = createTokenIcon(tokenType, value);
 
 	const label = document.createElement("span");
-	label.className = isSlashItem
-		? "max-w-[180px] truncate font-mono text-foreground"
-		: "max-w-[120px] truncate text-foreground";
+	label.className = buildInlineArtefactLabelClassName(tokenType);
 	label.textContent = labelForToken(tokenType, value, meta);
 
 	element.appendChild(icon);
@@ -125,13 +122,12 @@ function createSvgIcon(path: string, className: string, stroke = "currentColor")
 	return svg;
 }
 
-function createPhosphorPathIcon(path: string, className: string, color?: string): SVGElement {
+function createPhosphorPathIcon(path: string, className: string): SVGElement {
 	const ns = "http://www.w3.org/2000/svg";
 	const svg = document.createElementNS(ns, "svg");
 	svg.setAttribute("viewBox", "0 0 256 256");
 	svg.setAttribute("fill", "currentColor");
 	svg.setAttribute("class", className);
-	if (color) svg.style.color = color;
 	const p = document.createElementNS(ns, "path");
 	p.setAttribute("d", path);
 	svg.appendChild(p);
@@ -151,20 +147,23 @@ function createFileTypeIcon(source: string, className: string): HTMLImageElement
 }
 
 function createTokenIcon(tokenType: InlineArtefactTokenType, value: string): Element {
+	const iconClassName = ["h-3.5 w-3.5 shrink-0", buildInlineArtefactIconClassName(tokenType)]
+		.filter((part) => part.length > 0)
+		.join(" ");
+
 	if (tokenType === "command" || tokenType === "skill") {
 		return createPhosphorPathIcon(
-			"M223.68,66.15,135.68,18a15.88,15.88,0,0,0-15.36,0l-88,48.17a16,16,0,0,0-8.32,14v95.64a16,16,0,0,0,8.32,14l88,48.17a15.88,15.88,0,0,0,15.36,0l88-48.17a16,16,0,0,0,8.32-14V80.18A16,16,0,0,0,223.68,66.15ZM128,32l80.35,44L178.57,92.29l-80.35-44Zm0,88L47.65,76,81.56,57.43l80.35,44Zm88,55.85h0l-80,43.79V133.83l32-17.51V152a8,8,0,0,0,16,0V107.56l32-17.51v85.76Z",
-			"h-3.5 w-3.5 shrink-0"
+			INLINE_ARTEFACT_PACKAGE_PATH,
+			iconClassName,
 		);
 	}
 	if (tokenType === "text" || tokenType === "text_ref") {
 		return createPhosphorPathIcon(
-			"M200,32H163.74a47.92,47.92,0,0,0-71.48,0H56A16,16,0,0,0,40,48V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V48A16,16,0,0,0,200,32Zm-72,0a32,32,0,0,1,32,32H96A32,32,0,0,1,128,32Zm32,128H96a8,8,0,0,1,0-16h64a8,8,0,0,1,0,16Zm0-32H96a8,8,0,0,1,0-16h64a8,8,0,0,1,0,16Z",
-			"h-3.5 w-3.5 flex-shrink-0",
-			Colors.orange
+			INLINE_ARTEFACT_CLIPBOARD_PATH,
+			iconClassName,
 		);
 	}
-	return createFileTypeIcon(value, "h-3.5 w-3.5 flex-shrink-0");
+	return createFileTypeIcon(value, "h-3.5 w-3.5 shrink-0");
 }
 
 function createRemoveIcon(): SVGElement {

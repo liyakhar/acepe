@@ -18,7 +18,7 @@
 <button
 	type="button"
 	class={cn(
-		"inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.75rem] font-medium",
+		"inline-flex items-center gap-1.5 rounded-sm border border-border/50 px-2 py-1 text-[0.75rem] font-medium",
 		"bg-muted/50 text-foreground hover:bg-muted/80 transition-colors",
 		onclick ? "cursor-pointer" : "cursor-default",
 		className,

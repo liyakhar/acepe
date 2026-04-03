@@ -1034,7 +1034,6 @@ async function handleOpenPr(prNumber: number) {
 									>
 										<FilePathBadge
 											filePath={file.path}
-											iconBasePath="/svgs/icons"
 											linesAdded={file.additions}
 											linesRemoved={file.deletions}
 											interactive={false}

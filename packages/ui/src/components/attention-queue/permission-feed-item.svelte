@@ -67,7 +67,7 @@
 		{/if}
 		<span class="shrink-0">{permissionLabel}</span>
 		{#if filePath}
-			<FilePathBadge {filePath} iconBasePath="/svgs/icons" interactive={false} />
+			<FilePathBadge {filePath} interactive={false} />
 		{:else if command}
 			<code class="truncate font-mono text-foreground/70 min-w-0 flex-1"
 				>$ {command}</code

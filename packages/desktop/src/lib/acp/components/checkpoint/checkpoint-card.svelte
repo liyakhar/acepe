@@ -227,7 +227,6 @@ function getLanguageFromPath(filePath: string): string {
 			fileName={file.filePath.split("/").pop() ?? file.filePath}
 			linesAdded={file.linesAdded ?? 0}
 			linesRemoved={file.linesRemoved ?? 0}
-			iconBasePath="/svgs/icons"
 			interactive={false}
 		/>
 	{/snippet}

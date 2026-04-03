@@ -24,7 +24,6 @@ let { blocks }: Props = $props();
 		<FilePathBadge
 			filePath={block.filePath}
 			fileName={block.locationSuffix ? `${displayName}${block.locationSuffix}` : undefined}
-			iconBasePath="/svgs/icons"
 			linesAdded={block.linesAdded}
 			linesRemoved={block.linesRemoved}
 			interactive={false}
