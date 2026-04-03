@@ -5,6 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { ResultAsync } from "neverthrow";
+import type { UserSettingKey } from "$lib/services/converted-session-types.js";
 
 import type { PaletteMode } from "../../types/palette-mode.js";
 
@@ -12,7 +13,7 @@ import { createLogger } from "../../utils/logger.js";
 
 const logger = createLogger({ id: "recent-items-store", name: "RecentItemsStore" });
 
-const STORAGE_KEY = "command_palette_recent_items";
+const STORAGE_KEY: UserSettingKey = "command_palette_recent_items";
 const MAX_RECENT_ITEMS = 5;
 
 /**

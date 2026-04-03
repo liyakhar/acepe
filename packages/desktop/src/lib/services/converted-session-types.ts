@@ -558,6 +558,10 @@ export type UserSettingKey =
  */
 "session_model_per_mode" | 
 /**
+ * Global PR generation preferences (JSON object)
+ */
+"pr_generation_preferences" | 
+/**
  * Command palette recent items (JSON array)
  */
 "command_palette_recent_items" | 

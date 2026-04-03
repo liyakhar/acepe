@@ -56,10 +56,13 @@ import { createLogger } from "$lib/acp/utils/logger.js";
 import { getChangelogEntriesSince } from "$lib/changelog/index.js";
 import type { KeybindingsService } from "$lib/keybindings/service.svelte.js";
 import type { PreconnectionAgentSkillsStore } from "$lib/skills/store/preconnection-agent-skills-store.svelte.js";
+import type { UserSettingKey } from "$lib/services/converted-session-types.js";
 import { getZoomService } from "$lib/services/zoom.svelte.js";
 import type { MainAppViewState } from "../main-app-view-state.svelte.js";
 
 const logger = createLogger({ id: "initialization-manager", name: "InitializationManager" });
+const HAS_SEEN_SPLASH_KEY: UserSettingKey = "has_seen_splash";
+const LAST_SEEN_VERSION_KEY: UserSettingKey = "last_seen_version";
 
 import { InitializationError, type MainAppViewError } from "../../errors/main-app-view-error.js";
 
@@ -159,7 +162,7 @@ export class InitializationManager {
 			return;
 		}
 
-		invoke<string | null>("get_user_setting", { key: "has_seen_splash" })
+		invoke<string | null>("get_user_setting", { key: HAS_SEEN_SPLASH_KEY })
 			.then((value) => {
 				// Show splash if value is not "true"
 				this.state.showSplash = value !== "true";
@@ -204,7 +207,7 @@ export class InitializationManager {
 		const { getVersion } = await import("@tauri-apps/api/app");
 		const currentVersion = await getVersion();
 		const lastSeenVersion = await invoke<string | null>("get_user_setting", {
-			key: "last_seen_version",
+			key: LAST_SEEN_VERSION_KEY,
 		});
 
 		// Show changelog entries between last seen and current version
@@ -222,7 +225,7 @@ export class InitializationManager {
 
 		// Always update last seen version (even on first launch)
 		await invoke("save_user_setting", {
-			key: "last_seen_version",
+			key: LAST_SEEN_VERSION_KEY,
 			value: currentVersion,
 		});
 	}

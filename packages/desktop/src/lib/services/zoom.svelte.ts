@@ -7,6 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ResultAsync } from "neverthrow";
+import type { UserSettingKey } from "$lib/services/converted-session-types.js";
 
 /** Zoom configuration constants */
 const ZOOM_CONFIG = {
@@ -19,6 +20,8 @@ const ZOOM_CONFIG = {
 	/** Zoom increment per step (10%) */
 	STEP: 0.1,
 };
+
+const ZOOM_LEVEL_KEY: UserSettingKey = "zoom_level";
 
 /**
  * Zoom Service - Singleton for managing webview zoom.
@@ -98,7 +101,7 @@ export class ZoomService {
 	 */
 	private loadZoomLevel(): ResultAsync<number, Error> {
 		return ResultAsync.fromPromise(
-			invoke<string | null>("get_user_setting", { key: "zoom_level" }),
+			invoke<string | null>("get_user_setting", { key: ZOOM_LEVEL_KEY }),
 			(error) => new Error(`Failed to load zoom level: ${String(error)}`)
 		).map((value) => {
 			if (value === null) {
@@ -118,7 +121,7 @@ export class ZoomService {
 	private saveZoomLevel(level: number): ResultAsync<void, Error> {
 		return ResultAsync.fromPromise(
 			invoke<void>("save_user_setting", {
-				key: "zoom_level",
+				key: ZOOM_LEVEL_KEY,
 				value: level.toString(),
 			}),
 			(error) => new Error(`Failed to save zoom level: ${String(error)}`)

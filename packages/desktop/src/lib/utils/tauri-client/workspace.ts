@@ -1,10 +1,11 @@
 import type { ResultAsync } from "neverthrow";
 import type { AppError } from "../../acp/errors/app-error.js";
+import type { UserSettingKey } from "../../services/converted-session-types.js";
 import type { PersistedWorkspaceState } from "../../acp/store/types.js";
 import { CMD } from "./commands.js";
 import { invokeAsync } from "./invoke.js";
 
-const WORKSPACE_STATE_KEY = "workspace_state" as const;
+const WORKSPACE_STATE_KEY: UserSettingKey = "workspace_state";
 
 export const workspace = {
 	saveWorkspaceState: (state: PersistedWorkspaceState): ResultAsync<void, AppError> => {

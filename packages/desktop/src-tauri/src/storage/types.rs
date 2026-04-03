@@ -29,6 +29,8 @@ pub enum UserSettingKey {
     AgentAvailableModesCache,
     /// Per-session model memory (JSON map)
     SessionModelPerMode,
+    /// Global PR generation preferences (JSON object)
+    PrGenerationPreferences,
     /// Command palette recent items (JSON array)
     CommandPaletteRecentItems,
     /// OpenCode favorite models (JSON array)
@@ -92,6 +94,7 @@ impl UserSettingKey {
             }
             UserSettingKey::AgentAvailableModesCache => "agent_available_modes_cache",
             UserSettingKey::SessionModelPerMode => "session_model_per_mode",
+            UserSettingKey::PrGenerationPreferences => "pr_generation_preferences",
             UserSettingKey::CommandPaletteRecentItems => "command_palette_recent_items",
             UserSettingKey::FavoriteModels => "favorite_models",
             UserSettingKey::RecentModels => "recent_models",
@@ -141,6 +144,7 @@ mod tests {
             "agent_available_models_display_cache",
             "agent_available_modes_cache",
             "session_model_per_mode",
+            "pr_generation_preferences",
             "command_palette_recent_items",
             "favorite_models",
             "recent_models",
