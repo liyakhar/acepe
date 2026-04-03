@@ -102,7 +102,7 @@ onDestroy(() => {
 </script>
 
 <div
-	class="fixed inset-0 z-[9999] flex items-center justify-center"
+	class="fixed inset-0 z-[var(--app-blocking-z)] flex items-center justify-center"
 	role="dialog"
 	aria-modal="true"
 	aria-label="Updating Acepe"

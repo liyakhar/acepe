@@ -52,7 +52,7 @@
 				</Tooltip.Trigger>
 				<Tooltip.Portal>
 					<Tooltip.Content
-						class="z-50 rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+						class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
 						sideOffset={4}
 					>
 						{warmingLabel}
@@ -68,7 +68,7 @@
 				</Tooltip.Trigger>
 				<Tooltip.Portal>
 					<Tooltip.Content
-						class="z-50 rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+						class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
 						sideOffset={4}
 					>
 						<div class="space-y-1.5">
@@ -101,7 +101,7 @@
 				</Tooltip.Trigger>
 				<Tooltip.Portal>
 					<Tooltip.Content
-						class="z-50 rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+						class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
 						sideOffset={4}
 					>
 						{errorLabel}

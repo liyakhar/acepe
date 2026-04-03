@@ -147,7 +147,7 @@
 				<Tooltip.Content
 					side="bottom"
 					sideOffset={4}
-					class="z-[9998] max-w-[320px] bg-popover text-popover-foreground border border-border rounded-md px-3 py-1.5 shadow-md transition-none duration-0"
+					class="z-[var(--overlay-z)] max-w-[320px] bg-popover text-popover-foreground border border-border rounded-md px-3 py-1.5 shadow-md transition-none duration-0"
 				>
 					<p class="text-xs leading-snug text-foreground">{tab.tooltipText}</p>
 				</Tooltip.Content>

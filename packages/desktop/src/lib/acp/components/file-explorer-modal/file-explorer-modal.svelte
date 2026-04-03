@@ -199,7 +199,7 @@ function handleSelect(row: FileExplorerRow) {
 <!-- Backdrop -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
-	class="fixed inset-0 z-[9995] flex items-center justify-center bg-black/55 p-4"
+	class="fixed inset-0 z-[var(--app-spotlight-z)] flex items-center justify-center bg-black/55 p-4"
 	role="dialog"
 	aria-modal="true"
 	aria-label="File Explorer"

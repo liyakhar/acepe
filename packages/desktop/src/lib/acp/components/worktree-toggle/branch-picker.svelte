@@ -307,7 +307,7 @@ function openCreateBranchDialog(): void {
 							</button>
 						{/snippet}
 					</DropdownMenu.Trigger>
-					<DropdownMenu.Content align="start" sideOffset={4} class="z-[60] min-w-[10rem]">
+					<DropdownMenu.Content align="start" sideOffset={4} class="min-w-[10rem]">
 						{#each BRANCH_PREFIXES as prefix (prefix.label)}
 							<DropdownMenu.Item
 								onSelect={() => {

@@ -122,7 +122,7 @@ function handleItemHover(index: number) {
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		use:portal
-		class="fixed z-[100] rounded-lg border bg-popover shadow-lg overflow-hidden flex"
+		class="fixed z-[var(--overlay-z)] rounded-lg border bg-popover shadow-lg overflow-hidden flex"
 		style="top: {computedPosition.top}px; left: {computedPosition.left}px; width: {DROPDOWN_WIDTH}px; height: {DROPDOWN_HEIGHT}px;"
 		onmousedown={(e) => e.preventDefault()}
 	>

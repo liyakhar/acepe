@@ -38,7 +38,7 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		use:portal
-		class="fixed z-[100] w-80 rounded-lg border bg-popover shadow-lg overflow-hidden"
+		class="fixed z-[var(--overlay-z)] w-80 rounded-lg border bg-popover shadow-lg overflow-hidden"
 		style="top: {props.position.top}px; left: {props.position
 			.left}px; transform: translateY(-100%); margin-top: -8px;"
 		onmousedown={(e) => e.preventDefault()}

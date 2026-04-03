@@ -218,7 +218,7 @@ onDestroy(() => {
 </script>
 
 <div
-	class="fixed inset-0 z-[9998] flex items-center justify-center"
+	class="fixed inset-0 z-[var(--app-elevated-z)] flex items-center justify-center"
 	role="dialog"
 	aria-modal="true"
 	aria-label={m.changelog_title()}

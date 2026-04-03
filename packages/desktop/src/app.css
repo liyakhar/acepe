@@ -95,8 +95,12 @@
 	--shadow-xl: 0px 2px 3px 0px hsl(240 15% 20% / 0.12), 0px 8px 10px -1px hsl(240 15% 20% / 0.12);
 	--shadow-2xl: 0px 2px 3px 0px hsl(240 15% 20% / 0.35);
 
-	/* Z-index: portalled overlays (dropdowns, tooltips, popovers) must appear above full-screen overlays (settings, etc. at 9997) */
-	--overlay-z: 9998;
+	/* Z-index: desktop app-shell layers */
+	--app-spotlight-z: 9995;
+	--app-modal-z: 9997;
+	--app-elevated-z: 9998;
+	--overlay-z: var(--app-elevated-z);
+	--app-blocking-z: 9999;
 
 	/* Other properties */
 	--tracking-normal: 0em;

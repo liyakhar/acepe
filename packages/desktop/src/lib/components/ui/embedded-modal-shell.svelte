@@ -47,7 +47,7 @@ function stopPropagation(event: Event): void {
 	<div
 		class={cn(
 			position === "fixed" ? "fixed" : "absolute",
-			"inset-0 z-[9997] bg-black/55 p-2 transition-opacity duration-200 sm:p-4 md:p-5",
+			"inset-0 z-[var(--app-modal-z)] bg-black/55 p-2 transition-opacity duration-200 sm:p-4 md:p-5",
 			overlayClass
 		)}
 		role="dialog"
