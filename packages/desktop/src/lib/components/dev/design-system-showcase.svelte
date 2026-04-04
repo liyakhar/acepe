@@ -3,11 +3,14 @@
 	import { Button } from "@acepe/ui/button";
 	import {
 		CloseAction,
+		EmbeddedIconButton,
 		EmbeddedPanelHeader,
 		HeaderActionCell,
+		HeaderCell,
 		HeaderTitleCell,
 	} from "@acepe/ui/panel-header";
 	import {
+		AgentToolTask,
 		DiffPill,
 		FilePathBadge,
 		GitBranchBadge,
@@ -18,12 +21,16 @@
 		PillButton,
 		ProjectLetterBadge,
 		type AgentToolEntry,
+		type AnyAgentEntry,
 		type KanbanCardData,
 		type KanbanQuestionData,
 	} from "@acepe/ui";
 	import CheckCircle from "phosphor-svelte/lib/CheckCircle";
+	import X from "phosphor-svelte/lib/X";
 	import Kanban from "phosphor-svelte/lib/Kanban";
+	import Rows from "phosphor-svelte/lib/Rows";
 	import Palette from "phosphor-svelte/lib/Palette";
+	import Robot from "phosphor-svelte/lib/Robot";
 	import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
 	import ShieldWarning from "phosphor-svelte/lib/ShieldWarning";
 	import Tag from "phosphor-svelte/lib/Tag";
@@ -39,12 +46,14 @@
 
 	let { open, onOpenChange }: Props = $props();
 
-	type SidebarItem = { id: string; label: string; icon: "palette" | "shield" | "kanban" | "tag" };
+	type SidebarItem = { id: string; label: string; icon: "palette" | "shield" | "kanban" | "tag" | "robot" | "panel" };
 	const sidebarItems: SidebarItem[] = [
 		{ id: "button", label: "Buttons", icon: "palette" },
 		{ id: "badges", label: "Badges & Chips", icon: "tag" },
+		{ id: "panel-header", label: "Panel Header", icon: "panel" },
 		{ id: "permission-card", label: "Permission Card", icon: "shield" },
 		{ id: "kanban-card", label: "Kanban Card", icon: "kanban" },
+		{ id: "agent-tool-task", label: "Agent Tool Task", icon: "robot" },
 	];
 
 	const demoCardBase: KanbanCardData = {
@@ -64,6 +73,7 @@
 		todoProgress: { current: 3, total: 5, label: "Implement" },
 		taskCard: null,
 		latestTool: null,
+		hasUnseenCompletion: false,
 	};
 
 	const demoCardStreaming: KanbanCardData = {
@@ -83,6 +93,7 @@
 		todoProgress: null,
 		taskCard: null,
 		latestTool: null,
+		hasUnseenCompletion: false,
 	};
 
 	const demoCardWithTool: KanbanCardData = {
@@ -108,6 +119,7 @@
 			filePath: "src/lib/auth.ts",
 			status: "running",
 		},
+		hasUnseenCompletion: false,
 	};
 
 	const demoCardError: KanbanCardData = {
@@ -127,6 +139,7 @@
 		todoProgress: null,
 		taskCard: null,
 		latestTool: null,
+		hasUnseenCompletion: false,
 	};
 
 	const demoSubagentToolCalls: readonly AgentToolEntry[] = [
@@ -176,6 +189,65 @@
 			toolCalls: demoSubagentToolCalls,
 		},
 		latestTool: null,
+		hasUnseenCompletion: false,
+	};
+
+	const demoCurrentSubagentToolCalls: readonly AgentToolEntry[] = [
+		{
+			id: "current-subagent-1",
+			type: "tool_call",
+			kind: "task",
+			title: "Task completed",
+			subtitle: "Trace active task mapping in kanban view",
+			status: "done",
+		},
+		{
+			id: "current-subagent-2",
+			type: "tool_call",
+			kind: "task",
+			title: "Task completed",
+			subtitle: "Verify current task children survive thinking state",
+			status: "done",
+		},
+		{
+			id: "current-subagent-3",
+			type: "tool_call",
+			kind: "task",
+			title: "Task running",
+			subtitle: "Update design system specimen for multi-subagent cards",
+			status: "running",
+		},
+	];
+
+	const demoCardMultiSubagent: KanbanCardData = {
+		id: "demo-6",
+		title: "Repair kanban subagent visibility",
+		agentIconSrc: "/svgs/icons/claude.svg",
+		agentLabel: "claude",
+		projectName: "desktop",
+		projectColor: "#F59E0B",
+		timeAgo: "now",
+		activityText: null,
+		isStreaming: true,
+		modeId: "build",
+		diffInsertions: 14,
+		diffDeletions: 1,
+		errorText: null,
+		todoProgress: { current: 2, total: 4, label: "Fix" },
+		taskCard: {
+			summary: "Repair kanban subagent visibility",
+			isStreaming: true,
+			latestTool: {
+				id: "current-subagent-3",
+				kind: "task",
+				title: "Task running",
+				filePath: undefined,
+				status: "running",
+			},
+			toolCalls: demoCurrentSubagentToolCalls,
+		},
+		latestTool: null,
+		hasUnseenCompletion: false,
 	};
 
 	const demoPermissionReq: PermissionRequest = {
@@ -205,6 +277,14 @@
 		],
 		canSubmit: true,
 	};
+	const demoTaskToolCalls: AnyAgentEntry[] = [
+		{ id: "t1", type: "tool_call", kind: "read", title: "Read", filePath: "src/lib/auth.ts", status: "done" },
+		{ id: "t2", type: "tool_call", kind: "search", title: "Search", subtitle: "user session handler", status: "done" },
+		{ id: "t3", type: "tool_call", kind: "edit", title: "Edit", filePath: "src/lib/session.ts", status: "done" },
+		{ id: "t4", type: "tool_call", kind: "execute", title: "Execute", subtitle: "bun test", status: "done" },
+		{ id: "t5", type: "tool_call", kind: "edit", title: "Edit", filePath: "src/lib/auth.ts", status: "running" },
+	];
+
 	let activeSection = $state("button");
 
 	const purpleColor = "#9858FF";
@@ -274,8 +354,14 @@
 							{#if item.icon === "kanban"}
 								<Kanban size={12} weight="fill" class="shrink-0" style="color: {purpleColor}" />
 							{:else if item.icon === "palette"}
-								<Palette size={12} weight="fill" class="shrink-0" style="color: {purpleColor}" />						{:else if item.icon === "tag"}
-							<Tag size={12} weight="fill" class="shrink-0" style="color: {purpleColor}" />							{:else}
+								<Palette size={12} weight="fill" class="shrink-0" style="color: {purpleColor}" />
+							{:else if item.icon === "tag"}
+								<Tag size={12} weight="fill" class="shrink-0" style="color: {purpleColor}" />
+							{:else if item.icon === "robot"}
+								<Robot size={12} weight="fill" class="shrink-0" style="color: #18D6C3" />
+							{:else if item.icon === "panel"}
+								<Rows size={12} weight="fill" class="shrink-0" style="color: {purpleColor}" />
+							{:else}
 								<ShieldWarning size={12} weight="fill" class="shrink-0" style="color: {purpleColor}" />
 							{/if}
 								<span>{item.label}</span>
@@ -313,10 +399,10 @@
 									</div>
 									<div class="grid gap-3 md:grid-cols-2">
 										<div class="ds-specimen flex items-center gap-2">
-											<Button variant="header" size="header">
-												<Palette weight="fill" class="size-3.5" />
-												<span>Header Action</span>
-											</Button>
+									<Button variant="header" size="header">
+										<Palette weight="fill" class="size-3.5" />
+										<span>Header Action</span>
+									</Button>
 											<Button variant="header" size="header" disabled={true}>
 												<span>Disabled</span>
 											</Button>
@@ -330,13 +416,25 @@
 												<CheckCircle weight="fill" class="size-3 shrink-0" style="color: {greenColor}" />
 												<span>Allow</span>
 											</Button>
-											<Button variant="toolbar" size="toolbar">
-												<ShieldCheck weight="fill" class="size-3 shrink-0" style="color: {purpleColor}" />
-												<span>Always Allow</span>
-											</Button>
-										</div>
-									</div>
+									<Button variant="toolbar" size="toolbar">
+										<ShieldCheck weight="fill" class="size-3 shrink-0" style="color: {purpleColor}" />
+										<span>Always Allow</span>
+									</Button>
 								</div>
+								<div class="ds-specimen flex items-center gap-2 md:col-span-2">
+									<Button variant="headerAction" size="headerAction">
+										<Robot weight="fill" class="size-3 shrink-0" style="color: {purpleColor}" />
+										<span>New Agent</span>
+									</Button>
+									<Button variant="headerAction" size="headerAction">
+										<span>Update</span>
+									</Button>
+									<Button variant="headerAction" size="headerAction" disabled={true}>
+										<span>Updating</span>
+									</Button>
+								</div>
+							</div>
+						</div>
 
 								<div>
 									<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
@@ -477,10 +575,61 @@
 								</div>
 							</div>
 
+						{:else if activeSection === "panel-header"}
+							<div class="mb-1 text-xs font-semibold text-foreground/80">Panel Header</div>
+							<p class="mb-6 max-w-[420px] text-[11px] text-muted-foreground/60">
+								Embedded panel header with h-7 height, border-b, and action cells. Used in every card and overlay.
+							</p>
+
+							<div class="flex flex-col gap-6">
+								<!-- Example header with content -->
+								<div>
+									<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
+										Header with Content Area
+									</div>
+									<div class="ds-specimen overflow-hidden !p-0">
+										<EmbeddedPanelHeader>
+											<HeaderCell withDivider={false}>
+												<span class="size-3 rounded-sm bg-primary"></span>
+											</HeaderCell>
+											<HeaderTitleCell>
+												<span class="text-[11px] font-semibold font-mono text-foreground/80">Example Header</span>
+											</HeaderTitleCell>
+											<HeaderActionCell withDivider={false}>
+												<EmbeddedIconButton title="Action" ariaLabel="Action">
+													<X class="size-4" />
+												</EmbeddedIconButton>
+											</HeaderActionCell>
+										</EmbeddedPanelHeader>
+										<div class="p-3 text-[11px] text-muted-foreground">
+											Panel content area
+										</div>
+									</div>
+								</div>
+
+								<!-- Embedded Icon Button states -->
+								<div>
+									<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
+										Embedded Icon Buttons
+									</div>
+									<div class="ds-specimen flex items-center gap-0.5">
+										<EmbeddedIconButton title="Default" ariaLabel="Default">
+											<X class="size-4" />
+										</EmbeddedIconButton>
+										<EmbeddedIconButton title="Active" ariaLabel="Active" active={true}>
+											<X class="size-4" />
+										</EmbeddedIconButton>
+										<EmbeddedIconButton title="Disabled" ariaLabel="Disabled" disabled={true}>
+											<X class="size-4" />
+										</EmbeddedIconButton>
+									</div>
+								</div>
+							</div>
+
 						{:else if activeSection === "kanban-card"}
 							<div class="mb-1 text-xs font-semibold text-foreground/80">Kanban Card</div>
 							<p class="mb-6 max-w-[420px] text-[11px] text-muted-foreground/60">
-								Compact session card used in the kanban board. Shows robot icon, project badge, agent icon, title, time, tool activity, todo progress, and diff stats. Supports permission and question footer slots.
+								Compact session card used in the kanban board. Shows robot icon, project badge, agent icon, title, time, tool activity, todo progress, diff stats, and nested subagent task states. Supports permission and question footer slots.
 							</p>
 
 							<div class="flex flex-col gap-6">
@@ -521,6 +670,15 @@
 									</div>
 									<div class="mx-auto w-full max-w-[260px]">
 										<KanbanCard card={demoCardSubagent} />
+									</div>
+								</div>
+
+								<div>
+									<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
+										With Multiple Current Subagents
+									</div>
+									<div class="mx-auto w-full max-w-[260px]">
+										<KanbanCard card={demoCardMultiSubagent} />
 									</div>
 								</div>
 
@@ -581,7 +739,101 @@
 								</div>
 							</div>
 
-						{:else if activeSection === "permission-card"}
+						{:else if activeSection === "agent-tool-task"}
+						<div class="mb-1 text-xs font-semibold text-foreground/80">Agent Tool Task</div>
+						<p class="mb-6 max-w-[420px] text-[11px] text-muted-foreground/60">
+							Subagent task card used in the agent panel. Shows description, prompt, result, tool call tally, and last tool row. Supports compact mode for kanban embedding.
+						</p>
+
+						<div class="flex flex-col gap-6">
+							<!-- Default: running with children -->
+							<div>
+								<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
+									Default — Running
+								</div>
+								<div class="mx-auto w-full max-w-[400px]">
+									<AgentToolTask
+										description="Refactor auth session handling"
+										prompt="Investigate the session timeout bug in auth.ts and fix the race condition when multiple tabs refresh tokens simultaneously."
+										children={demoTaskToolCalls}
+										status="running"
+										iconBasePath="/svgs/icons"
+									/>
+								</div>
+							</div>
+
+							<!-- Default: done with result -->
+							<div>
+								<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
+									Default — Done with Result
+								</div>
+								<div class="mx-auto w-full max-w-[400px]">
+									<AgentToolTask
+										description="Fix session timeout race condition"
+										prompt="Investigate the session timeout bug in auth.ts and fix the race condition."
+										resultText="Fixed the race condition by adding a mutex lock around the token refresh. Added a test to verify concurrent refresh requests are serialized correctly."
+										children={demoTaskToolCalls}
+										status="done"
+										showDoneIcon={true}
+										durationLabel="12s"
+										iconBasePath="/svgs/icons"
+									/>
+								</div>
+							</div>
+
+							<!-- Compact: running -->
+							<div>
+								<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
+									Compact — Running
+								</div>
+								<div class="mx-auto w-full max-w-[260px]">
+									<AgentToolTask
+										description="Refactor auth session handling"
+										children={demoTaskToolCalls}
+										status="running"
+										compact={true}
+										iconBasePath="/svgs/icons"
+									/>
+								</div>
+							</div>
+
+							<!-- Compact: done -->
+							<div>
+								<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
+									Compact — Done
+								</div>
+								<div class="mx-auto w-full max-w-[260px]">
+									<AgentToolTask
+										description="Fix session timeout race condition"
+										resultText="Fixed the race condition by adding a mutex lock around the token refresh."
+										children={demoTaskToolCalls}
+										status="done"
+										showDoneIcon={true}
+										compact={true}
+										durationLabel="12s"
+										iconBasePath="/svgs/icons"
+									/>
+								</div>
+							</div>
+
+							<!-- Compact: no children (pending) -->
+							<div>
+								<div class="mb-2 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground/40">
+									Compact — Pending (no tools yet)
+								</div>
+								<div class="mx-auto w-full max-w-[260px]">
+									<AgentToolTask
+										description="Analyze test coverage gaps"
+										children={[]}
+										status="pending"
+										compact={true}
+										iconBasePath="/svgs/icons"
+									/>
+								</div>
+							</div>
+						</div>
+
+					{:else if activeSection === "permission-card"}
 							<div class="mb-1 text-xs font-semibold text-foreground/80">Permission Card</div>
 							<p class="mb-6 text-[11px] text-muted-foreground/60 max-w-[420px]">
 								Compact card above the composer. Header shows tool kind + segmented progress (current segment highlighted). Command wraps naturally. Full-width toolbar buttons.

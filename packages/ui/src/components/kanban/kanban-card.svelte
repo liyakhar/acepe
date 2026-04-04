@@ -1,9 +1,11 @@
 <script lang="ts">
 	import type { Snippet } from "svelte";
+	import X from "phosphor-svelte/lib/X";
+	import AgentToolTask from "../agent-panel/agent-tool-task.svelte";
 	import AgentToolRow from "../agent-panel/agent-tool-row.svelte";
-	import QueueSubagentCard from "../attention-queue/attention-queue-subagent-card.svelte";
 	import { DiffPill } from "../diff-pill/index.js";
 	import {
+		EmbeddedIconButton,
 		EmbeddedPanelHeader,
 		HeaderActionCell,
 		HeaderCell,
@@ -17,8 +19,12 @@
 	interface Props {
 		card: KanbanCardData;
 		onclick?: () => void;
+		/** Close button callback. When provided, renders a compact X button in the header. */
+		onClose?: () => void;
 		footer?: Snippet;
 		tally?: Snippet;
+		/** Renders a todo header section at the bottom of the card body. When provided, inline todoProgress in the tally is hidden. */
+		todoSection?: Snippet;
 		showFooter?: boolean;
 		showTally?: boolean;
 		/** When true the footer renders without padding so embedded composers sit flush. */
@@ -29,8 +35,10 @@
 	let {
 		card,
 		onclick,
+		onClose,
 		footer,
 		tally,
+		todoSection,
 		showFooter = false,
 		showTally = false,
 		flushFooter = false,
@@ -41,7 +49,11 @@
 	const hasDiff = $derived(card.diffInsertions > 0 || card.diffDeletions > 0);
 	const isInteractive = $derived(Boolean(onclick));
 	const showBody = $derived(Boolean(card.taskCard || card.latestTool || card.activityText || card.errorText));
-	const hasFooterContent = $derived(hasDiff || card.todoProgress !== null || showTally);
+	const hasTodoSection = $derived(todoSection !== undefined);
+	const hasFooterContent = $derived(card.todoProgress !== null && !hasTodoSection ? true : showTally);
+	const hasMenu = $derived(menu !== undefined);
+	const hasClose = $derived(Boolean(onClose));
+	const headerDiffDivider = $derived(hasMenu ? true : hasClose);
 
 	function handleKeydown(event: KeyboardEvent): void {
 		if (!onclick) return;
@@ -55,7 +67,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
 	class="flex flex-col overflow-hidden rounded-sm border border-border/60 bg-accent/30 transition-all duration-150 {isInteractive
-		? 'cursor-pointer hover:translate-x-px hover:border-border hover:bg-accent/45 hover:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.9)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border/80 focus-visible:ring-offset-0'
+		? 'cursor-pointer hover:border-border hover:bg-accent/45 hover:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.9)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border/80 focus-visible:ring-offset-0'
 		: ''}"
 	onclick={onclick}
 	onkeydown={handleKeydown}
@@ -63,7 +75,7 @@
 	tabindex={onclick ? 0 : undefined}
 	data-testid="kanban-card"
 >
-	<!-- Header: project badge, agent icon, title, time, menu -->
+	<!-- Header: project badge, agent icon, status dot, time, diff, actions -->
 	<div data-testid="kanban-card-header">
 		<EmbeddedPanelHeader class="bg-card/50">
 			<HeaderCell withDivider={false}>
@@ -73,13 +85,27 @@
 				<img src={card.agentIconSrc} alt={card.agentLabel} width="14" height="14" class="shrink-0 rounded-sm" />
 			</HeaderCell>
 			<HeaderTitleCell compactPadding>
-				<div class="flex min-w-0 items-center gap-1.5">
-					<span class="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground">{title}</span>
+				<div class="flex min-w-0 flex-1 items-center justify-end gap-1.5">
+					{#if card.hasUnseenCompletion}
+						<span
+							class="size-1.5 shrink-0 rounded-full"
+							style="background-color: var(--success-reference)"
+							title="Finished — not yet reviewed"
+							data-testid="unseen-completion-dot"
+						></span>
+					{/if}
 					{#if card.timeAgo}
 						<span class="shrink-0 font-mono text-[10px] text-muted-foreground/70">{card.timeAgo}</span>
 					{/if}
 				</div>
 			</HeaderTitleCell>
+			{#if hasDiff}
+				<HeaderActionCell withDivider={headerDiffDivider}>
+					<div class="flex h-7 items-center justify-center">
+						<DiffPill insertions={card.diffInsertions} deletions={card.diffDeletions} variant="plain" class="text-[10px]" />
+					</div>
+				</HeaderActionCell>
+			{/if}
 			{#if menu}
 				<HeaderActionCell withDivider={true}>
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -88,18 +114,37 @@
 					</div>
 				</HeaderActionCell>
 			{/if}
+			{#if onClose}
+				<HeaderActionCell withDivider={false}>
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="flex h-7 items-center justify-center" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+						<EmbeddedIconButton onclick={onClose} title="Close" ariaLabel="Close" class="!h-full border-l border-border/40">
+							{#snippet children()}
+								<X size={12} weight="bold" />
+							{/snippet}
+						</EmbeddedIconButton>
+					</div>
+				</HeaderActionCell>
+			{/if}
 		</EmbeddedPanelHeader>
+	</div>
+
+	<div class="border-t border-border/40 px-1.5 py-1" data-testid="kanban-card-title">
+		<div class="min-w-0">
+			<span class="block text-xs font-medium leading-tight text-foreground">{title}</span>
+		</div>
 	</div>
 
 	<!-- Content: task card, activity text, or latest tool -->
 	{#if showBody}
 		<div class="flex flex-col gap-1 px-1">
 			{#if card.taskCard}
-				<QueueSubagentCard
-					summary={card.taskCard.summary}
-					isStreaming={card.taskCard.isStreaming}
-					latestTool={card.taskCard.latestTool}
-					toolCalls={[...card.taskCard.toolCalls]}
+				<AgentToolTask
+					description={card.taskCard.summary}
+					status={card.taskCard.isStreaming ? "running" : "done"}
+					children={card.taskCard.toolCalls}
+					compact={true}
+					iconBasePath="/svgs/icons"
 				/>
 			{:else if card.latestTool}
 				<AgentToolRow
@@ -136,16 +181,20 @@
 						</div>
 					{/if}
 				{/if}
-				{#if card.todoProgress}
+				{#if card.todoProgress && !hasTodoSection}
 					<span class="shrink-0 text-[10px] text-muted-foreground">{card.todoProgress.label}</span>
 					<SegmentedProgress current={card.todoProgress.current} total={card.todoProgress.total} />
 					<span class="text-[10px] text-muted-foreground">
 						{card.todoProgress.current}/{card.todoProgress.total}
 					</span>
 				{/if}
-				{#if hasDiff}
-					<DiffPill insertions={card.diffInsertions} deletions={card.diffDeletions} variant="plain" class="text-[10px]" />
-				{/if}
+			</div>
+		{/if}
+
+		<!-- Todo section (compact todo header) -->
+		{#if hasTodoSection && todoSection}
+			<div class="border-t border-border/40">
+				{@render todoSection()}
 			</div>
 		{/if}
 
@@ -175,16 +224,20 @@
 						</div>
 					{/if}
 				{/if}
-				{#if card.todoProgress}
+				{#if card.todoProgress && !hasTodoSection}
 					<span class="shrink-0 text-[10px] text-muted-foreground">{card.todoProgress.label}</span>
 					<SegmentedProgress current={card.todoProgress.current} total={card.todoProgress.total} />
 					<span class="text-[10px] text-muted-foreground">
 						{card.todoProgress.current}/{card.todoProgress.total}
 					</span>
 				{/if}
-				{#if hasDiff}
-					<DiffPill insertions={card.diffInsertions} deletions={card.diffDeletions} variant="plain" class="text-[10px]" />
-				{/if}
+			</div>
+		{/if}
+
+		<!-- Todo section (compact todo header) -->
+		{#if hasTodoSection && todoSection}
+			<div class="border-t border-border/40">
+				{@render todoSection()}
 			</div>
 		{/if}
 	{/if}

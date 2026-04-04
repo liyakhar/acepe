@@ -37,6 +37,7 @@ export interface KanbanCardData {
 	readonly todoProgress: { current: number; total: number; label: string } | null;
 	readonly taskCard: KanbanTaskCardData | null;
 	readonly latestTool: KanbanToolData | null;
+	readonly hasUnseenCompletion: boolean;
 }
 
 export interface KanbanColumnGroup {

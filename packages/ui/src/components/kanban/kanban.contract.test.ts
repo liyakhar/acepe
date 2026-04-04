@@ -68,7 +68,7 @@ describe("kanban UI contract", () => {
 		expect(cardSource).toContain("cursor-pointer");
 		expect(cardSource).toContain("hover:border-border");
 		expect(cardSource).toContain("hover:bg-accent/45");
-		expect(cardSource).toContain("hover:translate-x-px");
+		expect(cardSource).not.toContain("hover:translate-x-px");
 		expect(cardSource).not.toContain("hover:-translate-y-px");
 		expect(cardSource).toContain("card.taskCard ||");
 		expect(cardSource).toContain("card.latestTool ||");
@@ -77,6 +77,10 @@ describe("kanban UI contract", () => {
 		expect(cardSource).toContain('<EmbeddedPanelHeader class="bg-card/50">');
 		expect(cardSource).toContain('<HeaderCell withDivider={false}>');
 		expect(cardSource).toContain('<HeaderTitleCell compactPadding>');
+		expect(cardSource).toContain('data-testid="kanban-card-title"');
+		expect(cardSource).toContain('class="border-t border-border/40 px-1.5 py-1"');
+		expect(cardSource).toContain('class="block text-xs font-medium leading-tight text-foreground"');
+		expect(cardSource).not.toContain('truncate text-[11px] font-medium text-foreground');
 		expect(cardSource).not.toContain('class="flex items-center gap-1.5 px-2 py-1.5"');
 		expect(cardSource).toContain('class="flex flex-col gap-1 px-1"');
 		expect(cardSource).not.toContain('class="flex flex-col gap-1 border-t border-border/40 px-1"');
@@ -85,14 +89,25 @@ describe("kanban UI contract", () => {
 		expect(cardSource).toContain('data-testid="kanban-card"');
 		expect(cardSource).toContain('data-testid="kanban-card-header"');
 		expect(cardSource).toContain('data-testid="kanban-card-tally"');
-		expect(cardSource).toContain("QueueSubagentCard");
-		expect(cardSource).toContain("summary={card.taskCard.summary}");
-		expect(cardSource).toContain("isStreaming={card.taskCard.isStreaming}");
-		expect(cardSource).toContain("latestTool={card.taskCard.latestTool}");
-		expect(cardSource).toContain("toolCalls={[...card.taskCard.toolCalls]}");
+		expect(cardSource).toContain("AgentToolTask");
+		expect(cardSource).toContain("description={card.taskCard.summary}");
+		expect(cardSource).toContain("status={card.taskCard.isStreaming ? \"running\" : \"done\"}");
+		expect(cardSource).toContain("children={card.taskCard.toolCalls}");
+		expect(cardSource).toContain('iconBasePath="/svgs/icons"');
 		expect(cardSource).toContain("{card.todoProgress.label}");
 		expect(cardSource).not.toContain("ToolTally toolCalls={[...card.toolCalls]}");
-		expect(cardSource).not.toContain("AgentToolTask");
+	});
+
+	it("places the diff pill in the header before the overflow menu instead of the footer tally", () => {
+		expect(existsSync(kanbanCardPath)).toBe(true);
+		if (!existsSync(kanbanCardPath)) return;
+
+		const cardSource = readFileSync(kanbanCardPath, "utf8");
+
+		expect(cardSource).toContain("const headerDiffDivider = $derived(hasMenu ? true : hasClose);");
+		expect(cardSource).toContain('{#if hasDiff}\n\t\t\t\t<HeaderActionCell withDivider={headerDiffDivider}>');
+		expect(cardSource).toContain('<DiffPill insertions={card.diffInsertions} deletions={card.diffDeletions} variant="plain" class="text-[10px]" />');
+		expect(cardSource).not.toContain('{#if hasDiff}\n\t\t\t\t\t<DiffPill insertions={card.diffInsertions} deletions={card.diffDeletions} variant="plain" class="text-[10px]" />');
 	});
 
 	it("only renders footer sections when there is actual footer content", () => {
@@ -106,7 +121,7 @@ describe("kanban UI contract", () => {
 		expect(cardSource).toContain("showTally?: boolean;");
 		expect(cardSource).toContain("showTally = false");
 		expect(cardSource).toContain("const hasFooterContent = $derived(");
-		expect(cardSource).toContain("hasDiff || card.todoProgress !== null || showTally");
+		expect(cardSource).toContain("card.todoProgress !== null && !hasTodoSection ? true : showTally");
 		expect(cardSource).not.toContain("card.toolCalls.length");
 		expect(cardSource).toContain("{#if showFooter && footer}");
 		expect(cardSource).toContain("{#if hasFooterContent}");
@@ -123,5 +138,7 @@ describe("kanban UI contract", () => {
 		const boardSource = readFileSync(kanbanBoardPath, "utf8");
 
 		expect(boardSource).toContain('class="flex h-full w-full min-w-0 flex-1');
+		expect(boardSource).toContain("gap-0.5");
+		expect(boardSource).toContain("p-0.5");
 	});
 });

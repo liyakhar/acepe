@@ -24,7 +24,7 @@
 		count={group.items.length}
 		color={sectionColor(group.id)}
 	/>
-	<div class="flex flex-1 flex-col gap-1 overflow-y-auto p-1.5">
+	<div class="flex flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
 		{#if group.items.length === 0}
 			{#if emptyHint}
 				<div class="py-4 text-center text-[10px] text-muted-foreground/50">{emptyHint}</div>
