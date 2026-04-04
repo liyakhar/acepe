@@ -1,5 +1,4 @@
 <script lang="ts">
-	import IconArrowUp from "@tabler/icons-svelte/icons/arrow-up";
 	import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
 	import {
 		Button,
@@ -10,7 +9,6 @@
 		HeaderActionCell,
 		KanbanBoard,
 		KanbanCard,
-		KanbanCompactComposer,
 		KanbanQuestionFooter,
 		type KanbanCardData,
 		type KanbanColumnGroup,
@@ -21,7 +19,6 @@
 	import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 	import { Colors } from "@acepe/ui/colors";
 	import { onDestroy, onMount } from "svelte";
-	import { SvelteMap } from "svelte/reactivity";
 	import type { SessionStatus } from "$lib/acp/application/dto/session-status.js";
 	import type { AgentInfo } from "$lib/acp/logic/agent-manager.js";
 	import type { Project, ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
@@ -34,13 +31,8 @@
 		getQueueItemToolDisplay,
 	} from "$lib/acp/components/queue/queue-item-display.js";
 	import PermissionActionBar from "$lib/acp/components/tool-calls/permission-action-bar.svelte";
-	import MicButton from "$lib/acp/components/agent-input/components/mic-button.svelte";
-	import { VoiceInputState } from "$lib/acp/components/agent-input/state/voice-input-state.svelte.js";
-	import { shouldStartVoiceHold, shouldStopVoiceHold } from "$lib/acp/components/agent-input/logic/voice-keyboard.js";
-	import { canStartVoiceInteraction } from "$lib/acp/components/agent-input/logic/voice-ui-state.js";
+	import TodoHeader from "$lib/acp/components/todo-header.svelte";
 	import AgentInput from "$lib/acp/components/agent-input/agent-input-ui.svelte";
-	import ModelSelectorMetricsChip from "$lib/acp/components/model-selector.metrics-chip.svelte";
-	import { hasVisibleModelSelectorMetrics } from "$lib/acp/components/model-selector.metrics-chip.logic.js";
 	import AgentSelector from "$lib/acp/components/agent-selector.svelte";
 	import ProjectSelector from "$lib/acp/components/project-selector.svelte";
 	import { WorktreeToggleControl } from "$lib/acp/components/worktree-toggle/index.js";
@@ -66,12 +58,9 @@
 	import type { ThreadBoardStatus } from "$lib/acp/store/thread-board/thread-board-status.js";
 	import type { PermissionRequest } from "$lib/acp/types/permission.js";
 	import type { QuestionRequest } from "$lib/acp/types/question.js";
-	import { AGENT_IDS } from "$lib/acp/types/agent-id.js";
-	import { CanonicalModeId } from "$lib/acp/types/canonical-mode-id.js";
 	import { formatTimeAgo } from "$lib/acp/utils/time-utils.js";
 	import { sessionEntriesToMarkdown } from "$lib/acp/utils/session-to-markdown.js";
 	import { useTheme } from "$lib/components/theme/context.svelte.js";
-	import { getVoiceSettingsStore } from "$lib/stores/voice-settings-store.svelte.js";
 	import { openFileInEditor, revealInFinder, tauriClient } from "$lib/utils/tauri-client.js";
 	import { ResultAsync } from "neverthrow";
 	import Robot from "phosphor-svelte/lib/Robot";
@@ -109,78 +98,20 @@
 	const selectionStore = getQuestionSelectionStore();
 	const themeState = useTheme();
 	const worktreeDefaultStore = getWorktreeDefaultStore();
-	const voiceSettingsStore = getVoiceSettingsStore();
-	const voiceEnabled = $derived(voiceSettingsStore.enabled);
 	const isDev = import.meta.env.DEV;
+
+	// Override CMD+T to open the kanban new-session dialog instead of spawning a panel
+	onMount(() => {
+		appState.onNewThreadOverride = () => handleNewSessionOpenChange(true);
+	});
+	onDestroy(() => {
+		appState.onNewThreadOverride = null;
+	});
 
 	const KANBAN_NEW_SESSION_PANEL_ID = "kanban-new-session-dialog";
 
-	let cardDrafts = $state(new SvelteMap<string, string>());
-	const cardVoiceStates = new Map<string, VoiceInputState>();
-
-	function getOrCreateVoiceState(sessionId: string): VoiceInputState {
-		const existing = cardVoiceStates.get(sessionId);
-		if (existing) return existing;
-
-		const state = new VoiceInputState({
-			sessionId,
-			getSelectedLanguage: () => voiceSettingsStore.language,
-			getSelectedModelId: () => voiceSettingsStore.selectedModelId,
-			onTranscriptionReady: (text) => {
-				const normalizedText = text.replace(/\s+/g, " ").trim();
-				if (!normalizedText) return;
-				const current = cardDrafts.get(sessionId);
-				const sep = current && current.length > 0 ? " " : "";
-				const next = (current ? current : "") + sep + normalizedText;
-				cardDrafts.set(sessionId, next);
-			},
-		});
-		void state.registerListeners();
-		cardVoiceStates.set(sessionId, state);
-		return state;
-	}
-
-	onDestroy(() => {
-		for (const vs of cardVoiceStates.values()) {
-			vs.dispose();
-		}
-		cardVoiceStates.clear();
-	});
-
-	onMount(() => {
-		const handleWindowKeyUp = (event: KeyboardEvent) => {
-			for (const voiceState of cardVoiceStates.values()) {
-				if (shouldStopVoiceHold(event, voiceState.isPressAndHold)) {
-					event.preventDefault();
-					voiceState.onKeyboardHoldEnd();
-				}
-			}
-		};
-
-		window.addEventListener("keyup", handleWindowKeyUp);
-
-		return () => {
-			window.removeEventListener("keyup", handleWindowKeyUp);
-		};
-	});
-
-	function handleComposerKeydown(sessionId: string, event: KeyboardEvent): void {
-		if (!voiceEnabled) return;
-		if (!shouldStartVoiceHold(event)) return;
-		const vs = getOrCreateVoiceState(sessionId);
-		if (!canStartVoiceInteraction(vs.phase, false)) return;
-		event.preventDefault();
-		vs.onKeyboardHoldStart();
-	}
-
-	function handleComposerKeyup(sessionId: string, event: KeyboardEvent): void {
-		const vs = cardVoiceStates.get(sessionId);
-		if (!vs) return;
-		if (!shouldStopVoiceHold(event, vs.isPressAndHold)) return;
-		vs.onKeyboardHoldEnd();
-	}
-
 	let newSessionOpen = $state(false);
+	let newSessionDialogRef = $state<HTMLElement | null>(null);
 	let selectedProjectPath = $state<string | null>(null);
 	let selectedAgentId = $state<string | null>(null);
 	let activeWorktreePath = $state<string | null>(null);
@@ -261,8 +192,8 @@
 		answer_needed: () => m.queue_group_answer_needed(),
 		planning: () => m.queue_group_planning(),
 		working: () => m.queue_group_working(),
-		finished: () => m.queue_group_finished(),
-		idle: () => "Idle",
+		needs_review: () => "Needs Review",
+		idle: () => "Done",
 		error: () => m.queue_group_error(),
 	};
 
@@ -270,7 +201,7 @@
 		"answer_needed",
 		"planning",
 		"working",
-		"finished",
+		"needs_review",
 		"idle",
 	];
 
@@ -515,6 +446,7 @@
 				: null,
 			taskCard,
 			latestTool,
+			hasUnseenCompletion: item.state.attention.hasUnseenCompletion,
 		};
 	}
 
@@ -776,43 +708,6 @@
 		selectionStore.setSingleOption(questionId, 0, opt.label);
 	}
 
-	function isComposerVisible(item: ThreadBoardItem): boolean {
-		return (
-			item.status === "idle" &&
-			item.state.connection === "connected" &&
-			item.state.activity.kind === "idle" &&
-			item.state.pendingInput.kind === "none"
-		);
-	}
-
-	function getComposerModeLabel(item: ThreadBoardItem): string {
-		return item.currentModeId === CanonicalModeId.PLAN ? CanonicalModeId.PLAN : CanonicalModeId.BUILD;
-	}
-
-	function handleComposerModeToggle(sessionId: string, currentModeId: string): void {
-		const nextModeId =
-			currentModeId === CanonicalModeId.PLAN ? CanonicalModeId.BUILD : CanonicalModeId.PLAN;
-
-		void sessionStore.setMode(sessionId, nextModeId).match(
-			() => undefined,
-			() => {
-				toast.error("Failed to switch mode.");
-				return undefined;
-			}
-		);
-	}
-
-	function handleComposerInput(sessionId: string, value: string): void {
-		cardDrafts.set(sessionId, value);
-	}
-
-	function handleComposerSubmit(sessionId: string): void {
-		const draft = cardDrafts.get(sessionId);
-		if (!draft || draft.trim().length === 0) return;
-		cardDrafts.delete(sessionId);
-		void sessionStore.sendMessage(sessionId, draft.trim());
-	}
-
 	function handleSubmitQuestion(sessionId: string) {
 		const item = itemLookup.get(sessionId);
 		if (!item || item.state.pendingInput.kind !== "question") return;
@@ -833,8 +728,8 @@
 <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
 	<div class="flex shrink-0 items-center justify-end px-2 pt-2">
 		<Button
-			variant="outline"
-			size="header"
+			variant="headerAction"
+			size="headerAction"
 			class="gap-2"
 			onclick={() => handleNewSessionOpenChange(true)}
 			disabled={createDisabled}
@@ -846,9 +741,16 @@
 
 	<Dialog bind:open={newSessionOpen} onOpenChange={handleNewSessionOpenChange}>
 		<DialogContent
+			bind:ref={newSessionDialogRef}
 			showCloseButton={false}
 			class="overflow-hidden max-w-[34rem] gap-0 border border-border/70 bg-background p-0 shadow-xl !backdrop-blur-none"
 			portalProps={{ disabled: true }}
+			onOpenAutoFocus={(e) => {
+				e.preventDefault();
+				requestAnimationFrame(() => {
+					newSessionDialogRef?.querySelector<HTMLElement>("[contenteditable]")?.focus();
+				});
+			}}
 		>
 			<EmbeddedPanelHeader>
 				<div class="flex min-w-0 items-center gap-2 px-2 text-[11px] font-medium">
@@ -941,22 +843,26 @@
 				{@const item = itemLookup.get(card.id)}
 				{@const permission = item ? getPermissionRequest(item) : null}
 				{@const question = item ? getQuestionData(item) : null}
-				{@const usageTelemetry = item ? (sessionStore.getHotState(item.sessionId).usageTelemetry ?? null) : null}
-				{@const isClaudeCode = item ? item.agentId === AGENT_IDS.CLAUDE_CODE : false}
-				{@const showUsage = hasVisibleModelSelectorMetrics(usageTelemetry, isClaudeCode)}
-				{@const showComposer = item ? isComposerVisible(item) : false}
-				{@const showFooter = permission !== null || question !== null || showComposer}
+				{@const hotState = item ? sessionStore.getHotState(item.sessionId) : null}
+				{@const showFooter = permission !== null || question !== null}
 				{#if item}
-					<KanbanCard {card} onclick={() => handleCardClick(card.id)} showFooter={showFooter} showTally={showUsage} flushFooter={showComposer}>
-						{#snippet tally()}
-							{#if showUsage}
-								<ModelSelectorMetricsChip sessionId={card.id} agentId={item.agentId} compact={true} hideLabel={true} />
-							{/if}
+					<KanbanCard {card} onclick={() => handleCardClick(card.id)} onClose={() => handleCloseSession(item)} showFooter={showFooter}>
+						{#snippet todoSection()}
+							{@const runtimeState = sessionStore.getSessionRuntimeState(item.sessionId)}
+							{@const todoSessionStatus = toSessionStatus(runtimeState, hotState ? hotState.status : "idle")}
+							<TodoHeader
+								sessionId={item.sessionId}
+								entries={sessionStore.getEntries(item.sessionId)}
+								isConnected={item.state.connection === "connected"}
+								status={todoSessionStatus}
+								isStreaming={card.isStreaming}
+								compact={true}
+							/>
 						{/snippet}
 						{#snippet menu()}
 							<DropdownMenu.Root>
 								<DropdownMenu.Trigger
-									class="shrink-0 inline-flex h-3 w-2.5 items-center justify-center text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+									class="shrink-0 inline-flex h-3 w-4 items-center justify-center text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
 									aria-label="More actions"
 									title="More actions"
 									onclick={(event) => event.stopPropagation()}
@@ -964,10 +870,6 @@
 									<IconDotsVertical class="h-2.5 w-2.5" aria-hidden="true" />
 								</DropdownMenu.Trigger>
 								<DropdownMenu.Content align="end" class="min-w-[180px]">
-									<DropdownMenu.Item onSelect={() => handleCloseSession(item)} class="cursor-pointer">
-										{m.common_close()}
-									</DropdownMenu.Item>
-									<DropdownMenu.Separator />
 									<DropdownMenu.Item class="cursor-pointer">
 										<CopyButton
 											text={item.sessionId}
@@ -1038,11 +940,8 @@
 						{#snippet footer()}
 							<div
 								class="flex min-w-0 flex-col gap-1"
-								data-show-usage={showUsage ? "true" : "false"}
 								data-has-permission={permission ? "true" : "false"}
 								data-has-question={question ? "true" : "false"}
-								data-is-claude-code={isClaudeCode ? "true" : "false"}
-								data-show-composer={showComposer ? "true" : "false"}
 							>
 								{#if permission}
 									<PermissionActionBar permission={permission} compact projectPath={item.projectPath} />
@@ -1052,76 +951,6 @@
 										onSelectOption={(i: number) => handleSelectOption(card.id, i)}
 										onSubmit={() => handleSubmitQuestion(card.id)}
 									/>
-								{/if}
-								{#if showComposer}
-									{@const composerDraft = cardDrafts.get(card.id)}
-									{@const composerValue = composerDraft ? composerDraft : ""}
-									{@const canSubmitComposer = composerValue.trim().length > 0}
-									{@const composerVoiceState = voiceEnabled ? getOrCreateVoiceState(card.id) : null}
-									{@const isVoiceComposerMode = composerVoiceState !== null && (composerVoiceState.phase === "checking_permission" || composerVoiceState.phase === "recording")}
-									<KanbanCompactComposer
-										embedded={true}
-										modeLabel={item ? getComposerModeLabel(item) : CanonicalModeId.BUILD}
-										value={composerValue}
-										voiceMode={isVoiceComposerMode}
-										onModeToggle={() => handleComposerModeToggle(card.id, item ? getComposerModeLabel(item) : CanonicalModeId.BUILD)}
-										onInput={(v) => handleComposerInput(card.id, v)}
-										onSubmit={() => handleComposerSubmit(card.id)}
-										onKeydown={(e) => handleComposerKeydown(card.id, e)}
-										onKeyup={(e) => handleComposerKeyup(card.id, e)}
-									>
-										{#snippet voiceContent()}
-											{#if composerVoiceState}
-												<div class="flex h-7 min-w-0 flex-1 items-center overflow-hidden">
-													<div class="kanban-voice-meter flex w-full items-center justify-center gap-px motion-reduce:hidden" aria-hidden="true">
-														{#each composerVoiceState.waveform.meterLevels as level, index (index)}
-															{@const dist = Math.abs(index - Math.floor(composerVoiceState.waveform.barCount / 2))}
-															{@const maxH = 18 - dist * 0.7}
-															<div
-																class="kanban-voice-bar rounded-full"
-																style:width="1.5px"
-																style:height="{level > 0.005 ? 1.5 + level * (maxH - 1.5) : 0}px"
-																style:background-color="#F9C396"
-															></div>
-														{/each}
-													</div>
-												</div>
-											{/if}
-										{/snippet}
-										{#snippet voiceTrailing()}
-											{#if composerVoiceState && composerVoiceState.recordingElapsedLabel}
-												<span class="font-mono text-[10px] text-muted-foreground tabular-nums">
-													{composerVoiceState.recordingElapsedLabel}
-												</span>
-											{/if}
-											{#if composerVoiceState}
-												<MicButton voiceState={composerVoiceState} disabled={false} />
-											{/if}
-										{/snippet}
-										{#snippet micButton()}
-											{#if composerVoiceState}
-												<MicButton
-													voiceState={composerVoiceState}
-													disabled={!canStartVoiceInteraction(composerVoiceState.phase, false) && composerVoiceState.phase !== "recording"}
-												/>
-											{/if}
-										{/snippet}
-										{#snippet submitButton()}
-											<Button
-												type="button"
-												size="icon"
-												onclick={(e) => {
-													e.stopPropagation();
-													handleComposerSubmit(card.id);
-												}}
-												disabled={!canSubmitComposer}
-												class="h-[17.6px] w-[17.6px] shrink-0 cursor-pointer rounded-full bg-foreground text-background hover:bg-foreground/85"
-											>
-												<IconArrowUp class="h-[8.8px] w-[8.8px]" />
-												<span class="sr-only">{m.agent_input_send_message()}</span>
-											</Button>
-										{/snippet}
-									</KanbanCompactComposer>
 								{/if}
 							</div>
 						{/snippet}
@@ -1140,13 +969,3 @@
 		onClose={() => (activeDialogPanelId = null)}
 	/>
 </div>
-
-<style>
-	.kanban-voice-meter {
-		min-height: 18px;
-	}
-
-	.kanban-voice-bar {
-		transition: height 90ms linear;
-	}
-</style>
