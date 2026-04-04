@@ -512,9 +512,21 @@ export class MainAppViewState {
 	 * - 2+ projects in focused view: spawn panel with agent selection for the focused project
 	 * - 2+ projects (normal view): show project selection
 	 */
+	/**
+	 * Optional override for new-thread behavior (e.g. kanban dialog).
+	 * When set, CMD+T calls this instead of spawning a panel.
+	 */
+	onNewThreadOverride: (() => void) | null = null;
+
 	handleNewThread(): void {
 		// Defensive guard: don't allow new thread if projectCount is unknown or 0
 		if (this.projectManager.projectCount === null || this.projectManager.projectCount === 0) {
+			return;
+		}
+
+		// In kanban mode (or any custom override), delegate to the registered handler
+		if (this.onNewThreadOverride) {
+			this.onNewThreadOverride();
 			return;
 		}
 
