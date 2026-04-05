@@ -25,8 +25,8 @@
 		applicationCategory: 'DeveloperApplication',
 		operatingSystem: 'macOS, Windows, Linux',
 		url: 'https://acepe.dev',
-		image: 'https://acepe.dev/og-image.jpg',
-		screenshot: 'https://acepe.dev/og-image.jpg',
+		image: 'https://acepe.dev/og-image.png',
+		screenshot: 'https://acepe.dev/og-image.png',
 		softwareVersion: '1.0',
 		offers: {
 			'@type': 'Offer',
