@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Markdown now renders during streaming with throttled 150ms sync rendering and a leading-edge first frame, instead of showing raw text until the stream finishes
+- Kanban board gains a Needs Review column (pink, eye icon) for unseen completions before they move to Done
+- Views can override Cmd+T to show a custom new-session flow such as the kanban new-agent dialog
+- Cargo profiles for faster Tauri dev builds (opt-level 2 for dependencies) and leaner releases (thin LTO, strip, single codegen unit)
+- Biome lint checks added to desktop and website pre-push validation hooks
+- ACP file write path handling now canonicalizes and scope-checks write paths for security
+
+### Changed
+- Workspace dependency versions aligned across desktop, website, ui, and analytics packages (Vite 7, SvelteKit 2.49, Svelte 5.45, TypeScript 5.9)
+- Remaining `once_cell::Lazy` statics replaced with `std::sync::LazyLock` and the direct `once_cell` dependency removed
+- Stale `lucide-svelte` and `phosphor-icons-svelte` dependencies removed from manifests and lockfile
+- Backend CI serializes Cargo steps and drops redundant `cargo check`
+- Website test script uses Bun instead of npm
+- Agent setup and kanban activity UI refreshed
+- Design system showcase ownership moved into the desktop package
+- Kanban inline composer removed in favor of thread dialog interaction
+
+### Fixed
+- OpenCode runtime root resolved from the repository or worktree root instead of the raw working directory, preventing duplicate processes and leaked LSP servers
+- Open PR button stays visible with its loading spinner during PR creation instead of vanishing instantly
+- Website logo dark/light theme assets now display correctly in their respective modes
+- Merge split button moved from PrStatusCard to ModifiedFilesHeader for consistent action placement
+
+## [2026.4.4] - 2026-04-03
+
+### Added
+- Shared PR preference key in the desktop user-setting contract, typed against `UserSettingKey` instead of raw string literals
+
+### Changed
+- Refreshed Acepe logo and regenerated desktop and website icon sets from the latest document source
+
+### Fixed
+- Kanban cards now show only live activity (active tool, subagent, thinking, error) instead of conversation preview markdown
+- Voice runtime models unloaded and recording sessions released during shutdown to prevent stale worker state
+
+## [2026.4.3] - 2026-04-03
+
+### Added
+- Kanban cards embed a compact voice composer with mode toggling and session usage tally in the card footer
+- Live session threads can be opened directly from kanban board cards, backed by background panels for real-time sync
+- Shared chip shell component with icon defaults exported from `@acepe/ui`
+- Compact inline task and permission summaries in the agent panel
+- Website comparison pages published with verified Conductor comparison and expanded discoverability
+
+### Changed
+- Logo asset consolidated from the shared document source with regenerated desktop and website icon sets
+- Tauri and Vite watch ignore files aligned so frontend-only changes stay on Vite HMR
+
+### Fixed
+- Generated i18n messages now included in svelte-check so typed Paraglide exports remain valid
+- Kanban tool kinds normalized to the shared AgentToolKind subset before building card data
+- Updater no longer allows startup updates to proceed through the install flow
+- Floating surfaces now route through layer tokens for correct stacking
+- Derived session titles preserved over generated session labels
+
 ## [2026.4.2] - 2026-04-02
 
 ### Added
@@ -64,6 +120,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Duplicate permission UI events no longer fire when multiple SDK requests share the same tool call
 - Markdown content now shows plain text while streaming instead of flickering partially rendered HTML
 - Question and attention queue entries render approve/deny flows more reliably with consistent UI state tracking
+
+## [2026.3.35] - 2026-03-30
+
+### Changed
+- Empty state heading replaced with a direct build prompt and dedicated sans, serif, and mono font tokens applied for branded Acepe typography
+
+### Fixed
+- Composer state recovers when the initial session handoff fails, keeping panels retryable and preloading slash commands before a session exists
+- Attached file-panel panes now scroll to the bottom without being clipped by the surrounding layout
+- Single-session fullscreen stays scoped to agent fullscreen, terminal fullscreen remains a separate target, and saved agent fullscreen selections restore consistently during workspace hydration
+- Worktree-aware file picker and global explorer prefer the active worktree path, first-send mode and model selections survive session creation, and queue and steer actions stay enabled while a turn can be cancelled
+- Restored panels now hydrate saved sessions first during startup so reconnection does not block on a full history scan
+- Claude Code permission prompts offer persistent allow rules when the SDK suggests them, and cancelled sessions resolve pending questions cleanly
+- OpenCode preserves streaming events and rich edit payloads during active sessions
+- Pierre diffs and markdown tables keep bottom clearance so content clears overlay scrollbars
 
 ## [2026.3.34] - 2026-03-29
 
@@ -416,7 +487,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Intel build support from release process
 - Intel download button from website
 
-[Unreleased]: https://github.com/flazouh/acepe/compare/v2026.3.33...HEAD
+[Unreleased]: https://github.com/flazouh/acepe/compare/v2026.4.4...HEAD
+[2026.4.4]: https://github.com/flazouh/acepe/releases/tag/v2026.4.4
+[2026.4.3]: https://github.com/flazouh/acepe/releases/tag/v2026.4.3
+[2026.4.2]: https://github.com/flazouh/acepe/releases/tag/v2026.4.2
+[2026.4.1]: https://github.com/flazouh/acepe/releases/tag/v2026.4.1
+[2026.3.37]: https://github.com/flazouh/acepe/releases/tag/v2026.3.37
+[2026.3.36]: https://github.com/flazouh/acepe/releases/tag/v2026.3.36
+[2026.3.35]: https://github.com/flazouh/acepe/releases/tag/v2026.3.35
+[2026.3.34]: https://github.com/flazouh/acepe/releases/tag/v2026.3.34
 [2026.3.33]: https://github.com/flazouh/acepe/releases/tag/v2026.3.33
 [2026.3.32]: https://github.com/flazouh/acepe/releases/tag/v2026.3.32
 [2026.3.31]: https://github.com/flazouh/acepe/releases/tag/v2026.3.31
