@@ -8,6 +8,7 @@
 		mode?: "tools";
 		toolCalls: AgentToolEntry[];
 		inline?: boolean;
+		compact?: boolean;
 		filledColor?: string;
 		mutedColor?: string;
 	};
@@ -18,6 +19,7 @@
 		filledCount: number;
 		ariaLabel: string;
 		inline?: boolean;
+		compact?: boolean;
 		filledColor?: string;
 		mutedColor?: string;
 	};
@@ -64,14 +66,14 @@
 
 {#if bars.length > 0}
 	<div
-		class="flex items-center gap-[2px] {isInline ? '' : 'border-t border-border px-2 py-1.5'}"
+		class="flex items-center gap-[2px] {isInline ? '' : props.compact ? 'border-t border-border/60 px-1 pt-0.5 pb-1' : 'border-t border-border px-2 py-1.5'}"
 		role="img"
 		aria-label={footerLabel}
 		title={footerLabel}
 	>
 		{#each bars as bar (bar.key)}
 			<div
-				class="rounded-full {isInline ? 'h-1.5 w-[5px]' : 'h-2 w-[3px]'}"
+				class="rounded-full {isInline ? 'h-1.5 w-[5px]' : props.compact ? 'h-1.5 w-[2px]' : 'h-2 w-[3px]'}"
 				style="background-color: {bar.filled ? filledColor : mutedColor}"
 				title={bar.label}
 			></div>

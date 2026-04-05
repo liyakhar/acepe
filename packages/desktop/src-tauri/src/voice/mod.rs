@@ -36,4 +36,8 @@ impl VoiceState {
     pub fn runtime(&self) -> &VoiceRuntimeHandle {
         &self.runtime
     }
+
+    pub fn shutdown(&self) {
+        self.runtime.shutdown();
+    }
 }

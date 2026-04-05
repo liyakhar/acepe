@@ -408,11 +408,9 @@ export interface PanelLayout {
 // ============================================
 
 /**
- * How an agent is provisioned (bundled vs installable).
+ * Current setup state for an agent.
  */
-export type AgentAvailabilityKind =
-	| { kind: "bundled" }
-	| { kind: "installable"; installed: boolean };
+export type AgentAvailabilityKind = { kind: "installable"; installed: boolean };
 
 /**
  * Agent - represents an AI agent provider.
@@ -424,7 +422,7 @@ export interface Agent {
 	readonly description?: string;
 	/** Icon path for the agent */
 	readonly icon: string;
-	/** How this agent is provisioned (set by store when loading from API) */
+	/** Current setup state for this agent (set by store when loading from API) */
 	readonly availability_kind?: AgentAvailabilityKind;
 	/** Visible UI modes that support wrapper-managed Autonomous execution. */
 	readonly autonomous_supported_mode_ids?: ReadonlyArray<string>;

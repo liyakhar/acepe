@@ -1625,7 +1625,10 @@ fn replays_serialized_copilot_task_tool_call_from_event_hub() {
                         ..
                     } => {
                         assert_eq!(description.as_deref(), Some("Explain codebase overview"));
-                        assert_eq!(prompt.as_deref(), Some("Explore the repository and summarize it."));
+                        assert_eq!(
+                            prompt.as_deref(),
+                            Some("Explore the repository and summarize it.")
+                        );
                         assert_eq!(subagent_type.as_deref(), Some("explore"));
                         assert!(raw.is_some(), "expected raw payload to be preserved");
                     }

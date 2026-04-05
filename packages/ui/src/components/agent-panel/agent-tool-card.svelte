@@ -8,10 +8,11 @@
 		variant?: Variant;
 		/** Optional extra Tailwind classes (e.g. flex, font-mono). */
 		class?: string;
+		dataTestid?: string;
 		children: Snippet;
 	}
 
-	let { variant = "default", class: className = "", children }: Props = $props();
+	let { variant = "default", class: className = "", dataTestid, children }: Props = $props();
 
 	const base = "rounded-sm border border-border overflow-hidden";
 	const variantClasses: Record<Variant, string> = {
@@ -22,6 +23,6 @@
 	const wrapperClass = $derived(`${base} ${variantClasses[variant]} ${className}`.trim());
 </script>
 
-<div class={wrapperClass}>
+<div class={wrapperClass} data-testid={dataTestid}>
 	{@render children()}
 </div>

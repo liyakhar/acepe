@@ -1,7 +1,7 @@
 <script lang="ts">
 import { PlanIcon } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import IconCircleCheckFilled from "@tabler/icons-svelte/icons/circle-check-filled";
+import { IconCircleCheckFilled } from "@tabler/icons-svelte";
 import Check from "phosphor-svelte/lib/Check";
 import ClaudeCodeIcon from "$lib/acp/components/claude-code-icon.svelte";
 import CodexIcon from "$lib/acp/components/codex-icon.svelte";

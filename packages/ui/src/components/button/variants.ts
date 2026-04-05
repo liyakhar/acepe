@@ -23,6 +23,8 @@ export const buttonVariants = tv({
       link: "text-primary underline-offset-4 hover:underline",
       header:
         "border border-border/50 bg-background text-foreground shadow-none hover:bg-accent/40 hover:text-foreground",
+      headerAction:
+        "border border-border/50 bg-muted text-foreground/80 shadow-none hover:bg-muted/80 hover:text-foreground transition-colors",
       toolbar:
         "border border-border/50 bg-muted text-foreground/80 hover:text-foreground hover:bg-muted/80 transition-colors",
     },
@@ -32,6 +34,8 @@ export const buttonVariants = tv({
       lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
       header:
         "h-7 gap-1.5 px-3 text-xs [&_svg:not([class*='size-'])]:size-3.5",
+      headerAction:
+        "h-auto gap-1 rounded px-2 py-0.5 text-[0.6875rem] [&_svg:not([class*='size-'])]:size-3",
       toolbar: "h-auto gap-1 rounded px-2 py-0.5 text-[0.6875rem] [&_svg:not([class*='size-'])]:size-3",
       icon: "size-9",
       "icon-sm": "size-8",

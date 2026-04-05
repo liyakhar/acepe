@@ -532,16 +532,17 @@ $effect(() => {
 	}
 });
 
-// Watch for external branch changes via .git/HEAD file watcher
+// Watch for external branch changes via .git/HEAD file watcher.
+// Two separate effects: one subscribes to the event stream once (mount),
+// the other dispatches watchHead only for newly-seen project paths.
+// Prior implementation re-ran on every sessionGroups reference change and
+// fired 6 IPC calls per tick (~30 calls in 58s observed in profiling).
+const watchedProjectPaths = new Set<string>();
+
 $effect(() => {
-	const projectPaths = sessionGroups.map((g) => g.projectPath);
-
-	for (const pp of projectPaths) {
-		void tauriClient.git.watchHead(pp);
-	}
-
 	let unlisten: (() => void) | null = null;
-	const promise = listen<{ projectPath: string; branch: string | null }>(
+	let disposed = false;
+	listen<{ projectPath: string; branch: string | null }>(
 		"git:head-changed",
 		(event) => {
 			const pp = event.payload.projectPath;
@@ -550,14 +551,24 @@ $effect(() => {
 				loadGitOverview(pp);
 			}
 		}
-	);
-	promise.then((fn) => {
-		unlisten = fn;
+	).then((fn) => {
+		if (disposed) fn();
+		else unlisten = fn;
 	});
 
 	return () => {
+		disposed = true;
 		unlisten?.();
 	};
+});
+
+$effect(() => {
+	for (const group of sessionGroups) {
+		const pp = group.projectPath;
+		if (watchedProjectPaths.has(pp)) continue;
+		watchedProjectPaths.add(pp);
+		void tauriClient.git.watchHead(pp);
+	}
 });
 
 function handleSessionSelect(item: SessionListItem) {

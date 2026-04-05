@@ -34,6 +34,11 @@ export interface CreateSessionOptions {
 	readonly projectName: string;
 
 	/**
+	 * Optional eager session title derived before the first send finishes.
+	 */
+	readonly title?: string | null;
+
+	/**
 	 * Optional worktree path for sessions operating in git worktrees.
 	 * Used for correct path conversion when creating checkpoints.
 	 */
@@ -69,6 +74,7 @@ export function createSession(
 			initialModeId: options.initialModeId ?? undefined,
 			initialModelId: options.initialModelId ?? undefined,
 			projectPath: options.projectPath,
+			title: options.title ?? undefined,
 			worktreePath: options.worktreePath,
 		})
 		.map((session) => session.id)

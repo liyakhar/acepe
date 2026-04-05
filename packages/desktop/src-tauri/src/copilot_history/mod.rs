@@ -754,7 +754,9 @@ mod tests {
                             name: "Task".to_string(),
                             arguments: ToolArguments::Think {
                                 description: Some("Explain the codebase".to_string()),
-                                prompt: Some("Explore the repository and summarize it.".to_string()),
+                                prompt: Some(
+                                    "Explore the repository and summarize it.".to_string(),
+                                ),
                                 subagent_type: Some("explore".to_string()),
                                 skill: None,
                                 skill_args: None,
@@ -785,7 +787,9 @@ mod tests {
                             name: "Task".to_string(),
                             arguments: ToolArguments::Think {
                                 description: Some("Explain the codebase".to_string()),
-                                prompt: Some("Explore the repository and summarize it.".to_string()),
+                                prompt: Some(
+                                    "Explore the repository and summarize it.".to_string(),
+                                ),
                                 subagent_type: Some("explore".to_string()),
                                 skill: None,
                                 skill_args: None,

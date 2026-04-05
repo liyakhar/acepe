@@ -1,7 +1,9 @@
 <script lang="ts">
+import IconArrowUp from "@tabler/icons-svelte/icons/arrow-up";
+import { Button } from "@acepe/ui/button";
+import { EmbeddedIconButton } from "@acepe/ui/panel-header";
 import * as m from "$lib/paraglide/messages.js";
 import FloppyDisk from "phosphor-svelte/lib/FloppyDisk";
-import PaperPlaneRight from "phosphor-svelte/lib/PaperPlaneRight";
 import PencilSimple from "phosphor-svelte/lib/PencilSimple";
 import Queue from "phosphor-svelte/lib/Queue";
 import Trash from "phosphor-svelte/lib/Trash";
@@ -28,7 +30,6 @@ const queue = $derived.by(() => {
 });
 const isPaused = $derived(messageQueueStore.pausedIds.has(sessionId));
 const count = $derived(queue.length);
-const latestMessage = $derived(count > 0 ? queue[count - 1] : null);
 const displayQueue = $derived.by(() => {
 	const ordered: QueuedMessage[] = [];
 
@@ -85,12 +86,6 @@ function handleSendNow(messageId: string): void {
 	messageQueueStore.sendNow(sessionId, messageId);
 }
 
-function truncate(text: string, maxLength: number): string {
-	const lines = text.split("\n");
-	const firstLine = lines[0] ? lines[0] : text;
-	if (firstLine.length <= maxLength) return firstLine;
-	return `${firstLine.slice(0, maxLength)}...`;
-}
 </script>
 
 {#if count > 0}
@@ -99,7 +94,7 @@ function truncate(text: string, maxLength: number): string {
 		<div class="rounded-t-lg bg-accent/50 overflow-hidden">
 			<div class="flex flex-col max-h-[260px] overflow-y-auto">
 				{#each displayQueue as message (message.id)}
-					{@const isNewest = latestMessage !== null && latestMessage.id === message.id}
+					{@const isNewest = queue[queue.length - 1]?.id === message.id}
 					<div
 						class="queue-message-row flex items-start gap-2 px-3 py-1.5 text-[0.6875rem] leading-tight border-b border-border/30 last:border-b-0 {isNewest ? 'bg-muted/30' : ''}"
 					>
@@ -130,42 +125,51 @@ function truncate(text: string, maxLength: number): string {
 							</div>
 						{:else}
 							<!-- Message content -->
-							<span class="flex-1 min-w-0 whitespace-pre-wrap break-words text-foreground">
-								{message.content}
-							</span>
-
-							{#if message.attachments.length > 0}
-								<span class="shrink-0 text-muted-foreground font-mono text-[0.625rem]">
-									+{message.attachments.length}
+							<div class="flex min-w-0 flex-1 items-start gap-2">
+								<span class="min-w-0 flex-1 whitespace-pre-wrap break-words text-foreground">
+									{message.content}
 								</span>
-							{/if}
+
+								{#if message.attachments.length > 0}
+									<span class="shrink-0 pt-0.5 font-mono text-[0.625rem] text-muted-foreground">
+										+{message.attachments.length}
+									</span>
+								{/if}
+							</div>
 
 							<!-- Actions -->
 							<div class="flex items-center gap-1 shrink-0" role="none">
-								<button
-									type="button"
-									class="flex items-center gap-1 rounded border border-border/50 bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground/75 hover:text-foreground hover:bg-muted/80 transition-colors cursor-pointer"
-									onclick={() => handleSendNow(message.id)}
-								>
-									<PaperPlaneRight size={10} weight="bold" class="shrink-0" />
-									{m.agent_input_send_message()}
-								</button>
-								<button
-									type="button"
-									class="flex items-center gap-1 rounded border border-border/50 bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground/75 hover:text-foreground hover:bg-muted/80 transition-colors cursor-pointer"
+								<Button
+									variant="headerAction"
+									size="icon-sm"
+									class="size-6"
+									aria-label={m.common_edit()}
+									title={m.common_edit()}
 									onclick={() => handleStartEdit(message.id, message.content)}
 								>
 									<PencilSimple size={10} weight="bold" class="shrink-0" />
-									{m.common_edit()}
-								</button>
-								<button
-									type="button"
-									class="flex items-center gap-1 rounded border border-border/50 bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground/75 hover:text-foreground hover:bg-muted/80 transition-colors cursor-pointer"
+								</Button>
+								<Button
+									variant="headerAction"
+									size="icon-sm"
+									class="size-6"
+									aria-label={m.common_delete()}
+									title={m.common_delete()}
 									onclick={() => handleRemove(message.id)}
 								>
 									<Trash size={10} weight="bold" class="shrink-0" />
-									{m.common_delete()}
-								</button>
+								</Button>
+								<Button
+									type="button"
+									size="sm"
+									class="h-6 rounded-full border-transparent bg-foreground px-2.5 text-[10px] text-background shadow-none hover:bg-foreground/85"
+									aria-label={m.agent_input_send_message()}
+									title={m.agent_input_send_message()}
+									onclick={() => handleSendNow(message.id)}
+								>
+									<IconArrowUp class="h-2.5 w-2.5" />
+									<span>{m.agent_input_send_message()}</span>
+								</Button>
 							</div>
 						{/if}
 					</div>
@@ -183,28 +187,17 @@ function truncate(text: string, maxLength: number): string {
 				{#if isPaused}
 					<span class="text-muted-foreground">· {m.agent_input_queue_paused()}</span>
 				{/if}
-				{#if latestMessage}
-					<span class="truncate text-muted-foreground">{truncate(latestMessage.content, 60)}</span>
-				{/if}
 			</div>
 
 			<div class="flex items-center gap-1 shrink-0" role="none">
 				{#if isPaused}
-					<button
-						type="button"
-						class="flex items-center gap-1 rounded border border-border/50 bg-muted px-2 py-0.5 text-[0.6875rem] font-medium text-foreground/75 hover:text-foreground hover:bg-muted/80 transition-colors cursor-pointer"
-						onclick={handleResume}
-					>
+					<Button variant="headerAction" size="headerAction" onclick={handleResume}>
 						{m.agent_input_queue_resume()}
-					</button>
+					</Button>
 				{/if}
-				<button
-					type="button"
-					class="flex items-center gap-1 rounded border border-border/50 bg-muted px-2 py-0.5 text-[0.6875rem] font-medium text-foreground/75 hover:text-foreground hover:bg-muted/80 transition-colors cursor-pointer"
-					onclick={handleClear}
-				>
+				<Button variant="headerAction" size="headerAction" onclick={handleClear}>
 					{m.agent_input_queue_clear()}
-				</button>
+				</Button>
 			</div>
 		</div>
 	</div>

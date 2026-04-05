@@ -407,7 +407,8 @@ fn resolve_serialized_tool_kind(
 
     if let Some(title_value) = title {
         let lower = title_value.trim().to_ascii_lowercase();
-        if lower.starts_with("viewing ") || lower.starts_with("view ") || lower.starts_with("read ") {
+        if lower.starts_with("viewing ") || lower.starts_with("view ") || lower.starts_with("read ")
+        {
             return ToolKind::Read;
         }
     }

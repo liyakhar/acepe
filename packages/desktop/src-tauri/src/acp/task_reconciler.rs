@@ -319,7 +319,10 @@ impl TaskReconciler {
     }
 
     fn infer_implicit_parent_id(&self, tool_call: &ToolCallData) -> Option<String> {
-        if !matches!(tool_call.status, ToolCallStatus::Pending | ToolCallStatus::InProgress) {
+        if !matches!(
+            tool_call.status,
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        ) {
             return None;
         }
 

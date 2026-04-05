@@ -29,7 +29,7 @@ pub async fn create_client(
         .ok_or_else(|| AcpError::AgentNotFound(agent_id.as_str().to_string()))?
         .clone();
 
-    if crate::acp::agent_installer::is_installable(&agent_id) && !provider.is_available() {
+    if crate::acp::agent_installer::can_auto_install(&agent_id) && !provider.is_available() {
         tracing::info!(
             agent_id = %agent_id.as_str(),
             "Managed agent not available; installing before client creation"

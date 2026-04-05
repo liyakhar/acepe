@@ -78,7 +78,10 @@ export class AgentStore {
 					name: a.name,
 					description: a.description,
 					icon: a.icon ?? a.id,
-					availability_kind: a.availability_kind ?? { kind: "bundled" as const },
+					availability_kind: a.availability_kind ?? {
+						kind: "installable" as const,
+						installed: true,
+					},
 					autonomous_supported_mode_ids: a.autonomous_supported_mode_ids
 						? a.autonomous_supported_mode_ids
 						: [],
@@ -95,7 +98,7 @@ export class AgentStore {
 	}
 
 	/**
-	 * Install a downloadable agent (Cursor, OpenCode).
+	 * Install an automatically provisioned agent.
 	 */
 	async installAgent(agentId: string): Promise<void> {
 		// Ensure progress listener is registered before starting install

@@ -16,9 +16,11 @@ interface Props {
 	isConnected: boolean;
 	status: SessionStatus;
 	isStreaming: boolean;
+	/** Compact mode: non-expandable bar only, no copy button or chevron. */
+	compact?: boolean;
 }
 
-const { sessionId, entries, isConnected, status, isStreaming }: Props = $props();
+const { sessionId, entries, isConnected, status, isStreaming, compact = false }: Props = $props();
 
 const manager = getTodoStateManager();
 
@@ -83,9 +85,9 @@ function toggleExpanded() {
 </script>
 
 {#if shouldRender && todoState}
-	<div class="w-full px-5">
+	<div class="w-full {compact ? '' : 'px-5'}">
 		<!-- Expanded Task Table (above the bar, expanding upward) -->
-		{#if isExpanded}
+		{#if !compact && isExpanded}
 			<div class="rounded-t-md bg-muted/30 overflow-hidden border border-b-0 border-border">
 				<div class="flex flex-col max-h-[300px] overflow-y-auto">
 					<!-- Compact markdown-table-style rows -->
@@ -131,46 +133,77 @@ function toggleExpanded() {
 			</div>
 		{/if}
 
-		<!-- Collapsed Header Bar (same style as modified-files-header) -->
-		<div
-			role="button"
-			tabindex={0}
-			onclick={toggleExpanded}
-			onkeydown={(e) => {
-				if (e.key === "Enter" || e.key === " ") {
-					e.preventDefault();
-					toggleExpanded();
-				}
-			}}
-			class="w-full flex items-center justify-between px-3 py-1 rounded-md border border-border bg-muted/30 hover:bg-muted/40 transition-colors cursor-pointer {isExpanded
-				? 'rounded-t-none border-t-0'
-				: ''}"
-		>
-			<div class="flex items-center gap-1.5 text-[0.6875rem] min-w-0">
-				{#if todoState.isLive && todoState.currentTask}
-					<span class="text-foreground font-medium truncate text-[0.6875rem]">
-						{todoState.currentTask.activeForm ?? todoState.currentTask.content}
+		{#if compact}
+			<!-- Compact bar: non-interactive, no expand/copy/chevron -->
+			<div
+				class="w-full flex items-center justify-between px-1.5 py-0.5"
+			>
+				<div class="flex items-center gap-1.5 text-[10px] min-w-0">
+					{#if todoState.isLive && todoState.currentTask}
+						<TextShimmer class="truncate text-foreground text-[10px]">
+							{todoState.currentTask.activeForm ? todoState.currentTask.activeForm : todoState.currentTask.content}
+						</TextShimmer>
+					{:else if todoState.currentTask}
+						<span class="text-muted-foreground truncate">
+							{todoState.currentTask.content}
+						</span>
+					{:else if todoState.completedCount === todoState.totalCount}
+						<CheckCircle class="size-3 text-success shrink-0" weight="fill" />
+						<span class="text-muted-foreground">{m.todo_all_completed()}</span>
+					{:else}
+						<span class="text-muted-foreground">{m.todo_tasks_paused()}</span>
+					{/if}
+				</div>
+
+				<div class="flex items-center gap-1.5 shrink-0">
+					<SegmentedProgress current={todoState.completedCount} total={todoState.totalCount} />
+					<span class="text-[10px] text-muted-foreground">
+						{todoState.completedCount}/{todoState.totalCount}
 					</span>
-				{:else if todoState.currentTask}
-					<span class="text-muted-foreground truncate">
-						{todoState.currentTask.content}
-					</span>
-				{:else if todoState.completedCount === todoState.totalCount}
-					<CheckCircle class="size-3 text-success shrink-0" weight="fill" />
-					<span class="text-muted-foreground">{m.todo_all_completed()}</span>
-				{:else}
-					<span class="text-muted-foreground">{m.todo_tasks_paused()}</span>
-				{/if}
+				</div>
 			</div>
+		{:else}
+			<!-- Collapsed Header Bar (same style as modified-files-header) -->
+			<div
+				role="button"
+				tabindex={0}
+				onclick={toggleExpanded}
+				onkeydown={(e) => {
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						toggleExpanded();
+					}
+				}}
+				class="w-full flex items-center justify-between px-3 py-1 rounded-md border border-border bg-muted/30 hover:bg-muted/40 transition-colors cursor-pointer {isExpanded
+					? 'rounded-t-none border-t-0'
+					: ''}"
+			>
+				<div class="flex items-center gap-1.5 text-[0.6875rem] min-w-0">
+					{#if todoState.isLive && todoState.currentTask}
+						<span class="text-foreground font-medium truncate text-[0.6875rem]">
+							{todoState.currentTask.activeForm ? todoState.currentTask.activeForm : todoState.currentTask.content}
+						</span>
+					{:else if todoState.currentTask}
+						<span class="text-muted-foreground truncate">
+							{todoState.currentTask.content}
+						</span>
+					{:else if todoState.completedCount === todoState.totalCount}
+						<CheckCircle class="size-3 text-success shrink-0" weight="fill" />
+						<span class="text-muted-foreground">{m.todo_all_completed()}</span>
+					{:else}
+						<span class="text-muted-foreground">{m.todo_tasks_paused()}</span>
+					{/if}
+				</div>
 
-			<div class="flex items-center gap-1.5 shrink-0">
-				<SegmentedProgress current={todoState.completedCount} total={todoState.totalCount} />
+				<div class="flex items-center gap-1.5 shrink-0">
+					<SegmentedProgress current={todoState.completedCount} total={todoState.totalCount} />
 
-				<CopyButton getText={getMarkdown} size={12} variant="icon" class="p-0.5" stopPropagation />
+					<CopyButton getText={getMarkdown} size={12} variant="icon" class="p-0.5" stopPropagation />
 
-				<!-- Expand/collapse chevron -->
-				<AnimatedChevron isOpen={isExpanded} class="size-3.5 text-muted-foreground" />
+					<!-- Expand/collapse chevron -->
+					<AnimatedChevron isOpen={isExpanded} class="size-3.5 text-muted-foreground" />
+				</div>
 			</div>
-		</div>
+		{/if}
 	</div>
 {/if}

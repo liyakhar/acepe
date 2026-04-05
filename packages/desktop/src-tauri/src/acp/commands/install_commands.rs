@@ -13,9 +13,9 @@ pub async fn acp_install_agent(
 
     let canonical = CanonicalAgentId::parse(&agent_id);
 
-    if !crate::acp::agent_installer::is_installable(&canonical) {
+    if !crate::acp::agent_installer::can_auto_install(&canonical) {
         return Err(SerializableAcpError::InvalidState {
-            message: format!("Agent '{}' is not installable (unknown agent)", agent_id),
+            message: format!("Agent '{}' cannot be installed automatically", agent_id),
         });
     }
 
@@ -38,9 +38,9 @@ pub async fn acp_uninstall_agent(agent_id: String) -> Result<(), SerializableAcp
 
     let canonical = CanonicalAgentId::parse(&agent_id);
 
-    if !crate::acp::agent_installer::is_installable(&canonical) {
+    if !crate::acp::agent_installer::can_auto_install(&canonical) {
         return Err(SerializableAcpError::InvalidState {
-            message: format!("Agent '{}' is not uninstallable", agent_id),
+            message: format!("Agent '{}' cannot be uninstalled automatically", agent_id),
         });
     }
 

@@ -176,10 +176,8 @@ pub fn log_streaming_event(session_id: &str, raw_json: &Value) {
 /// Only active in debug builds.
 #[cfg(debug_assertions)]
 pub fn log_debug_event(session_id: &str, event: &str, payload: &Value) {
-    let mut data = serde_json::Map::from_iter([(
-        "event".to_string(),
-        Value::String(event.to_string()),
-    )]);
+    let mut data =
+        serde_json::Map::from_iter([("event".to_string(), Value::String(event.to_string()))]);
 
     if let Some(object) = payload.as_object() {
         for (key, value) in object {

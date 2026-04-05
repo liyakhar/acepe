@@ -29,6 +29,8 @@
 		showSidebarToggle?: boolean;
 		/** Toggle add project button visibility in the left section */
 		showAddProject?: boolean;
+		/** Toggle the leading border on the right action rail */
+		showRightSectionLeadingBorder?: boolean;
 	}
 
 	const ICON = "size-4";
@@ -47,6 +49,7 @@
 		showAvatar = true,
 		showSidebarToggle = true,
 		showAddProject = true,
+		showRightSectionLeadingBorder = true,
 	}: Props = $props();
 </script>
 
@@ -105,7 +108,7 @@
 	</div>
 
 	<!-- Right: extra actions + settings + avatar -->
-	<div class="flex items-center h-full divide-x divide-border/50 border-x border-border/50">
+	<div class="flex items-center h-full divide-x divide-border/50 border-r border-border/50 {showRightSectionLeadingBorder ? 'border-l border-border/50' : ''}">
 		{#if extraRightActions}
 			{@render extraRightActions()}
 		{/if}

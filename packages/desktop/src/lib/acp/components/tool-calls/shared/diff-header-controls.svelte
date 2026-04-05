@@ -55,7 +55,7 @@ const accentText = $derived(
 
 const primaryColor = $derived(
 	themeType === "dark"
-		? "#c1823c" // --primary from .dark
+		? "#ffc799" // --primary from .dark
 		: "hsl(32 52% 50%)" // --primary from :root
 );
 </script>

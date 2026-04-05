@@ -80,7 +80,7 @@ const segments = $derived(buildVoiceDownloadSegments(percent, segmentCount));
 	.voice-download-segment {
 		width: 3px;
 		height: 8px;
-		border-radius: 999px;
+		border-radius: 1px;
 		background: color-mix(in oklab, var(--foreground) 10%, transparent);
 		transition: background-color 180ms ease-out, opacity 180ms ease-out, transform 180ms ease-out;
 		opacity: 0.55;

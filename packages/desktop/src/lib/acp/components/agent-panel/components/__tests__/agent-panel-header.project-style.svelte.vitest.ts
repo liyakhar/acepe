@@ -74,6 +74,43 @@ describe("AgentPanelHeader project-header style", () => {
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
+	it("shows the computed display title before the session title is hydrated", () => {
+		render(AgentPanelHeader, {
+			pendingProjectSelection: false,
+			isConnecting: false,
+			sessionId: "session-1",
+			sessionTitle: null,
+			sessionAgentId: null,
+			agentIconSrc: "",
+			agentName: null,
+			isFullscreen: false,
+			sessionStatus: "empty",
+			projectName: "repo",
+			projectColor: "#FF5D5A",
+			hideProjectBadge: true,
+			onClose: vi.fn(),
+			onToggleFullscreen: vi.fn(),
+			onCopyContent: undefined,
+			onOpenInFinder: undefined,
+			onExportRawStreaming: undefined,
+			displayTitle: "Fix login redirect race",
+			entriesCount: 0,
+			insertions: 0,
+			deletions: 0,
+			createdAt: null,
+			updatedAt: null,
+			onOpenRawFile: undefined,
+			onOpenInAcepe: undefined,
+			onExportMarkdown: undefined,
+			onExportJson: undefined,
+			onScrollToTop: undefined,
+			debugPanelState: null,
+		});
+
+		expect(screen.getByText("Fix login redirect race")).not.toBeNull();
+		expect(screen.queryByText("New thread")).toBeNull();
+	});
+
 	it("does not expose a delete action in the overflow menu", async () => {
 		render(AgentPanelHeader, {
 			pendingProjectSelection: false,

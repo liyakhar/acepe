@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from "../button/index.js";
 	import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
 
 	interface Props {
@@ -14,9 +15,11 @@
 	}: Props = $props();
 </script>
 
-<button
+<Button
 	type="button"
-	class="group flex items-center gap-1.5 h-6 px-2 rounded-md border border-border/60 bg-muted/30 text-muted-foreground text-[11px] hover:bg-muted/60 hover:border-border hover:text-foreground transition-all duration-150 cursor-pointer"
+	variant="headerAction"
+	size="headerAction"
+	class="group h-6 gap-1.5 bg-muted/30 px-2 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
 	{onclick}
 >
 	<MagnifyingGlass class="size-3 opacity-50 group-hover:opacity-80 transition-opacity" weight="bold" />
@@ -25,4 +28,4 @@
 		<kbd class="bg-background/60 border border-border/50 text-muted-foreground/70 pointer-events-none inline-flex h-[15px] min-w-[15px] items-center justify-center rounded px-0.5 font-sans text-[9px] font-medium select-none">&#8984;</kbd>
 		<kbd class="bg-background/60 border border-border/50 text-muted-foreground/70 pointer-events-none inline-flex h-[15px] min-w-[15px] items-center justify-center rounded px-0.5 font-sans text-[9px] font-medium select-none">{shortcutKey}</kbd>
 	</kbd>
-</button>
+</Button>

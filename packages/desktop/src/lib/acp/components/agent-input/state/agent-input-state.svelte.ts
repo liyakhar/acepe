@@ -16,6 +16,7 @@ import {
 	type MessageSendError,
 	SessionCreationError,
 } from "../errors/agent-input-error.js";
+import { deriveSessionTitleFromUserInput } from "../../../store/session-title-policy.js";
 import { calculateDropdownPosition } from "../logic/dropdown-trigger.js";
 import { createImageAttachment, isImageMimeType } from "../logic/image-attachment.js";
 import { findInlineArtefactRangeAtPosition } from "../logic/inline-artefact-segments.js";
@@ -598,6 +599,7 @@ export class AgentInputState {
 
 		// Create session and send message
 		const effectiveProjectName = projectName || "Default Project";
+		const initialSessionTitle = deriveSessionTitleFromUserInput(content);
 
 		this.logger.info("[PERF] sendMessage: SLOW PATH (no eager session, creating new)", {
 			agentId: selectedAgentId,
@@ -628,6 +630,7 @@ export class AgentInputState {
 			initialModelId,
 			projectPath: effectiveProjectPath,
 			projectName: effectiveProjectName,
+			title: initialSessionTitle,
 			worktreePath: worktreePath ?? undefined,
 		})
 			.andThen((newSessionId) => {

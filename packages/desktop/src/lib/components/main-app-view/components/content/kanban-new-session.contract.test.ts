@@ -7,7 +7,7 @@ const kanbanViewPath = resolve(contentDir, "./kanban-view.svelte");
 const dialogPath = resolve(contentDir, "./kanban-new-session-dialog.svelte");
 
 describe("kanban new-session dialog contract", () => {
-	it("renders a top-right new-session entry point in the kanban view", () => {
+	it("delegates the new-session entry point to the shared top bar", () => {
 		expect(existsSync(kanbanViewPath)).toBe(true);
 		if (!existsSync(kanbanViewPath)) return;
 
@@ -21,6 +21,8 @@ describe("kanban new-session dialog contract", () => {
 		expect(source).toContain("projectManager: ProjectManager");
 		expect(source).toContain('from "@acepe/ui"');
 		expect(source).toContain('class="flex h-full min-h-0 min-w-0 flex-1 flex-col"');
+		expect(source).not.toContain('class="flex shrink-0 items-center justify-end px-2 pt-2"');
+		expect(source).not.toContain('class="flex shrink-0 items-center justify-end px-2 pb-2"');
 		expect(source).toContain("<Dialog bind:open={newSessionOpen}");
 		expect(source).toContain('showCloseButton={false}');
 		expect(source).toContain('overflow-hidden max-w-[34rem]');
@@ -32,14 +34,12 @@ describe("kanban new-session dialog contract", () => {
 		expect(source).not.toContain('type ButtonVariant');
 		expect(violetRobotIconMarkup).toBeDefined();
 		expect(violetRobotIconMatches).not.toBeNull();
-		expect(violetRobotIconMatches).toHaveLength(2);
+		expect(violetRobotIconMatches).toHaveLength(1);
 		expect(source).toContain('<span class="truncate text-foreground">New Agent</span>');
 		expect(source).toContain('What do you want to build?');
 		expect(source).toContain('font-sans text-[1.9rem] font-semibold tracking-tight text-foreground');
-		expect(source).toContain('variant="headerAction"');
-		expect(source).toContain('size="headerAction"');
 		expect(source).not.toContain('IconSparkles');
-		expect(source).toContain('<span>New Agent</span>');
+		expect(source).not.toContain('<span>New Agent</span>');
 		expect(source).not.toContain('<span>New session</span>');
 		expect(source).toContain("EmbeddedPanelHeader");
 		expect(source).toContain("HeaderActionCell");
@@ -49,6 +49,7 @@ describe("kanban new-session dialog contract", () => {
 		expect(source).toContain("<AgentSelector");
 		expect(source).toContain("<ProjectSelector");
 		expect(source).toContain("<WorktreeToggleControl");
+		expect(source).toContain('<KanbanBoard {groups} emptyHint="No sessions">');
 		expect(source).not.toContain("<DialogHeader");
 		expect(source).not.toContain("<DialogTitle");
 		expect(source).not.toContain("KanbanNewSessionDialog");

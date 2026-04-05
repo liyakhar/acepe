@@ -243,7 +243,7 @@ const availableAgents = [
 		id: "claude-code",
 		name: "Claude Code",
 		icon: "",
-		availability_kind: { kind: "bundled" as const },
+		availability_kind: { kind: "installable" as const, installed: true },
 	},
 ];
 

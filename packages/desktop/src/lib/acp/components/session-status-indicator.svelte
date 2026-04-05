@@ -1,6 +1,5 @@
 <script lang="ts">
-import IconAlertCircle from "@tabler/icons-svelte/icons/alert-circle";
-import IconCircleCheckFilled from "@tabler/icons-svelte/icons/circle-check-filled";
+import { IconAlertCircle, IconCircleCheckFilled } from "@tabler/icons-svelte";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";

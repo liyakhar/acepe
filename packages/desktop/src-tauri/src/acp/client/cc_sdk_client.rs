@@ -258,7 +258,8 @@ impl PermissionBridge {
     ) {
         match pending_request.sender {
             PendingPermissionResponder::Tool(sender) => {
-                let permission_result = permission_result_from_ui_result(&pending_request.kind, result);
+                let permission_result =
+                    permission_result_from_ui_result(&pending_request.kind, result);
                 let _ = sender.send(permission_result);
             }
             PendingPermissionResponder::Hook(sender) => {

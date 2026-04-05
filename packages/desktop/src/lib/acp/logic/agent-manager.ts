@@ -13,7 +13,7 @@ export interface AgentInfo {
 	id: string;
 	name: string;
 	icon: string;
-	/** How this agent is provisioned (optional for compatibility with store Agent) */
+	/** Current setup state for this agent (optional for compatibility with store Agent). */
 	availability_kind?: AgentAvailabilityKind;
 }
 
@@ -76,7 +76,10 @@ export class AgentManager {
 					id: a.id,
 					name: a.name,
 					icon: a.id,
-					availability_kind: a.availability_kind ?? { kind: "bundled" as const },
+					availability_kind: a.availability_kind ?? {
+						kind: "installable" as const,
+						installed: true,
+					},
 				}))
 			)
 			.mapErr((error) => {

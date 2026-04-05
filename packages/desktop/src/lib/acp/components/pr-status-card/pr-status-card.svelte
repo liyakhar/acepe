@@ -90,8 +90,8 @@
 		Boolean(descriptionHtml) || (prDetails?.commits?.length ? prDetails.commits.length > 0 : false) || hasStreamingContent,
 	);
 
-	// Show the card when streaming, creating, or a PR exists
-	const isVisible = $derived(isCreating || prNumber !== null || hasStreamingContent);
+	// Show the card when streaming content arrives or a PR exists (not during initial creating phase)
+	const isVisible = $derived(prNumber !== null || hasStreamingContent);
 
 	// Derive the title to display — streaming title takes priority during generation
 	const displayTitle = $derived.by(() => {

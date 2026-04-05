@@ -18,6 +18,8 @@ pub enum CanonicalAgentId {
     OpenCode,
     #[serde(rename = "codex")]
     Codex,
+    #[serde(rename = "forge")]
+    Forge,
     /// Custom agent registered by user
     #[serde(rename = "custom")]
     Custom(String),
@@ -34,6 +36,7 @@ impl CanonicalAgentId {
             Self::Cursor => "cursor",
             Self::OpenCode => "opencode",
             Self::Codex => "codex",
+            Self::Forge => "forge",
             Self::Custom(id) => {
                 // Store in a way that allows round-trip conversion
                 // We need to return a &str, so we can't allocate here
@@ -53,6 +56,7 @@ impl CanonicalAgentId {
             Self::Cursor => "cursor".to_string(),
             Self::OpenCode => "opencode".to_string(),
             Self::Codex => "codex".to_string(),
+            Self::Forge => "forge".to_string(),
             Self::Custom(id) => format!("custom:{}", id),
         }
     }
@@ -73,6 +77,7 @@ impl CanonicalAgentId {
             "cursor" => Self::Cursor,
             "opencode" => Self::OpenCode,
             "codex" => Self::Codex,
+            "forge" => Self::Forge,
             custom => Self::Custom(custom.to_string()),
         }
     }
@@ -240,6 +245,15 @@ mod tests {
         assert_eq!(agent_id, CanonicalAgentId::Copilot);
         assert_eq!(agent_id.as_str(), "copilot");
         assert_eq!(agent_id.to_string_with_prefix(), "copilot");
+    }
+
+    #[test]
+    fn canonical_agent_id_round_trips_forge() {
+        let agent_id = CanonicalAgentId::parse("forge");
+
+        assert_eq!(agent_id, CanonicalAgentId::Forge);
+        assert_eq!(agent_id.as_str(), "forge");
+        assert_eq!(agent_id.to_string_with_prefix(), "forge");
     }
 
     #[test]

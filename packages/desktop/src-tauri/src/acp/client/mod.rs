@@ -33,6 +33,7 @@ pub mod cc_sdk_client;
 pub mod codex_native_client;
 pub mod codex_native_config;
 pub mod codex_native_events;
+pub mod forge_protocol;
 mod lifecycle;
 mod model_discovery;
 mod prompt_ops;

@@ -64,6 +64,13 @@ mod agent_type {
     }
 
     #[test]
+    fn converts_from_canonical_forge_defaults_to_claude_code_parser_family() {
+        let canonical = CanonicalAgentId::Forge;
+        let agent_type = AgentType::from_canonical(&canonical);
+        assert_eq!(agent_type, AgentType::ClaudeCode);
+    }
+
+    #[test]
     fn converts_from_canonical_custom_defaults_to_claude_code() {
         let canonical = CanonicalAgentId::Custom("my-agent".to_string());
         let agent_type = AgentType::from_canonical(&canonical);

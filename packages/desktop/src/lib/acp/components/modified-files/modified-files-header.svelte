@@ -1,5 +1,6 @@
 <script lang="ts">
 import { DiffPill } from "@acepe/ui";
+import { Button } from "@acepe/ui/button";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import ArrowsOut from "phosphor-svelte/lib/ArrowsOut";
 import Check from "phosphor-svelte/lib/Check";
@@ -392,11 +393,12 @@ function handlePromptResetClick(): void {
 							onclick={(e: MouseEvent) => e.stopPropagation()}
 							role="none"
 						>
-							<button
-								type="button"
+							<Button
+								variant="headerAction"
+								size="headerAction"
+								class="group/open-pr rounded-none border-0 bg-transparent shadow-none"
 								disabled={createPrLoading}
 								onclick={handleCreatePrClick}
-								class="group/open-pr flex items-center gap-2 px-2 py-0.5 font-medium text-foreground/75 hover:text-foreground hover:bg-muted/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 							>
 								<span class="flex items-center gap-1 shrink-0">
 									{#if createPrLoading}
@@ -412,7 +414,7 @@ function handlePromptResetClick(): void {
 									{/if}
 								</span>
 								<DiffPill insertions={totalAdded} deletions={totalRemoved} variant="plain" />
-							</button>
+							</Button>
 							<DropdownMenu.Trigger
 								disabled={createPrLoading}
 								class="self-stretch flex items-center px-1 border-l border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors outline-none disabled:opacity-50 disabled:cursor-not-allowed"
@@ -570,14 +572,15 @@ function handlePromptResetClick(): void {
 						onclick={(e: MouseEvent) => e.stopPropagation()}
 						role="none"
 					>
-						<button
-							type="button"
-							class="flex items-center gap-1 px-2 py-0.5 font-medium text-foreground/80 hover:text-foreground hover:bg-muted/80 transition-colors"
+						<Button
+							variant="headerAction"
+							size="headerAction"
+							class="rounded-none border-0 bg-transparent shadow-none"
 							onclick={() => handleReviewButtonClick(0)}
 						>
 							<FileCode size={11} weight="fill" class="shrink-0" />
 							{m.modified_files_review_button()}
-						</button>
+						</Button>
 						<DropdownMenu.Trigger
 							class="self-stretch flex items-center px-1 border-l border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors outline-none"
 							onclick={(e: MouseEvent) => e.stopPropagation()}
@@ -613,14 +616,10 @@ function handlePromptResetClick(): void {
 
 				<div role="none" onclick={(e: MouseEvent) => e.stopPropagation()}>
 					{#if isKeepAllApplied}
-						<button
-							type="button"
-							disabled
-							class="flex items-center gap-1 rounded border border-border/50 bg-muted px-2 py-0.5 text-[0.6875rem] font-medium text-foreground/80 disabled:cursor-not-allowed disabled:opacity-100"
-						>
+						<Button variant="headerAction" size="headerAction" disabled class="disabled:opacity-100">
 							<CheckCircle size={11} weight="fill" class="shrink-0 text-success" />
 							{m.review_applied()}
-						</button>
+						</Button>
 					{:else}
 						<button
 							type="button"

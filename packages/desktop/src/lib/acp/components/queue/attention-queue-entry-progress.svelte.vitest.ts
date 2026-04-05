@@ -1,4 +1,4 @@
-import { ActivityEntry } from "@acepe/ui";
+import ActivityEntry from "../../../../../../ui/src/components/attention-queue/attention-queue-entry.svelte";
 import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -153,15 +153,14 @@ describe("ActivityEntry todo progress", () => {
 			onNextQuestion: vi.fn(),
 		});
 
-		expect(container.querySelectorAll("[data-testid='queue-subagent-card']")).toHaveLength(1);
+		expect(container.querySelectorAll("[data-testid='agent-tool-task-card']")).toHaveLength(1);
 		expect(getByText("Explore GitHub endpoints")).toBeTruthy();
 		expect(queryByText("github.com")).toBeTruthy();
 		expect(queryByText("raw.githubusercontent.com")).toBeTruthy();
 		expect(queryByText("api.github.com")).toBeTruthy();
 
-		const card = container.querySelector("[data-testid='queue-subagent-card']");
+		const card = container.querySelector("[data-testid='agent-tool-task-card']");
 		expect(card?.querySelector('[title="3 tool calls"]')).toBeTruthy();
-		expect(card?.querySelector("[data-testid='queue-subagent-accent']")).toBeNull();
 		expect(card?.className).toContain("w-full");
 		expect(card?.parentElement?.className).toContain("w-full");
 		expect(card?.parentElement?.className).not.toContain("max-w-[60%]");
@@ -240,7 +239,7 @@ describe("ActivityEntry todo progress", () => {
 			onNextQuestion: vi.fn(),
 		});
 
-		const card = container.querySelector("[data-testid='queue-subagent-card']");
+		const card = container.querySelector("[data-testid='agent-tool-task-card']");
 		const fileChipSelector = `[data-file-path='${fullPath}']`;
 		const fileChip = card?.querySelector(fileChipSelector);
 		expect(card?.querySelectorAll(fileChipSelector)).toHaveLength(1);

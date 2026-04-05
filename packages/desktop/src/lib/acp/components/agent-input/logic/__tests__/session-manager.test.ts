@@ -38,6 +38,7 @@ describe("createSession", () => {
 			agentId: "claude-code",
 			projectPath: "/test",
 			projectName: "Test Project",
+			title: "Build kanban parity",
 		};
 
 		const result = await createSession(mockStore, options);
@@ -49,6 +50,7 @@ describe("createSession", () => {
 			expect.objectContaining({
 				agentId: "claude-code",
 				projectPath: "/test",
+				title: "Build kanban parity",
 			})
 		);
 	});

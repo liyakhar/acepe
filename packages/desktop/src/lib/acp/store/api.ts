@@ -250,7 +250,7 @@ export function listAgents(): ResultAsync<AgentInfo[], AppError> {
 }
 
 /**
- * Install a downloadable agent (Cursor, OpenCode).
+ * Install an automatically provisioned agent.
  */
 export function installAgent(agentId: string): ResultAsync<void, AppError> {
 	return tauriClient.acp.installAgent(agentId);

@@ -1,4 +1,14 @@
-import { diffAcceptRejectHunk, type FileDiffMetadata } from "@pierre/diffs";
+import { SPLIT_WITH_NEWLINES, type FileDiffMetadata } from "@pierre/diffs";
+
+function appendLines(target: string[], source: string[]): void {
+	for (const line of source) {
+		target.push(line);
+	}
+}
+
+function splitFileContent(contents: string): string[] {
+	return contents === "" ? [] : contents.split(SPLIT_WITH_NEWLINES);
+}
 
 /**
  * Computes the full file content with a specific hunk reverted.
@@ -19,13 +29,39 @@ export function computeRevertedFileContent(
 	fileDiffMetadata: FileDiffMetadata,
 	hunkIndex: number
 ): string {
-	// Get the hunk to revert
 	const hunk = fileDiffMetadata.hunks[hunkIndex];
 	if (!hunk) {
-		// Hunk index out of bounds, return original content
 		return newFileContent;
 	}
 
-	const revertedMetadata = diffAcceptRejectHunk(fileDiffMetadata, hunkIndex, "reject");
-	return revertedMetadata.additionLines.join("");
+	const currentAdditionLines = splitFileContent(newFileContent);
+	if (hunk.additionLineIndex > currentAdditionLines.length) {
+		return newFileContent;
+	}
+
+	const revertedLines = currentAdditionLines.slice(0, hunk.additionLineIndex);
+	let nextCurrentLineIndex = hunk.additionLineIndex;
+
+	for (const content of hunk.hunkContent) {
+		if (content.type === "context") {
+			appendLines(
+				revertedLines,
+				currentAdditionLines.slice(nextCurrentLineIndex, nextCurrentLineIndex + content.lines)
+			);
+			nextCurrentLineIndex += content.lines;
+			continue;
+		}
+
+		appendLines(
+			revertedLines,
+			fileDiffMetadata.deletionLines.slice(
+				content.deletionLineIndex,
+				content.deletionLineIndex + content.deletions
+			)
+		);
+		nextCurrentLineIndex += content.additions;
+	}
+
+	appendLines(revertedLines, currentAdditionLines.slice(nextCurrentLineIndex));
+	return revertedLines.join("");
 }

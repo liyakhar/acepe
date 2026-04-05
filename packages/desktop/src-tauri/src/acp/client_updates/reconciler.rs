@@ -28,7 +28,8 @@ pub(crate) fn process_through_reconciler(
                     &tool_call.name,
                 );
             }
-            let outputs = reconciler_guard.handle_tool_call_for_agent(tool_call.clone(), agent_type);
+            let outputs =
+                reconciler_guard.handle_tool_call_for_agent(tool_call.clone(), agent_type);
             outputs
                 .into_iter()
                 .filter_map(|output| match output {
@@ -95,7 +96,9 @@ mod tests {
     use super::process_through_reconciler;
     use crate::acp::parsers::AgentType;
     use crate::acp::provider::{AgentProvider, SpawnConfig};
-    use crate::acp::session_update::{SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
+    use crate::acp::session_update::{
+        SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus, ToolKind,
+    };
     use crate::acp::task_reconciler::TaskReconciler;
     use std::collections::HashMap;
     use std::sync::{Arc as StdArc, Mutex};

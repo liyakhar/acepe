@@ -26,6 +26,13 @@ pub struct SpawnConfig {
     pub env: HashMap<String, String>,
 }
 
+/// Whether a provider should appear in user-visible built-in lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentUiVisibility {
+    Visible,
+    Hidden,
+}
+
 /// Trait for agent provider implementations
 /// Defines how to spawn and configure different ACP agents
 pub trait AgentProvider: Send + Sync {
@@ -55,8 +62,13 @@ pub trait AgentProvider: Send + Sync {
         "terminal"
     }
 
-    /// Check if the agent is available (command exists in PATH)
-    /// Default returns true; providers should override with actual detection
+    /// Whether the provider should be listed in user-visible built-in surfaces.
+    fn ui_visibility(&self) -> AgentUiVisibility {
+        AgentUiVisibility::Visible
+    }
+
+    /// Check if the agent is ready to launch without additional setup.
+    /// Default returns true; providers should override with actual detection.
     fn is_available(&self) -> bool {
         true
     }

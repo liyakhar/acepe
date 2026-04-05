@@ -192,6 +192,22 @@ describe("getQueueItemTaskDisplay", () => {
 			showTaskSubagentList: false,
 		});
 	});
+
+	it("capitalizes a lowercase parent task description for the card title", () => {
+		const taskTool: ToolCall = {
+			id: "task-parent-lowercase",
+			name: "Task",
+			kind: "task",
+			arguments: { kind: "think", description: "parent task" },
+			status: "completed",
+			taskChildren: [],
+			awaitingPlanApproval: false,
+		};
+
+		const display = getQueueItemTaskDisplay(taskTool, "task", "completed");
+
+		expect(display.taskDescription).toBe("Parent task");
+	});
 });
 
 describe("getQueueItemToolDisplay", () => {
@@ -248,6 +264,27 @@ describe("getQueueItemToolDisplay", () => {
 		);
 
 		expect(display).toBeNull();
+	});
+
+	it("keeps the live task tool visible while thinking so subagent cards can render", () => {
+		const liveTaskTool = createTaskToolCall([
+			createSubagentChild("child-1", "Trace kanban mapping"),
+		]);
+
+		const display = getQueueItemToolDisplay(
+			createToolDisplayInput({
+				activityKind: "thinking",
+				currentStreamingToolCall: liveTaskTool,
+				currentToolKind: "task",
+			})
+		);
+
+		expect(display).toEqual({
+			toolCall: liveTaskTool,
+			toolKind: "task",
+			isStreaming: true,
+			turnState: "streaming",
+		});
 	});
 
 	it("marks the displayed tool as streaming when it matches the live tool", () => {

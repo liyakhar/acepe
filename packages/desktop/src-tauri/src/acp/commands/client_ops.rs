@@ -9,6 +9,7 @@ fn agent_display_name(agent_id: &CanonicalAgentId) -> &str {
         CanonicalAgentId::Cursor => "Cursor",
         CanonicalAgentId::OpenCode => "OpenCode",
         CanonicalAgentId::Codex => "Codex",
+        CanonicalAgentId::Forge => "Forge",
         CanonicalAgentId::Custom(id) => id.as_str(),
     }
 }

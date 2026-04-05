@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::acp::provider::AgentProvider;
+use crate::acp::provider::{AgentProvider, AgentUiVisibility};
 use crate::acp::providers::{
     ClaudeCodeProvider, CodexProvider, CopilotProvider, CursorProvider, CustomAgentConfig,
-    OpenCodeProvider,
+    ForgeProvider, OpenCodeProvider,
 };
 use crate::acp::types::CanonicalAgentId;
 
@@ -14,10 +14,7 @@ use crate::acp::types::CanonicalAgentId;
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "kind")]
 pub enum AgentAvailabilityKind {
-    /// Bundled with the app (custom agents)
-    #[serde(rename = "bundled")]
-    Bundled,
-    /// Downloadable on demand (all built-in agents)
+    /// Available after setup; installed reflects whether the agent is ready to launch.
     #[serde(rename = "installable")]
     Installable { installed: bool },
 }
@@ -28,7 +25,7 @@ pub struct AgentInfo {
     pub id: String,
     pub name: String,
     pub icon: String,
-    /// How this agent is provisioned
+    /// Current setup state for this agent.
     pub availability_kind: AgentAvailabilityKind,
     /// Visible UI modes that support wrapper-managed Autonomous execution.
     pub autonomous_supported_mode_ids: Vec<String>,
@@ -77,6 +74,10 @@ impl AgentRegistry {
             CanonicalAgentId::Codex,
             Arc::new(CodexProvider) as Arc<dyn AgentProvider>,
         );
+        built_in.insert(
+            CanonicalAgentId::Forge,
+            Arc::new(ForgeProvider) as Arc<dyn AgentProvider>,
+        );
 
         Self {
             built_in,
@@ -118,18 +119,19 @@ impl AgentRegistry {
         // Add built-in agents in consistent order.
         for agent_id in &Self::AGENT_ORDER {
             if let Some(provider) = self.built_in.get(agent_id) {
-                let availability_kind = Self::availability_kind_for(agent_id);
-                if check_availability {
-                    let _ = match &availability_kind {
-                        AgentAvailabilityKind::Bundled => provider.is_available(),
-                        AgentAvailabilityKind::Installable { installed } => *installed,
-                    };
+                if provider.ui_visibility() == AgentUiVisibility::Hidden {
+                    continue;
                 }
+
                 agents.push(AgentInfo {
                     id: provider.id().to_string(),
                     name: provider.name().to_string(),
                     icon: provider.icon().to_string(),
-                    availability_kind,
+                    availability_kind: Self::built_in_availability_kind_for(
+                        provider.as_ref(),
+                        agent_id,
+                        check_availability,
+                    ),
                     autonomous_supported_mode_ids: provider
                         .autonomous_supported_mode_ids()
                         .iter()
@@ -151,14 +153,18 @@ impl AgentRegistry {
         custom_agents.sort_by_key(|provider| provider.id());
 
         for provider in custom_agents {
-            if check_availability {
-                let _ = provider.is_available();
+            if provider.ui_visibility() == AgentUiVisibility::Hidden {
+                continue;
             }
+
             agents.push(AgentInfo {
                 id: provider.id().to_string(),
                 name: provider.name().to_string(),
                 icon: provider.icon().to_string(),
-                availability_kind: AgentAvailabilityKind::Bundled,
+                availability_kind: Self::custom_availability_kind_for(
+                    provider.as_ref(),
+                    check_availability,
+                ),
                 autonomous_supported_mode_ids: provider
                     .autonomous_supported_mode_ids()
                     .iter()
@@ -170,21 +176,35 @@ impl AgentRegistry {
         agents
     }
 
-    /// Determine the availability kind for a built-in agent.
-    ///
-    /// All built-in agents are installable (downloaded on demand).
-    fn availability_kind_for(agent_id: &CanonicalAgentId) -> AgentAvailabilityKind {
-        match agent_id {
-            CanonicalAgentId::ClaudeCode
-            | CanonicalAgentId::Cursor
-            | CanonicalAgentId::Copilot
-            | CanonicalAgentId::OpenCode
-            | CanonicalAgentId::Codex => {
-                let installed = crate::acp::agent_installer::is_installed(agent_id);
-                AgentAvailabilityKind::Installable { installed }
-            }
-            _ => AgentAvailabilityKind::Bundled,
-        }
+    /// Determine install/setup state for a built-in agent.
+    fn built_in_availability_kind_for(
+        provider: &dyn AgentProvider,
+        agent_id: &CanonicalAgentId,
+        check_availability: bool,
+    ) -> AgentAvailabilityKind {
+        let installed = if check_availability {
+            provider.is_available()
+        } else if crate::acp::agent_installer::can_auto_install(agent_id) {
+            crate::acp::agent_installer::is_installed(agent_id)
+        } else {
+            false
+        };
+
+        AgentAvailabilityKind::Installable { installed }
+    }
+
+    /// Determine install/setup state for a custom agent without probing by default.
+    fn custom_availability_kind_for(
+        provider: &dyn AgentProvider,
+        check_availability: bool,
+    ) -> AgentAvailabilityKind {
+        let installed = if check_availability {
+            provider.is_available()
+        } else {
+            true
+        };
+
+        AgentAvailabilityKind::Installable { installed }
     }
 
     /// Get the first available agent in priority order
@@ -200,6 +220,10 @@ impl AgentRegistry {
 
         for agent_id in PRIORITY_ORDER {
             if let Some(provider) = self.built_in.get(agent_id) {
+                if provider.ui_visibility() == AgentUiVisibility::Hidden {
+                    continue;
+                }
+
                 if provider.is_available() {
                     return Some(agent_id.clone());
                 }
@@ -210,6 +234,10 @@ impl AgentRegistry {
         match self.custom.lock() {
             Ok(custom) => {
                 for (id, provider) in custom.iter() {
+                    if provider.ui_visibility() == AgentUiVisibility::Hidden {
+                        continue;
+                    }
+
                     if provider.is_available() {
                         return Some(id.clone());
                     }
@@ -307,7 +335,116 @@ mod tests {
     }
 
     #[test]
-    fn list_all_for_ui_lists_custom_agents_without_runtime_probe() {
+    fn forge_is_registered_as_hidden_provider() {
+        let registry = AgentRegistry::new();
+        let forge = registry
+            .get(&CanonicalAgentId::Forge)
+            .expect("forge provider should be registered");
+
+        assert_eq!(forge.id(), "forge");
+        assert_eq!(forge.name(), "Forge");
+        assert_eq!(forge.ui_visibility(), AgentUiVisibility::Hidden);
+    }
+
+    struct HiddenUnavailableProvider;
+
+    impl AgentProvider for HiddenUnavailableProvider {
+        fn id(&self) -> &str {
+            "forge"
+        }
+
+        fn name(&self) -> &str {
+            "Forge"
+        }
+
+        fn spawn_config(&self) -> crate::acp::provider::SpawnConfig {
+            crate::acp::provider::SpawnConfig {
+                command: "forge".to_string(),
+                args: vec!["machine".to_string(), "--stdio".to_string()],
+                env: HashMap::new(),
+            }
+        }
+
+        fn ui_visibility(&self) -> AgentUiVisibility {
+            AgentUiVisibility::Hidden
+        }
+
+        fn is_available(&self) -> bool {
+            false
+        }
+    }
+
+    struct VisibleUnavailableProvider;
+
+    impl AgentProvider for VisibleUnavailableProvider {
+        fn id(&self) -> &str {
+            "forge"
+        }
+
+        fn name(&self) -> &str {
+            "Forge"
+        }
+
+        fn spawn_config(&self) -> crate::acp::provider::SpawnConfig {
+            crate::acp::provider::SpawnConfig {
+                command: "forge".to_string(),
+                args: vec!["machine".to_string(), "--stdio".to_string()],
+                env: HashMap::new(),
+            }
+        }
+
+        fn is_available(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn list_all_for_ui_omits_hidden_built_in_provider_entries() {
+        let mut built_in: HashMap<CanonicalAgentId, Arc<dyn AgentProvider>> = HashMap::new();
+        built_in.insert(
+            CanonicalAgentId::ClaudeCode,
+            Arc::new(HiddenUnavailableProvider),
+        );
+        let registry = AgentRegistry {
+            built_in,
+            custom: Mutex::new(HashMap::new()),
+        };
+
+        let ids = registry
+            .list_all_for_ui()
+            .into_iter()
+            .map(|agent| agent.id)
+            .collect::<Vec<_>>();
+
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn list_all_for_ui_marks_unavailable_visible_provider_as_not_installed() {
+        let mut built_in: HashMap<CanonicalAgentId, Arc<dyn AgentProvider>> = HashMap::new();
+        built_in.insert(
+            CanonicalAgentId::ClaudeCode,
+            Arc::new(VisibleUnavailableProvider),
+        );
+        let registry = AgentRegistry {
+            built_in,
+            custom: Mutex::new(HashMap::new()),
+        };
+
+        let forge = registry
+            .list_all_for_ui()
+            .into_iter()
+            .find(|agent| agent.id == "forge")
+            .expect("forge should be listed");
+
+        assert!(matches!(
+            forge.availability_kind,
+            AgentAvailabilityKind::Installable { installed: false }
+        ));
+    }
+
+    #[test]
+    fn list_all_for_ui_lists_custom_agents_as_installable_without_runtime_probe() {
         let registry = AgentRegistry::new();
         registry
             .register_custom(CustomAgentConfig {
@@ -326,6 +463,10 @@ mod tests {
             .expect("custom agent should be listed");
 
         assert_eq!(agent.id, "custom-agent");
+        assert!(matches!(
+            agent.availability_kind,
+            AgentAvailabilityKind::Installable { installed: true }
+        ));
     }
 
     #[test]

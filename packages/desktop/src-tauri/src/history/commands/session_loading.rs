@@ -257,6 +257,10 @@ pub async fn get_unified_session(
                 }
             }
         }
+        CanonicalAgentId::Forge => {
+            // Forge session loading not yet implemented
+            None
+        }
         CanonicalAgentId::Custom(_) => {
             // Unknown custom agent - no parser available
             None
@@ -310,6 +314,9 @@ pub async fn audit_session_load_timing_cli(
     }
     if matches!(canonical_agent, CanonicalAgentId::Copilot) {
         return Err("Copilot audit is not implemented yet".to_string());
+    }
+    if matches!(canonical_agent, CanonicalAgentId::Forge) {
+        return Err("Forge audit is not implemented yet".to_string());
     }
     if matches!(canonical_agent, CanonicalAgentId::Custom(_)) {
         return Err("Custom agents do not support session load audit".to_string());
@@ -402,7 +409,7 @@ pub async fn audit_session_load_timing_cli(
             add_stage(&mut stages, "load_session", t0);
             codex_result
         }
-        CanonicalAgentId::OpenCode | CanonicalAgentId::Copilot | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode | CanonicalAgentId::Copilot | CanonicalAgentId::Forge | CanonicalAgentId::Custom(_) => {
             unreachable!("handled above")
         }
     };
@@ -411,7 +418,7 @@ pub async fn audit_session_load_timing_cli(
         CanonicalAgentId::ClaudeCode => "claude-code",
         CanonicalAgentId::Cursor => "cursor",
         CanonicalAgentId::Codex => "codex",
-        CanonicalAgentId::OpenCode | CanonicalAgentId::Copilot | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode | CanonicalAgentId::Copilot | CanonicalAgentId::Forge | CanonicalAgentId::Custom(_) => {
             unreachable!()
         }
     };
@@ -445,6 +452,9 @@ pub async fn audit_session_load_timing(
 
     if matches!(canonical_agent, CanonicalAgentId::Copilot) {
         return Err("Copilot audit is not implemented yet".to_string());
+    }
+    if matches!(canonical_agent, CanonicalAgentId::Forge) {
+        return Err("Forge audit is not implemented yet".to_string());
     }
 
     let (result, agent_name) = match canonical_agent {
@@ -565,7 +575,7 @@ pub async fn audit_session_load_timing(
         CanonicalAgentId::Custom(_) => {
             return Err("Custom agents do not support session load audit".to_string());
         }
-        CanonicalAgentId::Copilot => unreachable!("handled above"),
+        CanonicalAgentId::Copilot | CanonicalAgentId::Forge => unreachable!("handled above"),
     };
 
     let total_ms = total_start.elapsed().as_millis();

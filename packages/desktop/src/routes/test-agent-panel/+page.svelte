@@ -125,7 +125,7 @@ function handleFocus() {
 			allProjects={[mockProject]}
 			{project}
 			selectedAgentId="claude-code"
-			availableAgents={[{ id: "claude-code", name: "Claude Code", icon: "", availability_kind: { kind: "bundled" as const } }]}
+			availableAgents={[{ id: "claude-code", name: "Claude Code", icon: "", availability_kind: { kind: "installable" as const, installed: true } }]}
 			onAgentChange={async () => {}}
 			effectiveTheme="dark"
 			onClose={handleClose}

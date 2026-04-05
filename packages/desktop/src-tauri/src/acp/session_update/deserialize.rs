@@ -91,10 +91,7 @@ impl<'de> serde::Deserialize<'de> for SessionUpdate {
                     .cloned()
                 {
                     serde_json::from_value(serialized_tool_call).map_err(|error| {
-                        serde::de::Error::custom(format!(
-                            "Invalid serialized tool call: {}",
-                            error
-                        ))
+                        serde::de::Error::custom(format!("Invalid serialized tool call: {}", error))
                     })?
                 } else {
                     // Handle ACP format: { toolCallId, _meta.claudeCode.toolName, rawInput, status, ... }

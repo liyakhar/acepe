@@ -1,6 +1,13 @@
 <script lang="ts">
 	import { FilePathBadge } from "@acepe/ui";
+	import ArrowsLeftRight from "phosphor-svelte/lib/ArrowsLeftRight";
+	import File from "phosphor-svelte/lib/File";
+	import GlobeHemisphereWest from "phosphor-svelte/lib/GlobeHemisphereWest";
+	import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
+	import PencilSimple from "phosphor-svelte/lib/PencilSimple";
 	import ShieldWarning from "phosphor-svelte/lib/ShieldWarning";
+	import Terminal from "phosphor-svelte/lib/Terminal";
+	import Trash from "phosphor-svelte/lib/Trash";
 	import { getPermissionStore } from "../../store/permission-store.svelte.js";
 	import { getSessionStore } from "../../store/session-store.svelte.js";
 	import type { PermissionRequest } from "../../types/permission.js";
@@ -12,16 +19,21 @@
 
  	interface Props {
 		sessionId: string;
+		permission?: PermissionRequest | null;
 		isFullscreen?: boolean;
 		projectPath?: string | null;
 	}
 
-	let { sessionId, isFullscreen = false, projectPath = null }: Props = $props();
+	let { sessionId, permission = null, isFullscreen = false, projectPath = null }: Props = $props();
 
 	const permissionStore = getPermissionStore();
 	const sessionStore = getSessionStore();
 
 	const pendingPermissions = $derived.by(() => {
+		if (permission) {
+			return [permission];
+		}
+
 		const entries = sessionStore.getEntries(sessionId);
 		const visiblePermissions: PermissionRequest[] = [];
 
@@ -54,20 +66,46 @@
 
 {#if currentPermission}
 	{@const compactDisplay = extractCompactPermissionDisplay(currentPermission, projectPath)}
+	{@const kind = compactDisplay.kind}
 	{@const command = compactDisplay.command}
 	{@const filePath = compactDisplay.filePath}
 	{@const verb = compactDisplay.label}
 	{@const purpleColor = Colors[COLOR_NAMES.PURPLE]}
 	<div class="mx-auto w-full max-w-[320px] px-3">
 		<div class="flex min-w-0 flex-col gap-1 overflow-hidden rounded-sm border border-border/60 bg-accent/30 px-1.5 py-1 permission-card-enter">
-			<!-- Header row: verb + file path (when no command) + progress -->
+			<!-- Header row: tool icon + file chip/summary + progress -->
 			<div class="flex min-w-0 items-center gap-1.5">
-				<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
-				<span class="text-[10px] font-mono font-medium text-muted-foreground shrink-0">{verb}</span>
+				<span
+					class="inline-flex shrink-0 items-center justify-center"
+					aria-label={verb}
+					title={verb}
+				>
+					{#if kind === "edit"}
+						<PencilSimple weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "read"}
+						<File weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "execute"}
+						<Terminal weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "search"}
+						<MagnifyingGlass weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "fetch" || kind === "web_search"}
+						<GlobeHemisphereWest weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "delete"}
+						<Trash weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "move"}
+						<ArrowsLeftRight weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else}
+						<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
+					{/if}
+				</span>
 				{#if filePath}
 					<div class="min-w-0 flex-1">
 						<FilePathBadge {filePath} interactive={false} size="sm" />
 					</div>
+				{:else if !command}
+					<span class="min-w-0 truncate text-[10px] font-mono font-medium text-muted-foreground">
+						{verb}
+					</span>
 				{/if}
 				{#if sessionProgress}
 					<div class="shrink-0 ml-auto">
@@ -83,7 +121,7 @@
 				{/if}
 			</div>
 
-			<!-- Command display (file path is visible inside the command) -->
+			<!-- Command display for execute permissions -->
 			{#if command}
 				<div class="max-h-[72px] overflow-y-auto rounded-sm bg-accent/40 px-2 py-1">
 					<code class="block min-w-0 whitespace-pre-wrap break-words font-mono text-[10px] text-foreground/70"

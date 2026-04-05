@@ -1,6 +1,6 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import IconCircleCheckFilled from "@tabler/icons-svelte/icons/circle-check-filled";
+import { IconCircleCheckFilled } from "@tabler/icons-svelte";
 import Lightning from "phosphor-svelte/lib/Lightning";
 import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";

@@ -1052,7 +1052,11 @@ mod tests {
                 Some("ses-test".to_string()),
             );
 
-            assert_eq!(updates.len(), 1, "subagent child usage should not emit parent-session telemetry");
+            assert_eq!(
+                updates.len(),
+                1,
+                "subagent child usage should not emit parent-session telemetry"
+            );
             assert!(
                 updates
                     .iter()
@@ -1063,7 +1067,10 @@ mod tests {
             if let SessionUpdate::ToolCall { tool_call, .. } = &updates[0] {
                 assert_eq!(tool_call.id, "toolu_child_telemetry_001");
                 assert_eq!(tool_call.kind, Some(ToolKind::Execute));
-                assert_eq!(tool_call.parent_tool_use_id.as_deref(), Some("toolu_task_parent"));
+                assert_eq!(
+                    tool_call.parent_tool_use_id.as_deref(),
+                    Some("toolu_task_parent")
+                );
             } else {
                 panic!("expected SessionUpdate::ToolCall, got {:?}", updates[0]);
             }

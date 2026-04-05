@@ -60,6 +60,7 @@ pub async fn get_unified_plan(
         }
         CanonicalAgentId::Copilot => Ok(None),
         CanonicalAgentId::Codex => Ok(None),
+        CanonicalAgentId::Forge => Ok(None),
         // Graceful fallback for agents without plans
         CanonicalAgentId::Custom(_) => {
             tracing::debug!(

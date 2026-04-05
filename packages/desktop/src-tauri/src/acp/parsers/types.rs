@@ -63,6 +63,11 @@ impl AgentType {
             crate::acp::types::CanonicalAgentId::OpenCode => AgentType::OpenCode,
             crate::acp::types::CanonicalAgentId::Cursor => AgentType::Cursor,
             crate::acp::types::CanonicalAgentId::Codex => AgentType::Codex,
+            crate::acp::types::CanonicalAgentId::Forge => {
+                // Forge uses a dedicated machine-protocol translator, so the ACP parser family
+                // remains unused until the native Forge client lands.
+                AgentType::ClaudeCode
+            }
             crate::acp::types::CanonicalAgentId::Custom(_) => {
                 // Custom agents default to ClaudeCode format for now
                 AgentType::ClaudeCode

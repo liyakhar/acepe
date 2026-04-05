@@ -20,7 +20,7 @@ describe("kanban empty-column contract", () => {
 
 		expect(source).toContain("const SECTION_ORDER: readonly ThreadBoardStatus[] = [");
 		expect(source).toContain(
-			'const SECTION_ORDER: readonly ThreadBoardStatus[] = [\n\t\t"answer_needed",\n\t\t"planning",\n\t\t"working",\n\t\t"finished",\n\t\t"idle",\n\t];'
+			'const SECTION_ORDER: readonly ThreadBoardStatus[] = [\n\t\t"answer_needed",\n\t\t"planning",\n\t\t"working",\n\t\t"idle",\n\t];'
 		);
 		expect(source).toContain("SECTION_ORDER.map((sectionId) => {");
 		expect(source).toContain("buildThreadBoard(");
@@ -52,7 +52,7 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("<KanbanThreadDialog");
 	});
 
-	it("renders task subagent cards and compact permission details in kanban cards", () => {
+	it("renders task subagent cards plus the same permission bar used above the composer", () => {
 		expect(existsSync(kanbanViewPath)).toBe(true);
 		if (!existsSync(kanbanViewPath)) return;
 
@@ -61,8 +61,14 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("getQueueItemTaskDisplay");
 		expect(source).toContain("taskCard: KanbanTaskCardData | null");
 		expect(source).toContain("projectPath={item.projectPath}");
-		expect(source).toContain("<PermissionActionBar permission={permission} compact projectPath={item.projectPath} />");
-		expect(source).not.toContain("extractCompactPermissionDisplay");
+		expect(source).toContain('import PermissionBar from "$lib/acp/components/tool-calls/permission-bar.svelte"');
+		expect(source).toContain("buildQueueItemQuestionUiState");
+		expect(source).toContain("<PermissionBar");
+		expect(source).toContain("sessionId={item.sessionId}");
+		expect(source).toContain("permission={permission}");
+		expect(source).toContain("projectPath={item.projectPath}");
+		expect(source).toContain("<AttentionQueueQuestionCard");
+		expect(source).not.toContain("<PendingPermissionCard permission={permission} />");
 	});
 
 	it("omits the kanban footer wrapper when there is no footer content", () => {
@@ -75,16 +81,13 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("{@const permission = item ? getPermissionRequest(item) : null}");
 		expect(source).toContain("{@const question = item ? getQuestionData(item) : null}");
 		expect(source).toContain(
-			"{@const usageTelemetry = item ? (sessionStore.getHotState(item.sessionId).usageTelemetry ?? null) : null}"
+			"{@const hotState = item ? sessionStore.getHotState(item.sessionId) : null}"
 		);
-		expect(source).toContain("{@const isClaudeCode = item ? item.agentId === AGENT_IDS.CLAUDE_CODE : false}");
-		expect(source).toContain("{@const showUsage = hasVisibleModelSelectorMetrics(usageTelemetry, isClaudeCode)}");
 		expect(source).toContain("{@const showComposer = item ? isComposerVisible(item) : false}");
 		expect(source).toContain("{@const showFooter = permission !== null || question !== null || showComposer}");
 		expect(source).toContain('{#if item}');
 		expect(source).toContain('<KanbanCard {card} onclick={() => handleCardClick(card.id)}');
 		expect(source).toContain('showFooter={showFooter}');
-		expect(source).toContain('showTally={showUsage}');
 		expect(source).toContain('flushFooter={showComposer}');
 		expect(source).not.toContain('{#snippet footer()}\n\t\t\t\t\t\t{#if item}');
 	});
@@ -96,44 +99,6 @@ describe("kanban empty-column contract", () => {
 		const source = readFileSync(kanbanViewPath, "utf8");
 
 		expect(source).toContain('{:else}\n\t\t\t\t\t<KanbanCard {card} onclick={() => handleCardClick(card.id)} />');
-	});
-
-	it("renders the compact context window widget in kanban footers", () => {
-		expect(existsSync(kanbanViewPath)).toBe(true);
-		if (!existsSync(kanbanViewPath)) return;
-
-		const source = readFileSync(kanbanViewPath, "utf8");
-
-		expect(source).toContain(
-			'import ModelSelectorMetricsChip from "$lib/acp/components/model-selector.metrics-chip.svelte"'
-		);
-		expect(source).toContain(
-			'import { hasVisibleModelSelectorMetrics } from "$lib/acp/components/model-selector.metrics-chip.logic.js"'
-		);
-		expect(source).toContain('import { AGENT_IDS } from "$lib/acp/types/agent-id.js"');
-		expect(source).toContain("<ModelSelectorMetricsChip");
-		expect(source).toContain("sessionId={card.id}");
-		expect(source).toContain("agentId={item.agentId}");
-		expect(source).toContain("compact={true}");
-		expect(source).toContain("{#snippet tally()}");
-		expect(source).toContain("{#if showUsage}");
-	});
-
-	it("keeps the tally context above the composer so the composer stays bottom-most", () => {
-		expect(existsSync(kanbanViewPath)).toBe(true);
-		if (!existsSync(kanbanViewPath)) return;
-
-		const source = readFileSync(kanbanViewPath, "utf8");
-		const tallyIndex = source.indexOf("{#snippet tally()}");
-		const composerIndex = source.indexOf("<KanbanCompactComposer");
-
-		expect(source).toContain('<KanbanCard {card} onclick={() => handleCardClick(card.id)}');
-		expect(source).toContain('showFooter={showFooter}');
-		expect(source).toContain('showTally={showUsage}');
-		expect(source).toContain('flushFooter={showComposer}');
-		expect(tallyIndex).toBeGreaterThan(-1);
-		expect(composerIndex).toBeGreaterThan(-1);
-		expect(tallyIndex).toBeLessThan(composerIndex);
 	});
 
 	it("renders the compact composer in an embedded voice layout with a smaller submit button", () => {
@@ -189,14 +154,14 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain('<DropdownMenu.Trigger');
 		expect(source).toContain('aria-label="More actions"');
 		expect(source).toContain(
-			'class="shrink-0 inline-flex h-3 w-2.5 items-center justify-center text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"'
+			'class="shrink-0 inline-flex h-3 w-4 items-center justify-center text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"'
 		);
 		expect(source).toContain('<IconDotsVertical class="h-2.5 w-2.5" aria-hidden="true" />');
 		expect(source).not.toContain('hover:bg-accent');
 		expect(source).toContain('label={m.session_menu_copy_id()}');
 		expect(source).toContain("{m.thread_open_in_finder()}");
 		expect(source).toContain("{m.session_menu_export()}");
-		expect(source).toContain("{m.common_close()}");
+		expect(source).not.toContain("{m.common_close()}");
 	});
 
 	it("avoids dead desktop-only imports that break Vite resolution", () => {

@@ -1,7 +1,6 @@
 <script lang="ts">
-	import IconCircleCheckFilled from "@tabler/icons-svelte/icons/circle-check-filled";
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
-	import Robot from "phosphor-svelte/lib/Robot";
+	import { IconCircleCheckFilled } from "@tabler/icons-svelte";
+	import { CaretRight, Robot } from "phosphor-svelte";
 	import { Colors } from "../../lib/colors.js";
 	import { TextShimmer } from "../text-shimmer/index.js";
 	import type { AgentToolStatus, AnyAgentEntry, AgentToolEntry } from "./types.js";
@@ -13,7 +12,7 @@
 		description: string | null;
 		prompt?: string | null;
 		resultText?: string | null;
-		children?: AnyAgentEntry[];
+		children?: readonly AnyAgentEntry[];
 		status?: AgentToolStatus;
 		showDoneIcon?: boolean;
 		compact?: boolean;
@@ -45,7 +44,7 @@
 	const isPending = $derived(status === "pending" || status === "running");
 	const isDone = $derived(status === "done");
 
-	const taskChildren = $derived(children);
+	const taskChildren = $derived(Array.from(children));
 
 	/** Child tool entries only (tool_call type) for the Tool calls section. */
 	const toolCallChildren = $derived(
@@ -64,39 +63,42 @@
 	const shouldShowDoneIcon = $derived(showDoneIcon && isDone);
 	const cardClass = $derived(compact ? "bg-accent/30 border-border/60" : "");
 	const headerClass = $derived(compact
-		? "flex min-w-0 items-center justify-between gap-1 px-2 py-1.5 text-xs"
+		? "flex min-w-0 items-center justify-between gap-1 px-1 py-0.5 text-[10px]"
 		: "flex h-7 items-center justify-between gap-1 px-2 text-xs");
 	const headerBorderClass = $derived(hasBorder
 		? compact
 			? "border-b border-border/60"
 			: "border-b border-border"
 		: "");
+	const headerContentClass = $derived(compact
+		? "flex min-w-0 flex-1 items-center justify-start gap-1"
+		: "flex min-w-0 flex-1 items-center justify-start gap-2");
 	const titleClass = $derived(compact ? "font-mono text-[10px]" : "font-mono text-[11px]");
 	const promptButtonClass = $derived(compact
-		? "w-full flex items-center gap-2 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
+		? "w-full flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
 		: "w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer");
-	const promptBodyClass = $derived(compact ? "px-2 pb-1.5" : "px-3 pb-2");
+	const promptBodyClass = $derived(compact ? "px-1 pb-0.5" : "px-3 pb-2");
 	const promptContentClass = $derived(compact
 		? "text-[10px] text-muted-foreground whitespace-pre-wrap break-words leading-relaxed"
 		: "text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed");
 	const resultSectionClass = $derived(compact ? "border-t border-border/60" : "border-t border-border");
 	const resultButtonClass = $derived(compact
-		? "w-full flex items-center gap-2 px-2 py-1.5 text-[10px] text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
+		? "w-full flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
 		: "w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer");
-	const resultBodyClass = $derived(compact ? "px-2 pb-2" : "px-3 pb-3");
+	const resultBodyClass = $derived(compact ? "px-1 pb-1" : "px-3 pb-3");
 	const resultContentClass = $derived(compact
-		? "text-[10px] bg-muted/30 rounded-sm p-2 whitespace-pre-wrap break-words leading-relaxed"
+		? "text-[10px] bg-muted/30 rounded-sm p-1 whitespace-pre-wrap break-words leading-relaxed"
 		: "text-xs bg-muted/30 rounded-md p-3 whitespace-pre-wrap break-words leading-relaxed");
-	const rowSectionClass = $derived(compact ? "border-t border-border/60 py-1" : "border-t border-border py-1.5");
+	const rowSectionClass = $derived(compact ? "border-t border-border/60 py-0.5" : "border-t border-border py-1.5");
 	const showLiveToolRow = $derived(!compact && hasChildren && lastToolCall !== null);
-	const tallyInline = $derived(compact);
-	const tallyWrapperClass = $derived(compact ? "px-2 pt-1 pb-1" : "");
+	const tallyInline = $derived(false);
+	const tallyWrapperClass = $derived("");
 </script>
 
-<AgentToolCard class={cardClass}>
+<AgentToolCard class={cardClass} dataTestid="agent-tool-task-card">
 	<!-- Header: fixed h-7 height -->
 	<div class="{headerClass} {headerBorderClass}">
-		<div class="flex min-w-0 flex-1 justify-start items-center gap-2">
+		<div class={headerContentClass}>
 			<Robot size={12} weight="fill" style="color: {Colors.purple}" class="shrink-0" />
 			<span class={titleClass}>
 				{#if isPending}
@@ -192,7 +194,7 @@
 	{/if}
 	{#if hasChildren}
 		<div class={tallyWrapperClass}>
-			<ToolTally toolCalls={toolCallChildren} inline={tallyInline} />
+			<ToolTally toolCalls={toolCallChildren} inline={tallyInline} compact={compact} />
 		</div>
 	{/if}
 

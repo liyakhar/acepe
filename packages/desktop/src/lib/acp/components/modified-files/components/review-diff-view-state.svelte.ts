@@ -44,10 +44,6 @@ function getLinesForRange(lines: string[], startIndex: number, count: number): s
 	return lines.slice(startIndex, startIndex + count);
 }
 
-function joinAdditionLines(fileDiffMetadata: FileDiffMetadata): string {
-	return fileDiffMetadata.additionLines.join("");
-}
-
 /**
  * Data structure for diff rendering with pre-parsed metadata.
  */
@@ -484,8 +480,10 @@ export class ReviewDiffViewState {
 			return null;
 		}
 
+		const currentDiffData = this.currentDiffData;
+
 		const updatedMetadata = diffAcceptRejectHunk(
-			this.currentDiffData.fileDiffMetadata,
+			currentDiffData.fileDiffMetadata,
 			hunkIndex,
 			action
 		);
@@ -497,13 +495,18 @@ export class ReviewDiffViewState {
 			this.rejectedCount++;
 		}
 
-		// Sync newFile.contents from the library's updated additionLines to prevent
-		// stale content in subsequent computeRevertedFileContent calls.
-		const updatedNewContents = joinAdditionLines(updatedMetadata);
+		const updatedNewContents =
+			action === "reject"
+				? computeRevertedFileContent(
+					currentDiffData.newFile.contents,
+					currentDiffData.fileDiffMetadata,
+					hunkIndex
+				)
+				: currentDiffData.newFile.contents;
 
-		this.currentDiffData = Object.assign({}, this.currentDiffData, {
+		this.currentDiffData = Object.assign({}, currentDiffData, {
 			fileDiffMetadata: updatedMetadata,
-			newFile: Object.assign({}, this.currentDiffData.newFile, {
+			newFile: Object.assign({}, currentDiffData.newFile, {
 				contents: updatedNewContents,
 			}),
 		});

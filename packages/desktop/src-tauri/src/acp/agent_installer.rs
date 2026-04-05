@@ -247,7 +247,7 @@ pub fn is_installed(agent_id: &CanonicalAgentId) -> bool {
 }
 
 /// Whether Acepe can provision the agent automatically.
-pub fn is_installable(agent_id: &CanonicalAgentId) -> bool {
+pub fn can_auto_install(agent_id: &CanonicalAgentId) -> bool {
     matches!(
         agent_id,
         CanonicalAgentId::ClaudeCode
@@ -904,6 +904,7 @@ fn agent_id_str(agent_id: &CanonicalAgentId) -> String {
         CanonicalAgentId::OpenCode => "opencode".to_string(),
         CanonicalAgentId::ClaudeCode => "claude-code".to_string(),
         CanonicalAgentId::Codex => "codex".to_string(),
+        CanonicalAgentId::Forge => "forge".to_string(),
         CanonicalAgentId::Custom(id) => {
             // Sanitize: reject path separators and traversal to prevent directory escape
             assert!(
@@ -1127,12 +1128,22 @@ mod tests {
     }
 
     #[test]
-    fn all_built_in_agents_are_installable() {
-        assert!(is_installable(&CanonicalAgentId::ClaudeCode));
-        assert!(is_installable(&CanonicalAgentId::Cursor));
-        assert!(is_installable(&CanonicalAgentId::Copilot));
-        assert!(is_installable(&CanonicalAgentId::OpenCode));
-        assert!(is_installable(&CanonicalAgentId::Codex));
+    fn forge_uses_path_backed_cache_key() {
+        assert_eq!(agent_id_str(&CanonicalAgentId::Forge), "forge");
+    }
+
+    #[test]
+    fn all_managed_built_in_agents_are_auto_installable() {
+        assert!(can_auto_install(&CanonicalAgentId::ClaudeCode));
+        assert!(can_auto_install(&CanonicalAgentId::Cursor));
+        assert!(can_auto_install(&CanonicalAgentId::Copilot));
+        assert!(can_auto_install(&CanonicalAgentId::OpenCode));
+        assert!(can_auto_install(&CanonicalAgentId::Codex));
+    }
+
+    #[test]
+    fn forge_is_not_auto_installable() {
+        assert!(!can_auto_install(&CanonicalAgentId::Forge));
     }
 
     #[test]

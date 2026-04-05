@@ -185,6 +185,34 @@ where
 /// Drop on SessionRegistry never fires on crash, so we sweep at startup.
 /// SIGTERM first (graceful), then SIGKILL after 500ms (forceful).
 /// Uses the agents cache dir path to narrow the match and avoid killing unrelated processes.
+fn orphaned_acp_process_patterns(agents_dir: &std::path::Path) -> Vec<String> {
+    let agents_dir_str = agents_dir.to_string_lossy();
+    vec![
+        format!("{}/claude-code/claude-agent-acp", agents_dir_str),
+        format!("{}/codex-acp/codex-acp", agents_dir_str),
+        format!("{}/codex/codex", agents_dir_str),
+        format!("{}/opencode/opencode", agents_dir_str),
+    ]
+}
+
+fn cleanup_app_runtime(app: &tauri::AppHandle, reason: &'static str) {
+    tracing::info!(reason, "Cleaning up ACP sessions and background managers");
+
+    let registry = app.state::<SessionRegistry>();
+    registry.stop_all();
+
+    let opencode_registry = app.state::<Arc<OpenCodeManagerRegistry>>();
+    tauri::async_runtime::block_on(opencode_registry.shutdown_all());
+
+    let git_watcher = app.state::<Arc<GitHeadWatcher>>();
+    git_watcher.unwatch_all();
+
+    if let Some(voice_state) = app.try_state::<VoiceState>() {
+        tracing::info!(reason, "Shutting down voice runtime");
+        voice_state.shutdown();
+    }
+}
+
 fn kill_orphaned_acp_processes(agents_dir: &std::path::Path) {
     #[cfg(unix)]
     {
@@ -192,12 +220,7 @@ fn kill_orphaned_acp_processes(agents_dir: &std::path::Path) {
         use std::thread;
         use std::time::Duration;
 
-        let agents_dir_str = agents_dir.to_string_lossy();
-        let patterns = [
-            format!("{}/claude-code/claude-agent-acp", agents_dir_str),
-            format!("{}/codex-acp/codex-acp", agents_dir_str),
-            format!("{}/codex/codex", agents_dir_str),
-        ];
+        let patterns = orphaned_acp_process_patterns(agents_dir);
         for pattern in &patterns {
             let _ = Command::new("/usr/bin/pkill")
                 .args(["-f", pattern])
@@ -1195,25 +1218,29 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 let app = window.app_handle();
                 if app.webview_windows().is_empty() {
-                    tracing::info!("Last window destroyed, cleaning up ACP sessions and OpenCode managers");
-                    let registry = app.state::<SessionRegistry>();
-                    registry.stop_all();
-                    let opencode_registry = app.state::<Arc<OpenCodeManagerRegistry>>();
-                    tauri::async_runtime::block_on(opencode_registry.shutdown_all());
-                    let git_watcher = app.state::<Arc<GitHeadWatcher>>();
-                    git_watcher.unwatch_all();
+                    cleanup_app_runtime(&app, "last window destroyed");
                 }
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, _event| {});
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { .. } => {
+                cleanup_app_runtime(app_handle, "exit requested");
+            }
+            tauri::RunEvent::Exit => {
+                cleanup_app_runtime(app_handle, "event loop exit");
+            }
+            _ => {}
+        });
 }
 
 #[cfg(test)]
 mod lib_tests {
+    use super::orphaned_acp_process_patterns;
     use super::should_attempt_claude_model_discovery;
     use crate::acp::provider::AgentProvider;
+    use std::path::Path;
 
     #[test]
     fn claude_defaults_skip_model_discovery_probe() {
@@ -1226,6 +1253,16 @@ mod lib_tests {
 
         assert!(!provider_model_ids.is_empty());
         assert!(!should_attempt_claude_model_discovery(&provider_model_ids));
+    }
+
+    #[test]
+    fn orphaned_acp_process_patterns_include_opencode() {
+        let patterns = orphaned_acp_process_patterns(Path::new("/tmp/agents"));
+
+        assert!(
+            patterns.contains(&"/tmp/agents/opencode/opencode".to_string()),
+            "startup orphan sweep should include the bundled opencode binary"
+        );
     }
 }
 

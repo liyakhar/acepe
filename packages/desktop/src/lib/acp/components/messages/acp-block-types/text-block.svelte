@@ -1,5 +1,5 @@
 <script lang="ts">
-import TypewriterText from "../typewriter-text.svelte";
+import MarkdownText from "../markdown-text.svelte";
 
 interface Props {
 	text: string;
@@ -10,4 +10,4 @@ interface Props {
 let { text, isStreaming = false, projectPath }: Props = $props();
 </script>
 
-<TypewriterText {text} {isStreaming} {projectPath} />
+<MarkdownText {text} {isStreaming} {projectPath} />

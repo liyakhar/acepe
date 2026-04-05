@@ -1,6 +1,5 @@
 <script lang="ts">
-	import IconCircleCheckFilled from "@tabler/icons-svelte/icons/circle-check-filled";
-	import IconAlertCircle from "@tabler/icons-svelte/icons/alert-circle";
+	import { IconAlertCircle, IconCircleCheckFilled } from "@tabler/icons-svelte";
 	import { Tooltip } from "bits-ui";
 
 	import { LoadingIcon } from "../icons/index.js";

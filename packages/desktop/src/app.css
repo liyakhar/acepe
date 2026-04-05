@@ -115,7 +115,7 @@
 	--card-foreground: #ffffff; /* editorSuggestWidget.foreground */
 	--popover: #272727; /* dropdown background */
 	--popover-foreground: #ffffff; /* editorSuggestWidget.foreground */
-	--primary: #d97757; /* button.background */
+	--primary: #ffc799; /* button.background */
 	--primary-foreground: #191c22; /* button.foreground */
 	--secondary: #565656; /* button.secondaryBackground */
 	--secondary-foreground: #ececec; /* button.secondaryForeground */
@@ -140,7 +140,7 @@
 	--chart-5: #b48ead; /* terminal.ansiMagenta */
 	--sidebar: #141414; /* sideBar.background */
 	--sidebar-foreground: #cccccc; /* sideBar.foreground */
-	--sidebar-primary: #ff8558; /* button.background */
+	--sidebar-primary: #ffc799; /* button.background */
 	--sidebar-primary-foreground: #191c22; /* button.foreground */
 	--sidebar-accent: #2a2a2a; /* list.hoverBackground */
 	--sidebar-accent-foreground: #ffffff; /* list.hoverForeground */

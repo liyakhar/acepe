@@ -1,3 +1,4 @@
+import { okAsync } from "neverthrow";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { QuestionRequest } from "../../types/question.js";
@@ -5,12 +6,9 @@ import type { QuestionRequest } from "../../types/question.js";
 import { QuestionStore } from "../question-store.svelte.js";
 
 // Mock the API module
-const mockReplyQuestion = vi.fn((_sessionId: string, _questionId: string, _answers: unknown) => ({
-	map: vi.fn((fn: () => void) => {
-		fn();
-		return { mapErr: vi.fn() };
-	}),
-}));
+const mockReplyQuestion = vi.fn(
+	(_sessionId: string, _questionId: string, _answers: unknown) => okAsync(undefined)
+);
 
 vi.mock("../api.js", () => ({
 	api: {
@@ -21,32 +19,11 @@ vi.mock("../api.js", () => ({
 
 // Mock the inbound request handler's respondToQuestion and cancelQuestion
 const mockRespondToQuestion = vi.fn(
-	(_sessionId: string, _requestId: number, _answers: Record<string, string | string[]>) => ({
-		map: vi.fn((fn: () => void) => {
-			fn();
-			return { mapErr: vi.fn() };
-		}),
-		mapErr: vi.fn((_errFn: (e: Error) => Error) => ({
-			map: vi.fn((fn: () => void) => {
-				fn();
-				return { mapErr: vi.fn() };
-			}),
-		})),
-	})
+	(_sessionId: string, _requestId: number, _answers: Record<string, string | string[]>) =>
+		okAsync(undefined)
 );
 
-const mockCancelQuestion = vi.fn((_sessionId: string, _requestId: number) => ({
-	map: vi.fn((fn: () => void) => {
-		fn();
-		return { mapErr: vi.fn() };
-	}),
-	mapErr: vi.fn((_errFn: (e: Error) => Error) => ({
-		map: vi.fn((fn: () => void) => {
-			fn();
-			return { mapErr: vi.fn() };
-		}),
-	})),
-}));
+const mockCancelQuestion = vi.fn((_sessionId: string, _requestId: number) => okAsync(undefined));
 
 vi.mock("../../logic/inbound-request-handler.js", () => ({
 	respondToQuestion: (
@@ -344,6 +321,41 @@ describe("QuestionStore", () => {
 			const result = await store.cancel("non-existent");
 
 			expect(result.isErr()).toBe(true);
+		});
+	});
+
+	describe("cancelForSession", () => {
+		it("cancels all pending questions for the matching session", async () => {
+			const sessionOneFirst: QuestionRequest = {
+				id: "q-session-1-a",
+				sessionId: "session-1",
+				jsonRpcRequestId: 201,
+				questions: [],
+			};
+			const sessionOneSecond: QuestionRequest = {
+				id: "q-session-1-b",
+				sessionId: "session-1",
+				questions: [],
+			};
+			const sessionTwoQuestion: QuestionRequest = {
+				id: "q-session-2",
+				sessionId: "session-2",
+				jsonRpcRequestId: 202,
+				questions: [],
+			};
+
+			store.add(sessionOneFirst);
+			store.add(sessionOneSecond);
+			store.add(sessionTwoQuestion);
+
+			const result = await store.cancelForSession("session-1");
+
+			expect(result.isOk()).toBe(true);
+			expect(store.pending.has("q-session-1-a")).toBe(false);
+			expect(store.pending.has("q-session-1-b")).toBe(false);
+			expect(store.pending.has("q-session-2")).toBe(true);
+			expect(mockCancelQuestion).toHaveBeenCalledWith("session-1", 201);
+			expect(mockReplyQuestion).toHaveBeenCalledWith("session-1", "q-session-1-b", []);
 		});
 	});
 });

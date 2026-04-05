@@ -128,7 +128,9 @@ practice.
 /// response contract plus branch / staged-files / diff context are always
 /// appended internally.
 fn normalize_custom_instructions(custom_instructions: Option<&str>) -> Option<&str> {
-    let instructions = custom_instructions.map(str::trim).filter(|value| !value.is_empty())?;
+    let instructions = custom_instructions
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
 
     if instructions == DEFAULT_SHIP_INSTRUCTIONS.trim()
         || instructions == LEGACY_DEFAULT_SHIP_INSTRUCTIONS.trim()

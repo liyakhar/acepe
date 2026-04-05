@@ -1,8 +1,9 @@
 <script lang="ts">
-import { AppTopBar } from "@acepe/ui/app-layout";
+import { Button } from "@acepe/ui/button";
+import { COLOR_NAMES, Colors } from "@acepe/ui/colors";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
+import { AppTopBar } from "@acepe/ui/app-layout";
 import { EmbeddedIconButton, HeaderCell } from "@acepe/ui/panel-header";
-import { PillButton } from "@acepe/ui";
 import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Bug from "phosphor-svelte/lib/Bug";
@@ -13,6 +14,7 @@ import GithubLogo from "phosphor-svelte/lib/GithubLogo";
 import HardDrives from "phosphor-svelte/lib/HardDrives";
 import Kanban from "phosphor-svelte/lib/Kanban";
 import Palette from "phosphor-svelte/lib/Palette";
+import Robot from "phosphor-svelte/lib/Robot";
 import Rows from "phosphor-svelte/lib/Rows";
 import Sidebar from "phosphor-svelte/lib/Sidebar";
 import SlidersHorizontal from "phosphor-svelte/lib/SlidersHorizontal";
@@ -77,10 +79,10 @@ const updateActionText = $derived(
 );
 
 const viewModes: { value: ViewMode; label: string; color: string }[] = [
-	{ value: "single", label: "Single", color: "#9858FF" },
-	{ value: "project", label: "Project", color: "#FF8D20" },
+	{ value: "single", label: "Single", color: Colors[COLOR_NAMES.PURPLE] },
+	{ value: "project", label: "Project", color: Colors[COLOR_NAMES.ORANGE] },
 	{ value: "multi", label: "Multi", color: "var(--success)" },
-	{ value: "kanban", label: "Kanban", color: "#3B82F6" },
+	{ value: "kanban", label: "Kanban", color: Colors[COLOR_NAMES.PINK] },
 ];
 
 function preventDropdownItemSelection(event: Event): void {
@@ -99,19 +101,20 @@ function preventDropdownItemSelection(event: Event): void {
 	onSearch={() => (viewState.commandPaletteOpen = true)}
 	onSettings={() => viewState.toggleSettings()}
 	showAvatar={false}
+	showRightSectionLeadingBorder={panelStore.viewMode !== "kanban"}
 >
 	{#snippet extraLeftActions()}
 		{#if updaterState?.kind === "available"}
 			<div class="flex items-center pl-2">
-			<PillButton variant="invert" size="xs" onclick={onUpdateClick}>
+			<Button variant="headerAction" size="headerAction" onclick={onUpdateClick}>
 				{#snippet children()}
 					Update
 				{/snippet}
-			</PillButton>
+			</Button>
 			</div>
 		{:else if updaterState?.kind === "downloading" || updaterState?.kind === "installing"}
 			<div class="flex items-center pl-2">
-			<PillButton variant="invert" size="xs" disabled>
+			<Button variant="headerAction" size="headerAction" disabled>
 				{#snippet children()}
 					<div class="flex items-center gap-2">
 						<span>{updateActionText}</span>
@@ -129,20 +132,20 @@ function preventDropdownItemSelection(event: Event): void {
 						</div>
 					</div>
 					{/snippet}
-				</PillButton>
+				</Button>
 			</div>
 		{:else if updaterState?.kind === "error"}
 			<div class="flex items-center pl-2">
-				<PillButton variant="ghost" size="xs" onclick={onRetryUpdateClick}>
+				<Button variant="headerAction" size="headerAction" onclick={onRetryUpdateClick}>
 					{#snippet children()}
 						Retry
 					{/snippet}
-				</PillButton>
+				</Button>
 			</div>
 		{/if}
 	{/snippet}
 	{#snippet extraRightActions()}
-		<HeaderCell withDivider={false}>
+		{#snippet layoutControl()}
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props }: DropdownMenuTriggerChildProps)}
@@ -215,7 +218,27 @@ function preventDropdownItemSelection(event: Event): void {
 					</DropdownMenu.Group>
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
-		</HeaderCell>
+		{/snippet}
+		{#if panelStore.viewMode === "kanban"}
+			<div class="flex items-center">
+				<div class="flex items-center pl-2 pr-2">
+					<Button
+						variant="headerAction"
+						size="headerAction"
+						class="gap-2 border-transparent hover:border-transparent"
+						onclick={() => viewState.handleNewThread()}
+					>
+						<Robot weight="fill" class="h-3.5 w-3.5" style="color: {Colors.purple}" />
+						<span>New Agent</span>
+					</Button>
+				</div>
+				{@render layoutControl()}
+			</div>
+		{:else}
+			<HeaderCell withDivider={false}>
+				{@render layoutControl()}
+			</HeaderCell>
+		{/if}
 		<HeaderCell withDivider={false}>
 			<Tooltip.Root>
 				<Tooltip.Trigger>

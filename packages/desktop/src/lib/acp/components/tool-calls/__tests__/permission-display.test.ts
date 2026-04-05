@@ -168,9 +168,30 @@ describe("permission-display", () => {
 		permission.permission = "Edit /repo/packages/ui/src/index.ts";
 
 		expect(extractCompactPermissionDisplay(permission, "/repo")).toEqual({
+			kind: "edit",
 			label: "Edit",
 			command: null,
 			filePath: "packages/ui/src/index.ts",
+		});
+	});
+
+	it("suppresses raw command text for file permissions when a file chip can be shown", () => {
+		const permission = createPermission({
+			parsedArguments: {
+				kind: "edit",
+				edits: [{ filePath: "/repo/packages/ui/src/kanban-card.svelte", oldString: null, newString: null, content: null }],
+			},
+			rawInput: {
+				command: "packages/ui/src/kanban-card.svelte",
+			},
+		});
+		permission.permission = "Edit /repo/packages/ui/src/kanban-card.svelte";
+
+		expect(extractCompactPermissionDisplay(permission, "/repo")).toEqual({
+			kind: "edit",
+			label: "Edit",
+			command: null,
+			filePath: "packages/ui/src/kanban-card.svelte",
 		});
 	});
 });

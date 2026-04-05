@@ -40,4 +40,29 @@ describe("kanban layout wiring contract", () => {
 		expect(topBarSource).toContain('value: "kanban"');
 		expect(topBarSource).toContain('phosphor-svelte/lib/Kanban');
 	});
+
+	it("renders a kanban-only New Agent action in the top bar", () => {
+		expect(existsSync(topBarPath)).toBe(true);
+		if (!existsSync(topBarPath)) return;
+
+		const topBarSource = readFileSync(topBarPath, "utf8");
+		const kanbanActionsSource = topBarSource
+			.split('{#if panelStore.viewMode === "kanban"}')[1]
+			?.split("{:else}")[0];
+
+		expect(topBarSource).toContain('panelStore.viewMode === "kanban"');
+		expect(topBarSource).toContain('showRightSectionLeadingBorder={panelStore.viewMode !== "kanban"}');
+		expect(topBarSource).toContain('{#if panelStore.viewMode === "kanban"}\n\t\t\t<div class="flex items-center">');
+		expect(topBarSource).toContain('<div class="flex items-center pl-2 pr-2">');
+		expect(topBarSource).toContain('<span>New Agent</span>');
+		expect(topBarSource).toContain("viewState.handleNewThread()");
+		expect(topBarSource).toContain('class="gap-2 border-transparent hover:border-transparent"');
+		expect(kanbanActionsSource).toBeDefined();
+		expect(kanbanActionsSource).toContain('<span>New Agent</span>');
+		expect(topBarSource).toContain('ariaLabel="Layout Settings"');
+		expect(kanbanActionsSource).toContain("{@render layoutControl()}");
+		expect(kanbanActionsSource.indexOf('<span>New Agent</span>')).toBeLessThan(
+			kanbanActionsSource.indexOf("{@render layoutControl()}")
+		);
+	});
 });

@@ -203,6 +203,51 @@ function registerQuestion(question: QuestionRequest): void {
 	questionStore.add(question);
 }
 
+function collectPendingTurnInputNotificationIds(sessionId: string): Set<string> {
+	const staleIds = new Set<string>();
+	for (const [id, permission] of permissionStore.pending) {
+		if (permission.sessionId === sessionId) staleIds.add(id);
+	}
+	for (const [id, question] of questionStore.pending) {
+		if (question.sessionId === sessionId) staleIds.add(id);
+	}
+	return staleIds;
+}
+
+function dismissPendingTurnInputNotifications(sessionId: string): void {
+	const staleIds = collectPendingTurnInputNotificationIds(sessionId);
+	if (staleIds.size === 0) return;
+	dismissWhere((notification) => staleIds.has(notification.id));
+}
+
+function clearPendingTurnInputs(sessionId: string): void {
+	dismissPendingTurnInputNotifications(sessionId);
+	questionStore.removeForSession(sessionId);
+	permissionStore.removeForSession(sessionId);
+}
+
+function cancelPendingTurnInputs(sessionId: string): void {
+	dismissPendingTurnInputNotifications(sessionId);
+	void questionStore.cancelForSession(sessionId).match(
+		() => {},
+		(error) => {
+			logger.error("Failed to cancel pending questions for interrupted turn", {
+				sessionId,
+				error,
+			});
+		}
+	);
+	void permissionStore.cancelForSession(sessionId).match(
+		() => {},
+		(error) => {
+			logger.error("Failed to cancel pending permissions for interrupted turn", {
+				sessionId,
+				error,
+			});
+		}
+	);
+}
+
 // Set up SessionStore callbacks for permission/question/plan routing
 sessionStore.setCallbacks({
 	onPermissionRequest: (permission) => {
@@ -327,26 +372,15 @@ sessionStore.setCallbacks({
 			}
 		);
 
-		// Dismiss stale notification popups for this session's permissions/questions
-		// Must happen before removeForSession() which clears the store entries
-		const staleIds = new Set<string>();
-		for (const [id, p] of permissionStore.pending) {
-			if (p.sessionId === sessionId) staleIds.add(id);
-		}
-		for (const [id, q] of questionStore.pending) {
-			if (q.sessionId === sessionId) staleIds.add(id);
-		}
-		if (staleIds.size > 0) {
-			dismissWhere((notif) => staleIds.has(notif.id));
-		}
-
 		// Clean up stale pending questions/permissions — if the turn completed,
 		// by definition no pending input is needed for this session.
-		questionStore.removeForSession(sessionId);
-		permissionStore.removeForSession(sessionId);
+		clearPendingTurnInputs(sessionId);
 
 		// Drain next queued message (if any)
 		messageQueueStore.drainNext(sessionId);
+	},
+	onTurnInterrupted: (sessionId: string) => {
+		cancelPendingTurnInputs(sessionId);
 	},
 	onTurnError: (sessionId: string) => {
 		messageQueueStore.pause(sessionId);
@@ -922,8 +956,8 @@ onDestroy(() => {
 });
 </script>
 
-<ThemeProvider class="bg-primary p-1 overflow-hidden h-dvh">
-	<div class="flex flex-col h-full min-h-0 gap-0.5 bg-background rounded-lg p-0.5">
+<ThemeProvider class="overflow-hidden h-dvh bg-background">
+	<div class="flex flex-col h-full min-h-0 gap-0.5 bg-background">
 		<!-- Top bar -->
 		<div class="shrink-0 bg-card/50 border border-border rounded-lg overflow-hidden">
 			<TopBar
@@ -965,7 +999,7 @@ onDestroy(() => {
 					</div>
 				{/if}
 				<main
-					class="flex-1 flex min-h-0 flex-col gap-0.5 overflow-hidden rounded-lg transition-[border-radius,background-color] duration-200 ease-out {hasAnyPanel
+					class="flex-1 flex min-h-0 flex-col gap-0.5 overflow-hidden transition-[background-color] duration-200 ease-out {hasAnyPanel
 						? ''
 						: 'justify-center items-center overflow-x-auto'}"
 				>
