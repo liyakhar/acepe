@@ -1,24 +1,24 @@
 <script lang="ts">
-	import { capture, AnalyticsEvent } from '$lib/analytics.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import Header from '$lib/components/header.svelte';
-	import { Download } from '@lucide/svelte';
-	import { AppleLogo, GithubLogo } from 'phosphor-svelte';
-	import logo from '$lib/assets/logo.svg';
-	import logoDark from '../../../../../assets/logo-dark.svg';
+import { capture, AnalyticsEvent } from "$lib/analytics.js";
+import * as m from "$lib/paraglide/messages.js";
+import Header from "$lib/components/header.svelte";
+import { Download } from "@lucide/svelte";
+import { AppleLogo, GithubLogo } from "phosphor-svelte";
+import logoLight from "$lib/assets/logo-light.svg";
+import logoDark from "../../../../../assets/logo-dark.svg";
 
-	const { data } = $props();
+const { data } = $props();
 
-	let downloading = $state(false);
+let downloading = $state(false);
 
-	function handleDownload() {
-		capture(AnalyticsEvent.Downloaded, {
-			arch: 'aarch64',
-			version: data.version ?? undefined
-		});
-		downloading = true;
-		setTimeout(() => (downloading = false), 4000);
-	}
+function handleDownload() {
+	capture(AnalyticsEvent.Downloaded, {
+		arch: "aarch64",
+		version: data.version ?? undefined,
+	});
+	downloading = true;
+	setTimeout(() => (downloading = false), 4000);
+}
 </script>
 
 <svelte:head>
@@ -109,8 +109,8 @@
 				<!-- Brand -->
 				<div class="col-span-2 md:col-span-1">
 					<a href="/" class="mb-3 inline-flex items-center gap-2">
-						<img src={logo} alt="" class="h-6 w-6 dark:hidden" />
-						<img src={logoDark} alt="" class="hidden h-6 w-6 dark:block" />
+						<img src={logoDark} alt="" class="h-6 w-6 dark:hidden" />
+						<img src={logoLight} alt="" class="hidden h-6 w-6 dark:block" />
 						<span class="text-base font-bold tracking-wide">{m.app_name()}</span>
 					</a>
 					<p class="max-w-[200px] text-[13px] leading-relaxed text-muted-foreground">

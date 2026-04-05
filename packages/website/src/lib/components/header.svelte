@@ -1,57 +1,64 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
-	import logo from '$lib/assets/logo.svg';
-	import logoDark from '../../../../../assets/logo-dark.svg';
-	import { browser } from '$app/environment';
-	import { page } from '$app/stores';
-	import { Download, Menu, Moon, Sun } from '@lucide/svelte';
-	import { Drawer, DrawerContent, DrawerOverlay, DrawerPortal, DrawerTrigger, TextShimmer } from '@acepe/ui';
-	import { DiscordLogo, GithubLogo, Star } from 'phosphor-svelte';
-	import {
-		THEME_STORAGE_KEY,
-		applyThemeToDocument,
-		getToggledTheme,
-		websiteThemeStore,
-		type WebsiteTheme
-	} from '$lib/theme/theme';
+import * as m from "$lib/paraglide/messages.js";
+import logoLight from "$lib/assets/logo-light.svg";
+import logoDark from "../../../../../assets/logo-dark.svg";
+import { browser } from "$app/environment";
+import { page } from "$app/stores";
+import { Download, Menu, Moon, Sun } from "@lucide/svelte";
+import {
+	Drawer,
+	DrawerContent,
+	DrawerOverlay,
+	DrawerPortal,
+	DrawerTrigger,
+	TextShimmer,
+} from "@acepe/ui";
+import { DiscordLogo, GithubLogo, Star } from "phosphor-svelte";
+import {
+	THEME_STORAGE_KEY,
+	applyThemeToDocument,
+	getToggledTheme,
+	websiteThemeStore,
+	type WebsiteTheme,
+} from "$lib/theme/theme";
 
-	interface Props {
-		showLogin?: boolean;
-		showDownload?: boolean;
+interface Props {
+	showLogin?: boolean;
+	showDownload?: boolean;
+}
+
+let { showLogin = false, showDownload = false }: Props = $props();
+let drawerOpen = $state(false);
+
+const showRoadmap = $derived($page.data.featureFlags?.roadmapEnabled === true);
+const githubStars = $derived($page.data.githubStars as number | null);
+
+function formatStars(count: number): string {
+	if (count >= 1000) {
+		return `${(count / 1000).toFixed(1).replace(/\.0$/, "")}k`;
 	}
+	return count.toString();
+}
+const theme = $derived($websiteThemeStore);
 
-	let { showLogin = false, showDownload = false }: Props = $props();
-	let drawerOpen = $state(false);
+const toggleThemeLabel = $derived(
+	theme === "dark" ? m.theme_switch_to_light() : m.theme_switch_to_dark()
+);
 
-	const showRoadmap = $derived($page.data.featureFlags?.roadmapEnabled === true);
-	const githubStars = $derived($page.data.githubStars as number | null);
+function handleThemeToggle() {
+	const nextTheme = getToggledTheme(theme);
 
-	function formatStars(count: number): string {
-		if (count >= 1000) {
-			return `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k`;
-		}
-		return count.toString();
+	if (browser) {
+		websiteThemeStore.set(nextTheme);
+		applyThemeToDocument(nextTheme, document.documentElement);
+		window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
 	}
-	const theme = $derived($websiteThemeStore);
+}
 
-	const toggleThemeLabel = $derived(
-		theme === 'dark' ? m.theme_switch_to_light() : m.theme_switch_to_dark()
-	);
-
-	function handleThemeToggle() {
-		const nextTheme = getToggledTheme(theme);
-
-		if (browser) {
-			websiteThemeStore.set(nextTheme);
-			applyThemeToDocument(nextTheme, document.documentElement);
-			window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-		}
-	}
-
-	const desktopNavLinkClass =
-		'rounded-full px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-card/70 hover:text-foreground';
-	const mobileNavLinkClass =
-		'flex min-h-11 min-w-11 items-center rounded-full px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-card/70 hover:text-foreground';
+const desktopNavLinkClass =
+	"rounded-full px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-card/70 hover:text-foreground";
+const mobileNavLinkClass =
+	"flex min-h-11 min-w-11 items-center rounded-full px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-card/70 hover:text-foreground";
 </script>
 
 <header class="fixed top-4 left-1/2 z-50 w-[calc(100%-3rem)] max-w-4xl -translate-x-1/2">
@@ -63,8 +70,8 @@
 				href="/"
 				class="flex items-center gap-2 rounded-full px-2 py-1 transition-colors hover:bg-card/70"
 			>
-				<img src={logo} alt="" class="h-6 w-6 dark:hidden" />
-				<img src={logoDark} alt="" class="hidden h-6 w-6 dark:block" />
+				<img src={logoDark} alt="" class="h-6 w-6 dark:hidden" />
+				<img src={logoLight} alt="" class="hidden h-6 w-6 dark:block" />
 				<span class="text-base font-bold tracking-wide">{m.app_name()}</span>
 			</a>
 		</div>
@@ -172,8 +179,8 @@
 								class="flex items-center gap-2 rounded-full px-2 py-1 transition-colors hover:bg-card/70"
 								onclick={() => (drawerOpen = false)}
 							>
-								<img src={logo} alt="" class="h-6 w-6 dark:hidden" />
-								<img src={logoDark} alt="" class="hidden h-6 w-6 dark:block" />
+							<img src={logoDark} alt="" class="h-6 w-6 dark:hidden" />
+							<img src={logoLight} alt="" class="hidden h-6 w-6 dark:block" />
 								<span class="text-base font-bold tracking-wide">{m.app_name()}</span>
 							</a>
 							<div class="flex items-center gap-2">

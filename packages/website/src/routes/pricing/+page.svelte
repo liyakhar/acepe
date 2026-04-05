@@ -1,14 +1,14 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
-	import { TextShimmer } from '@acepe/ui';
-	import Header from '$lib/components/header.svelte';
-	import { Check, ArrowRight, Terminal } from '@lucide/svelte';
-	import { GithubLogo } from 'phosphor-svelte';
-	import logo from '$lib/assets/logo.svg';
-	import logoDark from '../../../../../assets/logo-dark.svg';
-	import { pricingFaqItems } from './faq.js';
+import * as m from "$lib/paraglide/messages.js";
+import { TextShimmer } from "@acepe/ui";
+import Header from "$lib/components/header.svelte";
+import { Check, ArrowRight, Terminal } from "@lucide/svelte";
+import { GithubLogo } from "phosphor-svelte";
+import logoLight from "$lib/assets/logo-light.svg";
+import logoDark from "../../../../../assets/logo-dark.svg";
+import { pricingFaqItems } from "./faq.js";
 
-	let { data } = $props();
+let { data } = $props();
 </script>
 
 <svelte:head>
@@ -257,8 +257,8 @@
 				<!-- Brand -->
 				<div class="col-span-2 md:col-span-1">
 					<a href="/" class="mb-3 inline-flex items-center gap-2">
-						<img src={logo} alt="" class="h-6 w-6 dark:hidden" />
-						<img src={logoDark} alt="" class="hidden h-6 w-6 dark:block" />
+						<img src={logoDark} alt="" class="h-6 w-6 dark:hidden" />
+						<img src={logoLight} alt="" class="hidden h-6 w-6 dark:block" />
 						<span class="text-base font-bold tracking-wide">{m.app_name()}</span>
 					</a>
 					<p class="max-w-[200px] text-[13px] leading-relaxed text-muted-foreground">

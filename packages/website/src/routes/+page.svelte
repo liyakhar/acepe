@@ -20,7 +20,7 @@ import type {
 } from "@acepe/ui/attention-queue";
 import AgentIconsRow from "$lib/components/agent-icons-row.svelte";
 import Header from "$lib/components/header.svelte";
-import logo from "$lib/assets/logo.svg";
+import logoLight from "$lib/assets/logo-light.svg";
 import logoDark from "../../../../assets/logo-dark.svg";
 import { websiteThemeStore } from "$lib/theme/theme.js";
 import {
@@ -41,36 +41,36 @@ let { data } = $props();
 
 // === Mock data for real component showcases ===
 
-	const theme = $derived($websiteThemeStore);
+const theme = $derived($websiteThemeStore);
 
-	const mockGridAgents: AgentGridItem[] = $derived([
-		{
-			id: "claude-code",
-			name: "Claude Code",
-			iconSrc: `/svgs/agents/claude/claude-icon-${theme}.svg`,
-			available: true,
-		},
-		{
-			id: "codex",
-			name: "Codex",
-			iconSrc: `/svgs/agents/codex/codex-icon-${theme}.svg`,
-			available: true,
-		},
-		{
-			id: "cursor",
-			name: "Cursor",
-			iconSrc: `/svgs/agents/cursor/cursor-icon-${theme}.svg`,
-			available: true,
-		},
-		{
-			id: "opencode",
-			name: "OpenCode",
-			iconSrc: `/svgs/agents/opencode/opencode-logo-${theme}.svg`,
-			available: true,
-		},
-	]);
+const mockGridAgents: AgentGridItem[] = $derived([
+	{
+		id: "claude-code",
+		name: "Claude Code",
+		iconSrc: `/svgs/agents/claude/claude-icon-${theme}.svg`,
+		available: true,
+	},
+	{
+		id: "codex",
+		name: "Codex",
+		iconSrc: `/svgs/agents/codex/codex-icon-${theme}.svg`,
+		available: true,
+	},
+	{
+		id: "cursor",
+		name: "Cursor",
+		iconSrc: `/svgs/agents/cursor/cursor-icon-${theme}.svg`,
+		available: true,
+	},
+	{
+		id: "opencode",
+		name: "OpenCode",
+		iconSrc: `/svgs/agents/opencode/opencode-logo-${theme}.svg`,
+		available: true,
+	},
+]);
 
-	const mockTabs: AppTab[] = [
+const mockTabs: AppTab[] = [
 	{
 		id: "1",
 		title: "Fix login flow",
@@ -199,10 +199,22 @@ const mockQueueGroups = [
 		label: "Needs answer",
 		items: [
 			{
-				mode: "build", title: "Fix auth middleware", timeAgo: null, insertions: 0, deletions: 0,
-				isStreaming: false, fileToolDisplayText: null, statusText: null,
-				currentQuestion: { question: "Which auth strategy should I use?", multiSelect: false, options: [{ label: "JWT tokens" }, { label: "Session cookies" }, { label: "OAuth 2.0" }] },
-				totalQuestions: 1, hasMultipleQuestions: false, currentQuestionIndex: 0,
+				mode: "build",
+				title: "Fix auth middleware",
+				timeAgo: null,
+				insertions: 0,
+				deletions: 0,
+				isStreaming: false,
+				fileToolDisplayText: null,
+				statusText: null,
+				currentQuestion: {
+					question: "Which auth strategy should I use?",
+					multiSelect: false,
+					options: [{ label: "JWT tokens" }, { label: "Session cookies" }, { label: "OAuth 2.0" }],
+				},
+				totalQuestions: 1,
+				hasMultipleQuestions: false,
+				currentQuestionIndex: 0,
 				questionProgress: [{ questionIndex: 0, answered: false }],
 				currentQuestionOptions: [
 					{ label: "JWT tokens", selected: false, color: "#15DB95" },
@@ -216,14 +228,35 @@ const mockQueueGroups = [
 		id: "working",
 		label: "Working",
 		items: [
-			{ mode: "build", title: "Database migration", timeAgo: null, insertions: 0, deletions: 0, isStreaming: true, fileToolDisplayText: "db/migrate/add_users.sql", statusText: null, showToolShimmer: true, todoProgress: { current: 2, total: 5, label: "migrations" } },
+			{
+				mode: "build",
+				title: "Database migration",
+				timeAgo: null,
+				insertions: 0,
+				deletions: 0,
+				isStreaming: true,
+				fileToolDisplayText: "db/migrate/add_users.sql",
+				statusText: null,
+				showToolShimmer: true,
+				todoProgress: { current: 2, total: 5, label: "migrations" },
+			},
 		],
 	},
 	{
 		id: "idle",
 		label: "Needs Review",
 		items: [
-			{ mode: "plan", title: "Write API docs", timeAgo: null, insertions: 0, deletions: 0, isStreaming: false, fileToolDisplayText: null, statusText: null, todoProgress: { current: 3, total: 3, label: "sections" } },
+			{
+				mode: "plan",
+				title: "Write API docs",
+				timeAgo: null,
+				insertions: 0,
+				deletions: 0,
+				isStreaming: false,
+				fileToolDisplayText: null,
+				statusText: null,
+				todoProgress: { current: 3, total: 3, label: "sections" },
+			},
 		],
 	},
 ];
@@ -694,8 +727,8 @@ const features = [
 				<!-- Brand -->
 				<div class="col-span-2 md:col-span-1">
 					<a href="/" class="mb-3 inline-flex items-center gap-2">
-						<img src={logo} alt="" class="h-6 w-6 dark:hidden" />
-						<img src={logoDark} alt="" class="hidden h-6 w-6 dark:block" />
+						<img src={logoDark} alt="" class="h-6 w-6 dark:hidden" />
+						<img src={logoLight} alt="" class="hidden h-6 w-6 dark:block" />
 						<span class="text-base font-bold tracking-wide">{m.app_name()}</span>
 					</a>
 					<p class="max-w-[200px] text-[13px] leading-relaxed text-muted-foreground">
