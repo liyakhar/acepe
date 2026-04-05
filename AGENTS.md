@@ -20,6 +20,10 @@ cargo clippy       # Rust lint (in src-tauri/)
 
 - Acepe standardizes on the Compounding Engineering workflow for non-trivial engineering work.
 - ALWAYS fix bugs with TDD: write a focused failing test or characterization first, verify it fails, then implement the minimal fix and rerun the test.
+- Follow the red-green-refactor loop deliberately: first prove the bug or missing behavior with one failing test, then make the smallest change that turns it green, then clean up while keeping tests green.
+- Choose the narrowest valuable test seam. Prefer behavior-focused tests over implementation-detail assertions, and only drop to structural contract tests when the invariant is about wiring or ownership.
+- For legacy or unclear behavior, write a characterization test first before changing code. Do not “improve” behavior without first capturing what the system currently does or what the user explicitly wants.
+- Keep tests single-purpose. Avoid mixing unrelated assertions into one failure because it makes diagnosis and iteration slower.
 - NEVER run `bun dev` - the user manages the dev server.
 - NEVER run `git stash` without explicit user consent - stashing can hide in-progress work.
 - When debugging, separate facts from inference. Do not present an inferred root cause as fact. Label hypotheses clearly and prefer instrumentation or observed state transitions before claiming causality.
@@ -203,6 +207,11 @@ Always prefer scoped verification over the full suite when the scope is local:
 - Rust: `cargo test --lib module::path` instead of `cargo test --lib`
 - TypeScript: `bun test path/to/file.test.ts` instead of `bun test`
 - Run the full suite only before commit or after cross-cutting changes
+- Match the test type to the risk: pure logic with unit tests, user interactions with behavior/component tests, architectural placement with contract tests, and layout/visual changes with browser or visual verification.
+- String-based UI contract tests are allowed for important wiring and composition rules such as where an action is mounted, which component owns an override, or whether a shared shell renders a specific integration point.
+- Do not use string-based UI contract tests as the primary way to verify layout, spacing, visuals, or styling details that can change during harmless refactors. Prefer behavior tests and browser/visual checks for those.
+- When writing contract tests, assert stable product or architecture invariants instead of incidental markup. Prefer “this action is rendered by TopBar in kanban mode” over exact class-string snapshots unless the class itself is the contract.
+- When a bug fix spans multiple layers, keep the main failing test at the user-visible layer and add lower-level tests only where they help isolate the cause or prevent regression cheaply.
 
 ### 3. Use Review To Update The System
 
