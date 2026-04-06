@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from "svelte";
 
-	import { ProjectLetterBadge } from "../project-letter-badge/index.js";
 	import type { AgentSessionStatus } from "./types.js";
 	import {
 		CloseAction,
@@ -53,6 +52,13 @@
 		controls,
 		class: className = "",
 	}: Props = $props();
+
+	const projectBadgeLabel =
+		projectName && sequenceId != null
+			? `${projectName.charAt(0).toUpperCase()} #${sequenceId}`
+			: projectName
+				? projectName.charAt(0).toUpperCase()
+				: null;
 </script>
 
 <EmbeddedPanelHeader onHeaderClick={onScrollToTop} class={className}>
@@ -70,9 +76,13 @@
 	{:else}
 		{#if projectName && projectColor}
 			<HeaderCell withDivider={false}>
-				<ProjectLetterBadge name={projectName} color={projectColor} size={14} class="shrink-0" />
-				{#if sequenceId != null}
-					<span class="font-mono text-[10px] text-muted-foreground/70">#{sequenceId}</span>
+				{#if projectBadgeLabel}
+					<span
+						class="inline-flex h-[14px] shrink-0 items-center rounded-[4px] px-1 font-mono text-[10px] font-semibold"
+						style="background-color: color-mix(in srgb, {projectColor} 16%, transparent); color: {projectColor};"
+					>
+						{projectBadgeLabel}
+					</span>
 				{/if}
 			</HeaderCell>
 		{/if}
