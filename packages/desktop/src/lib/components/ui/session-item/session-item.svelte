@@ -6,6 +6,7 @@ import IconChevronRight from "@tabler/icons-svelte/icons/chevron-right";
 import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
 import Archive from "phosphor-svelte/lib/Archive";
 import Tree from "phosphor-svelte/lib/Tree";
+import { tick } from "svelte";
 import PrStateIcon from "$lib/acp/components/pr-state-icon.svelte";
 import { toast } from "svelte-sonner";
 import CopyButton from "$lib/acp/components/messages/copy-button.svelte";
@@ -20,6 +21,7 @@ import { getPanelStore } from "$lib/acp/store/index.js";
 import { formatSessionTitleForDisplay } from "$lib/acp/store/session-title-policy.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
 import { useTheme } from "$lib/components/theme/context.svelte.js";
+import { Input } from "$lib/components/ui/input/index.js";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";
@@ -45,6 +47,7 @@ type SessionDisplayItem = BaseSessionDisplayItem & {
 		isExpanded?: boolean;
 		onToggleExpand?: () => void;
 		onArchive?: (session: SessionDisplayItem) => void | Promise<void>;
+		onRename?: (title: string) => void | Promise<void>;
 	onExportMarkdown?: (sessionId: string) => void | Promise<void>;
 	onExportJson?: (sessionId: string) => void | Promise<void>;
 	onOpenPr?: () => void;
@@ -60,6 +63,7 @@ let {
 	isExpanded = false,
 	onToggleExpand,
 	onArchive,
+	onRename,
 	onExportMarkdown,
 	onExportJson,
 		onOpenPr,
@@ -94,6 +98,9 @@ function getSessionDisplayName(item: SessionDisplayItem): string {
 }
 
 function handleSelect() {
+	if (isRenaming) {
+		return;
+	}
 	onSelect?.(session);
 }
 
@@ -150,14 +157,73 @@ function handleOpenPr(event: MouseEvent) {
 	onOpenPr?.();
 }
 
+function openRenameEditor() {
+	if (!onRename) {
+		return;
+	}
+
+	renameDraft = getSessionDisplayName(session);
+	isRenaming = true;
+	isActionsMenuOpen = false;
+	void tick().then(() => {
+		if (renameInputRef) {
+			renameInputRef.focus();
+			renameInputRef.select();
+		}
+	});
+}
+
+function closeRenameEditor() {
+	isRenaming = false;
+	renameDraft = "";
+}
+
+function submitRename() {
+	if (!onRename) {
+		closeRenameEditor();
+		return;
+	}
+
+	const trimmedTitle = renameDraft.trim();
+	const currentTitle = getSessionDisplayName(session);
+	if (trimmedTitle === "" || trimmedTitle === currentTitle) {
+		closeRenameEditor();
+		return;
+	}
+
+	closeRenameEditor();
+	void onRename(trimmedTitle);
+}
+
+function handleRenameKeydown(event: KeyboardEvent) {
+	if (event.key === "Enter") {
+		event.preventDefault();
+		submitRename();
+		return;
+	}
+
+	if (event.key === "Escape") {
+		event.preventDefault();
+		closeRenameEditor();
+	}
+}
+
 const basePadding = 1;
 const paddingLeft = $derived(`${basePadding + depth * 16}px`);
 
 const isStreaming = $derived(session.activity?.isStreaming ?? false);
+const displayTitle = $derived(
+	session.sequenceId != null
+		? `#${session.sequenceId} ${getSessionDisplayName(session)}`
+		: getSessionDisplayName(session)
+);
 
 const queueTimeAgo = $derived(formatTimeAgoSafe(session.updatedAt ?? session.createdAt));
 let isRowHovered = $state(false);
 let isActionsMenuOpen = $state(false);
+let isRenaming = $state(false);
+let renameDraft = $state("");
+let renameInputRef = $state<HTMLInputElement | null>(null);
 let rowElement: HTMLDivElement | null = null;
 const actionsVisible = $derived(isRowHovered || isActionsMenuOpen);
 const _actionsVisibilityClass = $derived(
@@ -298,6 +364,11 @@ const highlightCtx = getSessionListHighlightContext();
 								class="min-w-[180px]"
 								onclick={(e: MouseEvent) => e.stopPropagation()}
 							>
+								{#if onRename}
+									<DropdownMenu.Item onSelect={openRenameEditor} class="cursor-pointer">
+										{m.file_list_rename()}
+									</DropdownMenu.Item>
+								{/if}
 								<DropdownMenu.Item class="cursor-pointer">
 									<CopyButton
 										text={session.id}
@@ -353,16 +424,36 @@ const highlightCtx = getSessionListHighlightContext();
 					</div>
 				{/snippet}
 
+				{#snippet titleContent()}
+					{#if isRenaming}
+						<Input
+							bind:ref={renameInputRef}
+							bind:value={renameDraft}
+							type="text"
+							class="h-6 border-0 bg-transparent px-0 !text-xs font-medium shadow-none focus-visible:ring-0 md:!text-xs"
+							onkeydown={handleRenameKeydown}
+							onblur={submitRename}
+							onclick={(event: MouseEvent) => event.stopPropagation()}
+							aria-label="Rename session"
+						/>
+					{:else}
+						<div class="text-xs font-medium truncate" title={displayTitle}>
+							{displayTitle}
+						</div>
+					{/if}
+				{/snippet}
+
 				<ActivityEntry
 					selected={selected || isOpen}
 					onSelect={handleSelect}
 					slidingHighlight={!!highlightCtx}
 					compactPadding={!!highlightCtx}
 					mode={null}
-					title={session.sequenceId != null ? `#${session.sequenceId} ${getSessionDisplayName(session)}` : getSessionDisplayName(session)}
+					title={displayTitle}
 					timeAgo={queueTimeAgo}
 					insertions={session.insertions ?? 0}
 					deletions={session.deletions ?? 0}
+					{titleContent}
 					{agentBadge}
 					{isStreaming}
 					trailingAction={actionsVisible ? rowActions : undefined}

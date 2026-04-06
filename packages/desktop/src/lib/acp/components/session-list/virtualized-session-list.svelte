@@ -16,8 +16,9 @@ type SessionListItem = BaseSessionListItem & {
 	interface Props {
 		sessions: SessionListItem[];
 		selectedSessionId: string | null;
-		onSelectSession: (item: SessionListItem) => void;
-		onOpenPr?: (item: SessionListItem) => void;
+	onSelectSession: (item: SessionListItem) => void;
+	onOpenPr?: (item: SessionListItem) => void;
+	onRenameSession?: (session: SessionListItem, title: string) => void | Promise<void>;
 	onArchive?: (session: SessionDisplayItem) => void | Promise<void>;
 	onExportMarkdown?: (sessionId: string) => void | Promise<void>;
 	onExportJson?: (sessionId: string) => void | Promise<void>;
@@ -28,9 +29,10 @@ let {
 	selectedSessionId,
 	onSelectSession,
 	onOpenPr,
+	onRenameSession,
 	onArchive,
-		onExportMarkdown,
-		onExportJson,
+	onExportMarkdown,
+	onExportJson,
 	}: Props = $props();
 
 // Track which parent sessions are expanded
@@ -167,6 +169,7 @@ setSessionListHighlightContext(highlightContext);
 			onSelect={() => handleSessionSelect(row.item)}
 			onToggleExpand={() => handleToggleExpand(row.item.id)}
 			onOpenPr={onOpenPr ? () => onOpenPr(row.item) : undefined}
+			onRename={onRenameSession ? (title) => onRenameSession(row.item, title) : undefined}
 			{onArchive}
 			{onExportMarkdown}
 			{onExportJson}

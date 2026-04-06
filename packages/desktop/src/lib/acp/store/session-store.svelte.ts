@@ -56,6 +56,7 @@ import { SessionNotFoundError } from "../errors/app-error.js";
 import { createLogger } from "../utils/logger.js";
 import { tauriClient } from "../../utils/tauri-client.js";
 import type { PrDetails } from "../../utils/tauri-client/git.js";
+import { api } from "./api.js";
 import * as preferencesStore from "./agent-model-preferences-store.svelte.js";
 import { SessionConnectionManager } from "./services/session-connection-manager.js";
 import { SessionMessagingService } from "./services/session-messaging-service.js";
@@ -64,8 +65,6 @@ import { SessionCapabilitiesStore } from "./session-capabilities-store.svelte.js
 import { SessionEntryStore } from "./session-entry-store.svelte.js";
 import { SessionHotStateStore } from "./session-hot-state-store.svelte.js";
 import { getTitleUpdateFromUserMessage } from "./session-title-policy.js";
-import "./api.js";
-
 const logger = createLogger({ id: "session-store", name: "SessionStore" });
 
 const SESSION_STORE_KEY = Symbol("session-store");
@@ -470,6 +469,29 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		);
 	}
 
+	renameSession(sessionId: string, title: string): ResultAsync<void, AppError> {
+		const session = this.getSessionCold(sessionId);
+		if (!session) {
+			return errAsync(new SessionNotFoundError(sessionId));
+		}
+
+		const trimmedTitle = title.trim();
+		if (trimmedTitle === "" || trimmedTitle === session.title) {
+			return okAsync(undefined);
+		}
+
+		return api.setSessionTitle(sessionId, trimmedTitle).map(() => {
+			this.updateSession(
+				sessionId,
+				{
+					title: trimmedTitle,
+				},
+				{ touchUpdatedAt: false }
+			);
+			return undefined;
+		});
+	}
+
 	// ============================================
 	// SESSION LOADING (delegated to repository)
 	// ============================================
@@ -578,6 +600,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		projectPath: string;
 		agentId: string;
 		title?: string;
+		initialAutonomousEnabled?: boolean;
 		initialModeId?: string;
 		initialModelId?: string;
 		worktreePath?: string;

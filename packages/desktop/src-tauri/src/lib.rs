@@ -922,6 +922,7 @@ pub fn run() {
             history::commands::session_loading::audit_session_load_timing,
             history::commands::session_loading::set_session_worktree_path,
             history::commands::session_loading::set_session_pr_number,
+            history::commands::session_loading::set_session_title,
             history::commands::plans::get_unified_plan,
             history::commands::scanning::scan_project_sessions,
             history::commands::scanning::get_startup_sessions,

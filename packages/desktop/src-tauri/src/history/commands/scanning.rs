@@ -26,6 +26,29 @@ fn derive_title_from_converted_session(
     None
 }
 
+fn resolve_indexed_session_title(
+    session_id: &str,
+    display: &str,
+    title_overridden: bool,
+    session: Option<&crate::session_jsonl::types::ConvertedSession>,
+) -> String {
+    if title_overridden {
+        return display.to_string();
+    }
+
+    if let Some(session) = session {
+        if let Some(title) = derive_title_from_converted_session(session) {
+            return title;
+        }
+        if !session.title.trim().is_empty() {
+            return session.title.clone();
+        }
+    }
+
+    crate::history::title_utils::derive_session_title(display, 100)
+        .unwrap_or_else(|| session_id[..8.min(session_id.len())].to_string())
+}
+
 async fn derive_indexed_session_title(
     app: &AppHandle,
     session_id: &str,
@@ -34,8 +57,13 @@ async fn derive_indexed_session_title(
     file_path: &str,
     worktree_path: Option<&str>,
     display: &str,
+    title_overridden: bool,
 ) -> String {
     let source_path = SessionMetadataRepository::normalized_source_path(file_path);
+
+    if title_overridden {
+        return display.to_string();
+    }
 
     if worktree_path.is_some() {
         if let Ok(Some(session)) = crate::history::commands::session_loading::get_unified_session(
@@ -47,17 +75,11 @@ async fn derive_indexed_session_title(
         )
         .await
         {
-            if let Some(title) = derive_title_from_converted_session(&session) {
-                return title;
-            }
-            if !session.title.trim().is_empty() {
-                return session.title;
-            }
+            return resolve_indexed_session_title(session_id, display, title_overridden, Some(&session));
         }
     }
 
-    crate::history::title_utils::derive_session_title(display, 100)
-        .unwrap_or_else(|| session_id[..8.min(session_id.len())].to_string())
+    resolve_indexed_session_title(session_id, display, title_overridden, None)
 }
 
 #[tauri::command]
@@ -94,8 +116,7 @@ pub async fn get_startup_sessions(
         .map_err(|error| format!("Failed to load startup session metadata: {error}"))?;
 
     // Build a set of requested IDs for O(1) lookup when detecting alias matches.
-    let requested_ids: std::collections::HashSet<String> =
-        session_ids.iter().cloned().collect();
+    let requested_ids: std::collections::HashSet<String> = session_ids.iter().cloned().collect();
 
     // Build the ordering map keyed by requested session ID -> original position.
     let startup_order: std::collections::HashMap<String, usize> = session_ids
@@ -212,6 +233,7 @@ async fn scan_project_sessions_inner(
                 &s.file_path,
                 s.worktree_path.as_deref(),
                 &s.display,
+                s.title_overridden,
             )
             .await;
             let worktree_deleted = s
@@ -328,13 +350,76 @@ async fn scan_project_sessions_inner(
 
 #[cfg(test)]
 mod tests {
-    use super::indexed_source_path;
+    use super::{derive_title_from_converted_session, indexed_source_path, resolve_indexed_session_title};
+    use crate::db::repository::SessionMetadataRow;
+    use crate::session_jsonl::types::{
+        ConvertedSession, SessionStats, StoredContentBlock, StoredEntry, StoredUserMessage,
+    };
+
+    fn make_session(title: &str, user_text: &str) -> ConvertedSession {
+        let content = StoredContentBlock {
+            block_type: "text".to_string(),
+            text: Some(user_text.to_string()),
+        };
+
+        ConvertedSession {
+            entries: vec![StoredEntry::User {
+                id: "entry-1".to_string(),
+                message: StoredUserMessage {
+                    id: None,
+                    content: content.clone(),
+                    chunks: vec![content],
+                    sent_at: None,
+                },
+                timestamp: Some("2026-04-06T00:00:00Z".to_string()),
+            }],
+            stats: SessionStats::default(),
+            title: title.to_string(),
+            created_at: "2026-04-06T00:00:00Z".to_string(),
+        }
+    }
 
     #[test]
     fn test_indexed_source_path_hides_worktree_sentinel() {
         assert_eq!(
             indexed_source_path("__worktree__/ses_legacy".to_string()),
             None
+        );
+    }
+
+    #[test]
+    fn converted_session_title_derivation_works() {
+        let converted = make_session("Fallback", "Original transcript title");
+        assert_eq!(
+            derive_title_from_converted_session(&converted),
+            Some("Original transcript title".to_string())
+        );
+    }
+
+    #[test]
+    fn title_override_should_short_circuit_indexed_derivation() {
+        let row = SessionMetadataRow {
+            id: "session-1".to_string(),
+            display: "Design changes".to_string(),
+            title_overridden: true,
+            timestamp: 0,
+            project_path: "/repo".to_string(),
+            agent_id: "claude-code".to_string(),
+            file_path: "file.jsonl".to_string(),
+            file_mtime: 0,
+            file_size: 0,
+            provider_session_id: None,
+            worktree_path: None,
+            pr_number: None,
+            is_acepe_managed: false,
+            sequence_id: Some(2),
+        };
+
+        let converted = make_session("Original transcript title", "Original transcript title");
+
+        assert_eq!(
+            resolve_indexed_session_title(&row.id, &row.display, row.title_overridden, Some(&converted)),
+            "Design changes"
         );
     }
 }

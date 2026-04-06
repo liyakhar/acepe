@@ -4,8 +4,9 @@
 
 #[cfg(test)]
 mod session_metadata_tests {
+    use crate::db::entities::prelude::AcepeSessionState;
     use crate::db::repository::SessionMetadataRepository;
-    use sea_orm::{ConnectionTrait, Database, DbConn, Statement};
+    use sea_orm::{ConnectionTrait, Database, DbConn, EntityTrait, Statement};
     use sea_orm_migration::MigratorTrait;
     use tempfile::tempdir;
 
@@ -147,6 +148,104 @@ mod session_metadata_tests {
             .unwrap()
             .unwrap();
         assert_eq!(session.display, "Updated title");
+    }
+
+    #[tokio::test]
+    async fn test_title_override_survives_transcript_refresh() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-override".to_string(),
+            "Derived title".to_string(),
+            1704067200000,
+            "/Users/test/project".to_string(),
+            "claude-code".to_string(),
+            "-Users-test-project/session-override.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .unwrap();
+
+        SessionMetadataRepository::set_title_override(
+            &db,
+            "session-override",
+            Some("My custom title"),
+        )
+        .await
+        .unwrap();
+
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-override".to_string(),
+            "Fresh derived title".to_string(),
+            1704067205000,
+            "/Users/test/project".to_string(),
+            "claude-code".to_string(),
+            "-Users-test-project/session-override.jsonl".to_string(),
+            1704067205,
+            2048,
+        )
+        .await
+        .unwrap();
+
+        let session = SessionMetadataRepository::get_by_id(&db, "session-override")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.display, "My custom title");
+    }
+
+    #[tokio::test]
+    async fn test_clearing_title_override_reveals_latest_transcript_title() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-override".to_string(),
+            "Derived title".to_string(),
+            1704067200000,
+            "/Users/test/project".to_string(),
+            "claude-code".to_string(),
+            "-Users-test-project/session-override.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .unwrap();
+
+        SessionMetadataRepository::set_title_override(
+            &db,
+            "session-override",
+            Some("My custom title"),
+        )
+        .await
+        .unwrap();
+
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-override".to_string(),
+            "Fresh derived title".to_string(),
+            1704067205000,
+            "/Users/test/project".to_string(),
+            "claude-code".to_string(),
+            "-Users-test-project/session-override.jsonl".to_string(),
+            1704067205,
+            2048,
+        )
+        .await
+        .unwrap();
+
+        SessionMetadataRepository::set_title_override(&db, "session-override", None)
+            .await
+            .unwrap();
+
+        let session = SessionMetadataRepository::get_by_id(&db, "session-override")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.display, "Fresh derived title");
     }
 
     #[tokio::test]
@@ -1154,6 +1253,57 @@ mod session_metadata_tests {
             .unwrap()
             .unwrap();
         assert_eq!(adopted.sequence_id, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_exists_records_opened_relationship_in_acepe_state() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-opened",
+            "/project",
+            "claude-code",
+            Some("/project/.worktrees/feature-a"),
+        )
+        .await
+        .unwrap();
+
+        let state = AcepeSessionState::find_by_id("session-opened")
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(state.relationship, "opened");
+        assert_eq!(state.sequence_id, Some(1));
+        assert_eq!(state.project_path, "/project");
+    }
+
+    #[tokio::test]
+    async fn test_ensure_exists_and_promote_records_created_relationship_in_acepe_state() {
+        let db = setup_test_db().await;
+
+        let sequence_id = SessionMetadataRepository::ensure_exists_and_promote(
+            &db,
+            "session-created",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let state = AcepeSessionState::find_by_id("session-created")
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(sequence_id, Some(1));
+        assert_eq!(state.relationship, "created");
+        assert_eq!(state.sequence_id, Some(1));
+        assert_eq!(state.project_path, "/project");
     }
 
     #[tokio::test]

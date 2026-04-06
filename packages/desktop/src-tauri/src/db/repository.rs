@@ -563,7 +563,7 @@ impl SessionReviewStateRepository {
 // Session Metadata Repository
 // ============================================================================
 
-use crate::db::entities::session_metadata;
+use crate::db::entities::{acepe_session_state, session_metadata};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
@@ -572,11 +572,41 @@ pub enum SessionLifecycleState {
     Persisted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcepeSessionRelationship {
+    Discovered,
+    Opened,
+    Created,
+}
+
+impl AcepeSessionRelationship {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Discovered => "discovered",
+            Self::Opened => "opened",
+            Self::Created => "created",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "opened" => Self::Opened,
+            "created" => Self::Created,
+            _ => Self::Discovered,
+        }
+    }
+
+    fn is_managed(self) -> bool {
+        !matches!(self, Self::Discovered)
+    }
+}
+
 /// Row returned from session metadata queries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMetadataRow {
     pub id: String,
     pub display: String,
+    pub title_overridden: bool,
     pub timestamp: i64,
     pub project_path: String,
     pub agent_id: String,
@@ -608,6 +638,43 @@ impl SessionMetadataRow {
 
     pub fn is_transcript_pending(&self) -> bool {
         self.lifecycle_state() == SessionLifecycleState::Created
+    }
+}
+
+fn compose_session_metadata_row(
+    model: session_metadata::Model,
+    state: Option<&acepe_session_state::Model>,
+) -> SessionMetadataRow {
+    let title_overridden = state.and_then(|state| state.title_override.as_ref()).is_some();
+    let display = state
+        .and_then(|state| state.title_override.clone())
+        .unwrap_or_else(|| model.display.clone());
+    let worktree_path = state
+        .and_then(|state| state.worktree_path.clone())
+        .or(model.worktree_path.clone());
+    let pr_number = state.and_then(|state| state.pr_number).or(model.pr_number);
+    let sequence_id = state
+        .and_then(|state| state.sequence_id)
+        .or(model.sequence_id);
+    let is_acepe_managed = state
+        .map(|state| AcepeSessionRelationship::from_str(&state.relationship).is_managed())
+        .unwrap_or(model.is_acepe_managed != 0);
+
+    SessionMetadataRow {
+        id: model.id,
+        display,
+        title_overridden,
+        timestamp: model.timestamp,
+        project_path: model.project_path,
+        agent_id: model.agent_id,
+        file_path: model.file_path,
+        file_mtime: model.file_mtime,
+        file_size: model.file_size,
+        provider_session_id: model.provider_session_id,
+        worktree_path,
+        pr_number,
+        is_acepe_managed,
+        sequence_id,
     }
 }
 
@@ -675,6 +742,7 @@ impl SessionMetadataRepository {
     fn is_sequence_constraint_violation(error: &sea_orm::DbErr) -> bool {
         let message = error.to_string();
         message.contains("idx_session_metadata_project_sequence_managed")
+            || message.contains("idx_acepe_session_state_project_sequence")
             || message.contains("UNIQUE constraint failed") && message.contains("sequence_id")
     }
 
@@ -690,11 +758,11 @@ impl SessionMetadataRepository {
         db: &impl sea_orm::ConnectionTrait,
         project_path: &str,
     ) -> Result<i32> {
-        let max_seq: Option<i32> = SessionMetadata::find()
+        let max_seq: Option<i32> = AcepeSessionState::find()
             .select_only()
-            .column_as(session_metadata::Column::SequenceId.max(), "max_seq")
-            .filter(session_metadata::Column::ProjectPath.eq(project_path))
-            .filter(session_metadata::Column::IsAcepeManaged.eq(1))
+            .column_as(acepe_session_state::Column::SequenceId.max(), "max_seq")
+            .filter(acepe_session_state::Column::ProjectPath.eq(project_path))
+            .filter(acepe_session_state::Column::SequenceId.is_not_null())
             .into_tuple::<Option<i32>>()
             .one(db)
             .await?
@@ -794,14 +862,34 @@ impl SessionMetadataRepository {
             .add(session_metadata::Column::ProviderSessionId.eq(session_id))
     }
 
-    /// Insert a new native session and assign the next per-project sequence ID.
+    async fn load_state_map(
+        db: &DbConn,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, acepe_session_state::Model>> {
+        if session_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let rows = AcepeSessionState::find()
+            .filter(acepe_session_state::Column::SessionId.is_in(session_ids.to_vec()))
+            .all(db)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.session_id.clone(), row))
+            .collect())
+    }
+
+    /// Insert a new Acepe-tracked session and assign the next per-project sequence ID.
     /// Returns the assigned sequence_id.
-    async fn insert_created_session(
+    async fn insert_acepe_tracked_session(
         db: &DbConn,
         session_id: &str,
         project_path: &str,
         agent_id: &str,
         worktree_path: Option<&str>,
+        relationship: AcepeSessionRelationship,
     ) -> Result<i32> {
         for _attempt in 0..5 {
             let txn = db.begin().await?;
@@ -831,6 +919,18 @@ impl SessionMetadataRepository {
 
             match SessionMetadata::insert(model).exec(&txn).await {
                 Ok(_) => {
+                    let state = acepe_session_state::ActiveModel {
+                        session_id: Set(session_id.to_string()),
+                        relationship: Set(relationship.as_str().to_string()),
+                        project_path: Set(project_path.to_string()),
+                        title_override: Set(None),
+                        worktree_path: Set(worktree_path.map(|path| path.to_string())),
+                        pr_number: Set(None),
+                        sequence_id: Set(Some(next_sequence_id)),
+                        created_at: Set(now),
+                        updated_at: Set(now),
+                    };
+                    state.insert(&txn).await?;
                     txn.commit().await?;
                     tracing::info!(
                         session_id = %session_id,
@@ -838,7 +938,8 @@ impl SessionMetadataRepository {
                         agent_id = %agent_id,
                         worktree_path = ?worktree_path,
                         sequence_id = next_sequence_id,
-                        "Session metadata inserted for created session without persisted transcript"
+                        relationship = relationship.as_str(),
+                        "Session metadata inserted for Acepe-tracked session without persisted transcript"
                     );
                     return Ok(next_sequence_id);
                 }
@@ -854,12 +955,18 @@ impl SessionMetadataRepository {
         anyhow::bail!("Failed to allocate a unique sequence_id after retries");
     }
 
-    async fn mark_session_as_acepe_managed(
+    async fn mark_session_as_acepe_tracked(
         db: &DbConn,
         existing_model: session_metadata::Model,
     ) -> Result<Option<i32>> {
-        if existing_model.is_acepe_managed != 0 {
-            return Ok(existing_model.sequence_id);
+        let existing_state = AcepeSessionState::find_by_id(&existing_model.id)
+            .one(db)
+            .await?;
+        if let Some(state) = existing_state.as_ref() {
+            let relationship = AcepeSessionRelationship::from_str(&state.relationship);
+            if relationship.is_managed() && state.sequence_id.is_some() {
+                return Ok(state.sequence_id);
+            }
         }
 
         for _attempt in 0..5 {
@@ -869,9 +976,15 @@ impl SessionMetadataRepository {
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Session metadata disappeared during promotion"))?;
 
-            if latest_model.is_acepe_managed != 0 {
-                txn.rollback().await?;
-                return Ok(latest_model.sequence_id);
+            let latest_state = AcepeSessionState::find_by_id(&existing_model.id)
+                .one(&txn)
+                .await?;
+            if let Some(state) = latest_state.as_ref() {
+                let relationship = AcepeSessionRelationship::from_str(&state.relationship);
+                if relationship.is_managed() && state.sequence_id.is_some() {
+                    txn.rollback().await?;
+                    return Ok(state.sequence_id);
+                }
             }
 
             let next_sequence_id =
@@ -880,9 +993,38 @@ impl SessionMetadataRepository {
             active.is_acepe_managed = Set(1);
             active.sequence_id = Set(Some(next_sequence_id));
             active.updated_at = Set(Utc::now());
+            let state_project_path = active.project_path.as_ref().clone();
+            let state_worktree_path = active.worktree_path.as_ref().clone();
+            let state_pr_number = active.pr_number.as_ref().to_owned();
 
             match active.update(&txn).await {
                 Ok(_) => {
+                    let now = Utc::now();
+                    if let Some(state) = latest_state {
+                        let mut state_active: acepe_session_state::ActiveModel = state.into();
+                        state_active.relationship =
+                            Set(AcepeSessionRelationship::Opened.as_str().to_string());
+                        state_active.project_path = Set(state_project_path.clone());
+                        state_active.worktree_path = Set(state_worktree_path.clone());
+                        state_active.sequence_id = Set(Some(next_sequence_id));
+                        state_active.updated_at = Set(now);
+                        state_active.update(&txn).await?;
+                    } else {
+                        let state = acepe_session_state::ActiveModel {
+                            session_id: Set(existing_model.id.clone()),
+                            relationship: Set(AcepeSessionRelationship::Opened
+                                .as_str()
+                                .to_string()),
+                            project_path: Set(state_project_path),
+                            title_override: Set(None),
+                            worktree_path: Set(state_worktree_path),
+                            pr_number: Set(state_pr_number),
+                            sequence_id: Set(Some(next_sequence_id)),
+                            created_at: Set(now),
+                            updated_at: Set(now),
+                        };
+                        state.insert(&txn).await?;
+                    }
                     txn.commit().await?;
                     return Ok(Some(next_sequence_id));
                 }
@@ -904,7 +1046,7 @@ impl SessionMetadataRepository {
             return Ok(None);
         };
 
-        Self::mark_session_as_acepe_managed(db, existing_model).await
+        Self::mark_session_as_acepe_tracked(db, existing_model).await
     }
 
     /// Get all sessions for given project paths, ordered by timestamp DESC.
@@ -930,7 +1072,13 @@ impl SessionMetadataRepository {
         let count = models.len();
         tracing::debug!(count = count, "Loaded session metadata");
 
-        Ok(models.into_iter().map(Self::model_to_row).collect())
+        let session_ids: Vec<String> = models.iter().map(|model| model.id.clone()).collect();
+        let state_map = Self::load_state_map(db, &session_ids).await?;
+
+        Ok(models
+            .into_iter()
+            .map(|model| compose_session_metadata_row(model.clone(), state_map.get(&model.id)))
+            .collect())
     }
 
     /// Get startup sessions for specific session IDs.
@@ -962,7 +1110,13 @@ impl SessionMetadataRepository {
         let count = models.len();
         tracing::debug!(count = count, "Loaded startup session metadata");
 
-        Ok(models.into_iter().map(Self::model_to_row).collect())
+        let canonical_ids: Vec<String> = models.iter().map(|model| model.id.clone()).collect();
+        let state_map = Self::load_state_map(db, &canonical_ids).await?;
+
+        Ok(models
+            .into_iter()
+            .map(|model| compose_session_metadata_row(model.clone(), state_map.get(&model.id)))
+            .collect())
     }
 
     /// Get all sessions ordered by timestamp DESC.
@@ -977,7 +1131,13 @@ impl SessionMetadataRepository {
         let count = models.len();
         tracing::debug!(count = count, "Loaded all session metadata");
 
-        Ok(models.into_iter().map(Self::model_to_row).collect())
+        let session_ids: Vec<String> = models.iter().map(|model| model.id.clone()).collect();
+        let state_map = Self::load_state_map(db, &session_ids).await?;
+
+        Ok(models
+            .into_iter()
+            .map(|model| compose_session_metadata_row(model.clone(), state_map.get(&model.id)))
+            .collect())
     }
 
     /// Get session by session_id.
@@ -986,7 +1146,11 @@ impl SessionMetadataRepository {
 
         let model = SessionMetadata::find_by_id(session_id).one(db).await?;
 
-        Ok(model.map(Self::model_to_row))
+        let Some(model) = model else {
+            return Ok(None);
+        };
+        let state = AcepeSessionState::find_by_id(session_id).one(db).await?;
+        Ok(Some(compose_session_metadata_row(model, state.as_ref())))
     }
 
     /// Upsert a session metadata record.
@@ -1043,7 +1207,14 @@ impl SessionMetadataRepository {
             active.provider_session_id = Set(provider_session_id);
             active.is_acepe_managed = Set(next_is_acepe_managed);
             active.updated_at = Set(now);
+            let state_project_path = active.project_path.as_ref().clone();
             active.update(db).await?;
+            if let Some(existing_state) = AcepeSessionState::find_by_id(&session_id).one(db).await? {
+                let mut state_active: acepe_session_state::ActiveModel = existing_state.into();
+                state_active.project_path = Set(state_project_path);
+                state_active.updated_at = Set(now);
+                state_active.update(db).await?;
+            }
         } else {
             let is_acepe_managed = if Self::is_acepe_managed_file_path(&file_path) {
                 1
@@ -1162,7 +1333,14 @@ impl SessionMetadataRepository {
                 ));
                 active.is_acepe_managed = Set(next_is_acepe_managed);
                 active.updated_at = Set(now);
+                let state_project_path = active.project_path.as_ref().clone();
                 active.update(&txn).await?;
+                if let Some(existing_state) = AcepeSessionState::find_by_id(&session_id).one(&txn).await? {
+                    let mut state_active: acepe_session_state::ActiveModel = existing_state.into();
+                    state_active.project_path = Set(state_project_path);
+                    state_active.updated_at = Set(now);
+                    state_active.update(&txn).await?;
+                }
                 updated_count += 1;
             } else {
                 let is_acepe_managed = if Self::is_acepe_managed_file_path(&file_path) {
@@ -1217,7 +1395,15 @@ impl SessionMetadataRepository {
             return Ok(false);
         }
 
-        Self::insert_created_session(db, session_id, project_path, agent_id, worktree_path).await?;
+        Self::insert_acepe_tracked_session(
+            db,
+            session_id,
+            project_path,
+            agent_id,
+            worktree_path,
+            AcepeSessionRelationship::Opened,
+        )
+        .await?;
         Ok(true)
     }
 
@@ -1235,12 +1421,18 @@ impl SessionMetadataRepository {
 
         let model = SessionMetadata::find_by_id(session_id).one(db).await?;
         if let Some(existing_model) = model {
-            return Self::mark_session_as_acepe_managed(db, existing_model).await;
+            return Self::mark_session_as_acepe_tracked(db, existing_model).await;
         }
 
-        let seq =
-            Self::insert_created_session(db, session_id, project_path, agent_id, worktree_path)
-                .await?;
+        let seq = Self::insert_acepe_tracked_session(
+            db,
+            session_id,
+            project_path,
+            agent_id,
+            worktree_path,
+            AcepeSessionRelationship::Created,
+        )
+        .await?;
         Ok(Some(seq))
     }
 
@@ -1257,10 +1449,17 @@ impl SessionMetadataRepository {
         let model = SessionMetadata::find_by_id(session_id).one(db).await?;
 
         if let Some(model) = model {
+            let now = Utc::now();
             let mut active: session_metadata::ActiveModel = model.into();
             active.worktree_path = Set(Some(worktree_path.to_string()));
-            active.updated_at = Set(Utc::now());
+            active.updated_at = Set(now);
             active.update(db).await?;
+            if let Some(existing_state) = AcepeSessionState::find_by_id(session_id).one(db).await? {
+                let mut state_active: acepe_session_state::ActiveModel = existing_state.into();
+                state_active.worktree_path = Set(Some(worktree_path.to_string()));
+                state_active.updated_at = Set(now);
+                state_active.update(db).await?;
+            }
             tracing::info!(session_id = %session_id, "Worktree path set");
         } else {
             let context_project_path = project_path.ok_or_else(|| {
@@ -1292,8 +1491,62 @@ impl SessionMetadataRepository {
                 updated_at: Set(now),
             };
             SessionMetadata::insert(model).exec(db).await?;
+            let state = acepe_session_state::ActiveModel {
+                session_id: Set(session_id.to_string()),
+                relationship: Set(AcepeSessionRelationship::Discovered.as_str().to_string()),
+                project_path: Set(context_project_path.to_string()),
+                title_override: Set(None),
+                worktree_path: Set(Some(worktree_path.to_string())),
+                pr_number: Set(None),
+                sequence_id: Set(None),
+                created_at: Set(now),
+                updated_at: Set(now),
+            };
+            state.insert(db).await?;
         }
 
+        Ok(())
+    }
+
+    pub async fn set_title_override(
+        db: &DbConn,
+        session_id: &str,
+        title_override: Option<&str>,
+    ) -> Result<()> {
+        tracing::debug!(
+            session_id = %session_id,
+            has_override = title_override.is_some(),
+            "Setting title override"
+        );
+
+        let metadata = SessionMetadata::find_by_id(session_id).one(db).await?;
+        let Some(metadata) = metadata else {
+            anyhow::bail!("Session metadata not found: {}", session_id);
+        };
+
+        let now = Utc::now();
+        if let Some(existing_state) = AcepeSessionState::find_by_id(session_id).one(db).await? {
+            let mut state_active: acepe_session_state::ActiveModel = existing_state.into();
+            state_active.project_path = Set(metadata.project_path.clone());
+            state_active.title_override = Set(title_override.map(str::to_string));
+            state_active.updated_at = Set(now);
+            state_active.update(db).await?;
+        } else {
+            let state = acepe_session_state::ActiveModel {
+                session_id: Set(session_id.to_string()),
+                relationship: Set(AcepeSessionRelationship::Discovered.as_str().to_string()),
+                project_path: Set(metadata.project_path),
+                title_override: Set(title_override.map(str::to_string)),
+                worktree_path: Set(metadata.worktree_path),
+                pr_number: Set(metadata.pr_number),
+                sequence_id: Set(None),
+                created_at: Set(now),
+                updated_at: Set(now),
+            };
+            state.insert(db).await?;
+        }
+
+        tracing::info!(session_id = %session_id, "Title override set");
         Ok(())
     }
 
@@ -1460,24 +1713,6 @@ impl SessionMetadataRepository {
         SessionMetadata::find().count(db).await.map_err(Into::into)
     }
 
-    fn model_to_row(m: session_metadata::Model) -> SessionMetadataRow {
-        SessionMetadataRow {
-            id: m.id,
-            display: m.display,
-            timestamp: m.timestamp,
-            project_path: m.project_path,
-            agent_id: m.agent_id,
-            file_path: m.file_path,
-            file_mtime: m.file_mtime,
-            file_size: m.file_size,
-            provider_session_id: m.provider_session_id,
-            worktree_path: m.worktree_path,
-            pr_number: m.pr_number,
-            is_acepe_managed: m.is_acepe_managed != 0,
-            sequence_id: m.sequence_id,
-        }
-    }
-
     /// Set the PR number on a session metadata record.
     pub async fn set_pr_number(
         db: &DbConn,
@@ -1487,10 +1722,17 @@ impl SessionMetadataRepository {
         tracing::debug!(session_id = %session_id, pr_number = ?pr_number, "Setting PR number");
 
         if let Some(model) = SessionMetadata::find_by_id(session_id).one(db).await? {
+            let now = Utc::now();
             let mut active: session_metadata::ActiveModel = model.into();
             active.pr_number = Set(pr_number);
-            active.updated_at = Set(Utc::now());
+            active.updated_at = Set(now);
             active.update(db).await?;
+            if let Some(existing_state) = AcepeSessionState::find_by_id(session_id).one(db).await? {
+                let mut state_active: acepe_session_state::ActiveModel = existing_state.into();
+                state_active.pr_number = Set(pr_number);
+                state_active.updated_at = Set(now);
+                state_active.update(db).await?;
+            }
             tracing::info!(session_id = %session_id, pr_number = ?pr_number, "PR number set");
         }
 

@@ -149,6 +149,21 @@ function handleOpenPr(sessionInfo: SessionListItem) {
 	});
 }
 
+function handleRenameSession(sessionInfo: SessionListItem, title: string) {
+	void sessionStore.renameSession(sessionInfo.id, title).match(
+		() => undefined,
+		(error) => {
+			toast.error(`Failed to rename session: ${error.message}`);
+			logger.error("[RenameSession] Failed", {
+				sessionId: sessionInfo.id,
+				projectPath: sessionInfo.projectPath,
+				title,
+				error,
+			});
+		}
+	);
+}
+
 function handleExportMarkdown(sessionId: string) {
 	const entries = sessionStore.getEntries(sessionId);
 	const markdown = sessionEntriesToMarkdown(entries);
@@ -260,11 +275,12 @@ const visibleSessions = $derived.by(() => {
 			onOpenTerminal={handleOpenTerminal}
 			onOpenBrowser={handleOpenBrowser}
 			onOpenGitPanel={handleOpenGitPanel}
-			onOpenPr={handleOpenPr}
-			onArchiveSession={handleArchiveSession}
-			onExportMarkdown={handleExportMarkdown}
-			onExportJson={handleExportJson}
-		/>
+						onOpenPr={handleOpenPr}
+						onArchiveSession={handleArchiveSession}
+						onRenameSession={handleRenameSession}
+						onExportMarkdown={handleExportMarkdown}
+						onExportJson={handleExportJson}
+					/>
 	{/snippet}
 
 	{#snippet footer()}

@@ -207,7 +207,10 @@ async fn persist_session_metadata_for_cwd_inserts_created_worktree_session() {
         .expect("load row")
         .expect("row should exist");
 
-    assert_eq!(row.project_path, canonicalize_or_original_for_test(&repo_path));
+    assert_eq!(
+        row.project_path,
+        canonicalize_or_original_for_test(&repo_path)
+    );
     assert_eq!(
         row.worktree_path,
         Some(canonicalize_or_original_for_test(&worktree_path))
@@ -385,6 +388,7 @@ fn session_metadata_created_rows_are_detected_as_pending_transcript() {
     let row = crate::db::repository::SessionMetadataRow {
         id: "session-placeholder".to_string(),
         display: "New Thread".to_string(),
+        title_overridden: false,
         timestamp: 0,
         project_path: "/project".to_string(),
         agent_id: "claude-code".to_string(),
@@ -416,6 +420,7 @@ fn session_metadata_real_rows_are_resumable() {
     let row = crate::db::repository::SessionMetadataRow {
         id: "session-real".to_string(),
         display: "Real Session".to_string(),
+        title_overridden: false,
         timestamp: 1704067200000,
         project_path: "/project".to_string(),
         agent_id: "claude-code".to_string(),
@@ -440,6 +445,7 @@ fn session_metadata_created_rows_with_worktree_context_are_resumable() {
     let row = crate::db::repository::SessionMetadataRow {
         id: "session-worktree-placeholder".to_string(),
         display: "Worktree Session".to_string(),
+        title_overridden: false,
         timestamp: 0,
         project_path: "/project".to_string(),
         agent_id: "opencode".to_string(),

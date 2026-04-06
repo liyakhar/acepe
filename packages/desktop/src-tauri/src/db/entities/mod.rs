@@ -2,6 +2,7 @@
 
 pub mod prelude;
 
+pub mod acepe_session_state;
 pub mod api_key;
 pub mod app_setting;
 pub mod checkpoint;
@@ -16,6 +17,7 @@ pub mod sql_connection;
 pub mod sql_query_history;
 pub mod user_keybinding;
 
+pub use acepe_session_state::Entity as AcepeSessionState;
 pub use api_key::Entity as ApiKey;
 pub use app_setting::Entity as AppSetting;
 pub use checkpoint::Entity as Checkpoint;

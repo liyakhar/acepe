@@ -1,5 +1,8 @@
 //! Re-export all entities
 
+pub use super::acepe_session_state::Column as AcepeSessionStateColumn;
+pub use super::acepe_session_state::Entity as AcepeSessionState;
+pub use super::acepe_session_state::Model as AcepeSessionStateModel;
 pub use super::api_key::Column as ApiKeyColumn;
 pub use super::api_key::Entity as ApiKey;
 pub use super::api_key::Model as ApiKeyModel;

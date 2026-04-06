@@ -35,6 +35,7 @@ interface Props {
 	deletions: number;
 	projectBadge?: Snippet;
 	agentBadge?: Snippet;
+	titleContent?: Snippet;
 	trailingAction?: Snippet;
 	isStreaming: boolean;
 	taskDescription: string | null;
@@ -87,6 +88,7 @@ let {
 	deletions,
 	projectBadge,
 	agentBadge,
+	titleContent,
 	trailingAction,
 	isStreaming,
 	taskDescription,
@@ -188,7 +190,11 @@ const showTaskWidget = $derived(taskWidgetSummary !== null);
 			{/if}
 
 			<div class="flex-1 min-w-0">
-				<div class="text-xs font-medium truncate">{title}</div>
+				{#if titleContent}
+					{@render titleContent()}
+				{:else}
+					<div class="text-xs font-medium truncate">{title}</div>
+				{/if}
 			</div>
 
 			{#if trailingAction}

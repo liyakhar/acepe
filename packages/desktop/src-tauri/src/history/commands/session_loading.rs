@@ -30,6 +30,19 @@ fn fallback_project_path_for_history_load(
     }
 }
 
+fn apply_session_title_metadata(
+    mut session: ConvertedSession,
+    metadata: Option<&crate::db::repository::SessionMetadataRow>,
+) -> ConvertedSession {
+    if let Some(row) = metadata {
+        if row.title_overridden {
+            session.title = row.display.clone();
+        }
+    }
+
+    session
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_unified_session(
@@ -115,9 +128,24 @@ pub async fn get_unified_session(
                     Ok(Some(fs)) => {
                         let converted =
                             crate::session_converter::convert_cursor_full_session_to_entries(&fs);
-                        return Ok(Some(converted));
+                        Some(converted)
                     }
-                    Ok(None) => {}
+                    Ok(None) => match crate::cursor_history::parser::find_session_by_id(&session_id).await {
+                        Ok(Some(fs)) => {
+                            let converted =
+                                crate::session_converter::convert_cursor_full_session_to_entries(&fs);
+                            Some(converted)
+                        }
+                        Ok(None) => None,
+                        Err(e) => {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                error = %e,
+                                "Cursor session lookup failed"
+                            );
+                            None
+                        }
+                    },
                     Err(e) => {
                         tracing::warn!(
                             session_id = %session_id,
@@ -125,25 +153,43 @@ pub async fn get_unified_session(
                             error = %e,
                             "Cursor source_path load failed, falling back to find_session_by_id"
                         );
+                        match crate::cursor_history::parser::find_session_by_id(&session_id).await {
+                            Ok(Some(fs)) => {
+                                let converted =
+                                    crate::session_converter::convert_cursor_full_session_to_entries(
+                                        &fs,
+                                    );
+                                Some(converted)
+                            }
+                            Ok(None) => None,
+                            Err(e) => {
+                                tracing::warn!(
+                                    session_id = %session_id,
+                                    error = %e,
+                                    "Cursor session lookup failed"
+                                );
+                                None
+                            }
+                        }
                     }
                 }
-            }
-
-            // Fallback: search across all projects (existing O(n) behavior)
-            match crate::cursor_history::parser::find_session_by_id(&session_id).await {
-                Ok(Some(fs)) => {
-                    let converted =
-                        crate::session_converter::convert_cursor_full_session_to_entries(&fs);
-                    Some(converted)
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "Cursor session lookup failed"
-                    );
-                    None
+            } else {
+                // Fallback: search across all projects (existing O(n) behavior)
+                match crate::cursor_history::parser::find_session_by_id(&session_id).await {
+                    Ok(Some(fs)) => {
+                        let converted =
+                            crate::session_converter::convert_cursor_full_session_to_entries(&fs);
+                        Some(converted)
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %e,
+                            "Cursor session lookup failed"
+                        );
+                        None
+                    }
                 }
             }
         }
@@ -270,7 +316,17 @@ pub async fn get_unified_session(
     // Catch-all: if any agent failed to load content, return an empty session
     // instead of None. This prevents the frontend from treating the session as
     // "not found" and auto-removing it from the session list.
-    let result = result.or_else(|| Some(ConvertedSession::empty(&session_id)));
+    let session_metadata = match db.as_ref() {
+        Some(db) => SessionMetadataRepository::get_by_id(db, &session_id)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+
+    let result = result
+        .or_else(|| Some(ConvertedSession::empty(&session_id)))
+        .map(|session| apply_session_title_metadata(session, session_metadata.as_ref()));
 
     tracing::info!(
         session_id = %session_id,
@@ -282,8 +338,19 @@ pub async fn get_unified_session(
 
 #[cfg(test)]
 mod tests {
-    use super::fallback_project_path_for_history_load;
+    use super::{apply_session_title_metadata, fallback_project_path_for_history_load};
     use crate::acp::types::CanonicalAgentId;
+    use crate::db::repository::SessionMetadataRow;
+    use crate::session_jsonl::types::{ConvertedSession, SessionStats};
+
+    fn make_session(title: &str) -> ConvertedSession {
+        ConvertedSession {
+            entries: vec![],
+            stats: SessionStats::default(),
+            title: title.to_string(),
+            created_at: "2026-04-06T00:00:00Z".to_string(),
+        }
+    }
 
     #[test]
     fn opencode_uses_effective_project_path_for_history_fallback() {
@@ -295,6 +362,30 @@ mod tests {
             ),
             "/repo/.worktrees/feature-a"
         );
+    }
+
+    #[test]
+    fn title_override_wins_over_parsed_session_title() {
+        let row = SessionMetadataRow {
+            id: "session-1".to_string(),
+            display: "Autonomous Mode".to_string(),
+            title_overridden: true,
+            timestamp: 0,
+            project_path: "/repo".to_string(),
+            agent_id: "claude-code".to_string(),
+            file_path: "file.jsonl".to_string(),
+            file_mtime: 0,
+            file_size: 0,
+            provider_session_id: None,
+            worktree_path: None,
+            pr_number: None,
+            is_acepe_managed: false,
+            sequence_id: Some(1),
+        };
+
+        let converted = apply_session_title_metadata(make_session("Original Transcript Title"), Some(&row));
+
+        assert_eq!(converted.title, "Autonomous Mode");
     }
 }
 
@@ -409,7 +500,10 @@ pub async fn audit_session_load_timing_cli(
             add_stage(&mut stages, "load_session", t0);
             codex_result
         }
-        CanonicalAgentId::OpenCode | CanonicalAgentId::Copilot | CanonicalAgentId::Forge | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode
+        | CanonicalAgentId::Copilot
+        | CanonicalAgentId::Forge
+        | CanonicalAgentId::Custom(_) => {
             unreachable!("handled above")
         }
     };
@@ -418,7 +512,10 @@ pub async fn audit_session_load_timing_cli(
         CanonicalAgentId::ClaudeCode => "claude-code",
         CanonicalAgentId::Cursor => "cursor",
         CanonicalAgentId::Codex => "codex",
-        CanonicalAgentId::OpenCode | CanonicalAgentId::Copilot | CanonicalAgentId::Forge | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode
+        | CanonicalAgentId::Copilot
+        | CanonicalAgentId::Forge
+        | CanonicalAgentId::Custom(_) => {
             unreachable!()
         }
     };
@@ -687,5 +784,41 @@ pub async fn set_session_pr_number(
                 "Failed to persist PR number to DB"
             );
             format!("Failed to set PR number: {}", e)
+        })
+}
+
+/// Persist a user-provided title override for a session.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_session_title(
+    app: AppHandle,
+    session_id: String,
+    title: String,
+) -> Result<(), String> {
+    let trimmed_title = title.trim().to_string();
+    if trimmed_title.is_empty() {
+        return Err("Session title cannot be empty".to_string());
+    }
+
+    tracing::info!(
+        session_id = %session_id,
+        "Persisting title override for session"
+    );
+
+    let db = app
+        .try_state::<DbConn>()
+        .ok_or("Database not available")?
+        .inner()
+        .clone();
+
+    SessionMetadataRepository::set_title_override(&db, &session_id, Some(trimmed_title.as_str()))
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                session_id = %session_id,
+                error = %e,
+                "Failed to persist title override to DB"
+            );
+            format!("Failed to set session title: {}", e)
         })
 }
