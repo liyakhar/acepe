@@ -1,8 +1,9 @@
 use super::codex_native_config::{
     build_codex_native_new_session_response, build_codex_native_resume_session_response,
     build_codex_turn_start_params_from_input, default_codex_native_config_state,
-    set_codex_native_config_option, set_codex_native_model, CodexInteractionMode,
-    CodexNativeConfigState, CodexTurnInputItem,
+    resolve_codex_execution_profile_mode_id, set_codex_native_config_option,
+    set_codex_native_model, CodexExecutionProfile, CodexInteractionMode, CodexNativeConfigState,
+    CodexTurnInputItem,
 };
 use super::codex_native_events::translate_codex_native_server_message;
 use crate::acp::client::{
@@ -57,6 +58,8 @@ pub struct CodexNativeClient {
     pending_question_ids: StdArc<Mutex<HashMap<String, Vec<String>>>>,
     session_id: Option<String>,
     provider_thread_id: Option<String>,
+    current_turn_id: Option<String>,
+    execution_profile: CodexExecutionProfile,
     config_state: CodexNativeConfigState,
     current_mode_id: String,
     initialized: bool,
@@ -89,6 +92,8 @@ impl CodexNativeClient {
             pending_question_ids: StdArc::new(Mutex::new(HashMap::new())),
             session_id: None,
             provider_thread_id: None,
+            current_turn_id: None,
+            execution_profile: CodexExecutionProfile::Standard,
             config_state: default_codex_native_config_state(),
             current_mode_id: "build".to_string(),
             initialized: false,
@@ -334,6 +339,7 @@ impl AgentClient for CodexNativeClient {
         let session_id = Uuid::new_v4().to_string();
         self.session_id = Some(session_id.clone());
         *self.active_session_id.lock().await = Some(session_id.clone());
+        self.execution_profile = CodexExecutionProfile::Standard;
         self.open_thread(&session_id, &cwd, None).await?;
         Ok(self.build_new_session_response(session_id).await)
     }
@@ -345,6 +351,7 @@ impl AgentClient for CodexNativeClient {
     ) -> AcpResult<ResumeSessionResponse> {
         self.session_id = Some(session_id.clone());
         *self.active_session_id.lock().await = Some(session_id.clone());
+        self.execution_profile = CodexExecutionProfile::Standard;
         let resume_thread_id =
             provider_thread_id_for_app_session(self.db.as_ref(), &session_id).await;
         self.open_thread(&session_id, &cwd, resume_thread_id)
@@ -367,12 +374,10 @@ impl AgentClient for CodexNativeClient {
     }
 
     async fn set_session_mode(&mut self, _session_id: String, mode_id: String) -> AcpResult<()> {
-        if mode_id != "build" && mode_id != "plan" {
-            return Err(AcpError::ProtocolError(format!(
-                "Unsupported Codex mode: {mode_id}"
-            )));
-        }
-        self.current_mode_id = mode_id;
+        let (visible_mode_id, execution_profile) =
+            resolve_codex_execution_profile_mode_id(&mode_id)?;
+        self.current_mode_id = visible_mode_id;
+        self.execution_profile = execution_profile;
         Ok(())
     }
 
@@ -402,14 +407,13 @@ impl AgentClient for CodexNativeClient {
             input,
             &self.config_state,
             interaction_mode,
+            self.execution_profile,
         );
         let payload = serde_json::to_value(params).map_err(AcpError::SerializationError)?;
         let response = self.send_request("turn/start", payload).await?;
-        if parse_turn_id(&response).is_none() {
-            return Err(AcpError::ProtocolError(
-                "turn/start response did not include a turn id".to_string(),
-            ));
-        }
+        self.current_turn_id = Some(parse_turn_id(&response).ok_or_else(|| {
+            AcpError::ProtocolError("turn/start response did not include a turn id".to_string())
+        })?);
         Ok(response)
     }
 
@@ -421,9 +425,17 @@ impl AgentClient for CodexNativeClient {
         let provider_thread_id = self.provider_thread_id.clone().ok_or_else(|| {
             AcpError::InvalidState("Codex session is missing a provider thread id".to_string())
         })?;
-        self.send_request("turn/interrupt", json!({ "threadId": provider_thread_id }))
-            .await
-            .map(|_| ())
+        let turn_id = self.current_turn_id.clone().ok_or_else(|| {
+            AcpError::InvalidState("Codex session is missing an active turn id".to_string())
+        })?;
+        self.send_request(
+            "turn/interrupt",
+            build_turn_interrupt_params(&provider_thread_id, &turn_id),
+        )
+        .await
+        .map(|_| {
+            self.current_turn_id = None;
+        })
     }
 
     async fn list_sessions(&mut self, _cwd: Option<String>) -> AcpResult<ListSessionsResponse> {
@@ -582,6 +594,13 @@ fn parse_turn_id(result: &Value) -> Option<String> {
         .and_then(|turn| turn.get("id"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+}
+
+fn build_turn_interrupt_params(thread_id: &str, turn_id: &str) -> Value {
+    json!({
+        "threadId": thread_id,
+        "turnId": turn_id,
+    })
 }
 
 fn is_recoverable_thread_resume_error(error: &AcpError) -> bool {
@@ -944,5 +963,16 @@ mod tests {
         assert!(!is_recoverable_thread_resume_error(
             &AcpError::JsonRpcError("thread/start failed: permission denied".to_string(),)
         ));
+    }
+
+    #[test]
+    fn turn_interrupt_payload_requires_thread_and_turn_ids() {
+        assert_eq!(
+            build_turn_interrupt_params("thread-1", "turn-1"),
+            json!({
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+            })
+        );
     }
 }

@@ -166,6 +166,7 @@ export class SessionConnectionManager {
 			projectPath: string;
 			agentId: string;
 			title?: string;
+			initialAutonomousEnabled?: boolean;
 			initialModeId?: string;
 			initialModelId?: string;
 			worktreePath?: string;
@@ -258,7 +259,7 @@ export class SessionConnectionManager {
 						currentModel,
 					});
 
-				return applyInitialSelection.map((selection) => {
+				return applyInitialSelection.andThen((selection) => {
 					currentMode = selection.currentMode;
 					currentModel = selection.currentModel;
 
@@ -286,105 +287,130 @@ export class SessionConnectionManager {
 						}
 					}
 
-					// Cache available models and modes for settings/optimistic display
-					preferencesStore.updateModelsCache(options.agentId, availableModels);
-					preferencesStore.updateModelsDisplayCache(options.agentId, modelsDisplay);
-					preferencesStore.updateModesCache(options.agentId, availableModes);
-					logger.info("Claude model capabilities on session creation", {
-						sessionId,
-						agentId: options.agentId,
-					responseCurrentModelId: currentModelId ? currentModelId : null,
-						availableModelIds: availableModels.map((model) => model.id),
-						cachedModelIds: preferencesStore
-							.getCachedModels(options.agentId)
-							.map((model) => model.id),
-					});
+					const requestedAutonomous = options.initialAutonomousEnabled === true;
+					const applyInitialAutonomous =
+						requestedAutonomous && currentMode
+							? this.applyExecutionProfile(sessionId, currentMode.id, true)
+									.map(() => true)
+									.orElse((error) => {
+										if (this.isUnsupportedAutonomousProfileError(error)) {
+											logger.warn(
+												"Skipping initial autonomous profile because the provider rejected it",
+												{
+													sessionId,
+													modeId: currentMode ? currentMode.id : null,
+													error,
+												}
+											);
+											return okAsync(false);
+										}
+										return errAsync(error);
+									})
+							: okAsync(false);
 
-					// Initialize per-mode model memory with current mode choice
-					if (currentMode) {
-						preferencesStore.setSessionModelForMode(
+					return applyInitialAutonomous.map((autonomousEnabled) => {
+
+						// Cache available models and modes for settings/optimistic display
+						preferencesStore.updateModelsCache(options.agentId, availableModels);
+						preferencesStore.updateModelsDisplayCache(options.agentId, modelsDisplay);
+						preferencesStore.updateModesCache(options.agentId, availableModes);
+						logger.info("Claude model capabilities on session creation", {
 							sessionId,
-							currentMode.id,
-						currentModel?.id ? currentModel.id : ""
-					);
-				}
+							agentId: options.agentId,
+							responseCurrentModelId: currentModelId ? currentModelId : null,
+							availableModelIds: availableModels.map((model) => model.id),
+							cachedModelIds: preferencesStore
+								.getCachedModels(options.agentId)
+								.map((model) => model.id),
+						});
 
-					// Store only cold data (identity + metadata) in the sessions array
-					const sessionCold: SessionCold = {
-						id: sessionId,
-						projectPath: options.projectPath,
-						agentId: options.agentId,
-						worktreePath: options.worktreePath,
-						title: options.title || "New Thread",
-						updatedAt: now,
-						createdAt: now,
-						sessionLifecycleState: "created",
-						parentId: null,
-						sequenceId: result.sequenceId === null ? undefined : result.sequenceId,
-					};
-
-					// Initialize hot state BEFORE adding the session to the store.
-					// initializeHotState writes synchronously (bypasses RAF batch),
-					// so the event service will see isConnected: true immediately
-					// when it receives streaming events for this session.
-					this.hotStateManager.initializeHotState(sessionId, {
-						status: "ready",
-						isConnected: true,
-						turnState: "idle",
-						connectionError: null,
-						currentMode,
-						currentModel,
-						availableCommands,
-						configOptions,
-						modelPerMode: currentMode
-							? { [currentMode.id]: currentModel?.id ? currentModel.id : "" }
-							: {},
-					});
-
-					this.stateWriter.addSession(sessionCold);
-
-					// Persist worktree path to DB for restore across app restarts
-					if (options.worktreePath) {
-						tauriClient.history
-							.setSessionWorktreePath(
+						// Initialize per-mode model memory with current mode choice
+						if (currentMode) {
+							preferencesStore.setSessionModelForMode(
 								sessionId,
-								options.worktreePath,
-								options.projectPath,
-								options.agentId
-							)
-							.mapErr((error) => {
-								logger.error("Failed to persist worktree path to DB", {
+								currentMode.id,
+								currentModel?.id ? currentModel.id : ""
+							);
+						}
+
+						// Store only cold data (identity + metadata) in the sessions array
+						const sessionCold: SessionCold = {
+							id: sessionId,
+							projectPath: options.projectPath,
+							agentId: options.agentId,
+							worktreePath: options.worktreePath,
+							title: options.title || "New Thread",
+							updatedAt: now,
+							createdAt: now,
+							sessionLifecycleState: "created",
+							parentId: null,
+							sequenceId: result.sequenceId === null ? undefined : result.sequenceId,
+						};
+
+						// Initialize hot state BEFORE adding the session to the store.
+						// initializeHotState writes synchronously (bypasses RAF batch),
+						// so the event service will see isConnected: true immediately
+						// when it receives streaming events for this session.
+						this.hotStateManager.initializeHotState(sessionId, {
+							status: "ready",
+							isConnected: true,
+							turnState: "idle",
+							connectionError: null,
+							autonomousEnabled,
+							currentMode,
+							currentModel,
+							availableCommands,
+							configOptions,
+							modelPerMode: currentMode
+								? { [currentMode.id]: currentModel?.id ? currentModel.id : "" }
+								: {},
+						});
+
+						this.stateWriter.addSession(sessionCold);
+
+						// Persist worktree path to DB for restore across app restarts
+						if (options.worktreePath) {
+							tauriClient.history
+								.setSessionWorktreePath(
 									sessionId,
-									worktreePath: options.worktreePath,
-									error,
+									options.worktreePath,
+									options.projectPath,
+									options.agentId
+								)
+								.mapErr((error) => {
+									logger.error("Failed to persist worktree path to DB", {
+										sessionId,
+										worktreePath: options.worktreePath,
+										error,
+									});
 								});
-							});
-					}
+						}
 
-					// Store capabilities separately from cold data
-					this.capabilitiesManager.updateCapabilities(sessionId, {
-						availableModes,
-						availableModels,
-						availableCommands,
-						modelsDisplay,
+						// Store capabilities separately from cold data
+						this.capabilitiesManager.updateCapabilities(sessionId, {
+							availableModes,
+							availableModels,
+							availableCommands,
+							modelsDisplay,
+						});
+
+						// Mark as preloaded since it's a new session with no entries
+						this.entryManager.markPreloaded(sessionId);
+
+						// Initialize session machine with correct initial states:
+						// - Content: LOADED (new session has no entries to load)
+						// - Connection: READY (already connected via newSession API)
+						this.connectionManager.initializeConnectedSession(sessionId);
+
+						// Flush any pending events that arrived before session was added
+						this.eventService.flushPendingEvents(sessionId, eventHandler);
+
+						logger.debug("Session created and connected", {
+							sessionId,
+						});
+
+						return this.stateReader.getSessionCold(sessionId)!;
 					});
-
-					// Mark as preloaded since it's a new session with no entries
-					this.entryManager.markPreloaded(sessionId);
-
-					// Initialize session machine with correct initial states:
-					// - Content: LOADED (new session has no entries to load)
-					// - Connection: READY (already connected via newSession API)
-					this.connectionManager.initializeConnectedSession(sessionId);
-
-					// Flush any pending events that arrived before session was added
-					this.eventService.flushPendingEvents(sessionId, eventHandler);
-
-					logger.debug("Session created and connected", {
-						sessionId,
-					});
-
-					return this.stateReader.getSessionCold(sessionId)!;
 				});
 			})
 			.mapErr((error) => {

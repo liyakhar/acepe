@@ -24,6 +24,11 @@ export interface CreateSessionOptions {
 	readonly initialModelId?: string | null;
 
 	/**
+	 * Whether Autonomous should be enabled immediately after session creation.
+	 */
+	readonly initialAutonomousEnabled?: boolean | null;
+
+	/**
 	 * Project path for the session.
 	 */
 	readonly projectPath: string;
@@ -71,6 +76,7 @@ export function createSession(
 	return store
 		.createSession({
 			agentId: options.agentId,
+			initialAutonomousEnabled: options.initialAutonomousEnabled === true,
 			initialModeId: options.initialModeId ?? undefined,
 			initialModelId: options.initialModelId ?? undefined,
 			projectPath: options.projectPath,

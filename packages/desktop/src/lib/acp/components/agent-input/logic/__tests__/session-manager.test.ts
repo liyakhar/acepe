@@ -36,6 +36,7 @@ describe("createSession", () => {
 
 		const options: CreateSessionOptions = {
 			agentId: "claude-code",
+			initialAutonomousEnabled: true,
 			projectPath: "/test",
 			projectName: "Test Project",
 			title: "Build kanban parity",
@@ -49,6 +50,7 @@ describe("createSession", () => {
 		expect(mockStore.createSession).toHaveBeenCalledWith(
 			expect.objectContaining({
 				agentId: "claude-code",
+				initialAutonomousEnabled: true,
 				projectPath: "/test",
 				title: "Build kanban parity",
 			})

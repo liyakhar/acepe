@@ -11,6 +11,7 @@ const DEFAULT_CODEX_MODEL_ID: &str = "gpt-5.3-codex";
 const DEFAULT_REASONING_EFFORT: &str = "high";
 const FAST_MODE_CONFIG_ID: &str = "fast_mode";
 const REASONING_CONFIG_ID: &str = "reasoning_effort";
+pub const CODEX_BUILD_FULL_ACCESS_MODE_ID: &str = "build-full-access";
 
 pub const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS: &str =
     "# Plan Mode\n\nProduce a decision-complete implementation plan before execution.";
@@ -44,6 +45,25 @@ pub struct CodexNativeConfigState {
 pub enum CodexInteractionMode {
     Default,
     Plan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexExecutionProfile {
+    Standard,
+    FullAccess,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum CodexApprovalPolicy {
+    #[serde(rename = "never")]
+    Never,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type")]
+pub enum CodexSandboxPolicy {
+    #[serde(rename = "dangerFullAccess")]
+    DangerFullAccess,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,6 +102,10 @@ pub struct CodexTurnStartParams {
     pub input: Vec<CodexTurnInputItem>,
     pub model: String,
     pub effort: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<CodexApprovalPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<CodexSandboxPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,6 +242,7 @@ pub fn build_codex_turn_start_params(
     input_text: &str,
     state: &CodexNativeConfigState,
     interaction_mode: Option<CodexInteractionMode>,
+    execution_profile: CodexExecutionProfile,
 ) -> CodexTurnStartParams {
     build_codex_turn_start_params_from_input(
         thread_id,
@@ -227,6 +252,7 @@ pub fn build_codex_turn_start_params(
         }],
         state,
         interaction_mode,
+        execution_profile,
     )
 }
 
@@ -235,20 +261,45 @@ pub fn build_codex_turn_start_params_from_input(
     input: Vec<CodexTurnInputItem>,
     state: &CodexNativeConfigState,
     interaction_mode: Option<CodexInteractionMode>,
+    execution_profile: CodexExecutionProfile,
 ) -> CodexTurnStartParams {
     let collaboration_mode = interaction_mode.map(|mode| build_collaboration_mode(state, mode));
+    let (approval_policy, sandbox_policy) = match execution_profile {
+        CodexExecutionProfile::Standard => (None, None),
+        CodexExecutionProfile::FullAccess => (
+            Some(CodexApprovalPolicy::Never),
+            Some(CodexSandboxPolicy::DangerFullAccess),
+        ),
+    };
 
     CodexTurnStartParams {
         thread_id: thread_id.to_string(),
         input,
         model: state.current_model_id.clone(),
         effort: state.reasoning_effort.clone(),
+        approval_policy,
+        sandbox_policy,
         service_tier: if state.fast_mode {
             Some("fast".to_string())
         } else {
             None
         },
         collaboration_mode,
+    }
+}
+
+pub fn resolve_codex_execution_profile_mode_id(
+    mode_id: &str,
+) -> AcpResult<(String, CodexExecutionProfile)> {
+    match mode_id {
+        "build" => Ok(("build".to_string(), CodexExecutionProfile::Standard)),
+        "plan" => Ok(("plan".to_string(), CodexExecutionProfile::Standard)),
+        CODEX_BUILD_FULL_ACCESS_MODE_ID => {
+            Ok(("build".to_string(), CodexExecutionProfile::FullAccess))
+        }
+        _ => Err(AcpError::ProtocolError(format!(
+            "Unsupported Codex mode: {mode_id}"
+        ))),
     }
 }
 
@@ -367,6 +418,7 @@ mod tests {
             "Implement the requested changes",
             &state,
             None,
+            CodexExecutionProfile::Standard,
         );
 
         assert_eq!(params.thread_id, "thread-1");
@@ -386,6 +438,7 @@ mod tests {
             "Plan the migration",
             &state,
             Some(CodexInteractionMode::Plan),
+            CodexExecutionProfile::Standard,
         );
 
         let collaboration_mode = params
@@ -415,6 +468,7 @@ mod tests {
             ],
             &default_codex_native_config_state(),
             Some(CodexInteractionMode::Plan),
+            CodexExecutionProfile::Standard,
         );
 
         let serialized = serde_json::to_value(params).expect("params should serialize");
@@ -446,5 +500,33 @@ mod tests {
 
         let invalid_config_id = set_codex_native_config_option(&mut state, "service_tier", "fast");
         assert!(invalid_config_id.is_err());
+    }
+
+    #[test]
+    fn autonomous_build_mode_resolves_to_full_access_execution_profile() {
+        let (visible_mode_id, execution_profile) =
+            resolve_codex_execution_profile_mode_id("build-full-access")
+                .expect("autonomous build mode should resolve");
+
+        assert_eq!(visible_mode_id, "build");
+        assert_eq!(execution_profile, CodexExecutionProfile::FullAccess);
+    }
+
+    #[test]
+    fn autonomous_turn_start_params_include_full_access_policy() {
+        let params = build_codex_turn_start_params(
+            "thread-9",
+            "Ship the fix",
+            &default_codex_native_config_state(),
+            Some(CodexInteractionMode::Default),
+            CodexExecutionProfile::FullAccess,
+        );
+
+        let serialized = serde_json::to_value(params).expect("params should serialize");
+        assert_eq!(serialized["approvalPolicy"], json!("never"));
+        assert_eq!(
+            serialized["sandboxPolicy"]["type"],
+            json!("dangerFullAccess")
+        );
     }
 }

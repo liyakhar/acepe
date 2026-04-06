@@ -110,6 +110,13 @@ impl AgentProvider for CursorProvider {
         }
     }
 
+    fn map_outbound_mode_id(&self, mode_id: &str) -> String {
+        match mode_id {
+            "build" => "agent".to_string(),
+            other => other.to_string(),
+        }
+    }
+
     fn model_fallback_for_empty_list(
         &self,
         current_model_id: &str,
@@ -328,5 +335,14 @@ mod tests {
     fn uses_task_reconciler_for_repeated_tool_call_normalization() {
         let provider = CursorProvider;
         assert!(provider.uses_task_reconciler());
+    }
+
+    #[test]
+    fn build_mode_round_trips_to_cursor_agent_mode() {
+        let provider = CursorProvider;
+
+        assert_eq!(provider.map_outbound_mode_id("build"), "agent");
+        assert_eq!(provider.normalize_mode_id("agent"), "build");
+        assert_eq!(provider.normalize_mode_id("ask"), "build");
     }
 }

@@ -27,6 +27,7 @@ describe("agent input toolbar structure", () => {
 		expect(agentInputSource).toContain("AutonomousToggleButton");
 		expect(agentInputSource).toContain("handleAutonomousToggle");
 		expect(agentInputSource).toContain("sessionStore.setAutonomousEnabled");
+		expect(agentInputSource).toContain("initialAutonomousEnabled");
 	});
 
 	it("renders the Autonomous toggle with a Phosphor shield icon that fills when enabled", () => {

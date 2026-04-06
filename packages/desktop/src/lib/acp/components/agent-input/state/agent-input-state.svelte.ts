@@ -527,6 +527,7 @@ export class AgentInputState {
 		content: string;
 		panelId?: string;
 		sessionId?: string | null;
+		initialAutonomousEnabled?: boolean | null;
 		initialModeId?: string | null;
 		initialModelId?: string | null;
 		selectedAgentId?: string | null;
@@ -540,6 +541,7 @@ export class AgentInputState {
 			content,
 			panelId,
 			sessionId,
+			initialAutonomousEnabled,
 			initialModeId,
 			initialModelId,
 			selectedAgentId,
@@ -552,6 +554,7 @@ export class AgentInputState {
 		this.logger.info("[first-send-trace] sendPreparedMessage entered", {
 			panelId: panelId ?? null,
 			sessionId: sessionId ?? null,
+			initialAutonomousEnabled: initialAutonomousEnabled === true,
 			initialModeId: initialModeId ?? null,
 			initialModelId: initialModelId ?? null,
 			projectPath: projectPath ?? null,
@@ -626,6 +629,7 @@ export class AgentInputState {
 
 		return createSession(this.store, {
 			agentId: selectedAgentId,
+			initialAutonomousEnabled: initialAutonomousEnabled === true,
 			initialModeId,
 			initialModelId,
 			projectPath: effectiveProjectPath,

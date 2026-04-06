@@ -331,7 +331,10 @@ mod tests {
             claude.autonomous_supported_mode_ids,
             vec!["build".to_string()]
         );
-        assert!(codex.autonomous_supported_mode_ids.is_empty());
+        assert_eq!(
+            codex.autonomous_supported_mode_ids,
+            vec!["build".to_string()]
+        );
     }
 
     #[test]

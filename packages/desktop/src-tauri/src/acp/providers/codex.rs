@@ -1,4 +1,5 @@
 use super::super::provider::{command_exists, AgentProvider, SpawnConfig};
+use crate::acp::client::codex_native_config::CODEX_BUILD_FULL_ACCESS_MODE_ID;
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
 
@@ -66,6 +67,25 @@ impl AgentProvider for CodexProvider {
 
     fn clear_message_tracker_on_prompt_response(&self) -> bool {
         true
+    }
+
+    fn autonomous_supported_mode_ids(&self) -> &'static [&'static str] {
+        &["build"]
+    }
+
+    fn map_execution_profile_mode_id(
+        &self,
+        mode_id: &str,
+        autonomous_enabled: bool,
+    ) -> Option<String> {
+        match (mode_id, autonomous_enabled) {
+            ("build", false) => Some("build".to_string()),
+            ("build", true) => Some(CODEX_BUILD_FULL_ACCESS_MODE_ID.to_string()),
+            ("plan", false) => Some("plan".to_string()),
+            ("plan", true) => None,
+            (_, false) => Some(mode_id.to_string()),
+            (_, true) => None,
+        }
     }
 }
 
@@ -189,5 +209,25 @@ mod tests {
             provider.communication_mode(),
             CommunicationMode::CodexNative
         );
+    }
+
+    #[test]
+    fn autonomous_execution_maps_build_to_full_access_profile() {
+        let provider = CodexProvider;
+
+        assert_eq!(provider.autonomous_supported_mode_ids(), &["build"]);
+        assert_eq!(
+            provider.map_execution_profile_mode_id("build", false),
+            Some("build".to_string())
+        );
+        assert_eq!(
+            provider.map_execution_profile_mode_id("build", true),
+            Some("build-full-access".to_string())
+        );
+        assert_eq!(
+            provider.map_execution_profile_mode_id("plan", false),
+            Some("plan".to_string())
+        );
+        assert_eq!(provider.map_execution_profile_mode_id("plan", true), None);
     }
 }

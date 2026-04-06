@@ -879,6 +879,53 @@ describe("SessionConnectionManager.createSession", () => {
 		expect(initUpdate?.currentMode?.id).toBe("plan");
 		expect(initUpdate?.currentModel?.id).toBe("gpt-5.2-codex/medium");
 	});
+
+	it("applies autonomous execution profile on create when requested before first send", async () => {
+		newSession.mockReturnValue(
+			okAsync({
+				sessionId,
+				modes: {
+					currentModeId: "build",
+					availableModes: [{ id: "build", name: "Build", description: null }],
+				},
+				models: {
+					currentModelId: "gpt-5.2-codex",
+					availableModels: [
+						{
+							modelId: "gpt-5.2-codex/high",
+							name: "gpt-5.2-codex (high)",
+							description: null,
+						},
+					],
+				},
+				availableCommands: [],
+			})
+		);
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.createSession(
+			{
+				projectPath,
+				agentId,
+				initialAutonomousEnabled: true,
+			},
+			createMockEventHandler()
+		);
+		result._unsafeUnwrap();
+
+		expect(setExecutionProfile).toHaveBeenCalledWith(sessionId, "build", true);
+
+		const initUpdate = (hotState.initializeHotState as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+		expect(initUpdate?.autonomousEnabled).toBe(true);
+	});
 });
 
 describe("SessionConnectionManager Autonomous execution profile", () => {
