@@ -15,7 +15,7 @@
 import { okAsync, type ResultAsync } from "neverthrow";
 
 import type { AppError } from "../errors/app-error.js";
-import { respondToPlanApproval } from "../logic/inbound-request-handler.js";
+import { replyToPlanApprovalRequest } from "../logic/interaction-reply.js";
 
 import { getPlanPreferenceStore } from "../store/plan-preference-store.svelte.js";
 import { getPlanStore } from "../store/plan-store.svelte.js";
@@ -108,7 +108,7 @@ export function usePlanInline(opts: PlanInlineOptions) {
 		// If we have a pending plan approval, reject it first
 		const maybeReject =
 			requestId != null && isAwaitingApproval
-				? respondToPlanApproval(sid, requestId, false).orElse((err) => {
+				? replyToPlanApprovalRequest(sid, requestId, false).orElse((err) => {
 						logger.warn("Failed to reject plan before sending command", {
 							error: err,
 							command,

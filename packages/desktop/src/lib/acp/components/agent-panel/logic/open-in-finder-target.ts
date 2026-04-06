@@ -1,3 +1,5 @@
+import { getAgentCapabilities } from "$lib/acp/constants/agent-capabilities.js";
+
 export type OpenInFinderTarget =
 	| { kind: "reveal"; path: string }
 	| { kind: "claude"; sessionId: string; projectPath: string };
@@ -25,7 +27,7 @@ export function getOpenInFinderTarget(input: OpenInFinderInput): OpenInFinderTar
 		return null;
 	}
 
-	if (input.agentId === "claude-code") {
+	if (getAgentCapabilities(input.agentId).openInFinderTarget === "claude-session") {
 		const sessionId = getNonEmptyValue(input.sessionId);
 		if (!sessionId) {
 			return null;

@@ -18,10 +18,9 @@ import { SvelteMap } from "svelte/reactivity";
 import type { AppError } from "../errors/app-error.js";
 import { AgentError } from "../errors/app-error.js";
 
-import { respondToPermission } from "../logic/inbound-request-handler.js";
+import { replyToPermissionRequest } from "../logic/interaction-reply.js";
 import type { PermissionRequest } from "../types/permission.js";
 import { createLogger } from "../utils/logger.js";
-import { api } from "./api.js";
 
 const PERMISSION_STORE_KEY = Symbol("permission-store");
 const logger = createLogger({ id: "permission-store", name: "PermissionStore" });
@@ -276,8 +275,7 @@ export class PermissionStore {
 	/**
 	 * Reply to a permission request.
 	 *
-	 * For ACP mode (Claude Code), uses JSON-RPC response via respondToPermission.
-	 * For OpenCode HTTP mode, uses the HTTP endpoint via api.replyPermission.
+	 * The shared interaction reply layer resolves the correct transport.
 	 */
 	reply(permissionId: string, reply: "once" | "always" | "reject"): ResultAsync<void, AppError> {
 		const permission = this.pending.get(permissionId);
@@ -296,34 +294,11 @@ export class PermissionStore {
 		this.notePermissionResolved(permission.sessionId);
 		logger.debug("Permission request removed", { permissionId });
 
-		// If this permission has a JSON-RPC request ID, use the JSON-RPC response mechanism (ACP mode)
-		if (permission.jsonRpcRequestId !== undefined) {
-			const allowed = reply !== "reject";
-			const optionId = this.resolveOptionId(permission, reply);
+		const optionId = this.resolveOptionId(permission, reply);
 
-			return respondToPermission(
-				permission.sessionId,
-				permission.jsonRpcRequestId,
-				allowed,
-				optionId
-			)
-				.map(() => {
-					logger.debug("Permission replied via JSON-RPC", { permissionId, reply, optionId });
-				})
-				.mapErr((err) => {
-					this.restorePermissionAfterFailedReply(
-						permission,
-						totalBeforeReply,
-						completedBeforeReply
-					);
-					return new AgentError("replyPermission", new Error(err.message)) as AppError;
-				});
-		}
-
-		// Otherwise, use the HTTP endpoint (OpenCode mode)
-		return api.replyPermission(permission.sessionId, permissionId, reply)
+		return replyToPermissionRequest(permission, reply, optionId)
 			.map(() => {
-				logger.debug("Permission replied via HTTP", { permissionId, reply });
+				logger.debug("Permission reply sent", { permissionId, reply, optionId });
 			})
 			.mapErr((error) => {
 				this.restorePermissionAfterFailedReply(

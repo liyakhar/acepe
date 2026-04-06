@@ -1,4 +1,8 @@
-import type { JsonValue, ToolArguments } from "../../services/converted-session-types.js";
+import type {
+	JsonValue,
+	ToolArguments,
+	ToolReference,
+} from "../../services/converted-session-types.js";
 
 /**
  * Tool-call reference used to anchor a permission request to an existing tool row.
@@ -97,6 +101,58 @@ export interface AcpPermissionRequest extends PermissionRequest {
 	jsonRpcRequestId: number;
 	metadata: AcpPermissionMetadata;
 	tool: PermissionToolReference;
+}
+
+type PermissionRequestMetadataInput = PermissionMetadata | JsonValue;
+type PermissionRequestToolInput = PermissionToolReference | ToolReference | null | undefined;
+
+export interface PermissionRequestBuilderInput {
+	id: string;
+	sessionId: string;
+	jsonRpcRequestId?: number | null;
+	permission: string;
+	patterns: string[];
+	metadata: PermissionRequestMetadataInput;
+	always: string[];
+	tool?: PermissionRequestToolInput;
+}
+
+function normalizePermissionMetadata(value: PermissionRequestMetadataInput): PermissionMetadata {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return {};
+	}
+
+	return value;
+}
+
+function normalizePermissionToolReference(
+	tool: PermissionRequestToolInput
+): PermissionToolReference | undefined {
+	if (tool === undefined || tool === null) {
+		return undefined;
+	}
+
+	if ("messageID" in tool) {
+		return tool;
+	}
+
+	return {
+		messageID: tool.messageId,
+		callID: tool.callId,
+	};
+}
+
+export function createPermissionRequest(input: PermissionRequestBuilderInput): PermissionRequest {
+	return {
+		id: input.id,
+		sessionId: input.sessionId,
+		jsonRpcRequestId: input.jsonRpcRequestId ?? undefined,
+		permission: input.permission,
+		patterns: input.patterns,
+		metadata: normalizePermissionMetadata(input.metadata),
+		always: input.always,
+		tool: normalizePermissionToolReference(input.tool),
+	};
 }
 
 /**

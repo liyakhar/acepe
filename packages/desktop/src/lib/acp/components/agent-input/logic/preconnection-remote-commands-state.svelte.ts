@@ -1,4 +1,5 @@
 import { okAsync, type ResultAsync } from "neverthrow";
+import { getAgentCapabilities } from "$lib/acp/constants/agent-capabilities.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
 import type { AppError } from "$lib/acp/errors/app-error.js";
 import type { AvailableCommand } from "$lib/acp/types/available-command.js";
@@ -33,7 +34,7 @@ export function shouldLoadRemotePreconnectionCommands(input: {
 	loadedProjectPath: string | null;
 	loadingProjectPath: string | null;
 }): boolean {
-	if (input.agentId !== "opencode") {
+	if (!getAgentCapabilities(input.agentId).loadsRemotePreconnectionCommands) {
 		return false;
 	}
 
@@ -85,16 +86,21 @@ export class PreconnectionRemoteCommandsState {
 			return okAsync(undefined);
 		}
 
+		const agentId = input.agentId;
+		if (!agentId) {
+			return okAsync(undefined);
+		}
+
 		logger.info("Loading remote preconnection commands", {
-			agentId: input.agentId,
+			agentId,
 			projectPath,
 		});
 		this.loadingProjectPath = projectPath;
 
-		return this.fetchRemoteCommands(projectPath, "opencode")
+		return this.fetchRemoteCommands(projectPath, agentId)
 			.map((commands) => {
 				logger.info("Loaded remote preconnection commands", {
-					agentId: input.agentId,
+					agentId,
 					projectPath,
 					count: commands.length,
 					commandNames: commands.map((command) => command.name),
@@ -107,7 +113,7 @@ export class PreconnectionRemoteCommandsState {
 			})
 			.mapErr((error) => {
 				logger.error("Failed to load remote preconnection commands", {
-					agentId: input.agentId,
+					agentId,
 					projectPath,
 					error: error.message,
 				});
@@ -120,7 +126,7 @@ export class PreconnectionRemoteCommandsState {
 
 	getCommands(input: GetCommandsInput): AvailableCommand[] {
 		if (
-			input.agentId === "opencode" &&
+			getAgentCapabilities(input.agentId).loadsRemotePreconnectionCommands &&
 			input.projectPath &&
 			input.projectPath === this.loadedProjectPath
 		) {

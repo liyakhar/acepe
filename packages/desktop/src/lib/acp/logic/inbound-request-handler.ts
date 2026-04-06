@@ -29,7 +29,7 @@ import {
 import { api } from "../store/api.js";
 import {
 	buildAcpPermissionId,
-	type AcpPermissionRequest,
+	createPermissionRequest,
 	type PermissionRequest,
 } from "../types/permission.js";
 import type { QuestionRequest } from "../types/question.js";
@@ -180,11 +180,15 @@ export class InboundRequestHandler {
 		}
 
 		// Create a permission request with the JSON-RPC request ID
-		const permission: AcpPermissionRequest = {
+		const permission = createPermissionRequest({
 			id: buildAcpPermissionId(params.sessionId, params.toolCall.toolCallId, request.id),
 			sessionId: params.sessionId,
 			jsonRpcRequestId: request.id,
-			permission: params.toolCall.title ? params.toolCall.title : params.toolCall.name ? params.toolCall.name : "Execute tool",
+			permission: params.toolCall.title
+				? params.toolCall.title
+				: params.toolCall.name
+					? params.toolCall.name
+					: "Execute tool",
 			patterns: [],
 			metadata: {
 				rawInput: params.toolCall.rawInput,
@@ -196,7 +200,7 @@ export class InboundRequestHandler {
 				messageID: "",
 				callID: params.toolCall.toolCallId,
 			},
-		};
+		});
 
 		logger.debug("Created permission request from inbound request", {
 			permissionId: permission.id,

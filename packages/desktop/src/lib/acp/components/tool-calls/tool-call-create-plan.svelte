@@ -16,7 +16,7 @@ import * as m from "$lib/paraglide/messages.js";
 import type { AcpError } from "../../errors/index.js";
 import { usePlanInline } from "../../hooks/use-plan-inline.svelte.js";
 import { useSessionContext } from "../../hooks/use-session-context.js";
-import { respondToPlanApproval } from "../../logic/inbound-request-handler.js";
+import { replyToPlanApprovalRequest } from "../../logic/interaction-reply.js";
 import { getSessionStore } from "../../store/session-store.svelte.js";
 import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";
@@ -94,7 +94,7 @@ function handleApprove() {
 	const sessionId = sessionContext?.sessionId;
 	if (requestId == null || !sessionId) return;
 	localApproval = true;
-	respondToPlanApproval(sessionId, requestId, true).match(
+	replyToPlanApprovalRequest(sessionId, requestId, true).match(
 		() => {},
 		(err: AcpError) => {
 			// Roll back optimistic update on failure
@@ -109,7 +109,7 @@ function handleReject() {
 	const sessionId = sessionContext?.sessionId;
 	if (requestId == null || !sessionId) return;
 	localApproval = false;
-	respondToPlanApproval(sessionId, requestId, false).match(
+	replyToPlanApprovalRequest(sessionId, requestId, false).match(
 		() => {},
 		(err: AcpError) => {
 			// Roll back optimistic update on failure

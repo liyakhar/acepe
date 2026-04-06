@@ -22,7 +22,7 @@ import type { AppError } from "../errors/app-error.js";
 import { AgentError } from "../errors/app-error.js";
 import { EventSubscriber } from "../logic/event-subscriber";
 import { CanonicalModeId } from "../types/canonical-mode-id.js";
-import type { PermissionRequest } from "../types/permission";
+import { createPermissionRequest, type PermissionRequest } from "../types/permission";
 import type { QuestionRequest } from "../types/question";
 import { createLogger } from "../utils/logger.js";
 import { rawStreamingStore } from "./raw-streaming-store.svelte.js";
@@ -127,13 +127,6 @@ function resolveContextBudget(
 	}
 
 	return previous?.contextBudget ?? null;
-}
-
-function toPermissionMetadata(value: JsonValue): Record<string, JsonValue> {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		return {};
-	}
-	return value as Record<string, JsonValue>;
 }
 
 function toPermissionToolReference(
@@ -551,16 +544,16 @@ export class SessionEventService {
 			case "permissionRequest":
 				// Permissions now converge here for session-update based agents, including
 				// cc-sdk flows that still carry a JSON-RPC reply route.
-				this.callbacks.onPermissionRequest?.({
+				this.callbacks.onPermissionRequest?.(createPermissionRequest({
 					id: update.permission.id,
 					sessionId: update.permission.sessionId,
-					jsonRpcRequestId: update.permission.jsonRpcRequestId ?? undefined,
+					jsonRpcRequestId: update.permission.jsonRpcRequestId,
 					permission: update.permission.permission,
 					patterns: update.permission.patterns,
-					metadata: toPermissionMetadata(update.permission.metadata),
+					metadata: update.permission.metadata,
 					always: update.permission.always,
-					tool: toPermissionToolReference(update.permission.tool),
-				});
+					tool: update.permission.tool,
+				}));
 				break;
 
 			case "questionRequest":

@@ -33,9 +33,11 @@ export interface AnsweredQuestion {
 }
 
 import { AgentError } from "../errors/app-error.js";
-import { cancelQuestion, respondToQuestion } from "../logic/inbound-request-handler.js";
+import {
+	cancelQuestionRequest,
+	replyToQuestionRequest,
+} from "../logic/interaction-reply.js";
 import { createLogger } from "../utils/logger.js";
-import { api } from "./api.js";
 
 const QUESTION_STORE_KEY = Symbol("question-store");
 const logger = createLogger({ id: "question-store", name: "QuestionStore" });
@@ -109,12 +111,10 @@ export class QuestionStore {
 	/**
 	 * Reply to a question request.
 	 *
-	 * For ACP mode (Claude Code's AskUserQuestion tool), uses JSON-RPC response.
-	 * For OpenCode HTTP mode, uses the HTTP endpoint via api.replyQuestion.
+	 * The shared interaction reply layer resolves the correct transport.
 	 *
 	 * @param questionId - The question ID
-	 * @param answers - Array of { questionIndex, answers: string[] } for OpenCode mode,
-	 *                  or will be converted to Record<string, string | string[]> for ACP mode
+	 * @param answers - Array of { questionIndex, answers: string[] }
 	 * @param questions - The normalized questions from the tool call (from Rust parsing).
 	 *                    Used as the source of truth for building answer map and storing answered questions.
 	 */
@@ -154,26 +154,15 @@ export class QuestionStore {
 		// The user's intent is clear — don't wait for the async IPC response.
 		this.remove(questionId);
 
-		// If this question has a JSON-RPC request ID, use the JSON-RPC response mechanism (ACP mode)
-		if (question.jsonRpcRequestId !== undefined) {
-			return respondToQuestion(question.sessionId, question.jsonRpcRequestId, answerMap)
-				.map(() => {
-					logger.debug("Question replied via JSON-RPC", { questionId });
-				})
-				.mapErr((err) => new AgentError("replyQuestion", new Error(err.message)) as AppError);
-		}
-
-		// Otherwise, use the HTTP endpoint (OpenCode mode)
-		return api.replyQuestion(question.sessionId, questionId, answers).map(() => {
-			logger.debug("Question replied via HTTP", { questionId });
+		return replyToQuestionRequest(question, answers, answerMap).map(() => {
+			logger.debug("Question reply sent", { questionId });
 		});
 	}
 
 	/**
 	 * Cancel a question request without answering.
 	 *
-	 * For ACP mode, sends a cancellation response via JSON-RPC.
-	 * For OpenCode mode, just removes the question from the store.
+	 * The shared interaction reply layer resolves the correct transport.
 	 */
 	cancel(questionId: string): ResultAsync<void, AppError> {
 		const question = this.pending.get(questionId);
@@ -197,19 +186,8 @@ export class QuestionStore {
 		// Eagerly remove from pending map so the UI updates immediately.
 		this.remove(questionId);
 
-		// If this question has a JSON-RPC request ID, send cancellation via JSON-RPC
-		if (question.jsonRpcRequestId !== undefined) {
-			return cancelQuestion(question.sessionId, question.jsonRpcRequestId)
-				.map(() => {
-					logger.debug("Question cancelled via JSON-RPC", { questionId });
-				})
-				.mapErr((err) => new AgentError("cancelQuestion", new Error(err.message)) as AppError);
-		}
-
-		// Stream-only ACP questions reuse the reply endpoint with an empty answer set.
-		// This lets the backend resolve the synthetic question state and release the turn.
-		return api.replyQuestion(question.sessionId, questionId, []).map(() => {
-			logger.debug("Question cancelled via replyQuestion fallback", { questionId });
+		return cancelQuestionRequest(question).map(() => {
+			logger.debug("Question cancel sent", { questionId });
 		});
 	}
 
