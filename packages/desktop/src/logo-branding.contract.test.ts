@@ -9,6 +9,8 @@ const sidebarHeaderLogoPath = resolve(
 );
 const sharedLogoPath = resolve(import.meta.dir, "../../../assets/logo.svg");
 const sharedDarkLogoPath = resolve(import.meta.dir, "../../../assets/logo-dark.svg");
+const canonicalLightLogoPath = resolve(import.meta.dir, "../../../assets/acepe-logo-light-bg.png");
+const canonicalDarkLogoPath = resolve(import.meta.dir, "../../../assets/acepe-logo-dark-bg.png");
 const iconScriptPath = resolve(import.meta.dir, "../scripts/generate-icons.sh");
 
 // Website paths
@@ -83,11 +85,20 @@ describe("desktop logo branding", () => {
 	it("renders the shared document logo asset instead of the legacy inline mark", () => {
 		expect(existsSync(logoComponentPath)).toBe(true);
 		expect(existsSync(sharedLogoPath)).toBe(true);
-		if (!existsSync(logoComponentPath) || !existsSync(sharedLogoPath)) return;
+		expect(existsSync(canonicalLightLogoPath)).toBe(true);
+		expect(existsSync(canonicalDarkLogoPath)).toBe(true);
+		if (
+			!existsSync(logoComponentPath) ||
+			!existsSync(sharedLogoPath) ||
+			!existsSync(canonicalLightLogoPath) ||
+			!existsSync(canonicalDarkLogoPath)
+		)
+			return;
 
 		const componentSource = readFileSync(logoComponentPath, "utf8");
 		const sidebarSource = readFileSync(sidebarHeaderLogoPath, "utf8");
 		const assetSource = readFileSync(sharedLogoPath, "utf8");
+		const embeddedDimensions = getEmbeddedPngDimensions(assetSource);
 
 		expect(componentSource).toContain('import logo from "../../../../../assets/logo.svg?url";');
 		expect(componentSource).toContain("<img");
@@ -97,13 +108,8 @@ describe("desktop logo branding", () => {
 		expect(sidebarSource).toContain('<Logo class="h-6 w-6" />');
 		expect(sidebarSource).not.toContain("Acepe Logo - L4-V2");
 		expect(assetSource).toContain('viewBox="0 0 140 140"');
-		expect(assetSource).toContain('rx="26"');
-		expect(assetSource).toContain("mark-mask");
-		expect(assetSource).toContain("bgGrad");
-		expect(assetSource).toContain("#99FFE4");
-		expect(assetSource).toContain("#FFC799");
-		expect(assetSource).not.toContain('rx="28"');
-		expect(assetSource).not.toContain("Three bars");
+		expect(assetSource).toContain("data:image/png;base64,");
+		expect(embeddedDimensions).toEqual({ width: 1460, height: 1452 });
 	});
 
 	it("provides a dedicated gold-on-dark logo variant", () => {
@@ -111,12 +117,10 @@ describe("desktop logo branding", () => {
 		if (!existsSync(sharedDarkLogoPath)) return;
 
 		const darkAssetSource = readFileSync(sharedDarkLogoPath, "utf8");
+		const embeddedDimensions = getEmbeddedPngDimensions(darkAssetSource);
 
-		expect(darkAssetSource).toContain('fill="#1A1A1A"');
-		expect(darkAssetSource).toContain('fill="#EBCB8B"');
-		expect(darkAssetSource).toContain('mask="url(#mark-mask)"');
 		expect(darkAssetSource).toContain("data:image/png;base64,");
-		expect(darkAssetSource).not.toContain('fill="url(#pattern0_62_9)"');
+		expect(embeddedDimensions).toEqual({ width: 1460, height: 1452 });
 	});
 
 	it("centralizes website branding through a single Logo component using favicon.svg", () => {
@@ -152,12 +156,14 @@ describe("desktop logo branding", () => {
 		const websitePricingSource = readFileSync(websitePricingPath, "utf8");
 		const websiteLoginSource = readFileSync(websiteLoginPath, "utf8");
 
-		// The favicon.svg is the full branded icon with rx="26" rounded rect
-		expect(websiteFaviconSource).toContain('rx="26"');
+		// The website favicon wrapper should embed the canonical light PNG.
+		expect(websiteFaviconSource).toContain("data:image/png;base64,");
+		expect(getEmbeddedPngDimensions(websiteFaviconSource)).toEqual({ width: 1460, height: 1452 });
 
 		// The Logo component imports favicon.svg -- single source of truth for the website
 		expect(websiteLogoSource).toContain('import logo from "$lib/assets/favicon.svg"');
 		expect(websiteLogoSource).toContain("<img");
+		expect(websiteLogoSource).toContain("rounded-[20%]");
 		expect(websiteLogoSource).not.toContain("dark:hidden");
 		expect(websiteLogoSource).not.toContain("dark:block");
 
@@ -196,17 +202,18 @@ describe("desktop logo branding", () => {
 
 		const scriptSource = readFileSync(iconScriptPath, "utf8");
 
-		// Source logo and color constants
-		expect(scriptSource).toContain('SOURCE_LOGO="$ASSETS_DIR/logo.svg"');
-		expect(scriptSource).toContain('LOGO_SOURCE_BACKGROUND="#F1EEE6"');
-		expect(scriptSource).toContain('DARK_LOGO_BACKGROUND="#1A1A1A"');
-		expect(scriptSource).toContain('DARK_LOGO_FOREGROUND="#EBCB8B"');
+		// Canonical PNG sources and generated wrappers
+		expect(scriptSource).toContain('CANONICAL_LOGO_LIGHT="$ASSETS_DIR/acepe-logo-light-bg.png"');
+		expect(scriptSource).toContain('CANONICAL_LOGO_DARK="$ASSETS_DIR/acepe-logo-dark-bg.png"');
+		expect(scriptSource).toContain('GENERATED_LOGO_LIGHT="$ASSETS_DIR/logo.svg"');
+		expect(scriptSource).toContain('GENERATED_LOGO_DARK="$ASSETS_DIR/logo-dark.svg"');
 
-		// Core pipeline: render SVG -> tauri icon -> dark variant -> website assets
-		expect(scriptSource).toContain('magick "$SOURCE_LOGO"');
-		expect(scriptSource).toContain('cp "$SOURCE_LOGO" "$WEBSITE_STATIC/favicon.svg"');
-		expect(scriptSource).toContain('cp "$SOURCE_LOGO" "$WEBSITE_ASSETS/favicon.svg"');
-		expect(scriptSource).toContain('base64 < "$LOGO_DARK_MASK_PNG"');
+		// Core pipeline: canonical PNG -> generated wrappers -> tauri icons -> website assets
+		expect(scriptSource).toContain('magick "$CANONICAL_LOGO_LIGHT"');
+		expect(scriptSource).toContain('base64 < "$CANONICAL_LOGO_LIGHT"');
+		expect(scriptSource).toContain('base64 < "$CANONICAL_LOGO_DARK"');
+		expect(scriptSource).toContain('cp "$GENERATED_LOGO_LIGHT" "$WEBSITE_STATIC/favicon.svg"');
+		expect(scriptSource).toContain('cp "$GENERATED_LOGO_LIGHT" "$WEBSITE_ASSETS/favicon.svg"');
 
 		// Favicon.ico and OG image generation
 		expect(scriptSource).toContain("favicon.ico");
@@ -222,7 +229,6 @@ describe("desktop logo branding", () => {
 		expect(scriptSource).not.toContain("WEBSITE_LOGO_FOREGROUND");
 		expect(scriptSource).not.toContain("WEBSITE_LOGO_DARK_FOREGROUND");
 		expect(scriptSource).not.toContain("resize 280x280");
-		expect(scriptSource).not.toContain('cat > "$ASSETS_DIR/logo.svg"');
 		expect(scriptSource).not.toContain("roundrectangle 100,100 923,923");
 	});
 

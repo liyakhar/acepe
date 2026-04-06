@@ -1,7 +1,7 @@
 #!/bin/bash
-# Generate all Acepe icons from a single source
+# Generate all Acepe icons from the canonical source logos.
 # Primary: dark bars on #F1EEE6 cream background
-# Dark variant: gold #EBCB8B bars on #1A1A1A
+# Dark variant: light bars on #1A1A1A
 
 set -e
 
@@ -10,28 +10,54 @@ DESKTOP_DIR="$(dirname "$SCRIPT_DIR")"
 ICONS_DIR="$DESKTOP_DIR/src-tauri/icons"
 STATIC_DIR="$DESKTOP_DIR/static"
 ASSETS_DIR="$(dirname "$(dirname "$DESKTOP_DIR")")/assets"
-SOURCE_LOGO="$ASSETS_DIR/logo.svg"
-SOURCE_LOGO_DARK="$ASSETS_DIR/logo-dark.svg"
+CANONICAL_LOGO_LIGHT="$ASSETS_DIR/acepe-logo-light-bg.png"
+CANONICAL_LOGO_DARK="$ASSETS_DIR/acepe-logo-dark-bg.png"
+GENERATED_LOGO_LIGHT="$ASSETS_DIR/logo.svg"
+GENERATED_LOGO_DARK="$ASSETS_DIR/logo-dark.svg"
 LOGO_SOURCE_BACKGROUND="#F1EEE6"
 MASTER_ICON_PNG="/tmp/acepe_icon_master.png"
-DARK_LOGO_BACKGROUND="#1A1A1A"
-DARK_LOGO_FOREGROUND="#EBCB8B"
-LOGO_DARK_TRANSPARENT_PNG="/tmp/acepe_logo_dark_mark.png"
-LOGO_DARK_ALPHA_PNG="/tmp/acepe_logo_dark_alpha.png"
-LOGO_DARK_MASK_PNG="/tmp/acepe_logo_dark_mask.png"
-LOGO_DARK_MASK_BASE64="/tmp/acepe_logo_dark_mask.base64"
+LOGO_LIGHT_BASE64="/tmp/acepe_logo_light.base64"
+LOGO_DARK_BASE64="/tmp/acepe_logo_dark.base64"
 
 echo "Generating Acepe icons..."
 
-if [ ! -f "$SOURCE_LOGO" ]; then
-  echo "Missing source logo: $SOURCE_LOGO" >&2
+if [ ! -f "$CANONICAL_LOGO_LIGHT" ]; then
+  echo "Missing canonical light logo: $CANONICAL_LOGO_LIGHT" >&2
   exit 1
 fi
 
-# Create the master icon directly from the shared logo asset so future icon rebuilds stay in sync.
-magick "$SOURCE_LOGO" -background none -resize 1024x1024 -define png:color-type=6 "$MASTER_ICON_PNG"
+if [ ! -f "$CANONICAL_LOGO_DARK" ]; then
+  echo "Missing canonical dark logo: $CANONICAL_LOGO_DARK" >&2
+  exit 1
+fi
 
-echo "✓ Created master icon from shared logo asset"
+# Mirror the canonical PNGs into the SVG paths the app already imports.
+base64 < "$CANONICAL_LOGO_LIGHT" | tr -d '\n' > "$LOGO_LIGHT_BASE64"
+cat > "$GENERATED_LOGO_LIGHT" <<EOF
+<svg width="140" height="140" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+<image width="140" height="140" preserveAspectRatio="none" href="data:image/png;base64,$(cat "$LOGO_LIGHT_BASE64")"/>
+</svg>
+EOF
+echo "✓ Generated logo.svg"
+
+base64 < "$CANONICAL_LOGO_DARK" | tr -d '\n' > "$LOGO_DARK_BASE64"
+cat > "$GENERATED_LOGO_DARK" <<EOF
+<svg width="140" height="140" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+<image width="140" height="140" preserveAspectRatio="none" href="data:image/png;base64,$(cat "$LOGO_DARK_BASE64")"/>
+</svg>
+EOF
+echo "✓ Generated logo-dark.svg"
+
+# Create a square master icon from the canonical light logo so future icon rebuilds stay in sync.
+magick "$CANONICAL_LOGO_LIGHT" \
+  -background "$LOGO_SOURCE_BACKGROUND" \
+  -gravity center \
+  -extent 1460x1460 \
+  -resize 1024x1024 \
+  -define png:color-type=6 \
+  "$MASTER_ICON_PNG"
+
+echo "✓ Created master icon from canonical light logo"
 
 # Generate all Tauri icons using the CLI
 cd "$DESKTOP_DIR"
@@ -44,27 +70,6 @@ magick "$MASTER_ICON_PNG" -resize 32x32 \
   "$STATIC_DIR/favicon.png"
 echo "✓ Generated favicon.png"
 
-# Build a flat gold-on-dark SVG variant from the full-size master icon to preserve edge detail.
-magick "$MASTER_ICON_PNG" -alpha on -fuzz 15% -transparent "$LOGO_SOURCE_BACKGROUND" "$LOGO_DARK_TRANSPARENT_PNG"
-magick "$LOGO_DARK_TRANSPARENT_PNG" -alpha extract "$LOGO_DARK_ALPHA_PNG"
-magick -size 1024x1024 xc:white "$LOGO_DARK_ALPHA_PNG" \
-  -alpha off \
-  -compose CopyOpacity \
-  -composite \
-  "png32:$LOGO_DARK_MASK_PNG"
-base64 < "$LOGO_DARK_MASK_PNG" | tr -d '\n' > "$LOGO_DARK_MASK_BASE64"
-
-cat > "$SOURCE_LOGO_DARK" <<EOF
-<svg width="140" height="140" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="140" height="140" rx="26" fill="$DARK_LOGO_BACKGROUND"/>
-<mask id="mark-mask" x="0" y="0" width="140" height="140" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
-<image width="140" height="140" preserveAspectRatio="none" href="data:image/png;base64,$(cat "$LOGO_DARK_MASK_BASE64")"/>
-</mask>
-<rect width="140" height="140" fill="$DARK_LOGO_FOREGROUND" mask="url(#mark-mask)"/>
-</svg>
-EOF
-echo "✓ Generated logo-dark.svg"
-
 # --- Website icons ---
 WEBSITE_DIR="$(dirname "$DESKTOP_DIR")/website"
 WEBSITE_STATIC="$WEBSITE_DIR/static"
@@ -74,8 +79,8 @@ if [ -d "$WEBSITE_DIR" ]; then
   echo "Generating website icons..."
 
   mkdir -p "$WEBSITE_ASSETS"
-  cp "$SOURCE_LOGO" "$WEBSITE_STATIC/favicon.svg"
-  cp "$SOURCE_LOGO" "$WEBSITE_ASSETS/favicon.svg"
+  cp "$GENERATED_LOGO_LIGHT" "$WEBSITE_STATIC/favicon.svg"
+  cp "$GENERATED_LOGO_LIGHT" "$WEBSITE_ASSETS/favicon.svg"
 
   # Website favicon PNGs
   magick "$MASTER_ICON_PNG" -resize 16x16 -define png:color-type=6 "$WEBSITE_STATIC/favicon-16x16.png"
