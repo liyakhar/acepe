@@ -98,12 +98,14 @@ nix = { version = "0.28", features = ["signal", "process"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 objc2 = { version = "0.6", features = ["catch-all"] }
-# PINNED exact version: audit whisper-rs-sys/build.rs before any bump;
-# Metal feature is macOS-only, while the base crate is used cross-platform.
-whisper-rs = { version = "=0.16.0", features = ["metal"] }
 
 [features]
+default = ["whisper-metal"]
 manual-test-targets = []
+# PINNED exact version: audit whisper-rs-sys/build.rs before any bump.
+# Metal stays opt-in at the package level so release builds can disable it
+# while keeping whisper available on every platform.
+whisper-metal = ["whisper-rs/metal"]
 
 [[bin]]
 name = "scan_unmatched_tools"

@@ -70,9 +70,9 @@ fn preview_text(text: &str) -> String {
 /// Thread-confined: `WhisperContext` lives on the dedicated voice worker thread
 /// and is never moved across a `spawn_blocking` boundary.
 ///
-/// Metal GPU acceleration is compiled in via the `whisper-rs/metal` feature;
-/// at runtime whisper-rs auto-detects whether Metal is available and falls
-/// back to CPU automatically.
+/// Metal GPU acceleration is compiled in when the package enables the
+/// `whisper-metal` feature; at runtime whisper-rs auto-detects whether Metal
+/// is available and falls back to CPU automatically.
 pub struct WhisperEngine {
     context: Option<WhisperContext>,
     model_path: Option<PathBuf>,

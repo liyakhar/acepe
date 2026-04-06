@@ -72,4 +72,4 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
-          args: --target aarch64-apple-darwin
+          args: --target aarch64-apple-darwin -- --no-default-features
