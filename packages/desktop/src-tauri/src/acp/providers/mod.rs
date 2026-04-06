@@ -2,11 +2,13 @@ pub mod claude_code;
 pub(crate) mod claude_code_settings;
 pub mod codex;
 pub mod copilot;
+pub(crate) mod copilot_settings;
 pub mod cursor;
 pub(crate) mod cursor_session_update_enrichment;
 pub mod custom;
 pub mod forge;
 pub mod opencode;
+pub(crate) mod opencode_settings;
 
 pub use claude_code::ClaudeCodeProvider;
 pub use codex::CodexProvider;

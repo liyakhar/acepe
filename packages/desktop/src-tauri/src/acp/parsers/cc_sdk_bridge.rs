@@ -62,6 +62,7 @@ pub fn translate_cc_sdk_message_with_turn_state(
             is_error,
             session_id: sdk_sid,
             usage,
+            model_usage,
             total_cost_usd,
             result,
             ..
@@ -70,6 +71,7 @@ pub fn translate_cc_sdk_message_with_turn_state(
             translate_result(
                 is_error,
                 usage,
+                model_usage,
                 total_cost_usd,
                 result,
                 effective_sid,
@@ -368,6 +370,7 @@ fn translate_stream_event(
 fn translate_result(
     is_error: bool,
     usage: Option<serde_json::Value>,
+    model_usage: Option<serde_json::Value>,
     total_cost_usd: Option<f64>,
     result: Option<String>,
     session_id: Option<String>,
@@ -377,7 +380,13 @@ fn translate_result(
 
     // Emit usage telemetry if we have usage data or a cost figure
     if usage.is_some() || total_cost_usd.is_some() {
-        let telemetry = build_result_telemetry(usage, total_cost_usd, session_id.clone(), model_id);
+        let telemetry = build_result_telemetry(
+            usage,
+            model_usage,
+            total_cost_usd,
+            session_id.clone(),
+            model_id,
+        );
         updates.push(SessionUpdate::UsageTelemetryUpdate { data: telemetry });
     }
 
@@ -564,6 +573,7 @@ fn build_usage_telemetry_from_json(
 /// Build `UsageTelemetryData` from a Result message where `session_id` is always present.
 fn build_result_telemetry(
     usage: Option<serde_json::Value>,
+    model_usage: Option<serde_json::Value>,
     total_cost_usd: Option<f64>,
     session_id: Option<String>,
     model_id: Option<&str>,
@@ -603,7 +613,11 @@ fn build_result_telemetry(
         },
         source_model_id: model_id.map(|m| m.to_string()),
         timestamp_ms: None,
-        context_window_size: None,
+        context_window_size: model_usage
+            .as_ref()
+            .and_then(|usage| model_id.and_then(|model| usage.get(model)))
+            .and_then(|usage| usage.get("contextWindow"))
+            .and_then(|value| value.as_u64()),
     }
 }
 
@@ -823,6 +837,7 @@ mod tests {
                     "input_tokens": 5000,
                     "output_tokens": 500,
                 })),
+                model_usage: None,
                 result: None,
                 structured_output: None,
                 stop_reason: None,
@@ -867,6 +882,7 @@ mod tests {
                     "input_tokens": 1000,
                     "output_tokens": 100,
                 })),
+                model_usage: None,
                 result: None,
                 structured_output: None,
                 stop_reason: None,
@@ -900,6 +916,7 @@ mod tests {
                     "input_tokens": 1000,
                     "output_tokens": 100,
                 })),
+                model_usage: None,
                 result: None,
                 structured_output: None,
                 stop_reason: None,
@@ -919,6 +936,49 @@ mod tests {
                 Some("claude-sonnet-4-5-20250929")
             );
             assert_eq!(data.context_window_size, None);
+        } else {
+            panic!("Expected UsageTelemetryUpdate");
+        }
+    }
+
+    #[test]
+    fn result_telemetry_uses_model_usage_context_window() {
+        let updates = translate_cc_sdk_message_with_turn_state(
+            AgentType::ClaudeCode,
+            Message::Result {
+                subtype: "conversation_turn".to_string(),
+                duration_ms: 1000,
+                duration_api_ms: 800,
+                is_error: false,
+                num_turns: 1,
+                session_id: "ses-model-usage".to_string(),
+                total_cost_usd: Some(0.005),
+                usage: Some(serde_json::json!({
+                    "input_tokens": 1000,
+                    "output_tokens": 100,
+                })),
+                model_usage: Some(serde_json::json!({
+                    "claude-sonnet-4-6": {
+                        "contextWindow": 200000,
+                        "maxOutputTokens": 32000
+                    }
+                })),
+                result: None,
+                structured_output: None,
+                stop_reason: None,
+            },
+            Some("ses-model-usage".to_string()),
+            CcSdkTurnStreamState {
+                saw_text_delta: false,
+                saw_thinking_delta: false,
+                model_id: Some("claude-sonnet-4-6".to_string()),
+            },
+        );
+
+        assert_eq!(updates.len(), 2);
+        if let SessionUpdate::UsageTelemetryUpdate { data } = &updates[0] {
+            assert_eq!(data.context_window_size, Some(200000));
+            assert_eq!(data.source_model_id.as_deref(), Some("claude-sonnet-4-6"));
         } else {
             panic!("Expected UsageTelemetryUpdate");
         }

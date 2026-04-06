@@ -4856,6 +4856,7 @@ mod tests {
             session_id: "provider-session".to_string(),
             total_cost_usd: None,
             usage: None,
+            model_usage: None,
             result: None,
             structured_output: None,
             stop_reason: Some("tool_use".to_string()),

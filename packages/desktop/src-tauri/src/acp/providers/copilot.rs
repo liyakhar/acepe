@@ -1,4 +1,6 @@
 use super::super::provider::{AgentProvider, SpawnConfig};
+use super::copilot_settings::apply_copilot_session_defaults;
+use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::parsers::AgentType;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
@@ -133,6 +135,15 @@ impl AgentProvider for CopilotProvider {
             (_, true) => None,
         }
     }
+
+    fn apply_session_defaults(
+        &self,
+        cwd: &Path,
+        models: &mut SessionModelState,
+        modes: &mut SessionModes,
+    ) -> AcpResult<()> {
+        apply_copilot_session_defaults(cwd, models, modes)
+    }
 }
 
 fn filtered_env() -> HashMap<String, String> {
@@ -200,7 +211,9 @@ fn push_unique_spawn_config(configs: &mut Vec<SpawnConfig>, candidate: SpawnConf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::acp::client::{AvailableModel, SessionModelState, SessionModes};
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn resolve_spawn_configs_prefers_cached_binary_before_debug_override() {
@@ -299,5 +312,100 @@ mod tests {
             .expect_err("missing auth method should fail");
 
         assert!(error.to_string().contains("copilot login"));
+    }
+
+    #[test]
+    fn configured_copilot_model_prefers_project_config_over_user_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(home.join(".copilot")).expect("create user copilot dir");
+        fs::create_dir_all(project.join(".copilot")).expect("create project copilot dir");
+
+        fs::write(
+            home.join(".copilot/config.json"),
+            r#"{
+  "model": "gpt-5.4",
+  "effortLevel": "high"
+}"#,
+        )
+        .expect("write user config");
+        fs::write(
+            project.join(".copilot/config.json"),
+            r#"{
+  "model": "gpt-4.1"
+}"#,
+        )
+        .expect("write project config");
+
+        let mut models = SessionModelState {
+            available_models: vec![
+                AvailableModel {
+                    model_id: "gpt-5.4".to_string(),
+                    name: "GPT-5.4".to_string(),
+                    description: None,
+                },
+                AvailableModel {
+                    model_id: "gpt-4.1".to_string(),
+                    name: "GPT-4.1".to_string(),
+                    description: None,
+                },
+            ],
+            current_model_id: "auto".to_string(),
+            models_display: Default::default(),
+        };
+        let mut modes = SessionModes {
+            current_mode_id: "build".to_string(),
+            available_modes: vec![],
+        };
+
+        super::super::copilot_settings::apply_copilot_session_defaults_from_paths(
+            Some(home.as_path()),
+            project.as_path(),
+            &mut models,
+            &mut modes,
+        )
+        .expect("copilot session defaults should apply");
+
+        assert_eq!(models.current_model_id, "gpt-4.1");
+    }
+
+    #[test]
+    fn configured_copilot_model_is_inserted_when_provider_returns_no_catalog() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(home.join(".copilot")).expect("create user copilot dir");
+        fs::create_dir_all(&project).expect("create project dir");
+
+        fs::write(
+            home.join(".copilot/config.json"),
+            r#"{
+  "model": "gpt-5.4"
+}"#,
+        )
+        .expect("write user config");
+
+        let mut models = SessionModelState {
+            available_models: vec![],
+            current_model_id: "auto".to_string(),
+            models_display: Default::default(),
+        };
+        let mut modes = SessionModes {
+            current_mode_id: "build".to_string(),
+            available_modes: vec![],
+        };
+
+        super::super::copilot_settings::apply_copilot_session_defaults_from_paths(
+            Some(home.as_path()),
+            project.as_path(),
+            &mut models,
+            &mut modes,
+        )
+        .expect("copilot session defaults should apply");
+
+        assert_eq!(models.current_model_id, "gpt-5.4");
+        assert_eq!(models.available_models.len(), 1);
+        assert_eq!(models.available_models[0].model_id, "gpt-5.4");
     }
 }

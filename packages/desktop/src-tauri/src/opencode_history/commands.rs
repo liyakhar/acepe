@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::acp::client_trait::AgentClient;
 use crate::acp::opencode::{OpenCodeHttpClient, OpenCodeManagerRegistry};
+use crate::acp::providers::OpenCodeProvider;
 use crate::opencode_history::parser;
 use crate::path_safety::validate_project_directory_from_str;
 use crate::session_converter;
@@ -46,7 +47,9 @@ async fn get_or_create_opencode_client(
         .await
         .map_err(|e| format!("Failed to get OpenCode manager: {}", e))?;
 
-    let client = OpenCodeHttpClient::new(manager, project_key).map_err(|e| e.to_string())?;
+    let provider = Arc::new(OpenCodeProvider);
+    let client =
+        OpenCodeHttpClient::new(manager, project_key, provider).map_err(|e| e.to_string())?;
 
     Ok(client)
 }

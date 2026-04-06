@@ -2017,6 +2017,14 @@ pub enum Message {
         /// Usage statistics
         #[serde(skip_serializing_if = "Option::is_none")]
         usage: Option<serde_json::Value>,
+        /// Per-model usage metadata emitted by the Claude CLI result payload.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "modelUsage",
+            alias = "modelUsage"
+        )]
+        model_usage: Option<serde_json::Value>,
         /// Result message
         #[serde(skip_serializing_if = "Option::is_none")]
         result: Option<String>,

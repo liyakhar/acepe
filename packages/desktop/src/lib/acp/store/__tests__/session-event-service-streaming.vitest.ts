@@ -109,7 +109,7 @@ describe("SessionEventService streaming delta handling", () => {
 		);
 	});
 
-	it("falls back to provider model capability when telemetry omits context size", () => {
+	it("does not guess a Claude context budget when telemetry omits context size", () => {
 		(handler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
 			currentModel: { id: "claude-sonnet-4-5-20250929" },
 			usageTelemetry: null,
@@ -130,11 +130,7 @@ describe("SessionEventService streaming delta handling", () => {
 		expect(handler.updateUsageTelemetry).toHaveBeenCalledWith(
 			"session-123",
 			expect.objectContaining({
-				contextBudget: expect.objectContaining({
-					maxTokens: 200000,
-					source: "provider-model-capability",
-					scope: "step",
-				}),
+				contextBudget: null,
 			})
 		);
 	});

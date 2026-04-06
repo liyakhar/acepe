@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::OnceLock;
 
+use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::cursor_extensions::{CursorExtensionEvent, CursorResponseAdapter};
 use crate::acp::error::AcpResult;
@@ -156,6 +157,19 @@ pub trait AgentProvider: Send + Sync {
     /// provider-specific policy down into runtime clients.
     fn resolve_runtime_mode_id(&self, requested_mode_id: Option<&str>, _cwd: &Path) -> String {
         requested_mode_id.unwrap_or("default").to_string()
+    }
+
+    /// Apply provider-owned defaults from local config to session state.
+    ///
+    /// This keeps provider-specific settings inheritance in the provider layer
+    /// instead of spreading config parsing across transport clients.
+    fn apply_session_defaults(
+        &self,
+        _cwd: &Path,
+        _models: &mut SessionModelState,
+        _modes: &mut SessionModes,
+    ) -> AcpResult<()> {
+        Ok(())
     }
 
     /// Optional fallback model candidate if provider returns empty models list.

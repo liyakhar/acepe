@@ -1410,7 +1410,10 @@ mod tests {
         do_commit(dir.path(), "Initial commit").expect("initial commit");
 
         let remote_path = remote_dir.path().to_string_lossy().into_owned();
-        run_test_git(dir.path(), &["remote", "add", "origin", remote_path.as_str()]);
+        run_test_git(
+            dir.path(),
+            &["remote", "add", "origin", remote_path.as_str()],
+        );
         run_test_git(dir.path(), &["push", "-u", "origin", "main"]);
 
         run_test_git(dir.path(), &["checkout", "-b", "acepe/bright-falcon"]);
@@ -1450,7 +1453,12 @@ mod tests {
         assert_eq!(
             run_test_git(
                 dir.path(),
-                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+                &[
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "--symbolic-full-name",
+                    "@{upstream}"
+                ],
             ),
             "origin/acepe/bright-falcon"
         );

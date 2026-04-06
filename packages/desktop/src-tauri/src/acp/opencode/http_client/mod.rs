@@ -12,6 +12,7 @@ use crate::acp::client_trait::AgentClient;
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::model_display::get_transformer;
 use crate::acp::parsers::AgentType;
+use crate::acp::provider::AgentProvider;
 use crate::acp::session_update::AvailableCommand;
 use crate::acp::types::PromptRequest;
 use crate::opencode_history::parser as opencode_history_parser;
@@ -32,6 +33,7 @@ use types::{ConfigResponse, OpenCodeCommand, OpenCodeModel, ProviderResponse, Se
 pub struct OpenCodeHttpClient {
     /// Shared OpenCode manager (manages subprocess and SSE)
     manager: Arc<Mutex<OpenCodeManager>>,
+    provider: Arc<dyn AgentProvider>,
     /// Canonical project key resolved by the manager registry.
     manager_project_key: String,
     /// HTTP client for API calls
@@ -55,6 +57,7 @@ impl OpenCodeHttpClient {
     pub fn new(
         manager: Arc<Mutex<OpenCodeManager>>,
         manager_project_key: String,
+        provider: Arc<dyn AgentProvider>,
     ) -> AcpResult<Self> {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -63,6 +66,7 @@ impl OpenCodeHttpClient {
 
         Ok(Self {
             manager,
+            provider,
             manager_project_key: manager_project_key.clone(),
             http_client,
             runtime_root: manager_project_key,

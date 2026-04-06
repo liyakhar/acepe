@@ -89,7 +89,7 @@ tar = "0.4"
 flate2 = "1.0"
 zip = "2"
 partial-json-fixer = "0.5"
-cc-sdk = { path = "vendor/claude-code-api-rs/claude-code-sdk-rs" }
+cc-sdk = { path = "cc-sdk-local" }
 tauri-plugin-mcp-bridge = "0.9"
 tauri-plugin-clipboard-manager = "2.3.2"
 # Unix signal handling for graceful shutdown

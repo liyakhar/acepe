@@ -46,6 +46,7 @@ impl MockResponseGenerator {
             session_id: "test-session".to_string(),
             total_cost_usd: None,
             usage: None,
+            model_usage: None,
             result: Some("Success".to_string()),
             structured_output: None,
             stop_reason: None,

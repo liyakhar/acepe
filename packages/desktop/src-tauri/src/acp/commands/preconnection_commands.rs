@@ -1,5 +1,6 @@
 use super::*;
 use crate::acp::opencode::OpenCodeHttpClient;
+use crate::acp::providers::OpenCodeProvider;
 use crate::acp::session_update::AvailableCommand;
 
 #[tauri::command]
@@ -25,8 +26,9 @@ pub async fn acp_list_preconnection_commands(
         }
     })?;
 
-    let mut client =
-        OpenCodeHttpClient::new(manager, project_key).map_err(SerializableAcpError::from)?;
+    let provider = Arc::new(OpenCodeProvider);
+    let mut client = OpenCodeHttpClient::new(manager, project_key, provider)
+        .map_err(SerializableAcpError::from)?;
 
     let commands = client
         .list_preconnection_commands(cwd.to_string_lossy().to_string())

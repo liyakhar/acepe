@@ -79,25 +79,10 @@ function isPendingToolCallStatus(status: string | null | undefined): boolean {
 	return status === "pending" || status === "in_progress";
 }
 
-function resolveClaudeContextWindow(modelId: string | null | undefined): number | null {
-	if (modelId == null) {
-		return null;
-	}
-
-	const normalized = modelId.toLowerCase();
-	if (normalized.includes("claude")) {
-		return 200000;
-	}
-	if (normalized === "haiku" || normalized === "sonnet" || normalized === "opus") {
-		return 200000;
-	}
-	return null;
-}
-
 function resolveContextBudget(
 	usageTelemetryData: UsageTelemetryData,
 	previous: SessionUsageTelemetry | undefined,
-	currentModelId: string | null,
+	_currentModelId: string | null,
 	updatedAt: number
 ): SessionContextBudget | null {
 	const explicitMaxTokens = usageTelemetryData.contextWindowSize ?? null;
@@ -112,18 +97,6 @@ function resolveContextBudget(
 
 	if (previous?.contextBudget?.source === "provider-explicit") {
 		return previous.contextBudget;
-	}
-
-	const capabilityMaxTokens = resolveClaudeContextWindow(
-		usageTelemetryData.sourceModelId ?? currentModelId
-	);
-	if (capabilityMaxTokens != null) {
-		return {
-			maxTokens: capabilityMaxTokens,
-			source: "provider-model-capability",
-			scope: usageTelemetryData.scope ?? previous?.contextBudget?.scope ?? "step",
-			updatedAt,
-		};
 	}
 
 	return previous?.contextBudget ?? null;

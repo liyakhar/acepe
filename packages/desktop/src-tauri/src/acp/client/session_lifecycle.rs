@@ -105,6 +105,7 @@ impl AcpClient {
         self.hydrate_missing_models_for_provider(provider.as_ref(), &mut response.models)
             .await;
         apply_provider_model_fallback(provider.as_ref(), &mut response.models);
+        provider.apply_session_defaults(&self.cwd, &mut response.models, &mut response.modes)?;
 
         // Populate models_display using agent-specific transformer
         let agent_type = self
@@ -153,7 +154,7 @@ impl AcpClient {
             }
             Err(err) => return Err(err),
         };
-        self.finalize_resume_response(session_id, result, "resume")
+        self.finalize_resume_response(session_id, result, "resume", &cwd)
             .await
     }
 
@@ -181,7 +182,7 @@ impl AcpClient {
             Err(err) => return Err(err),
         };
 
-        self.finalize_resume_response(session_id, result, "load")
+        self.finalize_resume_response(session_id, result, "load", &cwd)
             .await
     }
 
@@ -190,6 +191,7 @@ impl AcpClient {
         session_id: String,
         result: serde_json::Value,
         operation: &str,
+        cwd: &str,
     ) -> AcpResult<ResumeSessionResponse> {
         let mut response: ResumeSessionResponse =
             serde_json::from_value(result).map_err(AcpError::SerializationError)?;
@@ -210,6 +212,11 @@ impl AcpClient {
         self.hydrate_missing_models_for_provider(provider.as_ref(), &mut response.models)
             .await;
         apply_provider_model_fallback(provider.as_ref(), &mut response.models);
+        provider.apply_session_defaults(
+            std::path::Path::new(cwd),
+            &mut response.models,
+            &mut response.modes,
+        )?;
 
         // Populate models_display using agent-specific transformer
         let agent_type = self
@@ -264,6 +271,7 @@ impl AcpClient {
         self.hydrate_missing_models_for_provider(provider.as_ref(), &mut response.models)
             .await;
         apply_provider_model_fallback(provider.as_ref(), &mut response.models);
+        provider.apply_session_defaults(&self.cwd, &mut response.models, &mut response.modes)?;
 
         // Populate models_display using agent-specific transformer
         let agent_type = self

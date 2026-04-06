@@ -277,6 +277,10 @@ fn parse_result_message(json: Value) -> Result<Option<Message>> {
                 session_id,
                 total_cost_usd: json.get("total_cost_usd").and_then(|v| v.as_f64()),
                 usage: json.get("usage").cloned(),
+                model_usage: json
+                    .get("modelUsage")
+                    .or_else(|| json.get("model_usage"))
+                    .and_then(|v| (!v.is_null()).then(|| v.clone())),
                 result: json
                     .get("result")
                     .and_then(|v| v.as_str())
@@ -528,6 +532,33 @@ mod tests {
         } else {
             panic!("Expected Result message");
         }
+    }
+
+    #[test]
+    fn test_parse_result_message_preserves_model_usage() {
+        let json = json!({
+            "type": "result",
+            "subtype": "conversation_turn",
+            "duration_ms": 1,
+            "duration_api_ms": 1,
+            "is_error": false,
+            "num_turns": 1,
+            "session_id": "test_session",
+            "modelUsage": {
+                "claude-sonnet-4-6": {
+                    "contextWindow": 200000,
+                    "maxOutputTokens": 32000
+                }
+            }
+        });
+
+        let result = parse_message(json).unwrap().expect("result message");
+        let serialized = serde_json::to_value(result).expect("serialize parsed message");
+
+        assert_eq!(
+            serialized["modelUsage"]["claude-sonnet-4-6"]["contextWindow"],
+            json!(200000)
+        );
     }
 
     #[test]

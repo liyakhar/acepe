@@ -1,7 +1,11 @@
 use super::super::provider::{AgentProvider, SpawnConfig};
+use super::opencode_settings::apply_opencode_session_defaults;
+use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::client_trait::CommunicationMode;
+use crate::acp::error::AcpResult;
 use crate::acp::types::CanonicalAgentId;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// OpenCode HTTP Agent Provider
 /// Uses HTTP REST API + SSE instead of ACP JSON-RPC
@@ -111,11 +115,22 @@ impl AgentProvider for OpenCodeProvider {
     fn is_available(&self) -> bool {
         !self.spawn_configs().is_empty()
     }
+
+    fn apply_session_defaults(
+        &self,
+        cwd: &Path,
+        models: &mut SessionModelState,
+        modes: &mut SessionModes,
+    ) -> AcpResult<()> {
+        apply_opencode_session_defaults(cwd, models, modes)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::acp::client::{AvailableModel, SessionModelState, SessionModes};
+    use std::fs;
 
     #[test]
     fn resolve_spawn_configs_uses_cached_binary_and_defaults_to_serve() {
@@ -144,5 +159,105 @@ mod tests {
             normalize_opencode_serve_args(vec!["acp".to_string()]),
             vec!["serve"]
         );
+    }
+
+    #[test]
+    fn configured_opencode_defaults_prefer_project_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(home.join(".config/opencode")).expect("create user opencode dir");
+        fs::create_dir_all(&project).expect("create project dir");
+
+        fs::write(
+            home.join(".config/opencode/opencode.json"),
+            r#"{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-4-5",
+  "default_agent": "build"
+}"#,
+        )
+        .expect("write user config");
+        fs::write(
+            project.join("opencode.json"),
+            r#"{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openai/gpt-5.4",
+  "default_agent": "plan"
+}"#,
+        )
+        .expect("write project config");
+
+        let mut models = SessionModelState {
+            available_models: vec![
+                AvailableModel {
+                    model_id: "anthropic/claude-sonnet-4-5".to_string(),
+                    name: "Claude Sonnet 4.5".to_string(),
+                    description: None,
+                },
+                AvailableModel {
+                    model_id: "openai/gpt-5.4".to_string(),
+                    name: "GPT-5.4".to_string(),
+                    description: None,
+                },
+            ],
+            current_model_id: "auto".to_string(),
+            models_display: Default::default(),
+        };
+        let mut modes = SessionModes {
+            current_mode_id: "build".to_string(),
+            available_modes: vec![],
+        };
+
+        super::super::opencode_settings::apply_opencode_session_defaults_from_paths(
+            Some(home.as_path()),
+            project.as_path(),
+            &mut models,
+            &mut modes,
+        )
+        .expect("opencode session defaults should apply");
+
+        assert_eq!(models.current_model_id, "openai/gpt-5.4");
+        assert_eq!(modes.current_mode_id, "plan");
+    }
+
+    #[test]
+    fn configured_opencode_model_is_inserted_when_missing_from_provider_catalog() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(home.join(".config/opencode")).expect("create user opencode dir");
+        fs::create_dir_all(&project).expect("create project dir");
+
+        fs::write(
+            home.join(".config/opencode/opencode.json"),
+            r#"{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openrouter/qwen-coder"
+}"#,
+        )
+        .expect("write user config");
+
+        let mut models = SessionModelState {
+            available_models: vec![],
+            current_model_id: "auto".to_string(),
+            models_display: Default::default(),
+        };
+        let mut modes = SessionModes {
+            current_mode_id: "build".to_string(),
+            available_modes: vec![],
+        };
+
+        super::super::opencode_settings::apply_opencode_session_defaults_from_paths(
+            Some(home.as_path()),
+            project.as_path(),
+            &mut models,
+            &mut modes,
+        )
+        .expect("opencode session defaults should apply");
+
+        assert_eq!(models.current_model_id, "openrouter/qwen-coder");
+        assert_eq!(models.available_models.len(), 1);
+        assert_eq!(models.available_models[0].model_id, "openrouter/qwen-coder");
     }
 }

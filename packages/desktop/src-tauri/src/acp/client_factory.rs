@@ -114,7 +114,7 @@ pub async fn create_client(
                 project_key = %project_key,
                 "Creating OpenCode HTTP client"
             );
-            let mut client = OpenCodeHttpClient::new(manager, project_key)?;
+            let mut client = OpenCodeHttpClient::new(manager, project_key, provider)?;
             timeout(CLIENT_START_TIMEOUT, client.start())
                 .await
                 .map_err(|_| {

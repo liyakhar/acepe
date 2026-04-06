@@ -1,5 +1,6 @@
 use super::types::{Provider, ProviderModel};
 use super::*;
+use crate::acp::providers::OpenCodeProvider;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1076,7 +1077,9 @@ fn test_seed_current_model_from_session_state() {
     let manager = Arc::new(Mutex::new(OpenCodeManager::new(PathBuf::from(
         "/tmp/project",
     ))));
-    let mut client = OpenCodeHttpClient::new(manager, "/tmp/project".to_string()).expect("client");
+    let provider = Arc::new(OpenCodeProvider);
+    let mut client =
+        OpenCodeHttpClient::new(manager, "/tmp/project".to_string(), provider).expect("client");
 
     client
         .seed_current_model("github-copilot/claude-opus-4.6")

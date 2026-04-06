@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 
 #[async_trait]
 impl AgentClient for OpenCodeHttpClient {
@@ -70,23 +71,16 @@ impl AgentClient for OpenCodeHttpClient {
             "Created new OpenCode session"
         );
 
-        // Initialize default mode
-        self.current_mode = Some("build".to_string());
-
         // Fetch available models from OpenCode's /provider endpoint
         let (available_models, current_model_id) = self.fetch_available_models().await?;
-        self.seed_current_model(&current_model_id)?;
         let available_commands = self.fetch_available_commands().await;
-
-        let models_display = get_transformer(AgentType::OpenCode).transform(&available_models);
-
-        Ok(NewSessionResponse {
+        let mut response = NewSessionResponse {
             session_id: session.id,
             sequence_id: None,
             models: SessionModelState {
                 available_models,
                 current_model_id,
-                models_display,
+                models_display: Default::default(),
             },
             modes: SessionModes {
                 current_mode_id: "build".to_string(),
@@ -105,7 +99,18 @@ impl AgentClient for OpenCodeHttpClient {
             },
             available_commands,
             config_options: Vec::new(),
-        })
+        };
+        self.provider.apply_session_defaults(
+            Path::new(&self.runtime_root),
+            &mut response.models,
+            &mut response.modes,
+        )?;
+        response.models.models_display =
+            get_transformer(AgentType::OpenCode).transform(&response.models.available_models);
+        self.current_mode = Some(response.modes.current_mode_id.clone());
+        self.seed_current_model(&response.models.current_model_id)?;
+
+        Ok(response)
     }
 
     async fn resume_session(
@@ -121,23 +126,14 @@ impl AgentClient for OpenCodeHttpClient {
             "Resuming OpenCode session"
         );
 
-        // Initialize default mode
-        self.current_mode = Some("build".to_string());
-
         // Fetch available models from OpenCode's /provider endpoint
         let (available_models, current_model_id) = self.fetch_available_models().await?;
-        self.seed_current_model(&current_model_id)?;
         let available_commands = self.fetch_available_commands().await;
-
-        let models_display = get_transformer(AgentType::OpenCode).transform(&available_models);
-
-        // For HTTP mode, resuming is just setting the context
-        // Per ACP protocol: ResumeSessionResponse does NOT include sessionId
-        Ok(ResumeSessionResponse {
+        let mut response = ResumeSessionResponse {
             models: SessionModelState {
                 available_models,
                 current_model_id,
-                models_display,
+                models_display: Default::default(),
             },
             modes: SessionModes {
                 current_mode_id: "build".to_string(),
@@ -156,7 +152,18 @@ impl AgentClient for OpenCodeHttpClient {
             },
             available_commands,
             config_options: Vec::new(),
-        })
+        };
+        self.provider.apply_session_defaults(
+            Path::new(&self.runtime_root),
+            &mut response.models,
+            &mut response.modes,
+        )?;
+        response.models.models_display =
+            get_transformer(AgentType::OpenCode).transform(&response.models.available_models);
+        self.current_mode = Some(response.modes.current_mode_id.clone());
+        self.seed_current_model(&response.models.current_model_id)?;
+
+        Ok(response)
     }
 
     async fn fork_session(
