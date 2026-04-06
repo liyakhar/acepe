@@ -21,7 +21,7 @@ import { getConnectionStore } from "../../../store/connection-store.svelte.js";
 import { getPanelStore } from "../../../store/panel-store.svelte.js";
 import { getSessionStore } from "../../../store/session-store.svelte.js";
 import { mergeStrategyStore } from "../../../store/merge-strategy-store.svelte.js";
-import { normalizeTitleForDisplay } from "../../../store/session-title-policy.js";
+	import { formatSessionTitleForDisplay } from "../../../store/session-title-policy.js";
 import type { ModifiedFilesState } from "../../../types/modified-files-state.js";
 import { PanelConnectionEvent } from "../../../types/panel-connection-state.js";
 import { PanelConnectionState } from "../../../types/panel-connection-state.js";
@@ -536,22 +536,9 @@ const sequenceId = $derived(
 		: null
 );
 
-// Session menu: display title (cleaned, with fallback) and stats for header dropdown
-function capitalizeTitle(text: string): string {
-	return text
-		.split(/\s+/)
-		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-		.join(" ");
-}
 const displayTitle = $derived.by(() => {
 	if (!sessionTitle && !displayProjectName) return null;
-	const rawTitle = sessionTitle ?? "";
-	const cleanedTitle = normalizeTitleForDisplay(rawTitle);
-	if (cleanedTitle !== "") return capitalizeTitle(cleanedTitle);
-	if (displayProjectName && displayProjectName !== "Project" && displayProjectName !== "Unknown") {
-		return capitalizeTitle(`Conversation in ${displayProjectName}`);
-	}
-	return "Untitled conversation";
+	return formatSessionTitleForDisplay(sessionTitle, displayProjectName, "Project");
 });
 const sessionDiffStats = $derived.by(() => {
 	if (!sessionId) return { insertions: 0, deletions: 0 };
@@ -1716,7 +1703,7 @@ function handleCheckpointRevertComplete() {
 									</div>
 								</div>
 							{/if}
-							{#if effectivePathForGit && (createdPr || hasStreamingPreviewContent(streamingShipData))}
+							{#if effectivePathForGit && (createdPr || createPrRunning || streamingShipData)}
 								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
 									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
 										{#key prCardRenderKey}

@@ -30,6 +30,8 @@
 		showTally?: boolean;
 		/** When true the footer renders without padding so embedded composers sit flush. */
 		flushFooter?: boolean;
+		/** When true, hide the body content (tool calls, activity text). Used when a permission request is shown instead. */
+		hideBody?: boolean;
 		menu?: Snippet;
 	}
 
@@ -43,13 +45,14 @@
 		showFooter = false,
 		showTally = false,
 		flushFooter = false,
+		hideBody = false,
 		menu,
 	}: Props = $props();
 
 	const title = $derived(card.title ? capitalizeLeadingCharacter(card.title) : "Untitled session");
 	const hasDiff = $derived(card.diffInsertions > 0 || card.diffDeletions > 0);
 	const isInteractive = $derived(Boolean(onclick));
-	const showBody = $derived(Boolean(card.taskCard || card.latestTool || card.activityText || card.errorText));
+	const showBody = $derived(!hideBody && Boolean(card.taskCard || card.latestTool || card.activityText || card.errorText));
 	const hasTodoSection = $derived(todoSection !== undefined);
 	const hasFooterContent = $derived(card.todoProgress !== null && !hasTodoSection ? true : showTally);
 	const hasMenu = $derived(menu !== undefined);

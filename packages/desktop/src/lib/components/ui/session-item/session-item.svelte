@@ -17,7 +17,7 @@ import {
 } from "$lib/acp/constants/thread-list-constants.js";
 import { formatTimeAgo } from "$lib/acp/logic/thread-list-date-utils.js";
 import { getPanelStore } from "$lib/acp/store/index.js";
-import { normalizeTitleForDisplay } from "$lib/acp/store/session-title-policy.js";
+import { formatSessionTitleForDisplay } from "$lib/acp/store/session-title-policy.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
 import { useTheme } from "$lib/components/theme/context.svelte.js";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
@@ -82,32 +82,15 @@ function formatTimeAgoSafe(date: Date): string {
 	return result.isOk() ? result.value : UNKNOWN_TIME_TEXT;
 }
 
-function capitalizeTitle(text: string): string {
-	return text
-		.split(/\s+/)
-		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-		.join(" ");
-}
-
 function getSessionDisplayName(item: SessionDisplayItem): string {
 	const rawTitle = item.title || "";
-	const cleanedTitle = normalizeTitleForDisplay(rawTitle);
 
 	logger.debug("getSessionDisplayName", {
 		raw: rawTitle.substring(0, 100),
-		cleaned: cleanedTitle.substring(0, 100),
-		isEmpty: cleanedTitle === "",
+		formatted: formatSessionTitleForDisplay(item.title, item.projectName).substring(0, 100),
 	});
 
-	if (cleanedTitle !== "") {
-		return capitalizeTitle(cleanedTitle);
-	}
-
-	if (item.projectName && item.projectName !== "Unknown") {
-		return capitalizeTitle(`Conversation in ${item.projectName}`);
-	}
-
-	return "Untitled conversation";
+	return formatSessionTitleForDisplay(item.title, item.projectName);
 }
 
 function handleSelect() {
@@ -305,7 +288,7 @@ const highlightCtx = getSessionListHighlightContext();
 						<DropdownMenu.Root bind:open={isActionsMenuOpen}>
 							<DropdownMenu.Trigger
 								class="shrink-0 h-5 w-4 flex items-center justify-center rounded hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring text-muted-foreground hover:text-foreground"
-								onclick={(e) => e.stopPropagation()}
+								onclick={(e: MouseEvent) => e.stopPropagation()}
 							>
 								<IconDotsVertical class="h-3.5 w-3.5" aria-hidden="true" />
 								<span class="sr-only">Session actions</span>
@@ -313,7 +296,7 @@ const highlightCtx = getSessionListHighlightContext();
 							<DropdownMenu.Content
 								align="end"
 								class="min-w-[180px]"
-								onclick={(e) => e.stopPropagation()}
+								onclick={(e: MouseEvent) => e.stopPropagation()}
 							>
 								<DropdownMenu.Item class="cursor-pointer">
 									<CopyButton

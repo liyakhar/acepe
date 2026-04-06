@@ -9,9 +9,6 @@
 		HeaderActionCell,
 		KanbanBoard,
 		KanbanCard,
-		type ActivityEntryQuestion,
-		type ActivityEntryQuestionOption,
-		type ActivityEntryQuestionProgress,
 		type KanbanCardData,
 		type KanbanColumnGroup,
 		type KanbanTaskCardData,
@@ -19,6 +16,7 @@
 	} from "@acepe/ui";
 	import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 	import { Colors } from "@acepe/ui/colors";
+	import { SvelteMap } from "svelte/reactivity";
 	import { onDestroy, onMount } from "svelte";
 	import type { SessionStatus } from "$lib/acp/application/dto/session-status.js";
 	import type { AgentInfo } from "$lib/acp/logic/agent-manager.js";
@@ -31,11 +29,7 @@
 		getQueueItemTaskDisplay,
 		getQueueItemToolDisplay,
 	} from "$lib/acp/components/queue/queue-item-display.js";
-	import {
-		buildQueueItemQuestionUiState,
-		type QuestionSelectionReader,
-	} from "$lib/acp/components/queue/queue-item-question-ui-state.js";
-	import PermissionBar from "$lib/acp/components/tool-calls/permission-bar.svelte";
+	import PermissionActionBar from "$lib/acp/components/tool-calls/permission-action-bar.svelte";
 	import TodoHeader from "$lib/acp/components/todo-header.svelte";
 	import AgentInput from "$lib/acp/components/agent-input/agent-input-ui.svelte";
 	import AgentSelector from "$lib/acp/components/agent-selector.svelte";
@@ -45,7 +39,7 @@
 	import { loadWorktreeEnabled } from "$lib/acp/components/worktree-toggle/worktree-storage.js";
 	import { toAgentToolKind } from "$lib/acp/components/tool-calls/tool-kind-to-agent-tool-kind.js";
 	import { getToolCompactDisplayText } from "$lib/acp/registry/tool-kind-ui-registry.js";
-	import { normalizeTitleForDisplay } from "$lib/acp/store/session-title-policy.js";
+	import { formatSessionTitleForDisplay } from "$lib/acp/store/session-title-policy.js";
 	import {
 		getAgentPreferencesStore,
 		getAgentStore,
@@ -56,6 +50,7 @@
 		getUnseenStore,
 	} from "$lib/acp/store/index.js";
 	import { getQuestionSelectionStore } from "$lib/acp/store/question-selection-store.svelte.js";
+	import { buildQueueItemQuestionUiState } from "$lib/acp/components/queue/queue-item-question-ui-state.js";
 	import { getPrimaryQuestionText, groupPendingQuestionsBySession } from "$lib/acp/store/question-selectors.js";
 	import { buildQueueItem, calculateSessionUrgency, type QueueSessionSnapshot } from "$lib/acp/store/queue/utils.js";
 	import { buildThreadBoard } from "$lib/acp/store/thread-board/build-thread-board.js";
@@ -91,21 +86,6 @@
 		state: MainAppViewState;
 	}
 
-	interface KanbanQuestionUiState {
-		readonly questionId: string;
-		readonly currentQuestion: ActivityEntryQuestion;
-		readonly totalQuestions: number;
-		readonly hasMultipleQuestions: boolean;
-		readonly currentQuestionIndex: number;
-		readonly questionProgress: readonly ActivityEntryQuestionProgress[];
-		readonly currentQuestionAnswered: boolean;
-		readonly currentQuestionOptions: readonly ActivityEntryQuestionOption[];
-		readonly otherText: string;
-		readonly showOtherInput: boolean;
-		readonly showSubmitButton: boolean;
-		readonly canSubmit: boolean;
-	}
-
 	let { projectManager, state: appState }: Props = $props();
 
 	const panelStore = getPanelStore();
@@ -137,29 +117,7 @@
 	let activeWorktreePath = $state<string | null>(null);
 	let worktreePending = $state(false);
 	let activeDialogPanelId = $state<string | null>(null);
-	let questionIndexes = $state<Record<string, number>>({});
-
-	const QUESTION_COLORS = [
-		Colors.green,
-		Colors.red,
-		Colors.pink,
-		Colors.orange,
-	];
-
-	const selectionReader: QuestionSelectionReader = {
-		hasSelections(questionId, questionIndex) {
-			return selectionStore.hasSelections(questionId, questionIndex);
-		},
-		isOptionSelected(questionId, questionIndex, optionLabel) {
-			return selectionStore.isOptionSelected(questionId, questionIndex, optionLabel);
-		},
-		isOtherActive(questionId, questionIndex) {
-			return selectionStore.isOtherActive(questionId, questionIndex);
-		},
-		getOtherText(questionId, questionIndex) {
-			return selectionStore.getOtherText(questionId, questionIndex);
-		},
-	};
+	let questionIndexBySession = $state(new SvelteMap<string, { questionId: string; currentQuestionIndex: number }>());
 
 	const globalWorktreeDefault = $derived(worktreeDefaultStore.globalDefault);
 	const projects = $derived(projectManager.projects);
@@ -252,25 +210,8 @@
 	// thin i18n wrappers that cannot be extracted without coupling the store
 	// layer to Paraglide runtime. Duplication is acceptable here.
 
-	function capitalizeTitle(text: string): string {
-		return text
-			.split(/\s+/)
-			.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-			.join(" ");
-	}
-
 	function getSessionDisplayName(item: ThreadBoardItem): string {
-		const cleanedTitle = normalizeTitleForDisplay(item.title ? item.title : "");
-
-		if (cleanedTitle !== "") {
-			return capitalizeTitle(cleanedTitle);
-		}
-
-		if (item.projectName && item.projectName !== "Unknown") {
-			return capitalizeTitle(`Conversation in ${item.projectName}`);
-		}
-
-		return "Untitled conversation";
+		return formatSessionTitleForDisplay(item.title, item.projectName);
 	}
 
 	function toSessionStatus(
@@ -420,7 +361,6 @@
 		})();
 
 		const isStreaming = isWorking;
-		const normalizedTitle = normalizeTitleForDisplay(item.title ? item.title : "");
 		const timeAgo = formatTimeAgo(item.lastActivityAt);
 		const taskDisplay = getQueueItemTaskDisplay(
 			toolDisplay ? toolDisplay.toolCall : null,
@@ -475,7 +415,7 @@
 
 		return {
 			id: item.sessionId,
-			title: normalizedTitle ? normalizedTitle : null,
+			title: getSessionDisplayName(item),
 			agentIconSrc: getAgentIcon(item.agentId, themeState.effectiveTheme),
 			agentLabel: item.agentId,
 			projectName: item.projectName,
@@ -500,50 +440,6 @@
 	function getPermissionRequest(item: ThreadBoardItem): PermissionRequest | null {
 		if (item.state.pendingInput.kind !== "permission") return null;
 		return item.state.pendingInput.request;
-	}
-
-	function getQuestionStateKey(sessionId: string, questionId: string): string {
-		return `${sessionId}:${questionId}`;
-	}
-
-	function getCurrentQuestionIndex(sessionId: string, questionId: string): number {
-		const key = getQuestionStateKey(sessionId, questionId);
-		const currentIndex = questionIndexes[key];
-		return typeof currentIndex === "number" ? currentIndex : 0;
-	}
-
-	function getQuestionData(item: ThreadBoardItem): KanbanQuestionUiState | null {
-		if (item.state.pendingInput.kind !== "question") return null;
-		const pendingQuestion = item.state.pendingInput.request;
-		const questionId = resolveQuestionId(pendingQuestion);
-		const currentQuestionIndex = getCurrentQuestionIndex(item.sessionId, questionId);
-		const questionUiState = buildQueueItemQuestionUiState({
-			pendingQuestion,
-			questionId,
-			currentQuestionIndex,
-			questionColors: QUESTION_COLORS,
-			selectionReader,
-		});
-		const currentQuestion = questionUiState.currentQuestion;
-		if (!currentQuestion) return null;
-		return {
-			questionId,
-			currentQuestion: {
-				question: currentQuestion.question,
-				multiSelect: currentQuestion.multiSelect,
-				options: currentQuestion.options.map((option) => ({ label: option.label })),
-			},
-			totalQuestions: questionUiState.totalQuestions,
-			hasMultipleQuestions: questionUiState.hasMultipleQuestions,
-			currentQuestionIndex,
-			questionProgress: questionUiState.questionProgress,
-			currentQuestionAnswered: questionUiState.currentQuestionAnswered,
-			currentQuestionOptions: questionUiState.currentQuestionOptions,
-			otherText: questionUiState.otherText,
-			showOtherInput: questionUiState.showOtherInput,
-			showSubmitButton: questionUiState.showSubmitButton,
-			canSubmit: questionUiState.canSubmit,
-		};
 	}
 
 	const groups = $derived.by((): readonly KanbanColumnGroup[] => {
@@ -762,68 +658,102 @@
 		return callId ? callId : question.id ? question.id : "";
 	}
 
-	function handleSelectOption(item: ThreadBoardItem, optionLabel: string) {
-		if (item.state.pendingInput.kind !== "question") return;
+	function getQuestionUiState(item: ThreadBoardItem) {
+		if (item.state.pendingInput.kind !== "question") return null;
 		const pendingQuestion = item.state.pendingInput.request;
 		const questionId = resolveQuestionId(pendingQuestion);
-		const currentQuestionIndex = getCurrentQuestionIndex(item.sessionId, questionId);
-		const questionUiState = buildQueueItemQuestionUiState({
+		const currentQuestionIndex = getCurrentQuestionIndex(item);
+		return buildQueueItemQuestionUiState({
 			pendingQuestion,
 			questionId,
 			currentQuestionIndex,
-			questionColors: QUESTION_COLORS,
-			selectionReader,
+			questionColors: [Colors.green, Colors.red, Colors.pink, Colors.orange],
+			selectionReader: {
+				hasSelections(questionId: string, questionIndex: number) {
+					return selectionStore.hasSelections(questionId, questionIndex);
+				},
+				isOptionSelected(questionId: string, questionIndex: number, optionLabel: string) {
+					return selectionStore.isOptionSelected(questionId, questionIndex, optionLabel);
+				},
+				isOtherActive(questionId: string, questionIndex: number) {
+					return selectionStore.isOtherActive(questionId, questionIndex);
+				},
+				getOtherText(questionId: string, questionIndex: number) {
+					return selectionStore.getOtherText(questionId, questionIndex);
+				},
+			},
 		});
-		const currentQuestion = questionUiState.currentQuestion;
-		if (!currentQuestion) return;
-		if (currentQuestion.multiSelect) {
+	}
+
+	function getCurrentQuestionIndex(item: ThreadBoardItem): number {
+		if (item.state.pendingInput.kind !== "question") {
+			return 0;
+		}
+
+		const pendingQuestion = item.state.pendingInput.request;
+		const questionId = resolveQuestionId(pendingQuestion);
+		const current = questionIndexBySession.get(item.sessionId);
+		if (!current || current.questionId !== questionId) {
+			return 0;
+		}
+
+		const maxQuestionIndex = pendingQuestion.questions.length - 1;
+		if (current.currentQuestionIndex < 0 || current.currentQuestionIndex > maxQuestionIndex) {
+			return 0;
+		}
+
+		return current.currentQuestionIndex;
+	}
+
+	function setCurrentQuestionIndex(
+		sessionId: string,
+		questionId: string,
+		currentQuestionIndex: number
+	): void {
+		questionIndexBySession.set(sessionId, { questionId, currentQuestionIndex });
+	}
+
+	function getPendingQuestionId(item: ThreadBoardItem): string {
+		if (item.state.pendingInput.kind !== "question") {
+			return "";
+		}
+		return resolveQuestionId(item.state.pendingInput.request);
+	}
+
+	function handleOptionSelect(sessionId: string, currentQuestionIndex: number, optionLabel: string) {
+		const item = itemLookup.get(sessionId);
+		if (!item || item.state.pendingInput.kind !== "question") return;
+		const pendingQuestion = item.state.pendingInput.request;
+		const q = pendingQuestion.questions[currentQuestionIndex];
+		if (!q) return;
+		const questionId = resolveQuestionId(pendingQuestion);
+		if (q.multiSelect) {
 			selectionStore.toggleOption(questionId, currentQuestionIndex, optionLabel);
 			return;
 		}
 		selectionStore.setSingleOption(questionId, currentQuestionIndex, optionLabel);
-		if (questionUiState.isSingleQuestionSingleSelect) {
+
+		const isSingleQuestionSingleSelect = pendingQuestion.questions.length === 1;
+		if (isSingleQuestionSingleSelect) {
 			requestAnimationFrame(() => {
-				submitAllAnswers(item);
+				handleSubmitQuestion(sessionId);
 			});
 			return;
 		}
-		if (questionUiState.hasMultipleQuestions && currentQuestionIndex < questionUiState.totalQuestions - 1) {
-			const key = getQuestionStateKey(item.sessionId, questionId);
-			questionIndexes[key] = currentQuestionIndex + 1;
+
+		if (currentQuestionIndex < pendingQuestion.questions.length - 1) {
+			setCurrentQuestionIndex(sessionId, questionId, currentQuestionIndex + 1);
 		}
 	}
 
-	function submitAllAnswers(item: ThreadBoardItem) {
-		if (item.state.pendingInput.kind !== "question") return;
+	function handleOtherInput(sessionId: string, currentQuestionIndex: number, value: string) {
+		const item = itemLookup.get(sessionId);
+		if (!item || item.state.pendingInput.kind !== "question") return;
 		const pendingQuestion = item.state.pendingInput.request;
-		const questionId = resolveQuestionId(pendingQuestion);
-		const answers = pendingQuestion.questions.map((question, questionIndex) => ({
-			questionIndex,
-			answers: selectionStore.getAnswers(questionId, questionIndex, question.multiSelect),
-		}));
-		selectionStore.clearQuestion(questionId);
-		questionStore.reply(
-			pendingQuestion.id,
-			answers,
-			pendingQuestion.questions
-		);
-	}
-
-	function handleOtherInput(item: ThreadBoardItem, value: string) {
-		if (item.state.pendingInput.kind !== "question") return;
-		const pendingQuestion = item.state.pendingInput.request;
-		const questionId = resolveQuestionId(pendingQuestion);
-		const currentQuestionIndex = getCurrentQuestionIndex(item.sessionId, questionId);
-		const questionUiState = buildQueueItemQuestionUiState({
-			pendingQuestion,
-			questionId,
-			currentQuestionIndex,
-			questionColors: QUESTION_COLORS,
-			selectionReader,
-		});
-		const currentQuestion = questionUiState.currentQuestion;
+		const currentQuestion = pendingQuestion.questions[currentQuestionIndex];
 		if (!currentQuestion) return;
-		selectionStore.setOtherText(questionId, currentQuestionIndex, value);
+		const questionId = resolveQuestionId(pendingQuestion);
+		selectionStore.setOtherText(questionId, 0, value);
 		if (value.trim() && !selectionStore.isOtherActive(questionId, currentQuestionIndex)) {
 			selectionStore.setOtherModeActive(questionId, currentQuestionIndex, true);
 			if (!currentQuestion.multiSelect) {
@@ -835,39 +765,65 @@
 		}
 	}
 
-	function handleOtherKeydown(item: ThreadBoardItem, key: string) {
-		if (key !== "Enter" || item.state.pendingInput.kind !== "question") return;
+	function handleOtherKeydown(sessionId: string, currentQuestionIndex: number, key: string) {
+		const item = itemLookup.get(sessionId);
+		if (!item || item.state.pendingInput.kind !== "question") return;
 		const pendingQuestion = item.state.pendingInput.request;
 		const questionId = resolveQuestionId(pendingQuestion);
-		const currentQuestionIndex = getCurrentQuestionIndex(item.sessionId, questionId);
 		const otherValue = selectionStore.getOtherText(questionId, currentQuestionIndex).trim();
-		if (!otherValue) return;
-		const lastQuestionIndex = pendingQuestion.questions.length - 1;
-		if (currentQuestionIndex < lastQuestionIndex) {
-			const stateKey = getQuestionStateKey(item.sessionId, questionId);
-			questionIndexes[stateKey] = currentQuestionIndex + 1;
-			return;
+		if (key === "Enter" && otherValue) {
+			if (pendingQuestion.questions.length === 1) {
+				handleSubmitQuestion(sessionId);
+			} else if (currentQuestionIndex < pendingQuestion.questions.length - 1) {
+				setCurrentQuestionIndex(sessionId, questionId, currentQuestionIndex + 1);
+			} else {
+				handleSubmitQuestion(sessionId);
+			}
 		}
-		submitAllAnswers(item);
+		if (key === "Escape") {
+			selectionStore.setOtherModeActive(questionId, currentQuestionIndex, false);
+		}
 	}
 
-	function handlePrevQuestion(item: ThreadBoardItem) {
-		if (item.state.pendingInput.kind !== "question") return;
+	function handlePrevQuestion(sessionId: string, currentQuestionIndex: number): void {
+		const item = itemLookup.get(sessionId);
+		if (!item || item.state.pendingInput.kind !== "question") return;
 		const questionId = resolveQuestionId(item.state.pendingInput.request);
-		const currentQuestionIndex = getCurrentQuestionIndex(item.sessionId, questionId);
-		if (currentQuestionIndex === 0) return;
-		const stateKey = getQuestionStateKey(item.sessionId, questionId);
-		questionIndexes[stateKey] = currentQuestionIndex - 1;
+		if (currentQuestionIndex > 0) {
+			setCurrentQuestionIndex(sessionId, questionId, currentQuestionIndex - 1);
+		}
 	}
 
-	function handleNextQuestion(item: ThreadBoardItem) {
-		if (item.state.pendingInput.kind !== "question") return;
+	function handleNextQuestion(
+		sessionId: string,
+		currentQuestionIndex: number,
+		totalQuestions: number
+	): void {
+		const item = itemLookup.get(sessionId);
+		if (!item || item.state.pendingInput.kind !== "question") return;
+		const questionId = resolveQuestionId(item.state.pendingInput.request);
+		if (currentQuestionIndex < totalQuestions - 1) {
+			setCurrentQuestionIndex(sessionId, questionId, currentQuestionIndex + 1);
+		}
+	}
+
+	function handleSubmitQuestion(sessionId: string) {
+		const item = itemLookup.get(sessionId);
+		if (!item || item.state.pendingInput.kind !== "question") return;
 		const pendingQuestion = item.state.pendingInput.request;
 		const questionId = resolveQuestionId(pendingQuestion);
-		const currentQuestionIndex = getCurrentQuestionIndex(item.sessionId, questionId);
-		if (currentQuestionIndex >= pendingQuestion.questions.length - 1) return;
-		const stateKey = getQuestionStateKey(item.sessionId, questionId);
-		questionIndexes[stateKey] = currentQuestionIndex + 1;
+		if (!selectionStore.hasAnySelections(questionId)) return;
+		const answers = pendingQuestion.questions.map((q, questionIndex) => ({
+			questionIndex,
+			answers: selectionStore.getAnswers(questionId, questionIndex, q.multiSelect),
+		}));
+		selectionStore.clearQuestion(questionId);
+		questionIndexBySession.delete(sessionId);
+		questionStore.reply(
+			pendingQuestion.id,
+			answers,
+			pendingQuestion.questions
+		);
 	}
 </script>
 
@@ -878,7 +834,7 @@
 			showCloseButton={false}
 			class="overflow-hidden max-w-[34rem] gap-0 border border-border/70 bg-background p-0 shadow-xl !backdrop-blur-none"
 			portalProps={{ disabled: true }}
-			onOpenAutoFocus={(e) => {
+			onOpenAutoFocus={(e: Event) => {
 				e.preventDefault();
 				requestAnimationFrame(() => {
 					newSessionDialogRef?.querySelector<HTMLElement>("[contenteditable]")?.focus();
@@ -898,7 +854,7 @@
 				</HeaderActionCell>
 			</EmbeddedPanelHeader>
 			<div class="mx-auto flex w-full max-w-[30rem] flex-col px-3 pt-4 pb-2">
-				<h1 class="mb-6 whitespace-nowrap text-center font-sans text-[1.9rem] font-semibold tracking-tight text-foreground sm:text-4xl">
+				<h1 class="mb-6 text-center font-sans text-[1.9rem] font-semibold tracking-tight text-foreground sm:text-4xl">
 					What do you want to build?
 				</h1>
 				{#if canShowNewSessionInput}
@@ -975,9 +931,11 @@
 			{#snippet cardRenderer(card: KanbanCardData)}
 				{@const item = itemLookup.get(card.id)}
 				{@const permission = item ? getPermissionRequest(item) : null}
-				{@const question = item ? getQuestionData(item) : null}
+				{@const currentQuestionIndex = item ? getCurrentQuestionIndex(item) : 0}
+				{@const questionUiState = item ? getQuestionUiState(item) : null}
+				{@const questionId = item ? getPendingQuestionId(item) : ""}
 				{@const hotState = item ? sessionStore.getHotState(item.sessionId) : null}
-				{@const showFooter = permission !== null || question !== null}
+				{@const showFooter = permission !== null || questionUiState !== null}
 				{#if item}
 					<KanbanCard {card} onclick={() => handleCardClick(card.id)} onClose={() => handleCloseSession(item)} showFooter={showFooter}>
 						{#snippet todoSection()}
@@ -989,15 +947,16 @@
 								isConnected={item.state.connection === "connected"}
 								status={todoSessionStatus}
 								isStreaming={card.isStreaming}
+								compact={true}
 							/>
 						{/snippet}
 						{#snippet menu()}
 							<DropdownMenu.Root>
 								<DropdownMenu.Trigger
-									class="shrink-0 inline-flex h-3 w-4 items-center justify-center text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+									class="shrink-0 inline-flex h-5 w-5 items-center justify-center p-1 text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
 									aria-label="More actions"
 									title="More actions"
-									onclick={(event) => event.stopPropagation()}
+									onclick={(event: MouseEvent) => event.stopPropagation()}
 								>
 									<IconDotsVertical class="h-2.5 w-2.5" aria-hidden="true" />
 								</DropdownMenu.Trigger>
@@ -1073,32 +1032,32 @@
 							<div
 								class="flex min-w-0 flex-col gap-1"
 								data-has-permission={permission ? "true" : "false"}
-								data-has-question={question ? "true" : "false"}
+								data-has-question={questionUiState ? "true" : "false"}
 							>
 								{#if permission}
-									<PermissionBar sessionId={item.sessionId} projectPath={item.projectPath} />
-								{:else if question}
+									<PermissionActionBar permission={permission} compact hideHeader projectPath={item.projectPath} />
+								{:else if questionUiState && questionUiState.currentQuestion}
 									<AttentionQueueQuestionCard
-										currentQuestion={question.currentQuestion}
-										totalQuestions={question.totalQuestions}
-										hasMultipleQuestions={question.hasMultipleQuestions}
-										currentQuestionIndex={question.currentQuestionIndex}
-										questionId={question.questionId}
-										questionProgress={question.questionProgress}
-										currentQuestionAnswered={question.currentQuestionAnswered}
-										currentQuestionOptions={question.currentQuestionOptions}
-										otherText={question.otherText}
+										currentQuestion={questionUiState.currentQuestion}
+										totalQuestions={questionUiState.totalQuestions}
+										hasMultipleQuestions={questionUiState.hasMultipleQuestions}
+										{currentQuestionIndex}
+										{questionId}
+										questionProgress={questionUiState.questionProgress}
+										currentQuestionAnswered={questionUiState.currentQuestionAnswered}
+										currentQuestionOptions={questionUiState.currentQuestionOptions}
+										otherText={questionUiState.otherText}
 										otherPlaceholder={m.question_other_placeholder()}
-										showOtherInput={question.showOtherInput}
-										showSubmitButton={question.showSubmitButton}
-										canSubmit={question.canSubmit}
+										showOtherInput={questionUiState.showOtherInput}
+										showSubmitButton={questionUiState.showSubmitButton}
+										canSubmit={questionUiState.canSubmit}
 										submitLabel={m.common_submit()}
-										onOptionSelect={(optionLabel: string) => handleSelectOption(item, optionLabel)}
-										onOtherInput={(value: string) => handleOtherInput(item, value)}
-										onOtherKeydown={(key: string) => handleOtherKeydown(item, key)}
-										onSubmitAll={() => submitAllAnswers(item)}
-										onPrevQuestion={() => handlePrevQuestion(item)}
-										onNextQuestion={() => handleNextQuestion(item)}
+										onOptionSelect={(optionLabel: string) => handleOptionSelect(card.id, currentQuestionIndex, optionLabel)}
+										onOtherInput={(value: string) => handleOtherInput(card.id, currentQuestionIndex, value)}
+										onOtherKeydown={(key: string) => handleOtherKeydown(card.id, currentQuestionIndex, key)}
+										onSubmitAll={() => handleSubmitQuestion(card.id)}
+										onPrevQuestion={() => handlePrevQuestion(card.id, currentQuestionIndex)}
+										onNextQuestion={() => handleNextQuestion(card.id, currentQuestionIndex, questionUiState.totalQuestions)}
 									/>
 								{/if}
 							</div>

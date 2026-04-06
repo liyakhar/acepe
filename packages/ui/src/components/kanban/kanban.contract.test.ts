@@ -73,20 +73,18 @@ describe("kanban UI contract", () => {
 		expect(cardSource).toContain("card.taskCard ||");
 		expect(cardSource).toContain("card.latestTool ||");
 		expect(cardSource).toContain("card.activityText ||");
-		expect(cardSource).toContain('import { capitalizeLeadingCharacter } from "../../lib/utils.js";');
-		expect(cardSource).toContain(
-			'const title = $derived(card.title ? capitalizeLeadingCharacter(card.title) : "Untitled session");'
-		);
+		expect(cardSource).not.toContain("capitalizeLeadingCharacter");
+		expect(cardSource).toContain('const title = $derived(card.title ? card.title : "Untitled session");');
 		expect(cardSource).not.toContain("card.previewMarkdown");
 		expect(cardSource).toContain('<EmbeddedPanelHeader class="bg-card/50">');
 		expect(cardSource).toContain('<HeaderCell withDivider={false}>');
 		expect(cardSource).toContain('<HeaderTitleCell compactPadding>');
 		expect(cardSource).toContain('data-testid="kanban-card-title"');
-		expect(cardSource).toContain('class="border-b border-border/40 px-1.5 py-1"');
+		expect(cardSource).toContain('class="border-t border-border/40 px-1.5 py-1"');
 		expect(cardSource).toContain('class="block text-xs font-medium leading-tight text-foreground"');
 		expect(cardSource).not.toContain('truncate text-[11px] font-medium text-foreground');
 		expect(cardSource).not.toContain('class="flex items-center gap-1.5 px-2 py-1.5"');
-		expect(cardSource).toContain('class="flex flex-col gap-1 px-1 pt-1 pb-1"');
+		expect(cardSource).toContain('class="flex flex-col gap-1 px-1"');
 		expect(cardSource).not.toContain('class="flex flex-col gap-1 border-t border-border/40 px-1"');
 		expect(cardSource).not.toContain('class="flex flex-col gap-1 border-t border-border/40 px-1 py-1.5"');
 		expect(cardSource).not.toContain('class="flex flex-col gap-1 border-t border-border/40 py-1.5"');
@@ -109,7 +107,7 @@ describe("kanban UI contract", () => {
 		const cardSource = readFileSync(kanbanCardPath, "utf8");
 
 		expect(cardSource).toContain("const headerDiffDivider = $derived(hasMenu ? true : hasClose);");
-		expect(cardSource).toContain('{#if hasDiff}\n\t\t\t\t<HeaderActionCell withDivider={headerDiffDivider} class="px-1">');
+		expect(cardSource).toContain('{#if hasDiff}\n\t\t\t\t<HeaderActionCell withDivider={headerDiffDivider}>');
 		expect(cardSource).toContain('<div class="flex h-7 items-center justify-center">');
 		expect(cardSource).toContain('<DiffPill insertions={card.diffInsertions} deletions={card.diffDeletions} variant="plain" class="text-[10px]" />');
 		expect(cardSource).not.toContain('{#if hasDiff}\n\t\t\t\t\t<DiffPill insertions={card.diffInsertions} deletions={card.diffDeletions} variant="plain" class="text-[10px]" />');

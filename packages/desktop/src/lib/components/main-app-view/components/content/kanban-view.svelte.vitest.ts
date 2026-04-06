@@ -20,7 +20,7 @@ describe("kanban empty-column contract", () => {
 
 		expect(source).toContain("const SECTION_ORDER: readonly ThreadBoardStatus[] = [");
 		expect(source).toContain(
-			'const SECTION_ORDER: readonly ThreadBoardStatus[] = [\n\t\t"answer_needed",\n\t\t"planning",\n\t\t"working",\n\t\t"idle",\n\t];'
+			'const SECTION_ORDER: readonly ThreadBoardStatus[] = [\n\t\t"answer_needed",\n\t\t"planning",\n\t\t"working",\n\t\t"needs_review",\n\t\t"idle",\n\t];'
 		);
 		expect(source).toContain("SECTION_ORDER.map((sectionId) => {");
 		expect(source).toContain("buildThreadBoard(");
@@ -61,13 +61,21 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("getQueueItemTaskDisplay");
 		expect(source).toContain("taskCard: KanbanTaskCardData | null");
 		expect(source).toContain("projectPath={item.projectPath}");
-		expect(source).toContain('import PermissionBar from "$lib/acp/components/tool-calls/permission-bar.svelte"');
+		expect(source).toContain('import PermissionActionBar from "$lib/acp/components/tool-calls/permission-action-bar.svelte"');
 		expect(source).toContain("buildQueueItemQuestionUiState");
-		expect(source).toContain("<PermissionBar");
-		expect(source).toContain("sessionId={item.sessionId}");
+		expect(source).toContain("questionIndexBySession = $state(new SvelteMap");
+		expect(source).toContain("function getCurrentQuestionIndex(item: ThreadBoardItem): number");
+		expect(source).toContain("function handlePrevQuestion(sessionId: string, currentQuestionIndex: number): void");
+		expect(source).toContain("function handleNextQuestion(");
+		expect(source).toContain("<PermissionActionBar");
 		expect(source).toContain("permission={permission}");
 		expect(source).toContain("projectPath={item.projectPath}");
 		expect(source).toContain("<AttentionQueueQuestionCard");
+		expect(source).toContain("{currentQuestionIndex}");
+		expect(source).toContain("onPrevQuestion={() => handlePrevQuestion(card.id, currentQuestionIndex)}");
+		expect(source).toContain(
+			"onNextQuestion={() => handleNextQuestion(card.id, currentQuestionIndex, questionUiState.totalQuestions)}"
+		);
 		expect(source).not.toContain("<PendingPermissionCard permission={permission} />");
 	});
 
@@ -79,16 +87,15 @@ describe("kanban empty-column contract", () => {
 
 		expect(source).not.toContain("const kanbanFooterBySessionId = $derived.by(() => {");
 		expect(source).toContain("{@const permission = item ? getPermissionRequest(item) : null}");
-		expect(source).toContain("{@const question = item ? getQuestionData(item) : null}");
+		expect(source).toContain("{@const questionUiState = item ? getQuestionUiState(item) : null}");
 		expect(source).toContain(
 			"{@const hotState = item ? sessionStore.getHotState(item.sessionId) : null}"
 		);
-		expect(source).toContain("{@const showComposer = item ? isComposerVisible(item) : false}");
-		expect(source).toContain("{@const showFooter = permission !== null || question !== null || showComposer}");
+		expect(source).toContain("{@const showFooter = permission !== null || questionUiState !== null}");
 		expect(source).toContain('{#if item}');
 		expect(source).toContain('<KanbanCard {card} onclick={() => handleCardClick(card.id)}');
 		expect(source).toContain('showFooter={showFooter}');
-		expect(source).toContain('flushFooter={showComposer}');
+		expect(source).not.toContain('flushFooter={showComposer}');
 		expect(source).not.toContain('{#snippet footer()}\n\t\t\t\t\t\t{#if item}');
 	});
 
@@ -109,23 +116,6 @@ describe("kanban empty-column contract", () => {
 		const source = readFileSync(kanbanViewPath, "utf8");
 		const composerSource = readFileSync(kanbanCompactComposerPath, "utf8");
 
-		expect(source).toContain('import { CanonicalModeId } from "$lib/acp/types/canonical-mode-id.js"');
-		expect(source).toContain('import { SvelteMap } from "svelte/reactivity"');
-		expect(source).toContain('let cardDrafts = $state(new SvelteMap<string, string>());');
-		expect(source).toContain('item.status === "idle"');
-		expect(source).toContain('function handleComposerModeToggle(sessionId: string, currentModeId: string): void {');
-		expect(source).toContain('currentModeId === CanonicalModeId.PLAN ? CanonicalModeId.BUILD : CanonicalModeId.PLAN');
-		expect(source).toContain('void sessionStore.setMode(sessionId, nextModeId).match(');
-		expect(source).toContain(
-			'{@const isVoiceComposerMode = composerVoiceState !== null && (composerVoiceState.phase === "checking_permission" || composerVoiceState.phase === "recording")}'
-		);
-		expect(source).toContain('onModeToggle={() => handleComposerModeToggle(card.id, item ? getComposerModeLabel(item) : CanonicalModeId.BUILD)}');
-		expect(source).toContain('voiceMode={isVoiceComposerMode}');
-		expect(source).toContain('{#each composerVoiceState.waveform.meterLevels as level, index (index)}');
-		expect(source).toContain('class="kanban-voice-meter flex w-full items-center justify-center gap-px motion-reduce:hidden"');
-		expect(source).toContain('{composerVoiceState.recordingElapsedLabel}');
-		expect(source).toContain('class="h-[17.6px] w-[17.6px] shrink-0 cursor-pointer rounded-full bg-foreground text-background hover:bg-foreground/85"');
-		expect(source).toContain('<IconArrowUp class="h-[8.8px] w-[8.8px]" />');
 		expect(composerSource).toContain("onModeToggle?: () => void;");
 		expect(composerSource).toContain("bg-background/90");
 		expect(composerSource).toContain("px-2");
@@ -154,7 +144,7 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain('<DropdownMenu.Trigger');
 		expect(source).toContain('aria-label="More actions"');
 		expect(source).toContain(
-			'class="shrink-0 inline-flex h-3 w-4 items-center justify-center text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"'
+			'class="shrink-0 inline-flex h-5 w-5 items-center justify-center p-1 text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"'
 		);
 		expect(source).toContain('<IconDotsVertical class="h-2.5 w-2.5" aria-hidden="true" />');
 		expect(source).not.toContain('hover:bg-accent');

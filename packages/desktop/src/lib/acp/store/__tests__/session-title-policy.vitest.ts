@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	deriveSessionTitleFromUserInput,
+	formatSessionTitleForDisplay,
 	getTitleUpdateFromUserMessage,
 	isFallbackSessionTitle,
 	normalizeTitleForDisplay,
@@ -67,6 +68,20 @@ describe("session-title-policy", () => {
 		// Literal backslash-n as sometimes stored by Cursor
 		expect(normalizeTitleForDisplay("\\nhi\\n")).toBe("hi");
 		expect(normalizeTitleForDisplay("\\ncan you clone t3code\\n")).toBe("can you clone t3code");
+	});
+
+	it("formatSessionTitleForDisplay title-cases a stored title", () => {
+		expect(formatSessionTitleForDisplay("fix kanban title drift", null)).toBe(
+			"Fix Kanban Title Drift"
+		);
+	});
+
+	it("formatSessionTitleForDisplay falls back to project conversation title", () => {
+		expect(formatSessionTitleForDisplay("", "acepe")).toBe("Conversation In Acepe");
+	});
+
+	it("formatSessionTitleForDisplay returns untitled fallback when no title or project exists", () => {
+		expect(formatSessionTitleForDisplay("", null)).toBe("Untitled conversation");
 	});
 
 	it("derives title from input with artifacts", () => {

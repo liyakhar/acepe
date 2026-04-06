@@ -35,6 +35,36 @@ export function normalizeTitleForDisplay(title: string): string {
 	return stripArtifactsFromTitle(title).replace(/\\n/g, " ").replace(/\r?\n/g, " ").trim();
 }
 
+function capitalizeTitle(text: string): string {
+	return text
+		.split(/\s+/)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
+
+/**
+ * Format a session title for user-facing display, including the standard
+ * fallback title when no real title is present.
+ */
+export function formatSessionTitleForDisplay(
+	title: string | null | undefined,
+	projectName?: string | null,
+	unknownProjectName?: string
+): string {
+	const cleanedTitle = normalizeTitleForDisplay(title ? title : "");
+	if (cleanedTitle !== "") {
+		return capitalizeTitle(cleanedTitle);
+	}
+
+	const effectiveProjectName = projectName ? projectName : null;
+	const excludedProjectName = unknownProjectName ? unknownProjectName : "Unknown";
+	if (effectiveProjectName && effectiveProjectName !== excludedProjectName) {
+		return capitalizeTitle(`Conversation in ${effectiveProjectName}`);
+	}
+
+	return "Untitled conversation";
+}
+
 /**
  * Returns true when a title is still a placeholder and safe to replace.
  */

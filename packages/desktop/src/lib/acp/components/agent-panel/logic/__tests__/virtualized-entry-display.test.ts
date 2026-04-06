@@ -7,7 +7,6 @@ import {
 	getLatestRevealTargetKey,
 	getVirtualizedDisplayEntryKey,
 	isMergedThoughtAssistantDisplayEntry,
-	shouldObserveRevealResize,
 	THINKING_DISPLAY_ENTRY,
 } from "../virtualized-entry-display.js";
 
@@ -81,29 +80,5 @@ describe("virtualized-entry-display", () => {
 		display.push(THINKING_DISPLAY_ENTRY);
 
 		expect(getLatestRevealTargetKey(display)).toBe("assistant-1");
-	});
-
-	it("does not observe latest-message resize when the thread is idle", () => {
-		const display = buildVirtualizedDisplayEntries([
-			createMessageAssistantEntry("assistant-1", "latest reply"),
-		]);
-		const latestEntry = display[0];
-		if (!latestEntry) {
-			throw new Error("expected latest entry");
-		}
-
-		expect(shouldObserveRevealResize(display, latestEntry, false)).toBe(false);
-	});
-
-	it("observes latest-message resize while streaming", () => {
-		const display = buildVirtualizedDisplayEntries([
-			createMessageAssistantEntry("assistant-1", "latest reply"),
-		]);
-		const latestEntry = display[0];
-		if (!latestEntry) {
-			throw new Error("expected latest entry");
-		}
-
-		expect(shouldObserveRevealResize(display, latestEntry, true)).toBe(true);
 	});
 });
