@@ -22,6 +22,7 @@ import {
 	type SyncRenderResult,
 } from "../../utils/markdown-renderer.js";
 import ContentBlockRenderer from "./content-block-renderer.svelte";
+import { streamingReveal } from "./logic/streaming-reveal-action.js";
 import {
 	normalizeToProjectRelativePath,
 	resolveDiffStatsForFilePath,
@@ -29,6 +30,7 @@ import {
 import { mountFileBadges } from "./logic/mount-file-badges.js";
 import { mountGitHubBadges } from "./logic/mount-github-badges.js";
 import { parseContentBlocks } from "./logic/parse-content-blocks.js";
+import { splitStreamingSections } from "./logic/split-streaming-sections.js";
 
 const logger = createLogger({ id: "markdown-text", name: "Markdown Text" });
 const STREAMING_SYNC_RESULT = {
@@ -261,6 +263,13 @@ const visibleHtml = $derived.by(() => {
 	if (isStreaming) return null;
 	return syncResult.html ?? asyncHtml ?? null;
 });
+const streamingSections = $derived.by(() => {
+	if (streamingRenderedHtml === null) {
+		return [];
+	}
+
+	return splitStreamingSections(streamingRenderedHtml);
+});
 const error = $derived(asyncError);
 const isLoading = $derived(syncResult.needsAsync && asyncPending);
 
@@ -431,8 +440,13 @@ function handleKeydown(event: KeyboardEvent) {
 		tabindex="0"
 		onclick={handleClick}
 		onkeydown={handleKeydown}
+		use:streamingReveal={{ active: isStreaming }}
 	>
-		{@html streamingRenderedHtml}
+		{#each streamingSections as section (section.key)}
+			<div class="streaming-section" data-streaming-section-key={section.key}>
+				{@html section.html}
+			</div>
+		{/each}
 	</div>
 {:else if isLoading || isStreaming}
 	<!-- Show plain text with min-height while async rendering (rare: large messages only) -->

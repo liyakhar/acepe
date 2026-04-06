@@ -382,6 +382,47 @@ describe("MarkdownText", () => {
 		expect(mountGitHubBadgesMock).not.toHaveBeenCalled();
 	});
 
+	it("keeps stable streaming sections while append-only markdown grows", async () => {
+		renderMarkdownSyncMock.mockImplementation((text) => {
+			if (text === "first") {
+				return {
+					html: "<p>Hello</p>",
+					fromCache: false,
+					needsAsync: false,
+				};
+			}
+
+			return {
+				html: "<p>Hello world</p><p>Next block</p>",
+				fromCache: false,
+				needsAsync: false,
+			};
+		});
+
+		const view = render(MarkdownText, {
+			text: "first",
+			isStreaming: true,
+		});
+
+		const firstSection = await waitFor(() => {
+			const section = view.container.querySelector('[data-streaming-section-key="P:0"]');
+			expect(section).not.toBeNull();
+			return section;
+		});
+
+		await view.rerender({
+			text: "second",
+			isStreaming: true,
+		});
+
+		await waitFor(() => {
+			expect(view.container.querySelector('[data-streaming-section-key="P:1"]')).not.toBeNull();
+		});
+
+		expect(view.container.querySelector('[data-streaming-section-key="P:0"]')).toBe(firstSection);
+		expect(firstSection?.textContent).toContain("Hello world");
+	});
+
 	it("falls back to plain text during streaming when sync renderer returns null", async () => {
 		renderMarkdownSyncMock.mockImplementation(() => ({
 			html: null,

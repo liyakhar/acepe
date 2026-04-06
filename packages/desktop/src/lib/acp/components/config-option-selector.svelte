@@ -1,6 +1,7 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { IconCircleCheckFilled } from "@tabler/icons-svelte";
+import Brain from "phosphor-svelte/lib/Brain";
 import Lightning from "phosphor-svelte/lib/Lightning";
 import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
@@ -8,6 +9,7 @@ import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import type { ConfigOptionData } from "../../services/converted-session-types.js";
 
 import { Colors } from "../utils/colors.js";
+import { resolveConfigOptionIconState } from "./config-option-selector-icon-state.js";
 
 interface ConfigOptionSelectorProps {
 	configOption: ConfigOptionData;
@@ -79,7 +81,8 @@ const isBooleanEnabled = $derived.by(() => {
 	);
 });
 
-const usesLightningIcon = $derived(isReasoningOption(configOption) || isFastOption(configOption));
+const isReasoningConfigOption = $derived(isReasoningOption(configOption));
+const isFastConfigOption = $derived(isFastOption(configOption));
 
 const currentValueLabel = $derived.by(() => {
 	const options = configOption.options;
@@ -99,15 +102,32 @@ const currentValueLabel = $derived.by(() => {
 });
 
 const iconColor = $derived.by(() => {
-	if (isFastOption(configOption)) {
+	if (isFastConfigOption) {
 		return Colors.yellow;
 	}
 
-	if (isReasoningOption(configOption)) {
+	if (isReasoningConfigOption) {
 		return Colors.purple;
 	}
 
 	return Colors.cyan;
+});
+
+const iconState = $derived.by(() =>
+	resolveConfigOptionIconState({
+		isFastOption: isFastConfigOption,
+		isBooleanOption: isBooleanConfigOption,
+		isBooleanEnabled,
+		currentValue,
+	})
+);
+const iconClass = $derived(iconState.useMutedForeground ? "text-muted-foreground" : "");
+const iconStyle = $derived.by(() => {
+	if (iconState.useMutedForeground) {
+		return "";
+	}
+
+	return `color: ${iconColor}`;
 });
 
 function handleSelect(value: string) {
@@ -144,8 +164,20 @@ function handleBooleanToggle() {
 								? 'text-muted-foreground/50 cursor-not-allowed'
 								: 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
 						>
-							{#if usesLightningIcon}
-								<Lightning size={14} weight="fill" style="color: {iconColor}" />
+							{#if isReasoningConfigOption}
+								<Brain
+									class={iconClass}
+									size={14}
+									weight={iconState.weight}
+									style={iconStyle}
+								/>
+							{:else if isFastConfigOption}
+								<Lightning
+									class={iconClass}
+									size={14}
+									weight={iconState.weight}
+									style={iconStyle}
+								/>
 							{:else}
 								<ShieldCheck size={14} weight="fill" style="color: {iconColor}" />
 							{/if}
@@ -195,8 +227,20 @@ function handleBooleanToggle() {
 						? 'bg-accent/60 text-foreground hover:bg-accent/80'
 						: 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
 			>
-				{#if usesLightningIcon}
-					<Lightning size={14} weight="fill" style="color: {iconColor}" />
+				{#if isReasoningConfigOption}
+					<Brain
+						class={iconClass}
+						size={14}
+						weight={iconState.weight}
+						style={iconStyle}
+					/>
+				{:else if isFastConfigOption}
+					<Lightning
+						class={iconClass}
+						size={14}
+						weight={iconState.weight}
+						style={iconStyle}
+					/>
 				{:else}
 					<ShieldCheck size={14} weight="fill" style="color: {iconColor}" />
 				{/if}
