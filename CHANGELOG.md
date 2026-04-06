@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ACP file write path handling now canonicalizes and scope-checks write paths for security
 
 ### Changed
+- ACP frontend interaction handling now routes permissions, questions, and plan approvals through shared builders and reply strategies, and feature-specific agent behavior now reads from capability metadata instead of scattered agent-ID checks
+- ACP backend now delegates Cursor-specific notification suppression and session-update enrichment through provider hooks, extracts cc-sdk permission bridging into a dedicated module, and threads explicit agent context through session-update, cc-sdk bridge, and streaming parser seams instead of relying on task-local globals
 - Tool call edit and permission bar components redesigned with a dedicated diff resolution layer
 - Session title formatting extracted to shared `formatSessionTitleForDisplay`, replacing duplicated capitalize-and-fallback logic across agent panel and kanban view
 - Website branding now routes through a shared `Logo` component sourced from `favicon.svg`
@@ -42,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Copilot removed from hero section agent grid on the website
 
 ### Fixed
+- Duplicate ACP approval surfaces no longer appear for the same operation when tool-call cards, permission requests, and hook permissions arrive through overlapping event paths
 - Text delta whitespace preserved in Codex native streaming — leading spaces in LLM tokens (e.g. `" world"`) are no longer trimmed, fixing broken inter-word spacing
 - Reconnecting a thread with an already-bound ACP session no longer issues a duplicate resume
 - Codex turn interrupts now include the active turn id

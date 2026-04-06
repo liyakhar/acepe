@@ -2,6 +2,17 @@
 
 Tauri 2 + SvelteKit 2 + Svelte 5 desktop app for AI agent interaction via Agent Client Protocol.
 
+## Project Vision
+
+Acepe is building a **production-grade Agentic Developer Environment**: a native workspace where developers can run, supervise, compare, and ship work from multiple coding agents without giving up engineering discipline.
+
+The project should trend toward:
+
+- **Agent-agnostic architecture** at the core, with provider-specific quirks pushed to adapters and edges
+- **Production-grade reviewability** so users can inspect tool calls, permissions, diffs, checkpoints, and PR-ready changes
+- **Reliable long-running workflows** for serious project work, not one-off demo interactions
+- **Durable internal models** that make it easier to add or replace agents without rewriting the product around each integration
+
 ## Package Manager
 
 `bun` (not `npm`)
@@ -31,6 +42,8 @@ cargo clippy       # Rust lint (in src-tauri/)
 - NEVER use `any` or `unknown` - use proper types or Zod for validation.
 - ALWAYS run `bun run check` when you make TypeScript changes.
 - ALWAYS invoke the Svelte skills before modifying or creating Svelte code: `svelte-runes`, `svelte-components`, `sveltekit-structure`, `sveltekit-data-flow`.
+- It is explicitly encouraged to suggest **architecture overhauls** when you find recurring smells, leaky provider-specific logic, or brittle abstractions that should be replaced with production-grade code.
+- Do not preserve a bad pattern just because it is already widespread. Prefer durable, well-tested abstractions that improve the long-term shape of the codebase, as long as the refactor stays grounded in real product needs and verified behavior.
 - ALL new UI components must be dumb/presentational and live in `packages/ui`. Keep Tauri, store, runtime, and app-specific orchestration out of those components so they can be exported from `@acepe/ui` and reused by both `packages/desktop` and `packages/website`.
 - NEVER use `$effect` in Svelte 5 components. Effects create causal loops when they read and write connected state. Use `$derived` for computed values and event handlers for actions. If an effect is unavoidable, guard writes with comparison.
 - NEVER use spread syntax (`...obj`). Explicitly enumerate properties so data flow stays obvious and TypeScript can track provenance.
