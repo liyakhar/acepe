@@ -293,12 +293,22 @@
 	}
 }
 
+@keyframes streaming-live-refresh {
+	from {
+		opacity: 0.72;
+	}
+}
+
 /* Streaming section wrappers are stable keyed divs that survive across
    render cycles. Animate the wrapper itself so inner {html} replacements
    don't restart the fade. Code block internals get animation disabled
    to match Cursor's approach. */
 .markdown-content > .streaming-section.streaming-fade-in {
 	animation: streaming-fade-in 250ms ease;
+}
+
+.markdown-content > .streaming-section.streaming-live-refresh {
+	animation: streaming-live-refresh 160ms ease-out;
 }
 
 .markdown-content > .streaming-section .code-block-wrapper,

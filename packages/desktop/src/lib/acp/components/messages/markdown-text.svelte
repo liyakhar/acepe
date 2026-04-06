@@ -30,7 +30,8 @@ import {
 import { mountFileBadges } from "./logic/mount-file-badges.js";
 import { mountGitHubBadges } from "./logic/mount-github-badges.js";
 import { parseContentBlocks } from "./logic/parse-content-blocks.js";
-import { splitStreamingSections } from "./logic/split-streaming-sections.js";
+import { parseStreamingTail } from "./logic/parse-streaming-tail.js";
+import { streamingTailRefresh } from "./logic/streaming-tail-refresh.js";
 
 const logger = createLogger({ id: "markdown-text", name: "Markdown Text" });
 const STREAMING_SYNC_RESULT = {
@@ -39,15 +40,7 @@ const STREAMING_SYNC_RESULT = {
 	needsAsync: false,
 } satisfies SyncRenderResult;
 
-/** How often (ms) to re-render markdown while streaming. */
-const STREAMING_RENDER_INTERVAL_MS = 150;
-
-/**
- * Throttled markdown HTML produced during streaming.
- * Leading edge: rendered immediately when streaming starts.
- * Trailing: re-rendered every STREAMING_RENDER_INTERVAL_MS via setInterval.
- */
-let streamingRenderedHtml = $state<string | null>(null);
+const EMPTY_STREAMING_TAIL = { sections: [] };
 
 // Get session context (set by VirtualizedEntryList)
 const sessionContext = useSessionContext();
@@ -128,35 +121,6 @@ $effect(() => {
 			);
 		})();
 	}
-});
-
-// Throttled markdown rendering during streaming.
-// Leading edge: render immediately when streaming starts.
-// Trailing: re-render at fixed intervals so we don't parse markdown on every chunk.
-// The effect only depends on `isStreaming`; `text` is read via untrack / prop getter
-// inside the interval so chunk arrivals don't re-run the effect itself.
-$effect(() => {
-	if (!isStreaming) {
-		if (streamingRenderedHtml !== null) {
-			streamingRenderedHtml = null;
-		}
-		return;
-	}
-
-	// Leading edge: render the current text right away
-	const leadingResult = renderMarkdownSync(untrack(() => text));
-	streamingRenderedHtml = leadingResult.html;
-
-	// Re-render at a fixed cadence while streaming continues
-	const interval = setInterval(() => {
-		const result = renderMarkdownSync(text);
-		const nextHtml = result.html;
-		if (nextHtml !== null && nextHtml !== streamingRenderedHtml) {
-			streamingRenderedHtml = nextHtml;
-		}
-	}, STREAMING_RENDER_INTERVAL_MS);
-
-	return () => clearInterval(interval);
 });
 
 // Try sync rendering first (eliminates flicker for most messages)
@@ -263,15 +227,16 @@ const visibleHtml = $derived.by(() => {
 	if (isStreaming) return null;
 	return syncResult.html ?? asyncHtml ?? null;
 });
-const streamingSections = $derived.by(() => {
-	if (streamingRenderedHtml === null) {
-		return [];
+const streamingTail = $derived.by(() => {
+	if (!isStreaming) {
+		return EMPTY_STREAMING_TAIL;
 	}
 
-	return splitStreamingSections(streamingRenderedHtml);
+	return parseStreamingTail(text);
 });
 const error = $derived(asyncError);
 const isLoading = $derived(syncResult.needsAsync && asyncPending);
+let streamingSettledHtmlByKey = $state<ReadonlyMap<string, string>>(new Map());
 
 // Parse content blocks from HTML (extracts mermaid, github badges, etc.)
 // File badge placeholders stay as inline <span>s — mounted as Svelte components below.
@@ -306,6 +271,34 @@ $effect(() => {
 		cleanupFile();
 		cleanupGitHub();
 	};
+});
+
+$effect(() => {
+	if (!isStreaming) {
+		streamingSettledHtmlByKey = new Map();
+		return;
+	}
+
+	const previousSettledHtmlByKey = untrack(() => streamingSettledHtmlByKey);
+	const nextSettledHtmlByKey = new Map<string, string>();
+	for (const section of streamingTail.sections) {
+		if (section.kind !== "settled") {
+			continue;
+		}
+
+		const cachedHtml = previousSettledHtmlByKey.get(section.key);
+		if (cachedHtml !== undefined) {
+			nextSettledHtmlByKey.set(section.key, cachedHtml);
+			continue;
+		}
+
+		const result = renderMarkdownSync(section.markdown);
+		if (result.html !== null) {
+			nextSettledHtmlByKey.set(section.key, result.html);
+		}
+	}
+
+	streamingSettledHtmlByKey = nextSettledHtmlByKey;
 });
 
 /**
@@ -432,8 +425,8 @@ function handleKeydown(event: KeyboardEvent) {
 			{@html visibleHtml}
 		</div>
 	{/if}
-{:else if isStreaming && streamingRenderedHtml}
-	<!-- Streaming markdown: rendered at throttled intervals, without badges or special blocks -->
+{:else if isStreaming}
+	<!-- Streaming markdown: keep settled blocks stable and only update the live tail in place -->
 	<div
 		class="markdown-content text-sm text-foreground leading-relaxed"
 		role="button"
@@ -442,13 +435,36 @@ function handleKeydown(event: KeyboardEvent) {
 		onkeydown={handleKeydown}
 		use:streamingReveal={{ active: isStreaming }}
 	>
-		{#each streamingSections as section (section.key)}
-			<div class="streaming-section" data-streaming-section-key={section.key}>
-				{@html section.html}
+		{#each streamingTail.sections as section (section.key)}
+			<div
+				class="streaming-section"
+				data-streaming-section-key={section.key}
+				use:streamingTailRefresh={{
+					active: section.kind !== "settled",
+					value:
+						section.kind === "settled"
+							? ""
+							: section.kind === "live-code"
+								? section.code
+								: section.text,
+				}}
+			>
+				{#if section.kind === "settled"}
+					{@const settledHtml = streamingSettledHtmlByKey.get(section.key)}
+					{#if settledHtml}
+						{@html settledHtml}
+					{:else}
+						<div class="streaming-live-text whitespace-pre-wrap">{section.markdown}</div>
+					{/if}
+				{:else if section.kind === "live-code"}
+					<pre class="streaming-live-code"><code>{section.code}</code></pre>
+				{:else}
+					<div class="streaming-live-text whitespace-pre-wrap">{section.text}</div>
+				{/if}
 			</div>
 		{/each}
 	</div>
-{:else if isLoading || isStreaming}
+{:else if isLoading}
 	<!-- Show plain text with min-height while async rendering (rare: large messages only) -->
 	<div class="markdown-loading text-sm text-foreground whitespace-pre-wrap leading-relaxed">
 		{text}

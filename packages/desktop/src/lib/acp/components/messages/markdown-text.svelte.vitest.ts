@@ -356,7 +356,32 @@ describe("MarkdownText", () => {
 		expect(renderMarkdownMock).toHaveBeenCalledTimes(2);
 	});
 
-	it("renders markdown during streaming with throttled sync rendering", async () => {
+	it("renders settled blocks once and keeps the trailing streaming text live", async () => {
+		renderMarkdownSyncMock.mockImplementation((text) => ({
+			html: text === "# Hello streaming" ? "<h1>Hello streaming</h1>" : `<p>${text}</p>`,
+			fromCache: false,
+			needsAsync: false,
+		}));
+
+		const view = render(MarkdownText, {
+			text: "# Hello streaming\n\nBody",
+			isStreaming: true,
+		});
+
+		await waitFor(() => {
+			expect(view.container.querySelector(".markdown-content h1")?.textContent).toBe(
+				"Hello streaming"
+			);
+			expect(view.container.querySelector(".streaming-live-text")?.textContent).toContain("Body");
+		});
+
+		expect(renderMarkdownSyncMock).toHaveBeenCalledTimes(1);
+		expect(renderMarkdownSyncMock).toHaveBeenCalledWith("# Hello streaming");
+		expect(mountFileBadgesMock).not.toHaveBeenCalled();
+		expect(mountGitHubBadgesMock).not.toHaveBeenCalled();
+	});
+
+	it("updates the live streaming tail in place without rerunning full markdown rendering", async () => {
 		renderMarkdownSyncMock.mockImplementation((text) => ({
 			html: `<p>${text}</p>`,
 			fromCache: false,
@@ -364,66 +389,83 @@ describe("MarkdownText", () => {
 		}));
 
 		const view = render(MarkdownText, {
-			text: "# Hello streaming",
+			text: "Hello",
 			isStreaming: true,
 		});
 
-		// Should render markdown content during streaming (not plain text)
-		await waitFor(() => {
-			expect(view.container.querySelector(".markdown-content")).not.toBeNull();
-			expect(view.container.querySelector(".markdown-loading")).toBeNull();
+		const firstLiveSection = await waitFor(() => {
+			const section = view.container.querySelector('[data-streaming-section-key="LIVE:0"]');
+			expect(section).not.toBeNull();
+			expect(section?.textContent).toContain("Hello");
+			expect(section?.classList.contains("streaming-live-refresh")).toBe(true);
+			return section;
 		});
 
-		// renderMarkdownSync should have been called during streaming
-		expect(renderMarkdownSyncMock).toHaveBeenCalledWith("# Hello streaming");
+		expect(view.container.querySelector(".streaming-live-text")).not.toBeNull();
+		expect(renderMarkdownSyncMock).not.toHaveBeenCalled();
 
-		// File/GitHub badges should NOT be mounted during streaming
-		expect(mountFileBadgesMock).not.toHaveBeenCalled();
-		expect(mountGitHubBadgesMock).not.toHaveBeenCalled();
+		await view.rerender({
+			text: "Hello world",
+			isStreaming: true,
+		});
+
+		await waitFor(() => {
+			expect(firstLiveSection?.textContent).toContain("Hello world");
+			expect(firstLiveSection?.classList.contains("streaming-live-refresh")).toBe(true);
+		});
+
+		expect(view.container.querySelector('[data-streaming-section-key="LIVE:0"]')).toBe(
+			firstLiveSection
+		);
+		expect(renderMarkdownSyncMock).not.toHaveBeenCalled();
 	});
 
 	it("keeps stable streaming sections while append-only markdown grows", async () => {
 		renderMarkdownSyncMock.mockImplementation((text) => {
-			if (text === "first") {
+			if (text === "# Title") {
 				return {
-					html: "<p>Hello</p>",
+					html: "<h1>Title</h1>",
 					fromCache: false,
 					needsAsync: false,
 				};
 			}
 
 			return {
-				html: "<p>Hello world</p><p>Next block</p>",
+				html: `<p>${text}</p>`,
 				fromCache: false,
 				needsAsync: false,
 			};
 		});
 
 		const view = render(MarkdownText, {
-			text: "first",
+			text: "# Title\n\nHello",
 			isStreaming: true,
 		});
 
 		const firstSection = await waitFor(() => {
-			const section = view.container.querySelector('[data-streaming-section-key="P:0"]');
+			const section = view.container.querySelector('[data-streaming-section-key="SETTLED:0"]');
 			expect(section).not.toBeNull();
 			return section;
 		});
+		const liveSection = view.container.querySelector('[data-streaming-section-key="LIVE:1"]');
 
 		await view.rerender({
-			text: "second",
+			text: "# Title\n\nHello world",
 			isStreaming: true,
 		});
 
 		await waitFor(() => {
-			expect(view.container.querySelector('[data-streaming-section-key="P:1"]')).not.toBeNull();
+			expect(view.container.querySelector('[data-streaming-section-key="LIVE:1"]')?.textContent).toContain(
+				"Hello world"
+			);
 		});
 
-		expect(view.container.querySelector('[data-streaming-section-key="P:0"]')).toBe(firstSection);
-		expect(firstSection?.textContent).toContain("Hello world");
+		expect(view.container.querySelector('[data-streaming-section-key="SETTLED:0"]')).toBe(firstSection);
+		expect(view.container.querySelector('[data-streaming-section-key="LIVE:1"]')).toBe(liveSection);
+		expect(renderMarkdownSyncMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("falls back to plain text during streaming when sync renderer returns null", async () => {
+	it("renders an open fenced code block as a stable live code tail", async () => {
 		renderMarkdownSyncMock.mockImplementation(() => ({
 			html: null,
 			fromCache: false,
@@ -431,21 +473,17 @@ describe("MarkdownText", () => {
 		}));
 
 		const view = render(MarkdownText, {
-			text: "# Large streaming content",
+			text: "```ts\nconst a = 1;",
 			isStreaming: true,
 		});
 
-		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		await waitFor(() => {
+			expect(view.container.querySelector(".streaming-live-code code")?.textContent).toContain(
+				"const a = 1;"
+			);
+		});
 
-		// Sync renderer was called but returned null (e.g. renderer not ready or text too large)
-		expect(renderMarkdownSyncMock).toHaveBeenCalled();
-
-		// Should fall back to plain text
-		expect(view.container.querySelector(".markdown-content")).toBeNull();
-		expect(view.container.querySelector(".markdown-loading")).not.toBeNull();
-		expect(view.container.textContent).toContain("Large streaming content");
-
-		// Async rendering should NOT be triggered during streaming
+		expect(renderMarkdownSyncMock).not.toHaveBeenCalled();
 		expect(renderMarkdownMock).not.toHaveBeenCalled();
 	});
 
@@ -466,7 +504,7 @@ describe("MarkdownText", () => {
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 		expect(renderMarkdownMock).not.toHaveBeenCalled();
-		expect(view.container.querySelector(".markdown-content")).toBeNull();
+		expect(view.container.querySelector(".markdown-content")).not.toBeNull();
 		expect(view.container.textContent).toContain("Streaming title");
 		expect(mountFileBadgesMock).not.toHaveBeenCalled();
 		expect(mountGitHubBadgesMock).not.toHaveBeenCalled();
@@ -515,13 +553,11 @@ describe("MarkdownText", () => {
 
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		// Sync rendering IS attempted during streaming (throttled), but returns null for large text
-		expect(renderMarkdownSyncMock).toHaveBeenCalled();
+		expect(view.container.querySelector(".markdown-content")).not.toBeNull();
 		// Async rendering and repo-context fetch are still deferred until streaming settles
 		expect(renderMarkdownMock).not.toHaveBeenCalled();
 		expect(getRepoContextMock).not.toHaveBeenCalled();
-		// Falls back to plain text since sync returned null
-		expect(view.container.querySelector(".markdown-loading")?.textContent).toContain("abcdef1");
+		expect(view.container.textContent).toContain("abcdef1");
 
 		await view.rerender({
 			text: chunk,

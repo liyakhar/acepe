@@ -13,6 +13,8 @@ describe("markdown prose styles", () => {
 	it("animates streaming section wrappers directly and disables code block animation", () => {
 		expect(source).toContain(".markdown-content > .streaming-section.streaming-fade-in");
 		expect(source).toContain("animation: streaming-fade-in 250ms ease;");
+		expect(source).toContain(".markdown-content > .streaming-section.streaming-live-refresh");
+		expect(source).toContain("animation: streaming-live-refresh 160ms ease-out;");
 		expect(source).toContain(".markdown-content > .streaming-section .code-block-wrapper");
 		expect(source).toContain("animation: none !important;");
 	});
