@@ -12,10 +12,9 @@
 		HeaderCell,
 		HeaderTitleCell,
 	} from "../panel-header/index.js";
-	import { ProjectLetterBadge } from "../project-letter-badge/index.js";
-	import { SegmentedProgress } from "../segmented-progress/index.js";
-	import { TextShimmer } from "../text-shimmer/index.js";
-	import type { KanbanCardData } from "./types.js";
+import { SegmentedProgress } from "../segmented-progress/index.js";
+import { TextShimmer } from "../text-shimmer/index.js";
+import type { KanbanCardData } from "./types.js";
 
 	interface Props {
 		card: KanbanCardData;
@@ -58,6 +57,11 @@
 	const hasMenu = $derived(menu !== undefined);
 	const hasClose = $derived(Boolean(onClose));
 	const headerDiffDivider = $derived(hasMenu ? true : hasClose);
+	const projectBadgeLabel = $derived(
+		card.sequenceId !== null
+			? `${card.projectName.charAt(0).toUpperCase()} #${card.sequenceId}`
+			: card.projectName.charAt(0).toUpperCase()
+	);
 
 	function handleKeydown(event: KeyboardEvent): void {
 		if (!onclick) return;
@@ -83,12 +87,12 @@
 	<div data-testid="kanban-card-header">
 		<EmbeddedPanelHeader class="bg-card/50">
 			<HeaderCell withDivider={false}>
-				<div class="flex items-center gap-0.5 shrink-0">
-					<ProjectLetterBadge name={card.projectName} color={card.projectColor} size={14} class="shrink-0" />
-					{#if card.sequenceId !== null}
-						<span class="font-mono text-[10px] font-semibold text-muted-foreground/80">#{card.sequenceId}</span>
-					{/if}
-				</div>
+				<span
+					class="inline-flex h-[14px] shrink-0 items-center rounded-[4px] px-1 font-mono text-[10px] font-semibold"
+					style="background-color: color-mix(in srgb, {card.projectColor} 16%, transparent); color: {card.projectColor};"
+				>
+					{projectBadgeLabel}
+				</span>
 			</HeaderCell>
 			<HeaderCell>
 				<img src={card.agentIconSrc} alt={card.agentLabel} width="14" height="14" class="shrink-0 rounded-sm" />
