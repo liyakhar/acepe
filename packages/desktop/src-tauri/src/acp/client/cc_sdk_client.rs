@@ -43,8 +43,8 @@ use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher, Dispatch
 mod permissions;
 
 use permissions::{
-    build_denied_hook_output, HookPermissionRequest, PendingPermissionKind, PermissionBridge,
-    PermissionUiDispatch, QuestionPermissionRequest, ToolPermissionRequest,
+    build_denied_hook_output, HookPermissionRequest, PermissionBridge, PermissionUiDispatch,
+    QuestionPermissionRequest, ToolPermissionRequest,
 };
 
 #[derive(Debug, Clone)]
@@ -2419,6 +2419,7 @@ impl AgentClient for CcSdkClaudeClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::permissions::PendingPermissionKind;
     use crate::acp::session_update::ContentChunk;
     use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
     use cc_sdk::{CanUseTool, HookCallback};
