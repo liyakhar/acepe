@@ -14,10 +14,12 @@ import { extractCompactPermissionDisplay } from "./permission-display.js";
 interface Props {
 	permission: PermissionRequest;
 	compact?: boolean;
+	inline?: boolean;
+	hideHeader?: boolean;
 	projectPath?: string | null;
 }
 
-let { permission, compact = false, projectPath = null }: Props = $props();
+let { permission, compact = false, inline = false, hideHeader = false, projectPath = null }: Props = $props();
 
 const permissionStore = getPermissionStore();
 
@@ -39,11 +41,11 @@ function handleAlwaysAllow() {
 const greenColor = "var(--success)";
 const redColor = Colors[COLOR_NAMES.RED];
 const purpleColor = Colors[COLOR_NAMES.PURPLE];
-const buttonClass = $derived(compact ? "size-6 justify-center px-0" : "flex-1 justify-center");
+const buttonClass = $derived(compact || inline ? "justify-center" : "flex-1 justify-center");
 </script>
 
-<div class="flex w-full min-w-0 flex-col gap-1">
-	{#if compact}
+<div class="flex min-w-0 flex-col gap-1" class:w-full={!inline}>
+	{#if !hideHeader}
 		<div class="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
 			<ShieldWarning weight="fill" class="size-3 shrink-0" style="color: {purpleColor}" />
 			<span class="shrink-0 font-medium text-muted-foreground">{compactDisplay.label}</span>
@@ -57,21 +59,21 @@ const buttonClass = $derived(compact ? "size-6 justify-center px-0" : "flex-1 ju
 		</div>
 	{/if}
 
-	<div class="flex w-full items-center gap-1">
+	<div class="flex items-center gap-1" class:w-full={!inline && !compact} class:justify-end={inline || compact}>
 		<Button variant="toolbar" size="toolbar" class={buttonClass} onclick={handleReject}>
 			<XCircle weight="fill" class="size-3 shrink-0" style="color: {redColor}" />
-			{#if !compact}<span>{m.permission_deny()}</span>{/if}
+			<span>{m.permission_deny()}</span>
 		</Button>
 
 		<Button variant="toolbar" size="toolbar" class={buttonClass} onclick={handleAllowOnce}>
 			<CheckCircle weight="fill" class="size-3 shrink-0" style="color: {greenColor}" />
-			{#if !compact}<span>{m.permission_allow()}</span>{/if}
+			<span>{m.permission_allow()}</span>
 		</Button>
 
 		{#if hasAlwaysOption}
 			<Button variant="toolbar" size="toolbar" class={buttonClass} onclick={handleAlwaysAllow}>
 				<ShieldCheck weight="fill" class="size-3 shrink-0" style="color: {purpleColor}" />
-				{#if !compact}<span>{m.permission_always_allow()}</span>{/if}
+				<span>{m.permission_always_allow()}</span>
 			</Button>
 		{/if}
 	</div>

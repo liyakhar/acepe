@@ -98,14 +98,11 @@
 						<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
 					{/if}
 				</span>
+				<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
 				{#if filePath}
-					<div class="min-w-0 flex-1">
+					<div class="min-w-0 flex-1 cursor-pointer">
 						<FilePathBadge {filePath} interactive={false} size="sm" />
 					</div>
-				{:else if !command}
-					<span class="min-w-0 truncate text-[10px] font-mono font-medium text-muted-foreground">
-						{verb}
-					</span>
 				{/if}
 				{#if sessionProgress}
 					<div class="shrink-0 ml-auto">
@@ -130,9 +127,9 @@
 				</div>
 			{/if}
 
-			<!-- Action buttons: full width -->
-			<div class="flex items-center">
-				<PermissionActionBar permission={currentPermission} />
+			<!-- Action buttons: right-aligned with labels -->
+			<div class="flex items-center justify-end">
+				<PermissionActionBar permission={currentPermission} inline hideHeader />
 			</div>
 		</div>
 	</div>

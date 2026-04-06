@@ -15,6 +15,7 @@ import {
 import { getToolStatus } from "../../utils/tool-state-utils.js";
 import { getWorkerPool } from "../../utils/worker-pool-singleton.js";
 import { extractPermissionFilePath } from "./permission-display.js";
+import { resolveToolCallEditDiffs } from "./tool-call-edit/logic/resolve-tool-call-edit-diffs.js";
 
 interface ToolCallEditProps {
 	toolCall: ToolCall;
@@ -49,45 +50,34 @@ function normalizeFilePath(value: string | null | undefined): string | null {
 	return trimmed.length > 0 ? trimmed : null;
 }
 
-// Merge streaming args with tool call args for progressive display
-const mergedArgs = $derived.by(() => {
+const editDiffs = $derived.by(() => {
 	const streamingArgs = sessionStore.getStreamingArguments(toolCall.id);
-	if (!streamingArgs || streamingArgs.kind !== "edit") return toolCall.arguments;
+	const resolvedDiffs = resolveToolCallEditDiffs(toolCall.arguments, streamingArgs);
 
-	const base = toolCall.arguments;
-	if (base.kind === "edit") {
-		const baseEdit = base.edits[0] ?? {};
-		const streamEdit = streamingArgs.edits[0] ?? {};
+	return resolvedDiffs.map((diff, index) => {
+		const filePath =
+			normalizeFilePath(diff.filePath) ??
+			(index === 0
+				? (normalizeFilePath(locationFilePath) ?? normalizeFilePath(permissionFilePath))
+				: null);
+		const diffStats = calculateDiffStats({
+			oldString: diff.oldString,
+			newString: diff.newString,
+		}) ?? { added: 0, removed: 0 };
+
 		return {
-			...base,
-			edits: [
-				{
-					...baseEdit,
-					filePath: streamEdit.filePath ?? baseEdit.filePath,
-					oldString: streamEdit.oldString ?? baseEdit.oldString,
-					newString: streamEdit.newString ?? baseEdit.newString,
-					content: streamEdit.content ?? baseEdit.content,
-				},
-				...base.edits.slice(1),
-			],
+			filePath,
+			fileName: getFileName(filePath),
+			oldString: diff.oldString,
+			newString: diff.newString,
+			additions: diffStats.added,
+			deletions: diffStats.removed,
 		};
-	}
-	return base;
+	});
 });
 
-const firstEdit = $derived(mergedArgs.kind === "edit" ? (mergedArgs.edits[0] ?? null) : null);
-const filePath = $derived(
-	firstEdit
-		? (normalizeFilePath(firstEdit.filePath) ??
-				normalizeFilePath(locationFilePath) ??
-				normalizeFilePath(permissionFilePath))
-		: null
-);
-const fileName = $derived(getFileName(filePath));
-const diffStats = $derived(firstEdit ? calculateDiffStats(firstEdit) : null);
-
-const oldString = $derived(firstEdit?.oldString ?? null);
-const newString = $derived(firstEdit?.newString ?? firstEdit?.content ?? null);
+const primaryDiff = $derived(editDiffs[0] ?? null);
+const filePath = $derived(primaryDiff?.filePath ?? null);
 
 // Streaming detection
 const isStreaming = $derived(
@@ -109,13 +99,18 @@ const isAwaitingApproval = $derived(
 	Boolean(pendingPermission) && !isApplied && !toolStatus.isError
 );
 
-const isFileClickable = $derived(Boolean(filePath && projectPath));
+const isFileClickable = $derived(Boolean(projectPath));
 
-function handleFileClick() {
-	if (filePath && projectPath) {
-		panelStore.openFilePanel(getRelativeFilePath(filePath, projectPath) ?? filePath, projectPath, {
-			ownerPanelId,
-		});
+function handleFileClick(selectedFilePath?: string | null) {
+	const targetFilePath = selectedFilePath ?? filePath;
+	if (targetFilePath && projectPath) {
+		panelStore.openFilePanel(
+			getRelativeFilePath(targetFilePath, projectPath) ?? targetFilePath,
+			projectPath,
+			{
+				ownerPanelId,
+			}
+		);
 	}
 }
 
@@ -126,12 +121,13 @@ const themeNames = { dark: "Cursor Dark", light: "pierre-light" };
 </script>
 
 <AgentToolEdit
+	diffs={editDiffs}
 	{filePath}
-	{fileName}
-	additions={diffStats?.added ?? 0}
-	deletions={diffStats?.removed ?? 0}
-	{oldString}
-	{newString}
+	fileName={primaryDiff?.fileName ?? null}
+	additions={primaryDiff?.additions ?? 0}
+	deletions={primaryDiff?.deletions ?? 0}
+	oldString={primaryDiff?.oldString ?? null}
+	newString={primaryDiff?.newString ?? null}
 	isStreaming={isDiffStreaming}
 	status={agentStatus}
 	applied={isApplied}
