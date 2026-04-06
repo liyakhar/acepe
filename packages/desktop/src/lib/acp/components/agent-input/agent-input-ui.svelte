@@ -445,10 +445,26 @@ let isApplyingProvisionalToolbarSelections = $state(false);
 let provisionalModeId = $state<string | null>(null);
 let provisionalModelId = $state<string | null>(null);
 let provisionalAutonomousEnabled = $state(false);
+let pendingSessionConfigOperation: Promise<boolean> | null = null;
 let editorRef: HTMLDivElement | null = $state(null);
 let overlayMode: "preview" | "edit" | null = $state(null);
 let overlayRefId: string | null = $state(null);
 let overlayAnchorRect: DOMRect | null = $state(null);
+
+function queueSessionConfigOperation(operation: () => Promise<boolean>): Promise<boolean> {
+	const current = pendingSessionConfigOperation ?? Promise.resolve(true);
+	const next = current.then(
+		() => operation(),
+		() => operation()
+	);
+	let wrapped: Promise<boolean>;
+	wrapped = next.finally(() => {
+		if (pendingSessionConfigOperation === wrapped) {
+			pendingSessionConfigOperation = null;
+		}
+	});
+	return wrapped;
+}
 const primaryButtonIntent = $derived.by(() =>
 	resolvePrimaryButtonIntent({
 		hasDraftInput,
@@ -1048,6 +1064,13 @@ async function handleSend() {
 		return;
 	}
 
+	if (pendingSessionConfigOperation) {
+		const readyToSend = await pendingSessionConfigOperation;
+		if (!readyToSend) {
+			return;
+		}
+	}
+
 	logger.info("handleSend: preparing send", {
 		panelId: props.panelId,
 		sessionId: props.sessionId ?? null,
@@ -1289,23 +1312,30 @@ function handlePrimaryButtonClick(): void {
 // Handle mode change
 async function handleModeChange(modeId: string) {
 	if (props.sessionId) {
-		const shouldAnnounceForcedOff =
-			autonomousToggleActive &&
-			!resolveAutonomousSupport({
-				agentId: capabilitiesAgentId,
-				connectionPhase: sessionRuntimeState ? sessionRuntimeState.connectionPhase : null,
-				currentUiModeId: modeId,
-				agents: agentStore.agents,
-			}).supported;
-		const result = await sessionStore.setMode(props.sessionId, modeId);
-		if (result.isErr()) {
-			toast.error("Failed to switch mode.");
-			return;
-		}
+		pendingSessionConfigOperation = queueSessionConfigOperation(async () => {
+			const shouldAnnounceForcedOff =
+				autonomousToggleActive &&
+				!resolveAutonomousSupport({
+					agentId: capabilitiesAgentId,
+					connectionPhase: sessionRuntimeState ? sessionRuntimeState.connectionPhase : null,
+					currentUiModeId: modeId,
+					agents: agentStore.agents,
+				}).supported;
+			const result = await sessionStore.setMode(props.sessionId, modeId);
+			if (result.isErr()) {
+				toast.error("Failed to switch mode.");
+				return false;
+			}
 
-		if (shouldAnnounceForcedOff) {
-			autonomousStatusMessage =
-				"Autonomous turned off because this mode is unsupported for the current agent.";
+			if (shouldAnnounceForcedOff) {
+				autonomousStatusMessage =
+					"Autonomous turned off because this mode is unsupported for the current agent.";
+			}
+			return true;
+		});
+		const modeApplied = await pendingSessionConfigOperation;
+		if (!modeApplied) {
+			return;
 		}
 		return;
 	}
@@ -1364,7 +1394,11 @@ async function handleAutonomousToggle(): Promise<void> {
 // Handle model change
 async function handleModelChange(modelId: string) {
 	if (props.sessionId) {
-		await sessionStore.setModel(props.sessionId, modelId);
+		pendingSessionConfigOperation = queueSessionConfigOperation(async () => {
+			const result = await sessionStore.setModel(props.sessionId, modelId);
+			return result.isOk();
+		});
+		await pendingSessionConfigOperation;
 		return;
 	}
 	provisionalModelId = modelId;

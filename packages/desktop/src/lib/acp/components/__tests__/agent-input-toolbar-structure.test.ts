@@ -78,4 +78,16 @@ describe("agent input toolbar structure", () => {
 		expect(agentInputSource).toContain("if (cycleModeOnShortcut(event)) {");
 		expect(agentInputSource).toContain('container?.addEventListener("keydown", handleInputContainerKeyDown);');
 	});
+
+	it("waits for in-flight session mode or model changes before sending", () => {
+		expect(agentInputSource).toMatch(
+			/async function handleSend\(\) \{[\s\S]*pendingSessionConfigOperation[\s\S]*captureAndClearInput\(\)/
+		);
+		expect(agentInputSource).toMatch(
+			/pendingSessionConfigOperation = queueSessionConfigOperation\([\s\S]*sessionStore\.setMode/
+		);
+		expect(agentInputSource).toMatch(
+			/pendingSessionConfigOperation = queueSessionConfigOperation\([\s\S]*sessionStore\.setModel/
+		);
+	});
 });
