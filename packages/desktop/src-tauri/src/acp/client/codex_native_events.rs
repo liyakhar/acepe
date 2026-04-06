@@ -691,7 +691,9 @@ fn text_chunk(text: &str) -> ContentChunk {
 #[cfg(test)]
 mod tests {
     use super::translate_codex_native_server_message;
-    use crate::acp::session_update::{SessionUpdate, TurnErrorData};
+    use crate::acp::session_update::{
+        SessionUpdate, ToolArguments, ToolCallStatus, ToolKind, TurnErrorData,
+    };
     use crate::acp::types::ContentBlock;
     use serde_json::json;
 
