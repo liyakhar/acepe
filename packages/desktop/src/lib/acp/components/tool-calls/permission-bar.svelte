@@ -1,5 +1,13 @@
 <script lang="ts">
+	import { FilePathBadge } from "@acepe/ui";
+	import ArrowsLeftRight from "phosphor-svelte/lib/ArrowsLeftRight";
+	import File from "phosphor-svelte/lib/File";
+	import GlobeHemisphereWest from "phosphor-svelte/lib/GlobeHemisphereWest";
+	import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
+	import PencilSimple from "phosphor-svelte/lib/PencilSimple";
 	import ShieldWarning from "phosphor-svelte/lib/ShieldWarning";
+	import Terminal from "phosphor-svelte/lib/Terminal";
+	import Trash from "phosphor-svelte/lib/Trash";
 	import { getPermissionStore } from "../../store/permission-store.svelte.js";
 	import { getSessionStore } from "../../store/session-store.svelte.js";
 	import type { PermissionRequest } from "../../types/permission.js";
@@ -7,20 +15,25 @@
 	import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
 	import { shouldHidePermissionBarForExitPlan } from "./exit-plan-helpers.js";
 	import PermissionActionBar from "./permission-action-bar.svelte";
-	import { extractPermissionCommand, extractPermissionToolKind } from "./permission-display.js";
+	import { extractCompactPermissionDisplay } from "./permission-display.js";
 
  	interface Props {
 		sessionId: string;
+		permission?: PermissionRequest | null;
 		isFullscreen?: boolean;
 		projectPath?: string | null;
 	}
 
-	let { sessionId, isFullscreen = false, projectPath = null }: Props = $props();
+	let { sessionId, permission = null, isFullscreen = false, projectPath = null }: Props = $props();
 
 	const permissionStore = getPermissionStore();
 	const sessionStore = getSessionStore();
 
 	const pendingPermissions = $derived.by(() => {
+		if (permission) {
+			return [permission];
+		}
+
 		const entries = sessionStore.getEntries(sessionId);
 		const visiblePermissions: PermissionRequest[] = [];
 
@@ -48,26 +61,49 @@
 		return `Permission ${currentStep} of ${sessionProgress.total}`;
 	});
 
-	function extractCommand(permission: PermissionRequest): string | null {
-		return extractPermissionCommand(permission);
-	}
-
-	function extractVerb(permission: PermissionRequest): string {
-		return extractPermissionToolKind(permission);
-	}
 </script>
 
 
 {#if currentPermission}
-	{@const command = extractCommand(currentPermission)}
-	{@const verb = extractVerb(currentPermission)}
+	{@const compactDisplay = extractCompactPermissionDisplay(currentPermission, projectPath)}
+	{@const kind = compactDisplay.kind}
+	{@const command = compactDisplay.command}
+	{@const filePath = compactDisplay.filePath}
+	{@const verb = compactDisplay.label}
 	{@const purpleColor = Colors[COLOR_NAMES.PURPLE]}
 	<div class="mx-auto w-full max-w-[320px] px-3">
 		<div class="flex min-w-0 flex-col gap-1 overflow-hidden rounded-sm border border-border/60 bg-accent/30 px-1.5 py-1 permission-card-enter">
-			<!-- Header row: verb + progress only -->
+			<!-- Header row: tool icon + file chip/summary + progress -->
 			<div class="flex min-w-0 items-center gap-1.5">
-				<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
-				<span class="text-[10px] font-mono font-medium text-muted-foreground shrink-0">{verb}</span>
+				<span
+					class="inline-flex shrink-0 items-center justify-center"
+					aria-label={verb}
+					title={verb}
+				>
+					{#if kind === "edit"}
+						<PencilSimple weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "read"}
+						<File weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "execute"}
+						<Terminal weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "search"}
+						<MagnifyingGlass weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "fetch" || kind === "web_search"}
+						<GlobeHemisphereWest weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "delete"}
+						<Trash weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "move"}
+						<ArrowsLeftRight weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else}
+						<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
+					{/if}
+				</span>
+				<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
+				{#if filePath}
+					<div class="min-w-0 flex-1 cursor-pointer">
+						<FilePathBadge {filePath} interactive={false} size="sm" />
+					</div>
+				{/if}
 				{#if sessionProgress}
 					<div class="shrink-0 ml-auto">
 						<VoiceDownloadProgress
@@ -82,7 +118,7 @@
 				{/if}
 			</div>
 
-			<!-- Command display (file path is visible inside the command) -->
+			<!-- Command display for execute permissions -->
 			{#if command}
 				<div class="max-h-[72px] overflow-y-auto rounded-sm bg-accent/40 px-2 py-1">
 					<code class="block min-w-0 whitespace-pre-wrap break-words font-mono text-[10px] text-foreground/70"
@@ -91,9 +127,9 @@
 				</div>
 			{/if}
 
-			<!-- Action buttons: full width -->
-			<div class="flex items-center">
-				<PermissionActionBar permission={currentPermission} />
+			<!-- Action buttons: right-aligned with labels -->
+			<div class="flex items-center justify-end">
+				<PermissionActionBar permission={currentPermission} inline hideHeader />
 			</div>
 		</div>
 	</div>
