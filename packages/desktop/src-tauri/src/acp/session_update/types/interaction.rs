@@ -15,6 +15,8 @@ pub struct ToolReference {
 pub struct PermissionData {
     pub id: String,
     pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_rpc_request_id: Option<u64>,
     pub permission: String,
     pub patterns: Vec<String>,
     pub metadata: serde_json::Value,

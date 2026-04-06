@@ -1061,6 +1061,7 @@ pub(super) fn convert_permission_asked_to_session_update(
         permission: PermissionData {
             id: event.id,
             session_id: session_id.clone(),
+            json_rpc_request_id: None,
             permission: event.permission,
             patterns: event.patterns,
             metadata: event.metadata,

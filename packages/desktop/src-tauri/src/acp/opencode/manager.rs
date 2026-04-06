@@ -585,9 +585,7 @@ impl OpenCodeManagerRegistry {
                     manager.set_app_handle(app_handle);
 
                     match manager.ensure_running().await {
-                        Ok(_port) => {
-                            Ok(Ok(Arc::new(TokioMutex::new(manager))))
-                        }
+                        Ok(_port) => Ok(Ok(Arc::new(TokioMutex::new(manager)))),
                         Err(err) => {
                             // Classify: is this permanent or transient?
                             let msg = err.to_string();
@@ -662,10 +660,7 @@ impl OpenCodeManagerRegistry {
         });
 
         if !to_stop.is_empty() {
-            tracing::info!(
-                count = to_stop.len(),
-                "Shutting down all OpenCode managers"
-            );
+            tracing::info!(count = to_stop.len(), "Shutting down all OpenCode managers");
 
             for (project_key, manager) in &to_stop {
                 let mut guard = manager.lock().await;
@@ -749,8 +744,7 @@ mod tests {
     /// two concurrent callers get the same Arc.
     #[tokio::test]
     async fn oncecell_single_flight_returns_same_arc() {
-        let cell: Arc<tokio::sync::OnceCell<Arc<String>>> =
-            Arc::new(tokio::sync::OnceCell::new());
+        let cell: Arc<tokio::sync::OnceCell<Arc<String>>> = Arc::new(tokio::sync::OnceCell::new());
 
         let cell1 = cell.clone();
         let cell2 = cell.clone();
@@ -770,14 +764,16 @@ mod tests {
             },
         );
 
-        assert!(Arc::ptr_eq(&r1, &r2), "Both callers should get the same Arc");
+        assert!(
+            Arc::ptr_eq(&r1, &r2),
+            "Both callers should get the same Arc"
+        );
     }
 
     /// Verify transient failure leaves cell uninitialized for retry.
     #[tokio::test]
     async fn oncecell_transient_failure_allows_retry() {
-        let cell: Arc<tokio::sync::OnceCell<String>> =
-            Arc::new(tokio::sync::OnceCell::new());
+        let cell: Arc<tokio::sync::OnceCell<String>> = Arc::new(tokio::sync::OnceCell::new());
         let attempt = Arc::new(std::sync::atomic::AtomicU32::new(0));
 
         // First call: fail transiently
@@ -789,7 +785,10 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
-        assert!(cell.get().is_none(), "Cell should remain uninitialized after transient failure");
+        assert!(
+            cell.get().is_none(),
+            "Cell should remain uninitialized after transient failure"
+        );
 
         // Second call: succeed
         let attempt_clone = attempt.clone();
@@ -800,15 +799,18 @@ mod tests {
             })
             .await;
         assert!(result.is_ok());
-        assert_eq!(attempt.load(Ordering::SeqCst), 2, "Init closure should run twice");
+        assert_eq!(
+            attempt.load(Ordering::SeqCst),
+            2,
+            "Init closure should run twice"
+        );
     }
 
     /// Verify permanent failure is stored in cell and prevents retry.
     #[tokio::test]
     async fn oncecell_permanent_failure_prevents_retry() {
         type Entry = Result<Arc<String>, PermanentInitError>;
-        let cell: Arc<tokio::sync::OnceCell<Entry>> =
-            Arc::new(tokio::sync::OnceCell::new());
+        let cell: Arc<tokio::sync::OnceCell<Entry>> = Arc::new(tokio::sync::OnceCell::new());
         let init_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
 
         // First call: permanent failure (stored as Ok(Err(...)))

@@ -1,10 +1,8 @@
-use crate::acp::parsers::AgentType;
 use crate::acp::session_update::{
     ContentChunk, PermissionData, QuestionData, QuestionItem, QuestionOption, SessionUpdate,
     ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference,
     TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
 };
-use crate::acp::session_update_parser::{parse_session_update_notification_with_agent, ParseResult};
 use crate::acp::types::ContentBlock;
 use serde_json::Value;
 
@@ -17,10 +15,8 @@ const REASONING_TEXT_DELTA_METHOD: &str = "item/reasoning/textDelta";
 const REASONING_SUMMARY_DELTA_METHOD: &str = "item/reasoning/summaryTextDelta";
 const TURN_COMPLETED_METHOD: &str = "turn/completed";
 const ERROR_METHOD: &str = "error";
-const SESSION_UPDATE_METHOD: &str = "session/update";
 const ITEM_STARTED_METHOD: &str = "item/started";
 const ITEM_COMPLETED_METHOD: &str = "item/completed";
-const COMMAND_OUTPUT_DELTA_METHOD: &str = "item/commandExecution/outputDelta";
 
 pub fn translate_codex_native_server_message(
     session_id: &str,
@@ -47,10 +43,8 @@ pub fn translate_codex_native_server_message(
         USER_INPUT_REQUEST_METHOD => translate_question_request(session_id, message, params),
         TURN_COMPLETED_METHOD => translate_turn_completed(session_id, params),
         ERROR_METHOD => translate_error_notification(session_id, params),
-        SESSION_UPDATE_METHOD => translate_session_update(session_id, message),
         ITEM_STARTED_METHOD => translate_item_started(session_id, params),
         ITEM_COMPLETED_METHOD => translate_item_completed(session_id, params),
-        COMMAND_OUTPUT_DELTA_METHOD => translate_command_output_delta(session_id, params),
         _ => {
             tracing::debug!(
                 method = %method,
@@ -114,6 +108,7 @@ fn translate_permission_request(
         permission: PermissionData {
             id: request_id,
             session_id: session_id.to_string(),
+            json_rpc_request_id: None,
             permission: permission_label(method, params),
             patterns: permission_patterns(params),
             metadata: Value::Object(params.clone()),
@@ -244,34 +239,6 @@ fn translate_error_notification(
     }]
 }
 
-/// Route `session/update` notifications through the existing session update parser,
-/// which delegates to `CodexParser` for tool call/update parsing. The Acepe session
-/// ID is injected into the params so downstream consumers receive the correct ID
-/// regardless of what the Codex app-server sends.
-fn translate_session_update(session_id: &str, message: &Value) -> Vec<SessionUpdate> {
-    let enriched = inject_session_id(message, session_id);
-    match parse_session_update_notification_with_agent(AgentType::Codex, &enriched) {
-        ParseResult::Typed(update) => {
-            let update = override_session_id(*update, session_id);
-            vec![update]
-        }
-        ParseResult::Raw {
-            error,
-            update_type,
-            ..
-        } => {
-            tracing::warn!(
-                session_id = %session_id,
-                update_type = %update_type,
-                error = %error,
-                "Failed to parse Codex session/update notification"
-            );
-            Vec::new()
-        }
-        ParseResult::NotSessionUpdate => Vec::new(),
-    }
-}
-
 /// Translate `item/started` into a `ToolCall` when the item is a tool execution.
 /// Non-tool item types (userMessage, reasoning, agentMessage) are ignored because
 /// they are already handled by their own dedicated delta methods.
@@ -279,7 +246,10 @@ fn translate_item_started(
     session_id: &str,
     params: Option<&serde_json::Map<String, Value>>,
 ) -> Vec<SessionUpdate> {
-    let Some(item) = params.and_then(|p| p.get("item")).and_then(Value::as_object) else {
+    let Some(item) = params
+        .and_then(|p| p.get("item"))
+        .and_then(Value::as_object)
+    else {
         return Vec::new();
     };
 
@@ -292,7 +262,7 @@ fn translate_item_started(
         return Vec::new();
     };
 
-    let (name, kind, arguments, title) = extract_tool_fields(item_type, item);
+    let fields = extract_tool_fields(item_type, item);
 
     let status = match item.get("status").and_then(Value::as_str) {
         Some("completed") => ToolCallStatus::Completed,
@@ -303,12 +273,12 @@ fn translate_item_started(
     vec![SessionUpdate::ToolCall {
         tool_call: ToolCallData {
             id: id.to_string(),
-            name,
-            arguments,
+            name: fields.name,
+            arguments: fields.arguments,
             status,
             result: None,
-            kind: Some(kind),
-            title: Some(title),
+            kind: Some(fields.kind),
+            title: Some(fields.title),
             locations: None,
             skill_meta: None,
             normalized_questions: None,
@@ -328,7 +298,10 @@ fn translate_item_completed(
     session_id: &str,
     params: Option<&serde_json::Map<String, Value>>,
 ) -> Vec<SessionUpdate> {
-    let Some(item) = params.and_then(|p| p.get("item")).and_then(Value::as_object) else {
+    let Some(item) = params
+        .and_then(|p| p.get("item"))
+        .and_then(Value::as_object)
+    else {
         return Vec::new();
     };
 
@@ -341,7 +314,7 @@ fn translate_item_completed(
         return Vec::new();
     };
 
-    let (_name, _kind, arguments, title) = extract_tool_fields(item_type, item);
+    let fields = extract_tool_fields(item_type, item);
 
     let status = match item.get("status").and_then(Value::as_str) {
         Some("failed") => ToolCallStatus::Failed,
@@ -355,9 +328,7 @@ fn translate_item_completed(
         .or_else(|| {
             item.get("exitCode")
                 .filter(|v| !v.is_null())
-                .map(|exit_code| {
-                    serde_json::json!({ "exitCode": exit_code })
-                })
+                .map(|exit_code| serde_json::json!({ "exitCode": exit_code }))
         });
 
     vec![SessionUpdate::ToolCallUpdate {
@@ -365,35 +336,8 @@ fn translate_item_completed(
             tool_call_id: id.to_string(),
             status: Some(status),
             result,
-            title: Some(title),
-            arguments: Some(arguments),
-            ..ToolCallUpdateData::default()
-        },
-        session_id: Some(session_id.to_string()),
-    }]
-}
-
-/// Translate `item/commandExecution/outputDelta` into a streaming `ToolCallUpdate`.
-fn translate_command_output_delta(
-    session_id: &str,
-    params: Option<&serde_json::Map<String, Value>>,
-) -> Vec<SessionUpdate> {
-    let Some(params) = params else {
-        return Vec::new();
-    };
-
-    let Some(item_id) = get_non_empty_string(params.get("itemId")) else {
-        return Vec::new();
-    };
-
-    let Some(delta) = get_text_content(params.get("delta")) else {
-        return Vec::new();
-    };
-
-    vec![SessionUpdate::ToolCallUpdate {
-        update: ToolCallUpdateData {
-            tool_call_id: item_id.to_string(),
-            streaming_input_delta: Some(delta.to_string()),
+            title: Some(fields.title),
+            arguments: Some(fields.arguments),
             ..ToolCallUpdateData::default()
         },
         session_id: Some(session_id.to_string()),
@@ -408,11 +352,16 @@ fn is_tool_item_type(item_type: &str) -> bool {
     )
 }
 
+/// Extracted tool metadata from a Codex item payload.
+struct ToolFields {
+    name: String,
+    kind: ToolKind,
+    arguments: ToolArguments,
+    title: String,
+}
+
 /// Extract unified tool fields from a Codex item payload.
-fn extract_tool_fields(
-    item_type: &str,
-    item: &serde_json::Map<String, Value>,
-) -> (String, ToolKind, ToolArguments, String) {
+fn extract_tool_fields(item_type: &str, item: &serde_json::Map<String, Value>) -> ToolFields {
     match item_type {
         "commandExecution" => {
             let display_command = item
@@ -425,14 +374,14 @@ fn extract_tool_fields(
                 .unwrap_or("")
                 .to_string();
 
-            (
-                "Execute".to_string(),
-                ToolKind::Execute,
-                ToolArguments::Execute {
-                    command: Some(display_command.clone()),
+            ToolFields {
+                name: "Execute".to_string(),
+                kind: ToolKind::Execute,
+                title: display_command.clone(),
+                arguments: ToolArguments::Execute {
+                    command: Some(display_command),
                 },
-                display_command,
-            )
+            }
         }
         "fileRead" => {
             let path = item
@@ -442,14 +391,15 @@ fn extract_tool_fields(
                 .unwrap_or("")
                 .to_string();
 
-            (
-                "Read".to_string(),
-                ToolKind::Read,
-                ToolArguments::Read {
-                    file_path: Some(path.clone()),
+            let title = format!("Read {path}");
+            ToolFields {
+                name: "Read".to_string(),
+                kind: ToolKind::Read,
+                arguments: ToolArguments::Read {
+                    file_path: Some(path),
                 },
-                format!("Read {path}"),
-            )
+                title,
+            }
         }
         "fileChange" => {
             let path = item
@@ -459,19 +409,20 @@ fn extract_tool_fields(
                 .unwrap_or("")
                 .to_string();
 
-            (
-                "Edit".to_string(),
-                ToolKind::Edit,
-                ToolArguments::Edit {
+            let title = format!("Edit {path}");
+            ToolFields {
+                name: "Edit".to_string(),
+                kind: ToolKind::Edit,
+                arguments: ToolArguments::Edit {
                     edits: vec![crate::acp::session_update::EditEntry {
-                        file_path: Some(path.clone()),
+                        file_path: Some(path),
                         old_string: None,
                         new_string: None,
                         content: None,
                     }],
                 },
-                format!("Edit {path}"),
-            )
+                title,
+            }
         }
         _ => {
             // fileSearch, codeEdit, or future types
@@ -482,94 +433,15 @@ fn extract_tool_fields(
                 .unwrap_or(item_type)
                 .to_string();
 
-            (
-                item_type.to_string(),
-                ToolKind::Other,
-                ToolArguments::Other {
+            ToolFields {
+                name: item_type.to_string(),
+                kind: ToolKind::Other,
+                arguments: ToolArguments::Other {
                     raw: serde_json::Value::Object(item.clone()),
                 },
-                label,
-            )
+                title: label,
+            }
         }
-    }
-}
-
-/// Inject our Acepe session ID into the notification params so the parser picks it up.
-fn inject_session_id(message: &Value, session_id: &str) -> Value {
-    let mut enriched = message.clone();
-    if let Some(params) = enriched.get_mut("params").and_then(Value::as_object_mut) {
-        params.insert(
-            "sessionId".to_string(),
-            Value::String(session_id.to_string()),
-        );
-        if let Some(update) = params.get_mut("update").and_then(Value::as_object_mut) {
-            update.insert(
-                "sessionId".to_string(),
-                Value::String(session_id.to_string()),
-            );
-        }
-    }
-    enriched
-}
-
-/// Ensure the parsed SessionUpdate carries the Acepe session ID.
-fn override_session_id(update: SessionUpdate, session_id: &str) -> SessionUpdate {
-    let sid = Some(session_id.to_string());
-    match update {
-        SessionUpdate::ToolCall {
-            tool_call,
-            session_id: _,
-        } => SessionUpdate::ToolCall {
-            tool_call,
-            session_id: sid,
-        },
-        SessionUpdate::ToolCallUpdate {
-            update,
-            session_id: _,
-        } => SessionUpdate::ToolCallUpdate {
-            update,
-            session_id: sid,
-        },
-        SessionUpdate::AgentMessageChunk {
-            chunk,
-            part_id,
-            message_id,
-            session_id: _,
-        } => SessionUpdate::AgentMessageChunk {
-            chunk,
-            part_id,
-            message_id,
-            session_id: sid,
-        },
-        SessionUpdate::AgentThoughtChunk {
-            chunk,
-            part_id,
-            message_id,
-            session_id: _,
-        } => SessionUpdate::AgentThoughtChunk {
-            chunk,
-            part_id,
-            message_id,
-            session_id: sid,
-        },
-        SessionUpdate::UsageTelemetryUpdate { mut data } => {
-            data.session_id = session_id.to_string();
-            SessionUpdate::UsageTelemetryUpdate { data }
-        }
-        SessionUpdate::TurnComplete { session_id: _ } => SessionUpdate::TurnComplete {
-            session_id: sid,
-        },
-        SessionUpdate::TurnError {
-            error,
-            session_id: _,
-        } => SessionUpdate::TurnError {
-            error,
-            session_id: sid,
-        },
-        // For variants that already carry their own session context or don't need
-        // override (Plan, AvailableCommandsUpdate, ConfigOptionUpdate, etc.),
-        // return as-is since their session_id comes from the params injection.
-        other => other,
     }
 }
 
@@ -910,12 +782,10 @@ mod tests {
 
         assert_eq!(updates.len(), 1);
         match &updates[0] {
-            SessionUpdate::AgentMessageChunk { chunk, .. } => {
-                match &chunk.content {
-                    ContentBlock::Text { text } => assert_eq!(text, " world"),
-                    other => panic!("unexpected content block: {other:?}"),
-                }
-            }
+            SessionUpdate::AgentMessageChunk { chunk, .. } => match &chunk.content {
+                ContentBlock::Text { text } => assert_eq!(text, " world"),
+                other => panic!("unexpected content block: {other:?}"),
+            },
             other => panic!("unexpected update: {other:?}"),
         }
     }
@@ -936,12 +806,10 @@ mod tests {
 
         assert_eq!(updates.len(), 1);
         match &updates[0] {
-            SessionUpdate::AgentMessageChunk { chunk, .. } => {
-                match &chunk.content {
-                    ContentBlock::Text { text } => assert_eq!(text, "\n"),
-                    other => panic!("unexpected content block: {other:?}"),
-                }
-            }
+            SessionUpdate::AgentMessageChunk { chunk, .. } => match &chunk.content {
+                ContentBlock::Text { text } => assert_eq!(text, "\n"),
+                other => panic!("unexpected content block: {other:?}"),
+            },
             other => panic!("unexpected update: {other:?}"),
         }
     }
@@ -964,107 +832,6 @@ mod tests {
     }
 
     #[test]
-    fn routes_session_update_tool_call_to_parser() {
-        let updates = translate_codex_native_server_message(
-            "session-codex-1",
-            &json!({
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {
-                    "sessionId": "codex-thread-1",
-                    "update": {
-                        "sessionUpdate": "tool_call",
-                        "toolCallId": "tool-read-1",
-                        "title": "Read file",
-                        "kind": "read",
-                        "status": "running",
-                        "rawInput": { "file_path": "/tmp/test.rs" }
-                    }
-                }
-            }),
-        );
-
-        assert_eq!(updates.len(), 1);
-        match &updates[0] {
-            SessionUpdate::ToolCall {
-                tool_call,
-                session_id,
-            } => {
-                assert_eq!(
-                    session_id.as_deref(),
-                    Some("session-codex-1"),
-                    "Should use Acepe session ID, not Codex thread ID"
-                );
-                assert_eq!(tool_call.id, "tool-read-1");
-            }
-            other => panic!("Expected ToolCall, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn routes_session_update_tool_call_update_to_parser() {
-        let updates = translate_codex_native_server_message(
-            "session-codex-1",
-            &json!({
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {
-                    "update": {
-                        "sessionUpdate": "tool_call_update",
-                        "toolCallId": "tool-edit-1",
-                        "status": "completed",
-                        "rawOutput": { "applied": true }
-                    }
-                }
-            }),
-        );
-
-        assert_eq!(updates.len(), 1);
-        match &updates[0] {
-            SessionUpdate::ToolCallUpdate {
-                update,
-                session_id,
-            } => {
-                assert_eq!(session_id.as_deref(), Some("session-codex-1"));
-                assert_eq!(update.tool_call_id, "tool-edit-1");
-                assert!(matches!(
-                    update.status,
-                    Some(crate::acp::session_update::ToolCallStatus::Completed)
-                ));
-            }
-            other => panic!("Expected ToolCallUpdate, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn routes_session_update_usage_to_parser() {
-        let updates = translate_codex_native_server_message(
-            "session-codex-1",
-            &json!({
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {
-                    "update": {
-                        "sessionUpdate": "usage_update",
-                        "size": 128000,
-                        "used": 4500
-                    }
-                }
-            }),
-        );
-
-        assert_eq!(updates.len(), 1);
-        match &updates[0] {
-            SessionUpdate::UsageTelemetryUpdate { data } => {
-                assert_eq!(data.session_id, "session-codex-1");
-                assert_eq!(data.tokens.total, Some(4500));
-                assert_eq!(data.context_window_size, Some(128000));
-            }
-            other => panic!("Expected UsageTelemetryUpdate, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn returns_empty_for_unknown_methods() {
         let updates = translate_codex_native_server_message(
             "session-1",
@@ -1072,19 +839,6 @@ mod tests {
                 "jsonrpc": "2.0",
                 "method": "item/someFutureEvent/delta",
                 "params": { "data": "test" }
-            }),
-        );
-
-        assert!(updates.is_empty());
-    }
-
-    #[test]
-    fn session_update_without_params_returns_empty() {
-        let updates = translate_codex_native_server_message(
-            "session-1",
-            &json!({
-                "jsonrpc": "2.0",
-                "method": "session/update"
             }),
         );
 
@@ -1161,17 +915,11 @@ mod tests {
 
         assert_eq!(updates.len(), 1);
         match &updates[0] {
-            SessionUpdate::ToolCallUpdate {
-                update,
-                session_id,
-            } => {
+            SessionUpdate::ToolCallUpdate { update, session_id } => {
                 assert_eq!(session_id.as_deref(), Some("session-codex-1"));
                 assert_eq!(update.tool_call_id, "call_abc123");
                 assert_eq!(update.title.as_deref(), Some("git status"));
-                assert!(matches!(
-                    update.status,
-                    Some(ToolCallStatus::Completed)
-                ));
+                assert!(matches!(update.status, Some(ToolCallStatus::Completed)));
                 assert_eq!(
                     update.result.as_ref().and_then(|v| v.as_str()),
                     Some("On branch main\nnothing to commit")
@@ -1213,32 +961,248 @@ mod tests {
     }
 
     #[test]
-    fn command_output_delta_produces_streaming_update() {
+    fn item_started_file_read_produces_tool_call() {
         let updates = translate_codex_native_server_message(
-            "session-codex-1",
+            "session-1",
             &json!({
-                "method": "item/commandExecution/outputDelta",
+                "method": "item/started",
                 "params": {
-                    "itemId": "call_abc123",
-                    "delta": "On branch main\n",
-                    "threadId": "thread-1",
-                    "turnId": "turn-1"
+                    "item": {
+                        "id": "call_read1",
+                        "type": "fileRead",
+                        "filePath": "/tmp/example.rs",
+                        "status": "inProgress"
+                    }
                 }
             }),
         );
 
         assert_eq!(updates.len(), 1);
         match &updates[0] {
-            SessionUpdate::ToolCallUpdate {
-                update,
-                session_id,
-            } => {
-                assert_eq!(session_id.as_deref(), Some("session-codex-1"));
-                assert_eq!(update.tool_call_id, "call_abc123");
+            SessionUpdate::ToolCall { tool_call, .. } => {
+                assert_eq!(tool_call.id, "call_read1");
+                assert_eq!(tool_call.name, "Read");
+                assert_eq!(tool_call.kind, Some(ToolKind::Read));
+                assert_eq!(tool_call.title.as_deref(), Some("Read /tmp/example.rs"));
+                match &tool_call.arguments {
+                    ToolArguments::Read { file_path } => {
+                        assert_eq!(file_path.as_deref(), Some("/tmp/example.rs"));
+                    }
+                    other => panic!("Expected Read arguments, got {other:?}"),
+                }
+            }
+            other => panic!("Expected ToolCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_started_file_change_produces_tool_call() {
+        let updates = translate_codex_native_server_message(
+            "session-1",
+            &json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "call_edit1",
+                        "type": "fileChange",
+                        "filePath": "/tmp/example.rs",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            SessionUpdate::ToolCall { tool_call, .. } => {
+                assert_eq!(tool_call.id, "call_edit1");
+                assert_eq!(tool_call.name, "Edit");
+                assert_eq!(tool_call.kind, Some(ToolKind::Edit));
+                assert_eq!(tool_call.title.as_deref(), Some("Edit /tmp/example.rs"));
+                match &tool_call.arguments {
+                    ToolArguments::Edit { edits } => {
+                        assert_eq!(edits.len(), 1);
+                        assert_eq!(edits[0].file_path.as_deref(), Some("/tmp/example.rs"));
+                    }
+                    other => panic!("Expected Edit arguments, got {other:?}"),
+                }
+            }
+            other => panic!("Expected ToolCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_completed_file_read_produces_tool_call_update() {
+        let updates = translate_codex_native_server_message(
+            "session-1",
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "call_read_done",
+                        "type": "fileRead",
+                        "filePath": "/tmp/example.rs",
+                        "status": "completed",
+                        "aggregatedOutput": "fn main() {}"
+                    }
+                }
+            }),
+        );
+
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            SessionUpdate::ToolCallUpdate { update, session_id } => {
+                assert_eq!(session_id.as_deref(), Some("session-1"));
+                assert_eq!(update.tool_call_id, "call_read_done");
+                assert_eq!(update.title.as_deref(), Some("Read /tmp/example.rs"));
+                assert!(matches!(update.status, Some(ToolCallStatus::Completed)));
                 assert_eq!(
-                    update.streaming_input_delta.as_deref(),
-                    Some("On branch main\n")
+                    update.result.as_ref().and_then(|v| v.as_str()),
+                    Some("fn main() {}")
                 );
+                match update.arguments.as_ref() {
+                    Some(ToolArguments::Read { file_path }) => {
+                        assert_eq!(file_path.as_deref(), Some("/tmp/example.rs"));
+                    }
+                    other => panic!("Expected Read arguments, got {other:?}"),
+                }
+            }
+            other => panic!("Expected ToolCallUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_completed_file_change_produces_tool_call_update() {
+        let updates = translate_codex_native_server_message(
+            "session-1",
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "call_edit_done",
+                        "type": "fileChange",
+                        "filePath": "/tmp/example.rs",
+                        "status": "completed",
+                        "aggregatedOutput": "Applied 2 edits"
+                    }
+                }
+            }),
+        );
+
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            SessionUpdate::ToolCallUpdate { update, session_id } => {
+                assert_eq!(session_id.as_deref(), Some("session-1"));
+                assert_eq!(update.tool_call_id, "call_edit_done");
+                assert_eq!(update.title.as_deref(), Some("Edit /tmp/example.rs"));
+                assert!(matches!(update.status, Some(ToolCallStatus::Completed)));
+                assert_eq!(
+                    update.result.as_ref().and_then(|v| v.as_str()),
+                    Some("Applied 2 edits")
+                );
+                match update.arguments.as_ref() {
+                    Some(ToolArguments::Edit { edits }) => {
+                        assert_eq!(edits.len(), 1);
+                        assert_eq!(edits[0].file_path.as_deref(), Some("/tmp/example.rs"));
+                    }
+                    other => panic!("Expected Edit arguments, got {other:?}"),
+                }
+            }
+            other => panic!("Expected ToolCallUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_completed_file_change_failed_has_failed_status() {
+        let updates = translate_codex_native_server_message(
+            "session-1",
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "call_edit_fail",
+                        "type": "fileChange",
+                        "filePath": "/tmp/readonly.rs",
+                        "status": "failed",
+                        "aggregatedOutput": null,
+                        "exitCode": null
+                    }
+                }
+            }),
+        );
+
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            SessionUpdate::ToolCallUpdate { update, .. } => {
+                assert!(matches!(update.status, Some(ToolCallStatus::Failed)));
+                // No aggregatedOutput and no exitCode => result is None
+                assert!(update.result.is_none());
+            }
+            other => panic!("Expected ToolCallUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_started_other_tool_type_produces_tool_call() {
+        let updates = translate_codex_native_server_message(
+            "session-1",
+            &json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "call_search1",
+                        "type": "fileSearch",
+                        "title": "Searching for main",
+                        "query": "main",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            SessionUpdate::ToolCall { tool_call, .. } => {
+                assert_eq!(tool_call.id, "call_search1");
+                assert_eq!(tool_call.name, "fileSearch");
+                assert_eq!(tool_call.kind, Some(ToolKind::Other));
+                assert_eq!(tool_call.title.as_deref(), Some("Searching for main"));
+                match &tool_call.arguments {
+                    ToolArguments::Other { raw } => {
+                        // The raw value should contain the full item object
+                        assert_eq!(raw.get("query").and_then(|v| v.as_str()), Some("main"));
+                    }
+                    other => panic!("Expected Other arguments, got {other:?}"),
+                }
+            }
+            other => panic!("Expected ToolCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_completed_other_tool_type_produces_tool_call_update() {
+        let updates = translate_codex_native_server_message(
+            "session-1",
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "call_search_done",
+                        "type": "fileSearch",
+                        "title": "Searching for main",
+                        "status": "completed",
+                        "aggregatedOutput": "Found 3 matches"
+                    }
+                }
+            }),
+        );
+
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            SessionUpdate::ToolCallUpdate { update, .. } => {
+                assert_eq!(update.tool_call_id, "call_search_done");
+                assert_eq!(update.title.as_deref(), Some("Searching for main"));
+                assert!(matches!(update.status, Some(ToolCallStatus::Completed)));
             }
             other => panic!("Expected ToolCallUpdate, got {other:?}"),
         }

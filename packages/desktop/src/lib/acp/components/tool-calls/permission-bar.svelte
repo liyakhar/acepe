@@ -13,9 +13,9 @@
 	import type { PermissionRequest } from "../../types/permission.js";
 	import { Colors, COLOR_NAMES } from "../../utils/colors.js";
 	import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
-	import { shouldHidePermissionBarForExitPlan } from "./exit-plan-helpers.js";
 	import PermissionActionBar from "./permission-action-bar.svelte";
 	import { extractCompactPermissionDisplay } from "./permission-display.js";
+	import { visiblePermissionsForSessionBar } from "./permission-visibility.js";
 
  	interface Props {
 		sessionId: string;
@@ -35,17 +35,7 @@
 		}
 
 		const entries = sessionStore.getEntries(sessionId);
-		const visiblePermissions: PermissionRequest[] = [];
-
-		for (const permission of permissionStore.getForSession(sessionId)) {
-			if (shouldHidePermissionBarForExitPlan(permission, entries)) {
-				continue;
-			}
-
-			visiblePermissions.push(permission);
-		}
-
-		return visiblePermissions;
+		return visiblePermissionsForSessionBar(permissionStore.getForSession(sessionId), entries);
 	});
 	const currentPermission = $derived(pendingPermissions.length > 0 ? pendingPermissions[0] : null);
 	const sessionProgress = $derived(permissionStore.getSessionProgress(sessionId));

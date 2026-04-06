@@ -9,4 +9,8 @@ describe("permission bar contract", () => {
 		expect(source).toContain('<div class="min-w-0 flex-1 cursor-pointer">');
 		expect(source).toContain("<FilePathBadge {filePath} interactive={false} size=\"sm\" />");
 	});
+
+	it("filters out permissions already represented by tool-call entries", () => {
+		expect(source).toContain("visiblePermissionsForSessionBar");
+	});
 });

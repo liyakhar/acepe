@@ -4,11 +4,15 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 mod fs_handlers;
+mod forwarded_permission_request;
 mod helpers;
 mod permission_handlers;
 mod terminal_handlers;
 mod types;
 
+pub(crate) use forwarded_permission_request::{
+    remap_forwarded_web_search_tool_call_id, ForwardedPermissionRequest,
+};
 pub(crate) use helpers::extract_query_from_synthetic_permission;
 
 /// Pre-built tool call data for a permission request that has no preceding tool_call event.
@@ -598,6 +602,126 @@ mod tests {
         assert_eq!(
             extract_query_from_synthetic_permission(&parsed, &forwarded),
             None,
+        );
+    }
+
+    #[test]
+    fn forwarded_permission_request_injects_parsed_arguments() {
+        let mut forwarded = super::ForwardedPermissionRequest::new(json!({
+            "params": {
+                "sessionId": "session-1",
+                "toolCall": {
+                    "toolCallId": "tc-1"
+                }
+            }
+        }));
+
+        forwarded.inject_parsed_arguments(Some(&json!({
+            "kind": "execute",
+            "command": "ls -la"
+        })));
+
+        let payload = forwarded.into_value();
+        assert_eq!(
+            payload["params"]["toolCall"]["parsedArguments"]["command"],
+            "ls -la"
+        );
+    }
+
+    #[test]
+    fn forwarded_permission_request_normalizes_session_and_remaps_tool_call_id() {
+        let mut forwarded = super::ForwardedPermissionRequest::new(json!({
+            "params": {
+                "sessionId": "child-session",
+                "toolCall": {
+                    "toolCallId": "web_search_0"
+                }
+            }
+        }));
+
+        forwarded.normalize_session_id(Some("root-session"));
+        forwarded.remap_tool_call_id("tool_123");
+
+        let payload = forwarded.into_value();
+        assert_eq!(payload["params"]["sessionId"], "root-session");
+        assert_eq!(payload["params"]["toolCall"]["toolCallId"], "tool_123");
+    }
+
+    #[test]
+    fn forwarded_permission_request_reports_current_session_id() {
+        let mut forwarded = super::ForwardedPermissionRequest::new(json!({
+            "params": {
+                "sessionId": "child-session"
+            }
+        }));
+
+        assert_eq!(forwarded.session_id().as_deref(), Some("child-session"));
+        forwarded.normalize_session_id(Some("root-session"));
+        assert_eq!(forwarded.session_id().as_deref(), Some("root-session"));
+    }
+
+    #[test]
+    fn remap_forwarded_web_search_tool_call_id_updates_forwarded_payload_and_synthetic_tool() {
+        let mut forwarded = super::ForwardedPermissionRequest::new(json!({
+            "params": {
+                "sessionId": "session-1",
+                "toolCall": {
+                    "toolCallId": "web_search_0",
+                    "title": "Web search: tokio"
+                }
+            }
+        }));
+        let parsed = Some(json!({
+            "WebSearch": {
+                "query": "tokio"
+            }
+        }));
+        let mut synthetic_tool_call = Some(Box::new(super::SyntheticToolCallContext {
+            tool_call_data: crate::acp::session_update::ToolCallData {
+                id: "web_search_0".to_string(),
+                name: "WebSearch".to_string(),
+                arguments: crate::acp::session_update::ToolArguments::Other {
+                    raw: json!({}),
+                },
+                status: crate::acp::session_update::ToolCallStatus::InProgress,
+                result: None,
+                kind: Some(crate::acp::session_update::ToolKind::WebSearch),
+                title: Some("Web search: tokio".to_string()),
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                normalized_todos: None,
+                parent_tool_use_id: None,
+                task_children: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+            },
+        }));
+        let mut dedup = crate::acp::permission_tracker::WebSearchDedup::new();
+        dedup.record(
+            "session-1".to_string(),
+            "tokio".to_string(),
+            "tool_abc".to_string(),
+        );
+
+        let remapped = super::remap_forwarded_web_search_tool_call_id(
+            &mut forwarded,
+            &parsed,
+            &mut synthetic_tool_call,
+            &mut dedup,
+        );
+
+        assert_eq!(remapped.as_deref(), Some("tool_abc"));
+        assert_eq!(
+            forwarded.into_value()["params"]["toolCall"]["toolCallId"],
+            "tool_abc"
+        );
+        assert_eq!(
+            synthetic_tool_call
+                .as_ref()
+                .map(|ctx| ctx.tool_call_data.id.as_str()),
+            Some("tool_abc")
         );
     }
 }

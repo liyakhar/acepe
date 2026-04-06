@@ -498,11 +498,12 @@ export class SessionEventService {
 				break;
 
 			case "permissionRequest":
-				// JSON-RPC permissions are routed via InboundRequestHandler.
-				// OpenCode permissions arrive as session updates, so we still dispatch callbacks here.
+				// Permissions now converge here for session-update based agents, including
+				// cc-sdk flows that still carry a JSON-RPC reply route.
 				this.callbacks.onPermissionRequest?.({
 					id: update.permission.id,
 					sessionId: update.permission.sessionId,
+					jsonRpcRequestId: update.permission.jsonRpcRequestId ?? undefined,
 					permission: update.permission.permission,
 					patterns: update.permission.patterns,
 					metadata: toPermissionMetadata(update.permission.metadata),
@@ -512,8 +513,8 @@ export class SessionEventService {
 				break;
 
 			case "questionRequest":
-				// JSON-RPC questions are routed via InboundRequestHandler.
-				// OpenCode questions arrive as session updates, so we still dispatch callbacks here.
+				// Questions arrive as session updates across providers. Some still carry
+				// a JSON-RPC request ID for the reply path.
 				this.callbacks.onQuestionRequest?.({
 					id: update.question.id,
 					sessionId: update.question.sessionId,

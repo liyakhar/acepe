@@ -393,16 +393,53 @@ struct PendingQuestionState {
 
 /// Shared state between the streaming bridge and the permission handler.
 ///
-/// The bridge records `(tool_name, tool_use_id)` when it sees a
-/// `content_block_start` with `type: "tool_use"`. The permission handler
-/// then looks up the real `toolu_...` ID by tool name so the frontend can
-/// match permissions to the correct tool-call row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolCallTrackerEntry {
+    tool_use_id: String,
+    input_signature: Option<String>,
+}
+
+fn stable_json_signature(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(boolean) => boolean.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(string) => serde_json::to_string(string).unwrap_or_default(),
+        Value::Array(items) => {
+            let parts = items
+                .iter()
+                .map(stable_json_signature)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("[{parts}]")
+        }
+        Value::Object(object) => {
+            let parts = object
+                .iter()
+                .map(|(key, item)| (key.as_str(), stable_json_signature(item)))
+                .collect::<std::collections::BTreeMap<_, _>>()
+                .into_iter()
+                .map(|(key, item)| {
+                    let encoded_key = serde_json::to_string(key).unwrap_or_default();
+                    format!("{encoded_key}:{item}")
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{{parts}}}")
+        }
+    }
+}
+
+/// The bridge records `(tool_name, tool_use_id, input_signature)` as stream
+/// events arrive. Permission callbacks then resolve the real `toolu_...` ID by
+/// tool name plus normalized input, falling back to heuristics only when the
+/// stream has not surfaced enough input yet.
 ///
-/// Uses a `VecDeque` per tool name to handle parallel tool calls where
-/// Claude may invoke the same tool multiple times in a single response.
+/// Uses a `VecDeque` per tool name to handle parallel tool calls where Claude
+/// may invoke the same tool multiple times in a single response.
 struct ToolCallIdTracker {
-    /// Maps tool_name → queue of tool_use_ids in arrival order.
-    map: Mutex<HashMap<String, std::collections::VecDeque<String>>>,
+    /// Maps tool_name → queue of tool uses in arrival order.
+    map: Mutex<HashMap<String, std::collections::VecDeque<ToolCallTrackerEntry>>>,
 }
 
 impl ToolCallIdTracker {
@@ -414,19 +451,63 @@ impl ToolCallIdTracker {
 
     /// Record a tool_name → tool_use_id mapping from a stream event.
     async fn record(&self, tool_name: String, tool_use_id: String) {
-        self.map
-            .lock()
-            .await
-            .entry(tool_name)
-            .or_default()
-            .push_back(tool_use_id);
+        self.record_with_input(tool_name, tool_use_id, None).await;
+    }
+
+    async fn record_with_input(
+        &self,
+        tool_name: String,
+        tool_use_id: String,
+        input: Option<&Value>,
+    ) {
+        let input_signature = input.map(stable_json_signature);
+        let mut map = self.map.lock().await;
+        let queue = map.entry(tool_name).or_default();
+        if let Some(existing) = queue
+            .iter_mut()
+            .find(|entry| entry.tool_use_id == tool_use_id)
+        {
+            if input_signature.is_some() {
+                existing.input_signature = input_signature;
+            }
+            return;
+        }
+
+        queue.push_back(ToolCallTrackerEntry {
+            tool_use_id,
+            input_signature,
+        });
+    }
+
+    /// Pop the best matching tool_use_id for a given tool name + input.
+    async fn take_for_input(&self, tool_name: &str, input: &Value) -> Option<String> {
+        let target_signature = stable_json_signature(input);
+        let mut map = self.map.lock().await;
+        let queue = map.get_mut(tool_name)?;
+        let match_index = queue
+            .iter()
+            .position(|entry| entry.input_signature.as_deref() == Some(target_signature.as_str()))
+            .or_else(|| {
+                queue
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(index, entry)| entry.input_signature.is_none().then_some(index))
+            })
+            .or_else(|| (queue.len() == 1).then_some(0))?;
+
+        let id = queue.remove(match_index)?.tool_use_id;
+        if queue.is_empty() {
+            map.remove(tool_name);
+        }
+        Some(id)
     }
 
     /// Pop the oldest tool_use_id for a given tool name (FIFO).
     async fn take(&self, tool_name: &str) -> Option<String> {
         let mut map = self.map.lock().await;
         let queue = map.get_mut(tool_name)?;
-        let id = queue.pop_front();
+        let id = queue.pop_front().map(|entry| entry.tool_use_id);
         if queue.is_empty() {
             map.remove(tool_name);
         }
@@ -598,10 +679,14 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
         let request_id: u64 = self.bridge.next_id();
 
         // Look up the real tool_use_id (toolu_...) from the stream tracker.
-        // The streaming bridge records it on content_block_start before the
-        // CLI's control channel fires can_use_tool. Fall back to a synthetic
-        // ID if the tracker somehow missed it.
-        let tracked_tool_call_id = self.tool_call_tracker.take(tool_name).await;
+        // The streaming bridge records it before the CLI control channel fires
+        // can_use_tool, and enriches the record with the full tool input as soon
+        // as the assistant message arrives. Match by tool name + normalized
+        // input, falling back to a synthetic ID only when correlation fails.
+        let tracked_tool_call_id = self
+            .tool_call_tracker
+            .take_for_input(tool_name, input)
+            .await;
         let tracker_miss = tracked_tool_call_id.is_none();
         let tool_call_id = tracked_tool_call_id.unwrap_or_else(|| format!("cc-sdk-{}", request_id));
 
@@ -755,39 +840,22 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 "permission.ui.emit",
                 &serde_json::json!({
                     "source": "can_use_tool",
-                    "channel": "inbound_request",
+                    "channel": "session_update",
                     "requestId": request_id,
                     "toolName": tool_name,
                     "toolCallId": tool_call_id,
                 }),
             );
-            let mut permission_json = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": "session/request_permission",
-                "params": {
-                    "sessionId": self.session_id,
-                    "options": [
-                        { "kind": "allow", "name": "Allow once", "optionId": "allow" },
-                        { "kind": "allow_always", "name": "Always allow", "optionId": "allow_always" },
-                        { "kind": "reject", "name": "Reject", "optionId": "reject" }
-                    ],
-                    "toolCall": {
-                        "toolCallId": tool_call_id,
-                        "name": tool_name,
-                        "title": tool_name,
-                        "rawInput": input,
-                    }
-                }
-            });
-            if !has_always_option {
-                permission_json["params"]["options"] = serde_json::json!([
-                    { "kind": "allow", "name": "Allow once", "optionId": "allow" },
-                    { "kind": "reject", "name": "Reject", "optionId": "reject" }
-                ]);
-            }
             self.dispatcher
-                .enqueue(AcpUiEvent::inbound_request(permission_json));
+                .enqueue(AcpUiEvent::session_update(build_permission_request_update(
+                    &self.session_id,
+                    &tool_call_id,
+                    request_id,
+                    tool_name,
+                    input,
+                    has_always_option,
+                    self.agent_type,
+                )));
         } else {
             tracing::info!(
                 session_id = %self.session_id,
@@ -1407,6 +1475,8 @@ fn provider_models(provider: &dyn AgentProvider) -> Vec<AvailableModel> {
 fn map_to_claude_permission_mode(mode_id: &str) -> cc_sdk::PermissionMode {
     match mode_id {
         "plan" => cc_sdk::PermissionMode::Plan,
+        "acceptEdits" => cc_sdk::PermissionMode::AcceptEdits,
+        "bypassPermissions" => cc_sdk::PermissionMode::BypassPermissions,
         _ => cc_sdk::PermissionMode::Default,
     }
 }
@@ -1586,6 +1656,13 @@ async fn run_streaming_bridge(
                                             &mut pending_tool_call_ids,
                                             id,
                                         );
+                                        tool_call_tracker
+                                            .record_with_input(
+                                                name.to_string(),
+                                                id.to_string(),
+                                                block.get("input"),
+                                            )
+                                            .await;
                                         approval_callback_tracker
                                             .note_tool_use_started(&session_id, name, id)
                                             .await;
@@ -1695,7 +1772,11 @@ async fn run_streaming_bridge(
                                         block.get("name").and_then(|v| v.as_str()),
                                     ) {
                                         tool_call_tracker
-                                            .record(name.to_string(), id.to_string())
+                                            .record_with_input(
+                                                name.to_string(),
+                                                id.to_string(),
+                                                block.get("input"),
+                                            )
                                             .await;
                                     }
                                 }
@@ -1705,6 +1786,17 @@ async fn run_streaming_bridge(
                 }
                 // Extract model from Assistant message as fallback
                 if let cc_sdk::Message::Assistant { message, .. } = &msg {
+                    for block in &message.content {
+                        if let cc_sdk::ContentBlock::ToolUse(tool_use) = block {
+                            tool_call_tracker
+                                .record_with_input(
+                                    tool_use.name.clone(),
+                                    tool_use.id.clone(),
+                                    Some(&tool_use.input),
+                                )
+                                .await;
+                        }
+                    }
                     if let Some(model) = &message.model {
                         if turn_stream_state.model_id.is_none() {
                             turn_stream_state.model_id = Some(model.clone());
@@ -2065,6 +2157,7 @@ fn build_permission_request_update(
         permission: crate::acp::session_update::PermissionData {
             id: request_id.to_string(),
             session_id: session_id.to_string(),
+            json_rpc_request_id: Some(request_id),
             permission: tool_name.to_string(),
             patterns: build_permission_patterns(raw_input),
             metadata: build_permission_metadata(tool_name, raw_input, agent_type),
@@ -3001,6 +3094,18 @@ mod tests {
     }
 
     #[test]
+    fn permission_mode_mapping_supports_autonomous_and_accept_edits_profiles() {
+        assert_eq!(
+            map_to_claude_permission_mode("acceptEdits"),
+            cc_sdk::PermissionMode::AcceptEdits
+        );
+        assert_eq!(
+            map_to_claude_permission_mode("bypassPermissions"),
+            cc_sdk::PermissionMode::BypassPermissions
+        );
+    }
+
+    #[test]
     fn build_options_applies_resume_and_fork_flags() {
         let client = make_test_client();
 
@@ -3646,54 +3751,29 @@ mod tests {
         assert!(client.pending_questions.lock().await.is_empty());
     }
 
-    // --- permission_json shape test ---
-
-    /// Verify that the JSON emitted by can_use_tool matches the JsonRpcRequestSchema
-    /// expected by the TypeScript frontend.
     #[test]
-    fn permission_json_shape_matches_frontend_schema() {
-        let request_id: u64 = 42;
-        let tool_name = "Bash";
-        let input = serde_json::json!({ "command": "ls" });
-        let session_id = "test-session";
+    fn permission_request_update_includes_json_rpc_request_id() {
+        let update = build_permission_request_update(
+            "test-session",
+            "tool-42",
+            42,
+            "Bash",
+            &serde_json::json!({ "command": "ls" }),
+            false,
+            AgentType::ClaudeCode,
+        );
 
-        let tool_call_id = format!("cc-sdk-{}", request_id);
-        let permission_json = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "session/request_permission",
-            "params": {
-                "sessionId": session_id,
-                "options": [
-                    { "kind": "allow", "name": "Allow once", "optionId": "allow" },
-                    { "kind": "reject", "name": "Reject", "optionId": "reject" }
-                ],
-                "toolCall": {
-                    "toolCallId": tool_call_id,
-                    "name": tool_name,
-                    "title": tool_name,
-                    "rawInput": input,
-                }
+        match update {
+            SessionUpdate::PermissionRequest { permission, session_id } => {
+                assert_eq!(session_id.as_deref(), Some("test-session"));
+                assert_eq!(permission.id, "42");
+                assert_eq!(permission.session_id, "test-session");
+                assert_eq!(permission.json_rpc_request_id, Some(42));
+                assert_eq!(permission.permission, "Bash");
+                assert_eq!(permission.tool.as_ref().map(|tool| tool.call_id.as_str()), Some("tool-42"));
             }
-        });
-
-        // Top-level JSON-RPC envelope fields
-        assert_eq!(permission_json["jsonrpc"], "2.0");
-        assert_eq!(permission_json["id"], 42u64);
-        assert_eq!(permission_json["method"], "session/request_permission");
-
-        // params fields
-        let params = &permission_json["params"];
-        assert_eq!(params["sessionId"], "test-session");
-        assert!(params["options"].is_array());
-        assert_eq!(params["options"].as_array().unwrap().len(), 2);
-
-        // toolCall fields
-        let tool_call = &params["toolCall"];
-        assert_eq!(tool_call["toolCallId"], "cc-sdk-42");
-        assert_eq!(tool_call["name"], "Bash");
-        assert_eq!(tool_call["title"], "Bash");
-        assert_eq!(tool_call["rawInput"]["command"], "ls");
+            _ => panic!("expected permission request update"),
+        }
     }
 
     #[tokio::test]
@@ -3709,6 +3789,81 @@ mod tests {
 
         assert_eq!(tracker.take("Bash").await.as_deref(), Some("toolu_first"));
         assert_eq!(tracker.take("Bash").await.as_deref(), Some("toolu_second"));
+        assert_eq!(tracker.take("Bash").await, None);
+    }
+
+    #[tokio::test]
+    async fn tool_call_tracker_prefers_matching_input_over_fifo_for_same_name_tools() {
+        let tracker = ToolCallIdTracker::new();
+
+        tracker
+            .record_with_input(
+                "Bash".to_string(),
+                "toolu_first".to_string(),
+                Some(&serde_json::json!({
+                    "command": "git diff --stat",
+                    "description": "Show diff summary"
+                })),
+            )
+            .await;
+        tracker
+            .record_with_input(
+                "Bash".to_string(),
+                "toolu_second".to_string(),
+                Some(&serde_json::json!({
+                    "description": "Show working tree status with explicit paths",
+                    "command": "git status --short"
+                })),
+            )
+            .await;
+
+        assert_eq!(
+            tracker
+                .take_for_input(
+                    "Bash",
+                    &serde_json::json!({
+                        "command": "git status --short",
+                        "description": "Show working tree status with explicit paths"
+                    }),
+                )
+                .await
+                .as_deref(),
+            Some("toolu_second")
+        );
+        assert_eq!(tracker.take("Bash").await.as_deref(), Some("toolu_first"));
+        assert_eq!(tracker.take("Bash").await, None);
+    }
+
+    #[tokio::test]
+    async fn tool_call_tracker_prefers_newest_unannotated_same_name_tool() {
+        let tracker = ToolCallIdTracker::new();
+
+        tracker
+            .record_with_input(
+                "Bash".to_string(),
+                "toolu_old".to_string(),
+                Some(&serde_json::json!({
+                    "command": "git diff --cached"
+                })),
+            )
+            .await;
+        tracker
+            .record("Bash".to_string(), "toolu_current".to_string())
+            .await;
+
+        assert_eq!(
+            tracker
+                .take_for_input(
+                    "Bash",
+                    &serde_json::json!({
+                        "command": "git status --short"
+                    }),
+                )
+                .await
+                .as_deref(),
+            Some("toolu_current")
+        );
+        assert_eq!(tracker.take("Bash").await.as_deref(), Some("toolu_old"));
         assert_eq!(tracker.take("Bash").await, None);
     }
 

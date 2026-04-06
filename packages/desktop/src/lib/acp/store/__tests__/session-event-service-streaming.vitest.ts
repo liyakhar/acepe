@@ -478,6 +478,7 @@ describe("SessionEventService streaming delta handling", () => {
 			permission: {
 				id: "perm-1",
 				sessionId: "session-123",
+				jsonRpcRequestId: 42,
 				permission: "WebFetch",
 				patterns: ["https://example.com/*"],
 				metadata: { rawInput: { url: "https://example.com" } },
@@ -496,6 +497,7 @@ describe("SessionEventService streaming delta handling", () => {
 			expect.objectContaining({
 				id: "perm-1",
 				sessionId: "session-123",
+				jsonRpcRequestId: 42,
 				permission: "WebFetch",
 			})
 		);

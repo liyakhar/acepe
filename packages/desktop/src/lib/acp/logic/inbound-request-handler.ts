@@ -2,8 +2,8 @@
  * Inbound Request Handler - Handles JSON-RPC requests FROM the ACP subprocess.
  *
  * The ACP subprocess can send requests TO the client (not just responses).
- * The most common example is `session/request_permission` where the subprocess
- * needs user approval before executing a tool.
+ * This path still matters for legacy/provider-specific JSON-RPC requests and
+ * for reply routing, but cc-sdk permission flows now prefer session updates.
  *
  * This handler:
  * 1. Listens to `acp-inbound-request` events from the ACP event bridge stream

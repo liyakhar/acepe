@@ -4,8 +4,9 @@
  * This store handles pending permission requests from ACP and OpenCode agents,
  * allowing users to grant or deny permissions for file operations.
  *
- * For ACP mode (Claude Code), permissions come via JSON-RPC inbound requests
- * and responses are sent back via JSON-RPC.
+ * For ACP mode (Claude Code), permissions can arrive either as session updates
+ * carrying a JSON-RPC reply route or as legacy inbound JSON-RPC requests.
+ * Replies are still sent back via JSON-RPC.
  *
  * For OpenCode HTTP mode, permissions come via session updates
  * and responses are sent via HTTP endpoints.

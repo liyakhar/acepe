@@ -7,7 +7,8 @@ use crate::acp::client_transport::{
 use crate::acp::client_updates::handle_session_update_notification;
 use crate::acp::cursor_extensions::{is_cursor_extension_pre_tool, CursorResponseAdapter};
 use crate::acp::inbound_request_router::{
-    extract_query_from_synthetic_permission, route_backend_inbound_request, InboundRoutingDecision,
+    remap_forwarded_web_search_tool_call_id, route_backend_inbound_request,
+    ForwardedPermissionRequest, InboundRoutingDecision,
 };
 use crate::acp::non_streaming_batcher::NonStreamingEventBatcher;
 use crate::acp::parsers::arguments::parse_tool_kind_arguments;
@@ -392,21 +393,14 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                         }
                                     }
                                     InboundRoutingDecision::ForwardToUi { parsed_arguments, mut synthetic_tool_call } => {
-                                        let mut forwarded = json.clone();
-                                        if let Some(args_value) = &parsed_arguments {
-                                            if let Some(tc) = forwarded.pointer_mut("/params/toolCall").and_then(|v| v.as_object_mut()) {
-                                                tc.insert("parsedArguments".to_string(), args_value.clone());
-                                            }
-                                        }
+                                        let mut forwarded = ForwardedPermissionRequest::new(json.clone());
+                                        forwarded.inject_parsed_arguments(parsed_arguments.as_ref());
 
                                         // Normalize sub-agent session ID → root session ID.
                                         // Sub-agents use internal child session IDs the frontend doesn't know about.
                                         if let Some(root_id) = ctx.active_session_id.lock().ok().and_then(|g| g.clone()) {
-                                            if let Some(obj) = forwarded.pointer_mut("/params").and_then(|v| v.as_object_mut()) {
-                                                if obj.get("sessionId").and_then(|v| v.as_str()).is_some_and(|sid| sid != root_id) {
-                                                    tracing::debug!(root_session_id = %root_id, "Normalizing sub-agent session ID");
-                                                }
-                                                obj.insert("sessionId".to_string(), json!(root_id));
+                                            if forwarded.normalize_session_id(Some(&root_id)) {
+                                                tracing::debug!(root_session_id = %root_id, "Normalizing sub-agent session ID");
                                             }
                                         }
 
@@ -416,46 +410,22 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                         // We recorded the notification ID in web_search_dedup; remap here
                                         // so the synthetic ToolCall and forwarded JSON use the same ID,
                                         // preventing a duplicate UI row.
-                                        if let Some(ref mut synthetic_ctx) = synthetic_tool_call {
-                                            if is_web_search_id(&synthetic_ctx.tool_call_data.id) {
-                                                if let Some(query) = extract_query_from_synthetic_permission(
-                                                    &parsed_arguments,
-                                                    &forwarded,
-                                                ) {
-                                                    let session_id_for_dedup = forwarded
-                                                        .pointer("/params/sessionId")
-                                                        .and_then(|v| v.as_str())
-                                                        .map(|s| s.to_string());
-                                                    if let (Ok(mut dedup), Some(sid)) = (
-                                                        ctx.web_search_dedup.lock(),
-                                                        session_id_for_dedup.as_ref(),
-                                                    ) {
-                                                        if let Some(canonical_id) = dedup.take(sid, &query) {
-                                                            tracing::debug!(
-                                                                permission_id = %synthetic_ctx.tool_call_data.id,
-                                                                canonical_id = %canonical_id,
-                                                                query = %query,
-                                                                "Remapping web search permission ID to notification canonical ID"
-                                                            );
-                                                            // Rewrite synthetic ToolCallData ID
-                                                            synthetic_ctx.tool_call_data.id = canonical_id.clone();
-                                                            // Rewrite forwarded JSON so InboundRequestHandler anchors permission correctly
-                                                            if let Some(tc) = forwarded.pointer_mut("/params/toolCall") {
-                                                                if let Some(obj) = tc.as_object_mut() {
-                                                                    obj.insert("toolCallId".to_string(), json!(canonical_id));
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                        if let Ok(mut dedup) = ctx.web_search_dedup.lock() {
+                                            if let Some(canonical_id) = remap_forwarded_web_search_tool_call_id(
+                                                &mut forwarded,
+                                                &parsed_arguments,
+                                                &mut synthetic_tool_call,
+                                                &mut dedup,
+                                            ) {
+                                                tracing::debug!(
+                                                    canonical_id = %canonical_id,
+                                                    "Remapped web search permission ID to notification canonical ID"
+                                                );
                                             }
                                         }
 
                                         if let Some(synthetic_ctx) = &synthetic_tool_call {
-                                            let session_id = forwarded
-                                                .pointer("/params/sessionId")
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string());
+                                            let session_id = forwarded.session_id();
 
                                             if let Some(ref sid) = session_id {
                                                 let synthetic = SessionUpdate::ToolCall {
@@ -478,14 +448,11 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                             }
                                         }
 
-                                        if let Some(session_id) = forwarded
-                                            .pointer("/params/sessionId")
-                                            .and_then(|value| value.as_str())
-                                        {
+                                        if let Some(session_id) = forwarded.session_id() {
                                             if let Some(app_handle) = ctx.app_handle.as_ref() {
                                                 let registry = app_handle.state::<SessionRegistry>();
                                                 registry.store_pending_inbound_responder(
-                                                    session_id.to_string(),
+                                                    session_id,
                                                     StdArc::new(InboundRequestResponder {
                                                         provider: ctx.provider.clone(),
                                                         stdin_writer: ctx.stdin_writer.clone(),
@@ -497,7 +464,7 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                             }
                                         }
 
-                                        ctx.dispatcher.enqueue(AcpUiEvent::inbound_request(forwarded));
+                                        ctx.dispatcher.enqueue(AcpUiEvent::inbound_request(forwarded.into_value()));
                                     }
                                 }
                             } else {

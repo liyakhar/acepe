@@ -240,7 +240,7 @@ export type ConfigOptionValue = { name: string; value: JsonValue; description?: 
 /**
  * Permission request data.
  */
-export type PermissionData = { id: string; sessionId: string; permission: string; patterns: string[]; metadata: JsonValue; always: string[]; tool?: ToolReference | null }
+export type PermissionData = { id: string; sessionId: string; jsonRpcRequestId?: number | null; permission: string; patterns: string[]; metadata: JsonValue; always: string[]; tool?: ToolReference | null }
 
 /**
  * Question request data.
@@ -824,4 +824,3 @@ export type FileExplorerPreviewResponse =
  * Fallback for binary, too-large, deleted, or unsupported files.
  */
 { kind: "fallback"; file_path: string; file_name: string; reason: string; size_bytes: number | null; git_status: FileGitStatus | null; preview_kind: PreviewKind }
-

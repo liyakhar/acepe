@@ -79,8 +79,7 @@ pub fn resolve(input: &Path) -> Result<ResolvedOpenCodeRoot, ResolveError> {
         if dot_git.is_file() {
             // This is a git worktree. Parse .git file to find main repo.
             if let Some(main_repo) = parse_gitfile_to_main_repo(&dot_git) {
-                let canonical_main =
-                    std::fs::canonicalize(&main_repo).unwrap_or(main_repo);
+                let canonical_main = std::fs::canonicalize(&main_repo).unwrap_or(main_repo);
                 return Ok(ResolvedOpenCodeRoot {
                     runtime_root: current.to_path_buf(),
                     project_root: canonical_main,

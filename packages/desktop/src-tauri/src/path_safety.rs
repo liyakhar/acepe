@@ -409,7 +409,10 @@ mod tests {
         // resolve_write_path canonicalizes existing path components, so the
         // result uses the canonical prefix (e.g. /private/var on macOS).
         let canonical_project = canonicalize_or_original(&project_root);
-        let expected = canonical_project.join("src").join("nested").join("file.txt");
+        let expected = canonical_project
+            .join("src")
+            .join("nested")
+            .join("file.txt");
         assert_eq!(resolved, expected);
     }
 

@@ -5,9 +5,12 @@ import { getPermissionStore } from "../../store/permission-store.svelte.js";
 import type { TurnState } from "../../store/types.js";
 import type { PermissionRequest } from "../../types/permission.js";
 import type { ToolCall } from "../../types/tool-call.js";
-import type { ToolKind } from "../../types/tool-kind.js";
-import { mergePermissionArgs } from "../../utils/merge-permission-args.js";
 import { formatToolElapsedLabel, getToolStatus } from "../../utils/tool-state-utils.js";
+import PermissionActionBar from "./permission-action-bar.svelte";
+import {
+	resolveToolOperation,
+	type ToolRouteKey,
+} from "./resolve-tool-operation.js";
 // Dedicated tool components - each kind has its own component
 import ToolCallCreatePlan from "./tool-call-create-plan.svelte";
 import ToolCallDelete from "./tool-call-delete.svelte";
@@ -45,8 +48,9 @@ type ToolComponentProps = {
  * Each kind routes directly to its dedicated component.
  * Tools not listed here use ToolCallFallback.
  */
-const DEDICATED_COMPONENTS: Partial<Record<ToolKind, Component<ToolComponentProps>>> = {
+const DEDICATED_COMPONENTS: Partial<Record<ToolRouteKey, Component<ToolComponentProps>>> = {
 	read: ToolCallRead,
+	read_lints: ToolCallReadLints,
 	edit: ToolCallEdit,
 	execute: ToolCallExecute,
 	search: ToolCallSearch,
@@ -84,29 +88,10 @@ const sessionContext = useSessionContext();
 const pendingPermission = $derived(
 	permissionStore.getForToolCall(sessionContext?.sessionId, toolCall.id)
 );
-
-// Get the tool kind directly from the toolCall (Rust always provides this)
-// Default to "other" only as a safety net - should never happen in practice
-const resolvedKind = $derived<ToolKind>(toolCall.kind ?? "other");
-
-// Merge permission rawInput into arguments so child components see file paths, commands, etc.
-// Preserves original toolCall.title (may contain agent-provided data like backtick-wrapped
-// commands) — display titles are derived by each component via getToolKindTitle.
-const enrichedToolCall = $derived<ToolCall>({
-	...toolCall,
-	arguments: mergePermissionArgs(toolCall.arguments, pendingPermission),
-});
-
-// Get the component: dedicated by kind, with special case for Read Lints, else ToolCallFallback
-const ToolComponent = $derived.by(() => {
-	if (
-		resolvedKind === "read" &&
-		(enrichedToolCall.title?.trim() === "Read Lints" || enrichedToolCall.name === "read_lints")
-	) {
-		return ToolCallReadLints;
-	}
-	return DEDICATED_COMPONENTS[resolvedKind] ?? ToolCallFallback;
-});
+const resolvedOperation = $derived(resolveToolOperation(toolCall, pendingPermission));
+const ToolComponent = $derived(
+	DEDICATED_COMPONENTS[resolvedOperation.routeKey] ?? ToolCallFallback
+);
 
 const toolStatus = $derived(getToolStatus(toolCall, turnState));
 const elapsedLabel = $derived(
@@ -134,11 +119,17 @@ $effect(() => {
 });
 </script>
 
-<!-- DEBUG: kind={resolvedKind} -->
-<ToolComponent
-	toolCall={enrichedToolCall}
-	{turnState}
-	{projectPath}
-	{elapsedLabel}
-	pendingPermission={pendingPermission ?? null}
-/>
+<div class="flex min-w-0 flex-col gap-2">
+	<ToolComponent
+		toolCall={resolvedOperation.toolCall}
+		{turnState}
+		{projectPath}
+		{elapsedLabel}
+		pendingPermission={pendingPermission ?? null}
+	/>
+	{#if resolvedOperation.shouldShowInlinePermissionActionBar && pendingPermission}
+		<div class="flex justify-end">
+			<PermissionActionBar permission={pendingPermission} inline hideHeader />
+		</div>
+	{/if}
+</div>
