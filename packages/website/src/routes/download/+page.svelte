@@ -1,20 +1,16 @@
 <script lang="ts">
-import { capture, AnalyticsEvent } from "$lib/analytics.js";
 import * as m from "$lib/paraglide/messages.js";
 import Header from "$lib/components/header.svelte";
 import { Download } from "@lucide/svelte";
 import { AppleLogo, GithubLogo } from "phosphor-svelte";
-import Logo from "$lib/components/logo.svelte";
+import logoForLight from "$lib/assets/logo.svg";
+import logoForDark from "$lib/assets/logo-light-bg.svg";
 
 const { data } = $props();
 
 let downloading = $state(false);
 
 function handleDownload() {
-	capture(AnalyticsEvent.Downloaded, {
-		arch: "aarch64",
-		version: data.version ?? undefined,
-	});
 	downloading = true;
 	setTimeout(() => (downloading = false), 4000);
 }
@@ -108,7 +104,8 @@ function handleDownload() {
 				<!-- Brand -->
 				<div class="col-span-2 md:col-span-1">
 					<a href="/" class="mb-3 inline-flex items-center gap-2">
-						<Logo />
+						<img src={logoForLight} alt="" class="h-6 w-6 dark:hidden" />
+						<img src={logoForDark} alt="" class="hidden h-6 w-6 dark:block" />
 						<span class="text-base font-bold tracking-wide">{m.app_name()}</span>
 					</a>
 					<p class="max-w-[200px] text-[13px] leading-relaxed text-muted-foreground">

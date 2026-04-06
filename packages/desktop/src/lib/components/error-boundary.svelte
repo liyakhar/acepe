@@ -10,7 +10,6 @@ import { toast } from "svelte-sonner";
 import CopyButton from "$lib/acp/components/messages/copy-button.svelte";
 import { TIMING } from "$lib/acp/constants/timing.js";
 import { loadCursorTheme } from "$lib/acp/utils/shiki-theme.js";
-import { captureError } from "$lib/analytics.js";
 import * as m from "$lib/paraglide/messages.js";
 
 interface Props {
@@ -101,7 +100,6 @@ onMount(() => {
 			}
 		}
 
-		captureError(err);
 		error = err;
 	};
 
@@ -132,7 +130,6 @@ onMount(() => {
 			}
 		}
 
-		captureError(err);
 		error = err;
 	};
 

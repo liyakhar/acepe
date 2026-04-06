@@ -11,7 +11,6 @@ use crate::acp::session_registry::SessionRegistry;
 use crate::acp::streaming_log::log_streaming_event;
 use crate::acp::types::CanonicalAgentId;
 use crate::acp::types::PromptRequest;
-use crate::analytics;
 use crate::path_safety::ProjectPathSafetyError;
 use crate::project_access::{validate_project_directory_brokered, ProjectAccessReason};
 use serde_json::{json, Value};

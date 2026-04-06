@@ -8,11 +8,9 @@
 import type { ResultAsync } from "neverthrow";
 
 import { okAsync } from "neverthrow";
-import { captureError } from "$lib/analytics.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
 
 import type { AppError } from "../../errors/app-error.js";
-import { WorktreeError } from "../../errors/app-error.js";
 
 const TAG = "[worktree-setup]";
 
@@ -44,7 +42,6 @@ export function runWorktreeSetup(
 		.loadWorktreeConfig(projectPath)
 		.mapErr((error) => {
 			console.error(TAG, "load-config failed", { projectPath, worktreeCwd, error });
-			captureError(toError("load-config", error, { projectPath, worktreeCwd }));
 			return error;
 		})
 		.andThen((config) => {
@@ -72,13 +69,6 @@ function executeSetup(
 					error: result.error,
 					commandsRun: result.commandsRun,
 				});
-				captureError(
-					toError("run-setup-commands", new WorktreeError(result.error ?? "unknown"), {
-						projectPath,
-						worktreeCwd,
-						commandsRun: result.commandsRun,
-					})
-				);
 			} else {
 				console.info(TAG, "setup commands succeeded", {
 					commandsRun: result.commandsRun,
@@ -88,19 +78,6 @@ function executeSetup(
 		})
 		.mapErr((error) => {
 			console.error(TAG, "run-setup-invoke failed", { projectPath, worktreeCwd, error });
-			captureError(toError("run-setup-invoke", error, { projectPath, worktreeCwd }));
 			return error;
 		});
-}
-
-/** Build an Error with structured context for Sentry. */
-function toError(
-	step: string,
-	source: AppError | Error,
-	context: Record<string, unknown>
-): Error {
-	const msg = `Worktree setup failed [${step}]: ${source.message}`;
-	const err = new Error(msg, { cause: source });
-	Object.assign(err, { worktreeSetupContext: { step, ...context } });
-	return err;
 }

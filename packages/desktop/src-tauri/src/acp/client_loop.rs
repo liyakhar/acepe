@@ -38,7 +38,7 @@ const STDERR_BUFFER_MAX_LINES: usize = 20;
 
 /// Shared buffer that captures recent stderr output from the subprocess.
 /// When the subprocess dies, the last lines are included in the error message
-/// so users (and Sentry) can see WHY it crashed, not just that it crashed.
+/// so users can see WHY it crashed, not just that it crashed.
 pub(crate) type StderrBuffer = StdArc<std::sync::Mutex<VecDeque<String>>>;
 
 /// Create a new empty stderr buffer.
@@ -241,11 +241,6 @@ pub(crate) struct DeathMonitorContext {
 
 pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
     tokio::spawn(async move {
-        // Set Sentry scope so all tracing::error!() in this task carry agent context
-        sentry::configure_scope(|scope| {
-            scope.set_tag("agent_id", ctx.agent_type.as_str());
-        });
-
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
         let mut streaming_batcher = BatcherWithGuard::new(ctx.dispatcher.clone());

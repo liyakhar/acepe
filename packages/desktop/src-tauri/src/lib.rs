@@ -1,5 +1,4 @@
 pub mod acp;
-mod analytics;
 pub mod browser_webview;
 pub mod checkpoint;
 pub mod codex_history;
@@ -268,19 +267,6 @@ fn init_logging() {
         })
         .ok();
 
-    // Forward tracing events to Sentry:
-    // - error/fatal → Sentry issues (events)
-    // - warn/info/debug → breadcrumbs only (context for errors, not standalone issues)
-    // This prevents product-analytics-level logs (app_started, session_created, etc.)
-    // from polluting the Sentry issues feed.
-    let sentry_layer = sentry::integrations::tracing::layer().event_filter(|metadata| {
-        use sentry::integrations::tracing::EventFilter;
-        match *metadata.level() {
-            tracing::Level::ERROR => EventFilter::Event,
-            _ => EventFilter::Breadcrumb,
-        }
-    });
-
     #[cfg(debug_assertions)]
     {
         let console_layer = fmt::layer()
@@ -291,7 +277,6 @@ fn init_logging() {
             .with(env_filter)
             .with(console_layer)
             .with(file_layer)
-            .with(sentry_layer)
             .init();
     }
 
@@ -300,7 +285,6 @@ fn init_logging() {
         tracing_subscriber::registry()
             .with(env_filter)
             .with(file_layer)
-            .with(sentry_layer)
             .init();
     }
 }
@@ -508,59 +492,6 @@ fn run_claude_model_hydration_probe_cli(
     })
 }
 
-const ANALYTICS_DISTINCT_ID_FILENAME: &str = "analytics_distinct_id";
-
-fn generate_analytics_distinct_id() -> String {
-    format!("desktop-{}", uuid::Uuid::new_v4())
-}
-
-fn load_or_create_analytics_distinct_id(app_handle: &tauri::AppHandle) -> String {
-    let app_data_dir = match app_handle.path().app_data_dir() {
-        Ok(path) => path,
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
-                "Failed to resolve app data directory for analytics distinct ID"
-            );
-            return generate_analytics_distinct_id();
-        }
-    };
-
-    if let Err(error) = std::fs::create_dir_all(&app_data_dir) {
-        tracing::warn!(
-            path = %app_data_dir.display(),
-            error = %error,
-            "Failed to create app data directory for analytics distinct ID"
-        );
-        return generate_analytics_distinct_id();
-    }
-
-    let distinct_id_path = app_data_dir.join(ANALYTICS_DISTINCT_ID_FILENAME);
-    if let Ok(existing_id) = std::fs::read_to_string(&distinct_id_path) {
-        let trimmed_id = existing_id.trim();
-        if !trimmed_id.is_empty() {
-            return trimmed_id.to_string();
-        }
-    }
-
-    let distinct_id = generate_analytics_distinct_id();
-    if let Err(error) = std::fs::write(&distinct_id_path, &distinct_id) {
-        tracing::warn!(
-            path = %distinct_id_path.display(),
-            error = %error,
-            "Failed to persist analytics distinct ID"
-        );
-    }
-    distinct_id
-}
-
-#[tauri::command]
-#[specta::specta]
-fn get_analytics_distinct_id() -> Result<String, String> {
-    analytics::get_distinct_id()
-        .ok_or_else(|| "Analytics distinct ID is not initialized".to_string())
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Parse --probe-claude-model-hydration for CLI validation of the cc-sdk
@@ -627,14 +558,7 @@ pub fn run() {
     // This allows the Rust backend to access ANTHROPIC_API_KEY at runtime
     dotenv::dotenv().ok();
 
-    // Initialize Sentry BEFORE logging so the tracing layer can forward errors.
-    // The guard must live for the entire app lifetime to flush events on exit.
-    let _sentry_guard = analytics::init(
-        option_env!("SENTRY_DSN").unwrap_or_default().to_string(),
-        String::new(), // distinct_id set later after app data dir is available
-    );
-
-    // Initialize logging (includes sentry_tracing layer for error forwarding)
+    // Initialize logging
     init_logging();
 
     // Create a Tokio runtime and register it with Tauri's async runtime.
@@ -687,15 +611,6 @@ pub fn run() {
                 }
             });
 
-            // Set the analytics distinct ID (Sentry user context)
-            let analytics_distinct_id = load_or_create_analytics_distinct_id(app.handle());
-            analytics::set_distinct_id(analytics_distinct_id.clone());
-            tracing::info!(
-                distinct_id = %analytics_distinct_id,
-                "Initialized analytics distinct ID"
-            );
-            // Note: Sentry's built-in panic integration captures panics automatically.
-
             // Initialize agent installer cache directory and clean up stale temps
             if let Ok(app_data_dir) = app.path().app_data_dir() {
                 let agents_dir = app_data_dir.join("agents");
@@ -723,12 +638,6 @@ pub fn run() {
                         db_conn
                     }
                     Err(e) => {
-                        analytics::track_error(
-                            app_handle.clone(),
-                            "db_init_failed",
-                            e.to_string(),
-                            None,
-                        );
                         tracing::error!(error = %e, "Failed to initialize database, exiting");
                         std::process::exit(1);
                     }
@@ -1046,7 +955,6 @@ pub fn run() {
             get_session_file_path,
             save_user_setting,
             get_user_setting,
-            get_analytics_distinct_id,
             save_session_review_state,
             get_session_review_state,
             delete_session_review_state,

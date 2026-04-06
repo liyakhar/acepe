@@ -4,7 +4,6 @@ import { onMount } from "svelte";
 import { initializeHighlighter } from "$lib/acp/services/highlighter-pool.svelte.js";
 import { preInitializeMarkdown } from "$lib/acp/utils/markdown-renderer.js";
 import { registerCursorThemeForPierreDiffs } from "$lib/acp/utils/pierre-diffs-theme.js";
-import { initAnalytics } from "$lib/analytics.js";
 import ErrorBoundary from "$lib/components/error-boundary.svelte";
 import { Toaster } from "$lib/components/ui/sonner/index.js";
 import { TooltipProvider } from "$lib/components/ui/tooltip/index.js";
@@ -43,9 +42,6 @@ onMount(async () => {
 
 	// Preload markdown renderer for faster first message rendering
 	preInitializeMarkdown();
-
-	// Initialize Sentry analytics (skips in dev unless VITE_FORCE_ANALYTICS=1)
-	initAnalytics();
 	// Note: Initial sync is triggered in +page.svelte AFTER the event listener
 	// is registered to avoid race conditions
 });

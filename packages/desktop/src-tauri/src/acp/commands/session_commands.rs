@@ -176,9 +176,6 @@ pub async fn acp_new_session(
         .or_else(|| active_agent.get())
         .unwrap_or(CanonicalAgentId::ClaudeCode);
 
-    // Tag Sentry early so client creation errors carry agent context
-    analytics::set_sentry_agent_context(agent_id_enum.as_str(), None);
-
     // Create and initialize client with cwd so subprocess spawns in correct directory
     let mut client = create_and_initialize_client(
         &registry,
@@ -199,9 +196,6 @@ pub async fn acp_new_session(
             tracing::error!(error = %e, "New session failed");
             SerializableAcpError::from(e)
         })?;
-
-    // Tag Sentry so any tracing::error!() within this scope carries agent context
-    analytics::set_sentry_agent_context(agent_id_enum.as_str(), Some(&result.session_id));
 
     // Store the client keyed by session_id
     if let Some(old_client) =
@@ -300,9 +294,6 @@ pub async fn acp_resume_session(
         .or_else(|| active_agent.get())
         .unwrap_or(CanonicalAgentId::ClaudeCode);
 
-    // Tag Sentry so any tracing::error!() within this scope carries agent context
-    analytics::set_sentry_agent_context(agent_id_enum.as_str(), Some(&session_id));
-
     let cwd_str = cwd.to_string_lossy().to_string();
     let result = resume_or_create_session_client(
         &session_registry,
@@ -365,9 +356,6 @@ pub async fn acp_fork_session(
         .or_else(|| active_agent.get())
         .unwrap_or(CanonicalAgentId::ClaudeCode);
 
-    // Tag Sentry early so client creation errors carry agent context
-    analytics::set_sentry_agent_context(agent_id_enum.as_str(), Some(&session_id));
-
     // Create and initialize client with cwd so subprocess spawns in correct directory
     let mut client = create_and_initialize_client(
         &registry,
@@ -388,9 +376,6 @@ pub async fn acp_fork_session(
             tracing::error!(error = %e, "Fork session failed");
             SerializableAcpError::from(e)
         })?;
-
-    // Tag Sentry so any tracing::error!() within this scope carries agent context
-    analytics::set_sentry_agent_context(agent_id_enum.as_str(), Some(&result.session_id));
 
     // Store the client keyed by NEW session_id
     if let Some(old_client) =
@@ -432,12 +417,10 @@ pub async fn acp_close_session(
     tracing::info!(session_id = %session_id, "acp_close_session called");
     let session_registry = app.state::<SessionRegistry>();
 
-    // Look up agent before removing so we can tag Sentry and analytics
     let agent_id_str = session_registry
         .get_agent_id(&session_id)
         .map(|a| a.as_str().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    analytics::set_sentry_agent_context(&agent_id_str, Some(&session_id));
 
     if let Some(client_arc) = session_registry.remove(&session_id, "acp_close_session") {
         // Get exclusive access and stop the client

@@ -12,7 +12,6 @@
  */
 
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import { clearSentryAgentContext, setSentryAgentContext } from "../../../analytics.js";
 import { tauriClient } from "../../../utils/tauri-client.js";
 import type { AppError } from "../../errors/app-error.js";
 import { AgentError, ConnectionError, SessionNotFoundError } from "../../errors/app-error.js";
@@ -652,9 +651,6 @@ export class SessionConnectionManager {
 					this.connectionManager.sendConnectionSuccess(sessionId);
 					this.connectionManager.sendCapabilitiesLoaded(sessionId);
 
-					// Tag Sentry scope so frontend errors carry agent context
-					setSentryAgentContext(session.agentId, sessionId);
-
 					// Transition content state to LOADED so the UI shows the conversation.
 					// For Codex, content arrives via ACP streaming; for disk-based agents,
 					// content may already be LOADED from preloadSessions (idempotent).
@@ -741,9 +737,6 @@ export class SessionConnectionManager {
 
 		// Disconnect in state machine
 		this.connectionManager.sendDisconnect(sessionId);
-
-		// Clear agent context from Sentry scope
-		clearSentryAgentContext();
 
 		// Clear ACP capabilities on disconnect
 		this.capabilitiesManager.removeCapabilities(sessionId);

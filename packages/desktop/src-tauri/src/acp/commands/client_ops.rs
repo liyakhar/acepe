@@ -1,6 +1,5 @@
 use super::*;
 use crate::acp::session_registry::redact_session_id;
-use crate::analytics;
 
 fn agent_display_name(agent_id: &CanonicalAgentId) -> &str {
     match agent_id {
@@ -49,9 +48,6 @@ pub(super) async fn create_and_initialize_client(
     cwd: PathBuf,
     operation: &str,
 ) -> Result<Box<dyn AgentClient + Send + Sync + 'static>, SerializableAcpError> {
-    // Tag Sentry so client creation/initialization errors carry agent context
-    analytics::set_sentry_agent_context(agent_id_enum.as_str(), None);
-
     let mut client = create_client(registry, opencode_manager, agent_id_enum.clone(), app, cwd)
         .await
         .map_err(|e| {

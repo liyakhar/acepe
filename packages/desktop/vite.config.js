@@ -1,5 +1,4 @@
 import { paraglideVitePlugin } from "@inlang/paraglide-js";
-import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vitest/config";
@@ -35,19 +34,6 @@ export default defineConfig({
 				outdir: "./src/lib/paraglide",
 			})
 		),
-		// Sentry source map upload — only runs during production builds
-		...(process.env.SENTRY_AUTH_TOKEN
-			? [
-					sentryVitePlugin({
-						org: process.env.SENTRY_ORG,
-						project: process.env.SENTRY_PROJECT,
-						authToken: process.env.SENTRY_AUTH_TOKEN,
-						sourcemaps: {
-							filesToDeleteAfterUpload: ["./build/**/*.map"],
-						},
-					}),
-				]
-			: []),
 	],
 
 	// Pre-bundle icon libraries to avoid HMR issues with dynamic imports

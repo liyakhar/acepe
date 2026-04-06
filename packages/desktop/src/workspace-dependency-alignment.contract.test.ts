@@ -33,9 +33,7 @@ describe("workspace dependency alignment", () => {
 		const desktopPackageJson = readPackageJson("../package.json");
 		const websitePackageJson = readPackageJson("../../website/package.json");
 		const uiPackageJson = readPackageJson("../../ui/package.json");
-		const analyticsPackageJson = readPackageJson("../../analytics/package.json");
 
-		expect(analyticsPackageJson.devDependencies?.typescript).toBe("^5.9.3");
 		expect(desktopPackageJson.dependencies?.["@lucide/svelte"]).toBe("^0.562.0");
 		expect(desktopPackageJson.dependencies?.["phosphor-svelte"]).toBe("^3.1.0");
 		expect(desktopPackageJson.devDependencies?.["@sveltejs/kit"]).toBe("^2.49.1");
@@ -53,12 +51,10 @@ describe("workspace dependency alignment", () => {
 
 	it("keeps the Bun lockfile workspace selectors aligned with the package manifests", () => {
 		const bunLockSource = readFile("../../../bun.lock");
-		const analyticsWorkspace = getWorkspaceSection(bunLockSource, "packages/analytics");
 		const desktopWorkspace = getWorkspaceSection(bunLockSource, "packages/desktop");
 		const uiWorkspace = getWorkspaceSection(bunLockSource, "packages/ui");
 		const websiteWorkspace = getWorkspaceSection(bunLockSource, "packages/website");
 
-		expect(analyticsWorkspace).toContain('"typescript": "^5.9.3"');
 		expect(desktopWorkspace).toContain('"@sveltejs/kit": "^2.49.1"');
 		expect(desktopWorkspace).toContain('"@sveltejs/vite-plugin-svelte": "^6.2.1"');
 		expect(desktopWorkspace).toContain('"shiki": "^3.22.0"');

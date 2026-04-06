@@ -82,7 +82,6 @@ rayon = "1.10"
 memchr = "2"
 dashmap = "6"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
-sentry = { version = "0.38", features = ["tracing"] }
 thiserror = "1"
 indexmap = "2"
 tar = "0.4"

@@ -11,13 +11,6 @@ pub async fn acp_set_model(
     tracing::debug!(session_id = %session_id, model_id = %model_id, "acp_set_model called");
     let session_registry = app.state::<SessionRegistry>();
 
-    // Look up agent for Sentry context and analytics
-    let agent_id_str = session_registry
-        .get_agent_id(&session_id)
-        .map(|a| a.as_str().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    analytics::set_sentry_agent_context(&agent_id_str, Some(&session_id));
-
     // Get the client for this specific session
     let client_mutex = session_registry.get(&session_id).map_err(|e| {
         tracing::error!(session_id = %session_id, error = %e, "Session not found for set_model");
@@ -51,13 +44,6 @@ pub async fn acp_set_mode(
 ) -> Result<(), SerializableAcpError> {
     tracing::debug!(session_id = %session_id, mode_id = %mode_id, "acp_set_mode called");
     let session_registry = app.state::<SessionRegistry>();
-
-    // Look up agent for Sentry context and analytics
-    let agent_id_str = session_registry
-        .get_agent_id(&session_id)
-        .map(|a| a.as_str().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    analytics::set_sentry_agent_context(&agent_id_str, Some(&session_id));
 
     // Get the client for this specific session
     let client_mutex = session_registry.get(&session_id).map_err(|e| {
@@ -109,7 +95,6 @@ pub async fn acp_set_execution_profile(
             session_id: session_id.clone(),
         }
     })?;
-    analytics::set_sentry_agent_context(agent_id.as_str(), Some(&session_id));
 
     let provider = registry.get(&agent_id).ok_or_else(|| {
         tracing::error!(
@@ -169,11 +154,6 @@ pub async fn acp_set_config_option(
     tracing::debug!(session_id = %session_id, config_id = %config_id, value = %value, "acp_set_config_option called");
     let session_registry = app.state::<SessionRegistry>();
 
-    // Set Sentry agent context for error tagging
-    if let Some(agent_id) = session_registry.get_agent_id(&session_id) {
-        analytics::set_sentry_agent_context(agent_id.as_str(), Some(&session_id));
-    }
-
     let client_mutex = session_registry
         .get(&session_id)
         .map_err(|e| {
@@ -231,11 +211,6 @@ pub async fn acp_send_prompt(
 
     let session_registry = app.state::<SessionRegistry>();
 
-    // Set Sentry agent context for error tagging
-    if let Some(agent_id) = session_registry.get_agent_id(&session_id) {
-        analytics::set_sentry_agent_context(agent_id.as_str(), Some(&session_id));
-    }
-
     // Get the client for this specific session
     let client_mutex = session_registry.get(&session_id).map_err(|e| {
         tracing::error!(session_id = %session_id, error = %e, "Session not found for send_prompt");
@@ -265,13 +240,6 @@ pub async fn acp_send_prompt(
 pub async fn acp_cancel(app: AppHandle, session_id: String) -> Result<(), SerializableAcpError> {
     tracing::debug!(session_id = %session_id, "acp_cancel called");
     let session_registry = app.state::<SessionRegistry>();
-
-    // Look up agent for Sentry context and analytics
-    let agent_id_str = session_registry
-        .get_agent_id(&session_id)
-        .map(|a| a.as_str().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    analytics::set_sentry_agent_context(&agent_id_str, Some(&session_id));
 
     // Get the client for this specific session
     let client_mutex = session_registry.get(&session_id).map_err(|e| {
