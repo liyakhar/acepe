@@ -14,12 +14,12 @@
     HeaderTitleCell,
   } from "../panel-header/index.js";
   import { PlanIcon, BuildIcon, LoadingIcon } from "../icons/index.js";
-  import XCircle from "phosphor-svelte/lib/XCircle";
-  import ArrowsOut from "phosphor-svelte/lib/ArrowsOut";
-  import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
-  import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
-  import Lightning from "phosphor-svelte/lib/Lightning";
-  import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
+  import { XCircle } from "phosphor-svelte";
+  import { ArrowsOut } from "phosphor-svelte";
+  import { ArrowSquareOut } from "phosphor-svelte";
+  import { MagnifyingGlass } from "phosphor-svelte";
+  import { Lightning } from "phosphor-svelte";
+  import { DownloadSimple } from "phosphor-svelte";
 
   export type PlanCardStatus =
     | "streaming"

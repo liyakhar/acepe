@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
+import { IconDotsVertical } from "@tabler/icons-svelte";
 import {
 	CloseAction,
 	EmbeddedIconButton,
@@ -10,8 +10,8 @@ import {
 	HeaderTitleCell,
 	ProjectLetterBadge,
 } from "@acepe/ui";
-import IconPlus from "@tabler/icons-svelte/icons/plus";
-import IconTerminal from "@tabler/icons-svelte/icons/terminal";
+import { IconPlus } from "@tabler/icons-svelte";
+import { IconTerminal } from "@tabler/icons-svelte";
 import type { TerminalTab } from "$lib/acp/store/types.js";
 
 interface Props {

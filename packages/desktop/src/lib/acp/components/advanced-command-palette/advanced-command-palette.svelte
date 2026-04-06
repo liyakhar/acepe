@@ -1,5 +1,5 @@
 <script lang="ts">
-import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
+import { MagnifyingGlass } from "phosphor-svelte";
 import * as Dialog from "$lib/components/ui/dialog/index.js";
 import * as Kbd from "$lib/components/ui/kbd/index.js";
 import { TIMING } from "../../constants/timing.js";

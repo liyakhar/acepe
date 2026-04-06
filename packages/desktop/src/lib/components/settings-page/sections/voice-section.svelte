@@ -6,9 +6,9 @@ import {
 	HeaderCell,
 	HeaderTitleCell,
 } from "@acepe/ui/panel-header";
-import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
-import Microphone from "phosphor-svelte/lib/Microphone";
-import Trash from "phosphor-svelte/lib/Trash";
+import { DownloadSimple } from "phosphor-svelte";
+import { Microphone } from "phosphor-svelte";
+import { Trash } from "phosphor-svelte";
 
 import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
 import { Switch } from "$lib/components/ui/switch/index.js";

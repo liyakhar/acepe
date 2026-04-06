@@ -1,8 +1,8 @@
 <script lang="ts">
 import { EmbeddedIconButton } from "@acepe/ui/panel-header";
 import { PlanSidebarLayout } from "@acepe/ui/plan-sidebar";
-import ArrowsOut from "phosphor-svelte/lib/ArrowsOut";
-import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
+import { ArrowsOut } from "phosphor-svelte";
+import { DownloadSimple } from "phosphor-svelte";
 import { toast } from "svelte-sonner";
 import { ScrollArea } from "$lib/components/ui/scroll-area/index.js";
 import * as m from "$lib/paraglide/messages.js";

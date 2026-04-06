@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from "svelte";
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
+	import { CaretRight } from "phosphor-svelte";
 	import ToolLabel from "./tool-label.svelte";
 	import type { AgentToolStatus } from "./types.js";
 

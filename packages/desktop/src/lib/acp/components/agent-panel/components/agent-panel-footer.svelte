@@ -6,8 +6,8 @@
 -->
 <script lang="ts">
 import { EmbeddedIconButton } from "@acepe/ui/panel-header";
-import Browser from "phosphor-svelte/lib/Browser";
-import Gear from "phosphor-svelte/lib/Gear";
+import { Browser } from "phosphor-svelte";
+import { Gear } from "phosphor-svelte";
 import { Terminal } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import { WorktreeToggleControl } from "../../worktree-toggle/index.js";

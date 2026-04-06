@@ -1,8 +1,8 @@
 <script lang="ts">
-import IconAlignJustified from "@tabler/icons-svelte/icons/align-justified";
-import IconColumns from "@tabler/icons-svelte/icons/columns";
-import IconMoon from "@tabler/icons-svelte/icons/moon";
-import IconSun from "@tabler/icons-svelte/icons/sun";
+import { IconAlignJustified } from "@tabler/icons-svelte";
+import { IconColumns } from "@tabler/icons-svelte";
+import { IconMoon } from "@tabler/icons-svelte";
+import { IconSun } from "@tabler/icons-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import { IconWrapper } from "$lib/components/ui/icon-wrapper/index.js";
 

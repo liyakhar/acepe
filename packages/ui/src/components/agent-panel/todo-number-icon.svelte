@@ -1,17 +1,17 @@
 <script lang="ts">
-	import NumberCircleOne from "phosphor-svelte/lib/NumberCircleOne";
-	import NumberCircleTwo from "phosphor-svelte/lib/NumberCircleTwo";
-	import NumberCircleThree from "phosphor-svelte/lib/NumberCircleThree";
-	import NumberCircleFour from "phosphor-svelte/lib/NumberCircleFour";
-	import NumberCircleFive from "phosphor-svelte/lib/NumberCircleFive";
-	import NumberCircleSix from "phosphor-svelte/lib/NumberCircleSix";
-	import NumberCircleSeven from "phosphor-svelte/lib/NumberCircleSeven";
-	import NumberCircleEight from "phosphor-svelte/lib/NumberCircleEight";
-	import NumberCircleNine from "phosphor-svelte/lib/NumberCircleNine";
-	import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-	import CircleNotch from "phosphor-svelte/lib/CircleNotch";
-	import XCircle from "phosphor-svelte/lib/XCircle";
-	import Circle from "phosphor-svelte/lib/Circle";
+	import { NumberCircleOne } from "phosphor-svelte";
+	import { NumberCircleTwo } from "phosphor-svelte";
+	import { NumberCircleThree } from "phosphor-svelte";
+	import { NumberCircleFour } from "phosphor-svelte";
+	import { NumberCircleFive } from "phosphor-svelte";
+	import { NumberCircleSix } from "phosphor-svelte";
+	import { NumberCircleSeven } from "phosphor-svelte";
+	import { NumberCircleEight } from "phosphor-svelte";
+	import { NumberCircleNine } from "phosphor-svelte";
+	import { CheckCircle } from "phosphor-svelte";
+	import { CircleNotch } from "phosphor-svelte";
+	import { XCircle } from "phosphor-svelte";
+	import { Circle } from "phosphor-svelte";
 
 	import type { AgentTodoStatus } from "./types.js";
 

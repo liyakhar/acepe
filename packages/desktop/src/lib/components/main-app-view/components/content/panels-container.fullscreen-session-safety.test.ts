@@ -16,11 +16,10 @@ describe("PanelsContainer fullscreen AgentPanel bindings", () => {
 		);
 	});
 
-	it("renders git panels inline in the main container instead of through a modal-only host", () => {
-		expect(source).not.toContain("EmbeddedModalShell");
-		expect(source).not.toContain("const sourceControlPanelSnapshot = $derived.by(() => {");
-		expect(source).toContain("{:else if fullscreenTopLevelPanel.kind === \"git\"}");
-		expect(source).toContain("{#each group.gitPanels as gitPanel (gitPanel.id)}");
+	it("does not render source control as a workspace panel", () => {
+		expect(source).not.toContain("import { GitPanel }");
+		expect(source).not.toContain("{:else if fullscreenTopLevelPanel.kind === \"git\"}");
+		expect(source).not.toContain("{#each group.gitPanels as gitPanel (gitPanel.id)}");
 	});
 
 	it("shows the embedded project badge for agent panels when only one project group exists", () => {

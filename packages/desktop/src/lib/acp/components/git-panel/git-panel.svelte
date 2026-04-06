@@ -28,17 +28,21 @@ import {
 } from "@acepe/ui/git-panel";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import Check from "phosphor-svelte/lib/Check";
-import FolderOpen from "phosphor-svelte/lib/FolderOpen";
-import GitBranch from "phosphor-svelte/lib/GitBranch";
-import GitPullRequest from "phosphor-svelte/lib/GitPullRequest";
-import Trash from "phosphor-svelte/lib/Trash";
-import Tree from "phosphor-svelte/lib/Tree";
-import { untrack } from "svelte";
+import { Check } from "phosphor-svelte";
+import { FolderOpen } from "phosphor-svelte";
+import { GitBranch } from "phosphor-svelte";
+import { GitPullRequest } from "phosphor-svelte";
+import { Trash } from "phosphor-svelte";
+import { Tree } from "phosphor-svelte";
+import { onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import * as m from "$lib/paraglide/messages.js";
 import type { CommitDiff } from "$lib/acp/types/github-integration.js";
 import type { WorktreeInfo } from "$lib/acp/types/worktree-info.js";
+import MicButton from "../agent-input/components/mic-button.svelte";
+import { normalizeVoiceInputText } from "../agent-input/logic/voice-input-text.js";
+import { canCancelVoiceInteraction, canStartVoiceInteraction } from "../agent-input/logic/voice-ui-state.js";
+import { VoiceInputState } from "../agent-input/state/voice-input-state.svelte.js";
 import PrStateIcon from "../pr-state-icon.svelte";
 import type {
 	GitLogEntry,
@@ -67,6 +71,7 @@ import type { GitPanelInitialTarget } from "../../store/git-panel-type.js";
 import type { PrDiff, PrListItem, RepoContext } from "../../types/github-integration.js";
 import type { FileDiff as FileDiffType } from "../../types/github-integration.js";
 import type { GitHubReference } from "../../constants/github-badge-html.js";
+import { getVoiceSettingsStore } from "$lib/stores/voice-settings-store.svelte.js";
 
 import PierreDiffView from "../diff-viewer/pierre-diff-view.svelte";
 import PrDiffFileList from "./pr-diff-file-list.svelte";
@@ -80,6 +85,7 @@ interface Props {
 	projectColor: string | undefined;
 	width: number;
 	initialTarget?: GitPanelInitialTarget;
+	voiceSessionId?: string | null;
 	isFullscreenEmbedded?: boolean;
 	hideProjectBadge?: boolean;
 	onClose: () => void;
@@ -95,6 +101,7 @@ let {
 	projectColor,
 	width,
 	initialTarget,
+	voiceSessionId = null,
 	isFullscreenEmbedded = false,
 	hideProjectBadge = false,
 	onClose,
@@ -115,6 +122,7 @@ let commitMessage = $state("");
 let activeView = $state<"status" | "history" | "stash">("status");
 let generating = $state(false);
 let activeSection = $state<SourceControlSection>("changes");
+let voiceState = $state<VoiceInputState | null>(null);
 let commitLookup = $state("");
 let commitLookupLoading = $state(false);
 let commitLookupError = $state<string | null>(null);
@@ -142,6 +150,8 @@ let startX = $state(0);
 // ─── Derived ─────────────────────────────────────────────────────────
 
 const effectiveColor = $derived(projectColor ?? "");
+const voiceSettingsStore = getVoiceSettingsStore();
+const voiceEnabled = $derived(voiceSettingsStore.enabled);
 const widthStyle = $derived(
 	isFullscreenEmbedded
 		? "min-width: 0; width: 100%; max-width: 100%;"
@@ -210,6 +220,50 @@ const canCommitPush = $derived(
 	(stagedFiles.length > 0 || (remoteStatus?.ahead ?? 0) > 0) && !!branch && !stackedActionRunning
 );
 const canCommitPushPr = $derived(canCommitPush && (remoteStatus?.trackingBranch?.length ?? 0) > 0);
+const commitMicDisabled = $derived.by(() => {
+	if (voiceState === null) {
+		return true;
+	}
+
+	return (
+		!canStartVoiceInteraction(voiceState.phase, false) &&
+		!canCancelVoiceInteraction(voiceState.phase)
+	);
+});
+
+onMount(() => {
+	if (!voiceEnabled || !voiceSessionId) {
+		return;
+	}
+
+	const nextVoiceState = new VoiceInputState({
+		sessionId: voiceSessionId,
+		getSelectedLanguage: () => voiceSettingsStore.language,
+		getSelectedModelId: () => voiceSettingsStore.selectedModelId,
+		onTranscriptionReady: (text) => {
+			const normalizedText = normalizeVoiceInputText(text);
+			if (!normalizedText) {
+				return;
+			}
+
+			commitMessage = commitMessage.length > 0 ? `${commitMessage} ${normalizedText}` : normalizedText;
+		},
+	});
+	let disposed = false;
+	void nextVoiceState.registerListeners().then(() => {
+		if (disposed) {
+			nextVoiceState.dispose();
+			return;
+		}
+		voiceState = nextVoiceState;
+	});
+
+	return () => {
+		disposed = true;
+		voiceState = null;
+		nextVoiceState.dispose();
+	};
+});
 
 // ─── Data Fetching ───────────────────────────────────────────────────
 
@@ -715,6 +769,12 @@ async function handleOpenPr(prNumber: number) {
 		{/if}
 	{/snippet}
 
+	{#snippet commitMicButton()}
+		{#if voiceState}
+			<MicButton voiceState={voiceState} disabled={commitMicDisabled} />
+		{/if}
+	{/snippet}
+
 	{#if activeSection === "changes"}
 		<div
 			class="flex items-center gap-1.5 border-b border-border/30 px-2 py-1.5 shrink-0 bg-muted/5"
@@ -753,6 +813,7 @@ async function handleOpenPr(prNumber: number) {
 			onCommitMessageChange={(msg) => (commitMessage = msg)}
 			onCommit={handleCommit}
 			onGenerate={onRequestGeneration ? handleGenerate : undefined}
+			commitMicButton={commitMicButton}
 			{generating}
 			onPush={handlePush}
 			onPull={handlePull}

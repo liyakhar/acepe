@@ -1,7 +1,7 @@
 <script lang="ts">
 import { GitHubBadge } from "@acepe/ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import GithubLogo from "phosphor-svelte/lib/GithubLogo";
+import { GithubLogo } from "phosphor-svelte";
 
 import type { GitHubReference } from "../constants/github-badge-html.js";
 import { getGitHubURL } from "../constants/github-badge-html.js";
@@ -133,14 +133,14 @@ function handleClick(e: MouseEvent) {
 	if (enhancedRef.type === "issue" || !projectPath) return;
 
 	if (enhancedRef.type === "pr") {
-		panelStore.openGitPanel(projectPath, undefined, {
+		panelStore.openGitDialog(projectPath, undefined, {
 			section: "prs",
 			prNumber: enhancedRef.number,
 		});
 		return;
 	}
 
-	panelStore.openGitPanel(projectPath, undefined, {
+	panelStore.openGitDialog(projectPath, undefined, {
 		section: "commits",
 		commitSha: enhancedRef.sha,
 	});

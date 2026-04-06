@@ -8,10 +8,10 @@
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { EmbeddedIconButton } from "@acepe/ui/panel-header";
 import { tick } from "svelte";
-import DotsThreeVertical from "phosphor-svelte/lib/DotsThreeVertical";
-import Gear from "phosphor-svelte/lib/Gear";
-import NotePencil from "phosphor-svelte/lib/NotePencil";
-import Tree from "phosphor-svelte/lib/Tree";
+import { DotsThreeVertical } from "phosphor-svelte";
+import { Gear } from "phosphor-svelte";
+import { NotePencil } from "phosphor-svelte";
+import { Tree } from "phosphor-svelte";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import { Switch } from "$lib/components/ui/switch/index.js";
 import { Input } from "$lib/components/ui/input/index.js";

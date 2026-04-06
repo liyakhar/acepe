@@ -1,8 +1,8 @@
 <script lang="ts">
 import { DiffPill, ProjectLetterBadge } from "@acepe/ui";
-import ArrowDown from "phosphor-svelte/lib/ArrowDown";
-import ArrowUp from "phosphor-svelte/lib/ArrowUp";
-import GitBranch from "phosphor-svelte/lib/GitBranch";
+import { ArrowDown } from "phosphor-svelte";
+import { ArrowUp } from "phosphor-svelte";
+import { GitBranch } from "phosphor-svelte";
 import { Kbd, KbdGroup } from "$lib/components/ui/kbd/index.js";
 import { getAgentIcon } from "../constants/thread-list-constants.js";
 import type { AgentInfo } from "../logic/agent-manager.js";

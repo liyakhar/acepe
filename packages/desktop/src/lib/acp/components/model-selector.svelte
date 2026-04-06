@@ -3,7 +3,7 @@ import { Selector, TextShimmer } from "@acepe/ui";
 import { Colors } from "@acepe/ui/colors";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { ResultAsync } from "neverthrow";
-import Brain from "phosphor-svelte/lib/Brain";
+import { Brain } from "phosphor-svelte";
 import { onDestroy, onMount } from "svelte";
 import type { HTMLButtonAttributes } from "svelte/elements";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";

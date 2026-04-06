@@ -1,7 +1,7 @@
 <script lang="ts">
-import FolderOpen from "phosphor-svelte/lib/FolderOpen";
-import GitBranch from "phosphor-svelte/lib/GitBranch";
-import Link from "phosphor-svelte/lib/Link";
+import { FolderOpen } from "phosphor-svelte";
+import { GitBranch } from "phosphor-svelte";
+import { Link } from "phosphor-svelte";
 import { toast } from "svelte-sonner";
 import { Button } from "$lib/components/ui/button/index.js";
 import * as Dialog from "$lib/components/ui/dialog/index.js";

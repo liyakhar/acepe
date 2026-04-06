@@ -1,8 +1,8 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { EmbeddedIconButton } from "@acepe/ui/panel-header";
-import Moon from "phosphor-svelte/lib/Moon";
-import Sun from "phosphor-svelte/lib/Sun";
+import { Moon } from "phosphor-svelte";
+import { Sun } from "phosphor-svelte";
 
 import { useTheme } from "./context.svelte.js";
 

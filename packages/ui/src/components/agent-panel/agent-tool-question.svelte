@@ -1,9 +1,9 @@
 <script lang="ts">
-	import Check from "phosphor-svelte/lib/Check";
-	import Square from "phosphor-svelte/lib/Square";
-	import XCircle from "phosphor-svelte/lib/XCircle";
-	import DotsThree from "phosphor-svelte/lib/DotsThree";
-	import IconHelpCircleFilled from "@tabler/icons-svelte/icons/help-circle-filled";
+	import { Check } from "phosphor-svelte";
+	import { Square } from "phosphor-svelte";
+	import { XCircle } from "phosphor-svelte";
+	import { DotsThree } from "phosphor-svelte";
+	import { IconHelpCircleFilled } from "@tabler/icons-svelte";
 	import { TextShimmer } from "../text-shimmer/index.js";
 	import type { AgentQuestion, AgentToolStatus } from "./types.js";
 	import {

@@ -8,8 +8,8 @@
 <script lang="ts">
 import { invoke } from "@tauri-apps/api/core";
 import { ResultAsync } from "neverthrow";
-import Plus from "phosphor-svelte/lib/Plus";
-import X from "phosphor-svelte/lib/X";
+import { Plus } from "phosphor-svelte";
+import { X } from "phosphor-svelte";
 import { onMount } from "svelte";
 import type { EmbeddedTerminalTab } from "$lib/acp/store/embedded-terminal-store.svelte.js";
 import { EmbeddedTerminalStore } from "$lib/acp/store/embedded-terminal-store.svelte.js";

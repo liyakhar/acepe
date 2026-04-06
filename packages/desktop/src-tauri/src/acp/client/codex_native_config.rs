@@ -4,25 +4,29 @@ use crate::acp::client::{
 use crate::acp::client_session::default_modes;
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::session_update::{ConfigOptionData, ConfigOptionValue};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_CODEX_MODEL_ID: &str = "gpt-5.3-codex";
 const DEFAULT_REASONING_EFFORT: &str = "high";
 const FAST_MODE_CONFIG_ID: &str = "fast_mode";
 const REASONING_CONFIG_ID: &str = "reasoning_effort";
 pub const CODEX_BUILD_FULL_ACCESS_MODE_ID: &str = "build-full-access";
+const CODEX_GLOBAL_CONFIG_RELATIVE_PATH: &str = ".codex/config.toml";
 
 pub const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS: &str =
     "# Plan Mode\n\nProduce a decision-complete implementation plan before execution.";
 pub const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS: &str =
     "# Default Mode\n\nMake reasonable assumptions and execute the user's request.";
 
-const CODEX_REASONING_OPTIONS: [(&str, &str); 4] = [
+const CODEX_REASONING_OPTIONS: [(&str, &str); 5] = [
     ("xhigh", "Extra High"),
     ("high", "High"),
     ("medium", "Medium"),
     ("low", "Low"),
+    ("minimal", "Minimal"),
 ];
 
 const BUILT_IN_CODEX_MODELS: [(&str, &str); 6] = [
@@ -39,6 +43,13 @@ pub struct CodexNativeConfigState {
     pub current_model_id: String,
     pub reasoning_effort: String,
     pub fast_mode: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CodexExternalConfig {
+    model: Option<String>,
+    model_reasoning_effort: Option<String>,
+    service_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,19 +131,30 @@ pub fn default_codex_native_config_state() -> CodexNativeConfigState {
     }
 }
 
-pub fn build_codex_native_session_model_state() -> SessionModelState {
-    SessionModelState {
-        available_models: BUILT_IN_CODEX_MODELS
-            .into_iter()
-            .map(|(model_id, name)| AvailableModel {
-                model_id: model_id.to_string(),
-                name: name.to_string(),
-                description: None,
-            })
-            .collect(),
-        current_model_id: DEFAULT_CODEX_MODEL_ID.to_string(),
-        models_display: Default::default(),
+pub fn load_codex_native_config_state(cwd: &Path) -> AcpResult<CodexNativeConfigState> {
+    load_codex_native_config_state_from_paths(
+        codex_global_config_path().as_deref(),
+        &cwd.join(CODEX_GLOBAL_CONFIG_RELATIVE_PATH),
+    )
+}
+
+fn load_codex_native_config_state_from_paths(
+    global_config_path: Option<&Path>,
+    project_config_path: &Path,
+) -> AcpResult<CodexNativeConfigState> {
+    let mut state = default_codex_native_config_state();
+
+    if let Some(global_config_path) = global_config_path {
+        merge_codex_native_config_state_from_path(&mut state, global_config_path)?;
     }
+
+    merge_codex_native_config_state_from_path(&mut state, project_config_path)?;
+
+    Ok(state)
+}
+
+pub fn build_codex_native_session_model_state() -> SessionModelState {
+    build_codex_native_session_model_state_with_state(&default_codex_native_config_state())
 }
 
 pub fn build_codex_native_config_options(state: &CodexNativeConfigState) -> Vec<ConfigOptionData> {
@@ -166,24 +188,31 @@ pub fn build_codex_native_config_options(state: &CodexNativeConfigState) -> Vec<
 }
 
 pub fn build_codex_native_new_session_response(session_id: String) -> NewSessionResponse {
-    let state = default_codex_native_config_state();
+    build_codex_native_new_session_response_with_state(
+        session_id,
+        &default_codex_native_config_state(),
+    )
+}
+
+pub fn build_codex_native_new_session_response_with_state(
+    session_id: String,
+    state: &CodexNativeConfigState,
+) -> NewSessionResponse {
     NewSessionResponse {
         session_id,
         sequence_id: None,
-        models: build_codex_native_session_model_state(),
+        models: build_codex_native_session_model_state_with_state(state),
         modes: default_modes(),
         available_commands: vec![],
-        config_options: build_codex_native_config_options(&state),
+        config_options: build_codex_native_config_options(state),
     }
 }
 
 pub fn build_codex_native_resume_session_response(
     state: &CodexNativeConfigState,
 ) -> ResumeSessionResponse {
-    let mut models = build_codex_native_session_model_state();
-    models.current_model_id = normalize_model_id(&state.current_model_id);
     ResumeSessionResponse {
-        models,
+        models: build_codex_native_session_model_state_with_state(state),
         modes: default_modes(),
         available_commands: vec![],
         config_options: build_codex_native_config_options(state),
@@ -191,18 +220,8 @@ pub fn build_codex_native_resume_session_response(
 }
 
 pub fn set_codex_native_model(state: &mut CodexNativeConfigState, model_id: &str) -> AcpResult<()> {
-    let normalized_model_id = normalize_model_id(model_id);
-    if BUILT_IN_CODEX_MODELS
-        .iter()
-        .any(|(candidate_model_id, _)| *candidate_model_id == normalized_model_id)
-    {
-        state.current_model_id = normalized_model_id;
-        return Ok(());
-    }
-
-    Err(AcpError::ProtocolError(format!(
-        "Unknown Codex model: {model_id}"
-    )))
+    state.current_model_id = normalize_model_id(model_id);
+    Ok(())
 }
 
 pub fn set_codex_native_config_option(
@@ -212,17 +231,7 @@ pub fn set_codex_native_config_option(
 ) -> AcpResult<Vec<ConfigOptionData>> {
     match config_id {
         REASONING_CONFIG_ID => {
-            let normalized_value = value.trim().to_lowercase();
-            if CODEX_REASONING_OPTIONS
-                .iter()
-                .any(|(candidate_value, _)| *candidate_value == normalized_value)
-            {
-                state.reasoning_effort = normalized_value;
-            } else {
-                return Err(AcpError::ProtocolError(format!(
-                    "Unsupported Codex reasoning effort: {value}"
-                )));
-            }
+            state.reasoning_effort = normalize_reasoning_effort(value)?;
         }
         FAST_MODE_CONFIG_ID => {
             state.fast_mode = parse_boolean_config_value(value)?;
@@ -327,6 +336,96 @@ fn build_collaboration_mode(
     }
 }
 
+fn build_codex_native_session_model_state_with_state(
+    state: &CodexNativeConfigState,
+) -> SessionModelState {
+    let current_model_id = normalize_model_id(&state.current_model_id);
+    let mut available_models = BUILT_IN_CODEX_MODELS
+        .into_iter()
+        .map(|(model_id, name)| AvailableModel {
+            model_id: model_id.to_string(),
+            name: name.to_string(),
+            description: None,
+        })
+        .collect::<Vec<_>>();
+
+    if !available_models
+        .iter()
+        .any(|model| model.model_id == current_model_id)
+    {
+        available_models.insert(
+            0,
+            AvailableModel {
+                model_id: current_model_id.clone(),
+                name: current_model_id.clone(),
+                description: Some("Configured in Codex config.toml".to_string()),
+            },
+        );
+    }
+
+    SessionModelState {
+        available_models,
+        current_model_id,
+        models_display: Default::default(),
+    }
+}
+
+fn merge_codex_native_config_state_from_path(
+    state: &mut CodexNativeConfigState,
+    path: &Path,
+) -> AcpResult<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let raw = fs::read_to_string(path).map_err(|error| {
+        AcpError::InvalidState(format!(
+            "Failed to read Codex config at {}: {error}",
+            path.display()
+        ))
+    })?;
+    let config = toml::from_str::<CodexExternalConfig>(&raw).map_err(|error| {
+        AcpError::ProtocolError(format!(
+            "Invalid Codex config at {}: {error}",
+            path.display()
+        ))
+    })?;
+
+    merge_codex_native_config_state(state, config, path)
+}
+
+fn merge_codex_native_config_state(
+    state: &mut CodexNativeConfigState,
+    config: CodexExternalConfig,
+    path: &Path,
+) -> AcpResult<()> {
+    if let Some(model) = config.model {
+        state.current_model_id = normalize_model_id(&model);
+    }
+
+    if let Some(reasoning_effort) = config.model_reasoning_effort {
+        state.reasoning_effort = normalize_reasoning_effort(&reasoning_effort).map_err(|_| {
+            AcpError::ProtocolError(format!(
+                "Unsupported Codex model_reasoning_effort in {}: {}",
+                path.display(),
+                reasoning_effort
+            ))
+        })?;
+    }
+
+    if let Some(service_tier) = config.service_tier {
+        state.fast_mode = parse_codex_service_tier(&service_tier).map_err(|_| {
+            AcpError::ProtocolError(format!(
+                "Unsupported Codex service_tier in {}: {}",
+                path.display(),
+                service_tier
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
 fn normalize_model_id(model_id: &str) -> String {
     let trimmed = model_id.trim();
     if trimmed.is_empty() {
@@ -334,6 +433,30 @@ fn normalize_model_id(model_id: &str) -> String {
     }
 
     trimmed.to_string()
+}
+
+fn normalize_reasoning_effort(value: &str) -> AcpResult<String> {
+    let normalized_value = value.trim().to_lowercase();
+    if CODEX_REASONING_OPTIONS
+        .iter()
+        .any(|(candidate_value, _)| *candidate_value == normalized_value)
+    {
+        return Ok(normalized_value);
+    }
+
+    Err(AcpError::ProtocolError(format!(
+        "Unsupported Codex reasoning effort: {value}"
+    )))
+}
+
+fn parse_codex_service_tier(value: &str) -> AcpResult<bool> {
+    match value.trim().to_lowercase().as_str() {
+        "fast" => Ok(true),
+        "flex" => Ok(false),
+        _ => Err(AcpError::ProtocolError(format!(
+            "Unsupported Codex service tier: {value}"
+        ))),
+    }
 }
 
 fn parse_boolean_config_value(value: &str) -> AcpResult<bool> {
@@ -347,10 +470,15 @@ fn parse_boolean_config_value(value: &str) -> AcpResult<bool> {
     }
 }
 
+fn codex_global_config_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(CODEX_GLOBAL_CONFIG_RELATIVE_PATH))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn new_session_response_uses_base_models_and_separate_config_options() {
@@ -388,7 +516,7 @@ mod tests {
 
         assert_eq!(state.current_model_id, DEFAULT_CODEX_MODEL_ID);
         assert_eq!(state.reasoning_effort, "medium");
-        assert_eq!(state.fast_mode, false);
+        assert!(!state.fast_mode);
         assert_eq!(config_options[0].current_value, Some(json!("medium")));
     }
 
@@ -405,6 +533,32 @@ mod tests {
         assert_eq!(state.reasoning_effort, "medium");
         assert!(state.fast_mode);
         assert_eq!(config_options[1].current_value, Some(json!(true)));
+    }
+
+    #[test]
+    fn custom_models_are_accepted() {
+        let mut state = default_codex_native_config_state();
+
+        set_codex_native_model(&mut state, "gpt-oss-custom")
+            .expect("custom models from Codex config should be accepted");
+
+        assert_eq!(state.current_model_id, "gpt-oss-custom");
+    }
+
+    #[test]
+    fn minimal_reasoning_effort_is_supported() {
+        let mut state = default_codex_native_config_state();
+
+        let config_options =
+            set_codex_native_config_option(&mut state, REASONING_CONFIG_ID, "minimal")
+                .expect("minimal reasoning should update");
+
+        assert_eq!(state.reasoning_effort, "minimal");
+        assert_eq!(config_options[0].current_value, Some(json!("minimal")));
+        assert!(config_options[0]
+            .options
+            .iter()
+            .any(|option| option.value == json!("minimal")));
     }
 
     #[test]
@@ -451,6 +605,61 @@ mod tests {
             collaboration_mode.settings.developer_instructions,
             CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
         );
+    }
+
+    #[test]
+    fn resume_session_response_includes_configured_custom_model() {
+        let state = CodexNativeConfigState {
+            current_model_id: "gpt-oss-custom".to_string(),
+            reasoning_effort: "medium".to_string(),
+            fast_mode: false,
+        };
+
+        let response = build_codex_native_resume_session_response(&state);
+
+        assert_eq!(response.models.current_model_id, "gpt-oss-custom");
+        assert!(response
+            .models
+            .available_models
+            .iter()
+            .any(|model| model.model_id == "gpt-oss-custom"));
+    }
+
+    #[test]
+    fn codex_config_state_prefers_project_config_over_global_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let global_config = temp.path().join("global.toml");
+        let project_config = temp.path().join("project.toml");
+
+        fs::write(
+            &global_config,
+            r#"
+model = "gpt-5.4"
+model_reasoning_effort = "low"
+service_tier = "fast"
+"#,
+        )
+        .expect("write global config");
+
+        fs::write(
+            &project_config,
+            r#"
+model = "gpt-oss-custom"
+model_reasoning_effort = "minimal"
+service_tier = "flex"
+"#,
+        )
+        .expect("write project config");
+
+        let state = load_codex_native_config_state_from_paths(
+            Some(global_config.as_path()),
+            project_config.as_path(),
+        )
+        .expect("config state should load");
+
+        assert_eq!(state.current_model_id, "gpt-oss-custom");
+        assert_eq!(state.reasoning_effort, "minimal");
+        assert!(!state.fast_mode);
     }
 
     #[test]

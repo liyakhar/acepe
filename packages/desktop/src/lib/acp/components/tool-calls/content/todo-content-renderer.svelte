@@ -1,6 +1,7 @@
 <script lang="ts">
-import { TextShimmer, TodoNumberIcon } from "@acepe/ui";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
+import { TodoNumberIcon } from "@acepe/ui/agent-panel";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
+import { CheckCircle } from "phosphor-svelte";
 
 import type { TodoContent } from "../../../schemas/tool-call-content.schema.js";
 

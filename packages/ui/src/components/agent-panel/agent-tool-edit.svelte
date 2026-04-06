@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { WorkerPoolManager } from "@pierre/diffs/worker";
-import CaretRight from "phosphor-svelte/lib/CaretRight";
+import { CaretRight } from "phosphor-svelte";
 
 import { FilePathBadge } from "../file-path-badge/index.js";
 import { TextShimmer } from "../text-shimmer/index.js";

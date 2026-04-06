@@ -1,13 +1,13 @@
 <script lang="ts">
-import IconArrowUp from "@tabler/icons-svelte/icons/arrow-up";
+import { IconArrowUp } from "@tabler/icons-svelte";
 import { Button } from "@acepe/ui/button";
 import { EmbeddedIconButton } from "@acepe/ui/panel-header";
 import * as m from "$lib/paraglide/messages.js";
-import FloppyDisk from "phosphor-svelte/lib/FloppyDisk";
-import PencilSimple from "phosphor-svelte/lib/PencilSimple";
-import Queue from "phosphor-svelte/lib/Queue";
-import Trash from "phosphor-svelte/lib/Trash";
-import X from "phosphor-svelte/lib/X";
+import { FloppyDisk } from "phosphor-svelte";
+import { PencilSimple } from "phosphor-svelte";
+import { Queue } from "phosphor-svelte";
+import { Trash } from "phosphor-svelte";
+import { X } from "phosphor-svelte";
 
 import { getMessageQueueStore } from "../store/message-queue/message-queue-store.svelte.js";
 import type { QueuedMessage } from "../store/message-queue/types.js";

@@ -1,6 +1,6 @@
 <script lang="ts">
 import { ProjectLetterBadge } from "@acepe/ui";
-import IconX from "@tabler/icons-svelte/icons/x";
+import { IconX } from "@tabler/icons-svelte";
 import { normalizeTitleForDisplay } from "$lib/acp/store/session-title-policy.js";
 import { Button } from "$lib/components/ui/button/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";

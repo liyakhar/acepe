@@ -1,5 +1,5 @@
 <script lang="ts">
-import Sparkle from "phosphor-svelte/lib/Sparkle";
+import { Sparkle } from "phosphor-svelte";
 import type { ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
 
 import type { MainAppViewState } from "../../logic/main-app-view-state.svelte.js";

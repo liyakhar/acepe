@@ -1,9 +1,9 @@
 <script lang="ts">
-import ArrowLeft from "phosphor-svelte/lib/ArrowLeft";
-import ArrowRight from "phosphor-svelte/lib/ArrowRight";
-import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
-import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
-import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+import { ArrowLeft } from "phosphor-svelte";
+import { ArrowRight } from "phosphor-svelte";
+import { ArrowSquareOut } from "phosphor-svelte";
+import { ArrowsClockwise } from "phosphor-svelte";
+import { WarningCircle } from "phosphor-svelte";
 import { untrack } from "svelte";
 import * as Dialog from "$lib/components/ui/dialog/index.js";
 import { Spinner } from "$lib/components/ui/spinner/index.js";

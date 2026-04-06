@@ -1,5 +1,5 @@
 <script lang="ts">
-	import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
+	import { IconDotsVertical } from "@tabler/icons-svelte";
 	import {
 		AttentionQueueQuestionCard,
 		CloseAction,
@@ -29,7 +29,7 @@
 		getQueueItemTaskDisplay,
 		getQueueItemToolDisplay,
 	} from "$lib/acp/components/queue/queue-item-display.js";
-	import PermissionActionBar from "$lib/acp/components/tool-calls/permission-action-bar.svelte";
+	import PermissionBar from "$lib/acp/components/tool-calls/permission-bar.svelte";
 	import TodoHeader from "$lib/acp/components/todo-header.svelte";
 	import AgentInput from "$lib/acp/components/agent-input/agent-input-ui.svelte";
 	import AgentSelector from "$lib/acp/components/agent-selector.svelte";
@@ -37,8 +37,7 @@
 	import { WorktreeToggleControl } from "$lib/acp/components/worktree-toggle/index.js";
 	import { getWorktreeDefaultStore } from "$lib/acp/components/worktree-toggle/worktree-default-store.svelte.js";
 	import { loadWorktreeEnabled } from "$lib/acp/components/worktree-toggle/worktree-storage.js";
-	import { toAgentToolKind } from "$lib/acp/components/tool-calls/tool-kind-to-agent-tool-kind.js";
-	import { getToolCompactDisplayText } from "$lib/acp/registry/tool-kind-ui-registry.js";
+	import { resolveCompactToolDisplay } from "$lib/acp/components/tool-calls/tool-definition-registry.js";
 	import { formatSessionTitleForDisplay } from "$lib/acp/store/session-title-policy.js";
 	import {
 		getAgentPreferencesStore,
@@ -63,7 +62,7 @@
 	import { useTheme } from "$lib/components/theme/context.svelte.js";
 	import { openFileInEditor, revealInFinder, tauriClient } from "$lib/utils/tauri-client.js";
 	import { ResultAsync } from "neverthrow";
-	import Robot from "phosphor-svelte/lib/Robot";
+	import { Robot } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import type { MainAppViewState } from "../../logic/main-app-view-state.svelte.js";
@@ -392,27 +391,11 @@
 		const latestTool: KanbanToolData | null = (() => {
 			if (taskCard) return null;
 			if (!toolDisplay) return null;
-			const tc = toolDisplay.toolCall;
-			const displayTitle = getToolCompactDisplayText(
-				toolDisplay.toolKind,
-				tc,
-				toolDisplay.turnState
-			);
-			const filePath =
-				tc.locations && tc.locations.length > 0 && tc.locations[0]
-					? tc.locations[0].path
-					: undefined;
-			const status = tc.status === "completed" ? "done" as const
-				: tc.status === "failed" ? "error" as const
-				: tc.status === "in_progress" ? "running" as const
-				: "pending" as const;
-			return {
-				id: tc.id,
-				kind: toAgentToolKind(toolDisplay.toolKind),
-				title: displayTitle ? displayTitle : tc.name,
-				filePath,
-				status,
-			};
+			return resolveCompactToolDisplay({
+				toolCall: toolDisplay.toolCall,
+				toolKind: toolDisplay.toolKind,
+				turnState: toolDisplay.turnState,
+			});
 		})();
 		const hasUnseenCompletion = item.status === "needs_review" ? false : item.state.attention.hasUnseenCompletion;
 
@@ -1046,7 +1029,11 @@
 								data-has-question={questionUiState ? "true" : "false"}
 							>
 								{#if permission}
-									<PermissionActionBar permission={permission} compact hideHeader projectPath={item.projectPath} />
+									<PermissionBar
+										sessionId={item.sessionId}
+										permission={permission}
+										projectPath={item.projectPath}
+									/>
 								{:else if questionUiState && questionUiState.currentQuestion}
 									<AttentionQueueQuestionCard
 										currentQuestion={questionUiState.currentQuestion}

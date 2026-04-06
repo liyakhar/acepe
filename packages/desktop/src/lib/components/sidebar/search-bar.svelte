@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconSearch from "@tabler/icons-svelte/icons/search";
+import { IconSearch } from "@tabler/icons-svelte";
 import { Input } from "$lib/components/ui/input/index.js";
 
 interface Props {

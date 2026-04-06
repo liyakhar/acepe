@@ -1,6 +1,6 @@
 <script lang="ts">
-import IconTrash from "@tabler/icons-svelte/icons/trash";
-import IconX from "@tabler/icons-svelte/icons/x";
+import { IconTrash } from "@tabler/icons-svelte";
+import { IconX } from "@tabler/icons-svelte";
 import { Badge } from "$lib/components/ui/badge/index.js";
 import { Button } from "$lib/components/ui/button/index.js";
 import type { ThreadState } from "../types/thread-state.js";

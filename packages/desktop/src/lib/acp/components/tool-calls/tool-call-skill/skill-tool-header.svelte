@@ -1,9 +1,7 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
-import IconCheck from "@tabler/icons-svelte/icons/check";
-import ArrowsInLineVertical from "phosphor-svelte/lib/ArrowsInLineVertical";
-import ArrowsOutLineVertical from "phosphor-svelte/lib/ArrowsOutLineVertical";
-import Package from "phosphor-svelte/lib/Package";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
+import { IconCheck } from "@tabler/icons-svelte";
+import { ArrowsInLineVertical, ArrowsOutLineVertical, Package } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import type { ToolCallStatus } from "$lib/services/converted-session-types.js";
 

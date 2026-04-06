@@ -7,8 +7,8 @@ import {
 	HeaderActionCell,
 	HeaderTitleCell,
 } from "@acepe/ui/panel-header";
-import ArrowsInSimple from "phosphor-svelte/lib/ArrowsInSimple";
-import ArrowsOutSimple from "phosphor-svelte/lib/ArrowsOutSimple";
+import { ArrowsInSimple } from "phosphor-svelte";
+import { ArrowsOutSimple } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import type { SessionPlanResponse } from "$lib/services/converted-session-types.js";
 

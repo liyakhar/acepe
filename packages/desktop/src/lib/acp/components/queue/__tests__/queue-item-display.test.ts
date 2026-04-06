@@ -134,7 +134,7 @@ describe("getQueueItemTaskDisplay", () => {
 			latestTaskSubagentTool: {
 				id: "child-2",
 				kind: "task",
-				title: "Task completed",
+				title: "Trace queue item rendering for task tools",
 				filePath: undefined,
 				status: "done",
 			},

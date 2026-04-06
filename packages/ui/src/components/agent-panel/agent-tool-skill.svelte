@@ -1,7 +1,7 @@
 <script lang="ts">
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
-	import Package from "phosphor-svelte/lib/Package";
-	import Check from "phosphor-svelte/lib/Check";
+	import { CaretRight } from "phosphor-svelte";
+	import { Package } from "phosphor-svelte";
+	import { Check } from "phosphor-svelte";
 	import { TextShimmer } from "../text-shimmer/index.js";
 	import AgentToolCard from "./agent-tool-card.svelte";
 	import ToolLabel from "./tool-label.svelte";

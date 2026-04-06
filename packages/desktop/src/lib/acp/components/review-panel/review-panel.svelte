@@ -6,8 +6,8 @@ import {
 	HeaderActionCell,
 	HeaderTitleCell,
 } from "@acepe/ui";
-import IconChevronLeft from "@tabler/icons-svelte/icons/chevron-left";
-import IconChevronRight from "@tabler/icons-svelte/icons/chevron-right";
+import { IconChevronLeft } from "@tabler/icons-svelte";
+import { IconChevronRight } from "@tabler/icons-svelte";
 import { SvelteMap } from "svelte/reactivity";
 import { Skeleton } from "$lib/components/ui/skeleton/index.js";
 import * as m from "$lib/paraglide/messages.js";

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
-	import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
+	import { IconDotsVertical } from "@tabler/icons-svelte";
 	import { Button } from "@acepe/ui/button";
 	import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 	import {
@@ -29,16 +29,16 @@
 		type AnyAgentEntry,
 		type KanbanCardData,
 	} from "@acepe/ui";
-	import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-	import X from "phosphor-svelte/lib/X";
-	import Kanban from "phosphor-svelte/lib/Kanban";
-	import Rows from "phosphor-svelte/lib/Rows";
-	import Palette from "phosphor-svelte/lib/Palette";
-	import Robot from "phosphor-svelte/lib/Robot";
-	import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
-	import ShieldWarning from "phosphor-svelte/lib/ShieldWarning";
-	import Tag from "phosphor-svelte/lib/Tag";
-	import XCircle from "phosphor-svelte/lib/XCircle";
+	import { CheckCircle } from "phosphor-svelte";
+	import { X } from "phosphor-svelte";
+	import { Kanban } from "phosphor-svelte";
+	import { Rows } from "phosphor-svelte";
+	import { Palette } from "phosphor-svelte";
+	import { Robot } from "phosphor-svelte";
+	import { ShieldCheck } from "phosphor-svelte";
+	import { ShieldWarning } from "phosphor-svelte";
+	import { Tag } from "phosphor-svelte";
+	import { XCircle } from "phosphor-svelte";
 
 	import PermissionBar from "$lib/acp/components/tool-calls/permission-bar.svelte";
 	import type { PermissionRequest } from "$lib/acp/types/permission.js";

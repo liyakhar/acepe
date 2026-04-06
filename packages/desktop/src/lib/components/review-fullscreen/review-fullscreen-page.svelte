@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconX from "@tabler/icons-svelte/icons/x";
+import { IconX } from "@tabler/icons-svelte";
 import AgentPanelReviewContent from "$lib/acp/components/agent-panel/components/agent-panel-review-content.svelte";
 import { aggregateFileEdits } from "$lib/acp/components/modified-files/logic/aggregate-file-edits.js";
 import { getSessionStore } from "$lib/acp/store/session-store.svelte.js";

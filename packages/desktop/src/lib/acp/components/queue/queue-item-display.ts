@@ -1,7 +1,7 @@
 import type { AgentToolEntry } from "@acepe/ui/agent-panel";
 import { capitalizeLeadingCharacter } from "@acepe/ui/utils";
 import { convertTaskChildren } from "../tool-calls/tool-call-task/logic/convert-task-children.js";
-import { getToolKindSubtitle, getToolKindTitle } from "../../registry/tool-kind-ui-registry.js";
+import { compactAgentToolEntry, resolveFullToolEntry } from "../tool-calls/tool-definition-registry.js";
 import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";
 import type { ToolKind } from "../../types/tool-kind.js";
@@ -105,13 +105,13 @@ function getChildSummary(child: ToolCall): string | null {
 		}
 	}
 
-	const childKind = child.kind ?? "other";
-	const subtitle = getToolKindSubtitle(childKind, child)?.trim();
+	const entry = resolveFullToolEntry({ toolCall: child });
+	const subtitle = entry.subtitle?.trim();
 	if (subtitle && subtitle.length > 0) {
 		return subtitle;
 	}
 
-	const title = getToolKindTitle(childKind, child).trim();
+	const title = entry.title.trim();
 	return title.length > 0 ? title : null;
 }
 
@@ -147,13 +147,7 @@ export function getQueueItemTaskDisplay(
 	const convertedChildren = convertTaskChildren(toolCall.taskChildren, turnState);
 	const latestTaskSubagentTool =
 		convertedChildren.length > 0
-			? {
-				id: convertedChildren[convertedChildren.length - 1].id,
-				kind: convertedChildren[convertedChildren.length - 1].kind,
-				title: convertedChildren[convertedChildren.length - 1].title,
-				filePath: convertedChildren[convertedChildren.length - 1].filePath,
-				status: convertedChildren[convertedChildren.length - 1].status,
-			}
+			? compactAgentToolEntry(convertedChildren[convertedChildren.length - 1])
 			: null;
 
 	if (taskSubagentSummaries.length > 0) {

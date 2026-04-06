@@ -31,7 +31,7 @@ describe("agent input toolbar structure", () => {
 	});
 
 	it("renders the Autonomous toggle with a Phosphor shield icon that fills when enabled", () => {
-		expect(autonomousToggleSource).toContain('from "phosphor-svelte/lib/Shield"');
+		expect(autonomousToggleSource).toContain('from "phosphor-svelte"');
 		expect(autonomousToggleSource).toContain('import { Colors } from "$lib/acp/utils/colors.js"');
 		expect(autonomousToggleSource).toContain("Colors.red");
 		expect(autonomousToggleSource).toContain('weight={active ? "fill" : "regular"}');

@@ -1,6 +1,6 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import IconPlus from "@tabler/icons-svelte/icons/plus";
+import { IconPlus } from "@tabler/icons-svelte";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { getAgentIcon } from "../constants/thread-list-constants.js";

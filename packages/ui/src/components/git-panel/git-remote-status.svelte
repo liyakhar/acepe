@@ -2,8 +2,8 @@
 	/**
 	 * GitRemoteStatus — Ahead/behind indicator pill.
 	 */
-	import ArrowUp from "phosphor-svelte/lib/ArrowUp";
-	import ArrowDown from "phosphor-svelte/lib/ArrowDown";
+	import { ArrowUp } from "phosphor-svelte";
+	import { ArrowDown } from "phosphor-svelte";
 
 	import { cn } from "../../lib/utils.js";
 	import type { GitRemoteStatus } from "./types.js";

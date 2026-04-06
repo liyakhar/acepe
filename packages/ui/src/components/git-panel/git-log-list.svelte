@@ -5,8 +5,8 @@
 	 * Click a file to expand/collapse its inline diff (rendered via snippet).
 	 */
 	import type { Snippet } from "svelte";
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
-	import GitCommit from "phosphor-svelte/lib/GitCommit";
+	import { CaretRight } from "phosphor-svelte";
+	import { GitCommit } from "phosphor-svelte";
 
 	import { DiffPill } from "../diff-pill/index.js";
 	import { getFileIconSrc, getFallbackIconSrc } from "../../lib/file-icon/index.js";

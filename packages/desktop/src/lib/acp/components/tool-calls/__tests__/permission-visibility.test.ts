@@ -75,13 +75,13 @@ describe("permission visibility", () => {
 		expect(visiblePermissionsForSessionBar([permission], entries)).toEqual([permission]);
 	});
 
-	it("filters represented permissions out of the session-level permission bar", () => {
+	it("keeps anchored permissions visible in the session-level permission bar", () => {
 		const anchoredPermission = createPermission("tool-1");
 		const orphanPermission = createPermission("tool-2");
 		const entries = [createToolCallEntry("tool-1")];
 
 		expect(
 			visiblePermissionsForSessionBar([anchoredPermission, orphanPermission], entries)
-		).toEqual([orphanPermission]);
+		).toEqual([anchoredPermission, orphanPermission]);
 	});
 });

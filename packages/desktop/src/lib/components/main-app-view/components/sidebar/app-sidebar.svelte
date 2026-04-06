@@ -104,8 +104,8 @@ function handleRemoveProject(projectPath: string) {
 	for (const tp of panelStore.terminalPanels.filter((p) => p.projectPath === projectPath)) {
 		panelStore.closeTerminalPanel(tp.id);
 	}
-	for (const gp of panelStore.gitPanels.filter((p) => p.projectPath === projectPath)) {
-		panelStore.closeGitPanel(gp.id);
+	if (panelStore.gitDialog?.projectPath === projectPath) {
+		panelStore.closeGitDialog();
 	}
 	for (const fp of panelStore.filePanels.filter((p) => p.projectPath === projectPath)) {
 		panelStore.closeFilePanel(fp.id);
@@ -138,12 +138,12 @@ function handleOpenBrowser(projectPath: string) {
 }
 
 function handleOpenGitPanel(projectPath: string) {
-	panelStore.openGitPanel(projectPath);
+	panelStore.openGitDialog(projectPath);
 }
 
 function handleOpenPr(sessionInfo: SessionListItem) {
 	if (sessionInfo.prNumber == null) return;
-	panelStore.openGitPanel(sessionInfo.projectPath, undefined, {
+	panelStore.openGitDialog(sessionInfo.projectPath, undefined, {
 		section: "prs",
 		prNumber: sessionInfo.prNumber,
 	});

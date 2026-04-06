@@ -971,13 +971,15 @@ export class SessionConnectionManager {
 
 		const previousAutonomousEnabled = hotState.autonomousEnabled;
 		this.hotStateManager.updateHotState(sessionId, {
-			autonomousEnabled: enabled,
 			autonomousTransition: enabled ? "enabling" : "disabling",
 		});
 
 		return this.applyExecutionProfile(session.id, currentModeId, enabled)
 			.map(() => {
-				this.hotStateManager.updateHotState(sessionId, { autonomousTransition: "idle" });
+				this.hotStateManager.updateHotState(sessionId, {
+					autonomousEnabled: enabled,
+					autonomousTransition: "idle",
+				});
 			})
 			.mapErr((error) => {
 				this.hotStateManager.updateHotState(sessionId, {

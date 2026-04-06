@@ -1,5 +1,5 @@
 <script lang="ts">
-	import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
+	import { MagnifyingGlass } from "phosphor-svelte";
 	import { cn } from "../../lib/utils.js";
 	import type { SqlFilterOperator } from "./types.js";
 

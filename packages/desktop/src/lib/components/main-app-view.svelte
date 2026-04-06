@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { okAsync, ResultAsync } from "neverthrow";
-import FolderPlus from "phosphor-svelte/lib/FolderPlus";
+import { FolderPlus } from "phosphor-svelte";
 import { onDestroy, onMount } from "svelte";
 import { toast } from "svelte-sonner";
 import OpenProjectDialog from "$lib/acp/components/add-repository/open-project-dialog.svelte";
@@ -68,6 +68,7 @@ import { FileExplorerModal } from "$lib/acp/components/file-explorer-modal/index
 import EmptyStates from "./main-app-view/components/content/empty-states.svelte";
 import PanelsContainer from "./main-app-view/components/content/panels-container.svelte";
 import AppOverlays from "./main-app-view/components/overlays/app-overlays.svelte";
+import SourceControlDialog from "./main-app-view/components/overlays/source-control-dialog.svelte";
 import AppSidebar from "./main-app-view/components/sidebar/app-sidebar.svelte";
 import {
 	buildFileExplorerProjectInfoByPath,
@@ -924,7 +925,6 @@ const hasAnyPanel = $derived(
 		panelStore.filePanels.length > 0 ||
 		panelStore.reviewPanels.length > 0 ||
 		panelStore.terminalPanels.length > 0 ||
-		panelStore.gitPanels.length > 0 ||
 		panelStore.browserPanels.length > 0
 );
 
@@ -967,7 +967,7 @@ onDestroy(() => {
 </script>
 
 <ThemeProvider class="overflow-hidden h-dvh bg-background">
-	<div class="flex flex-col h-full min-h-0 pb-0.5 overflow-hidden">
+	<div class="flex flex-col h-full min-h-0 pt-0.5 pb-0.5 overflow-hidden">
 		<!-- Top bar -->
 		<div class="shrink-0 overflow-hidden">
 			<TopBar
@@ -1038,6 +1038,7 @@ onDestroy(() => {
 		{/if}
 	</div>
 	<AppOverlays state={viewState} {commandPalette} />
+	<SourceControlDialog {projectManager} />
 	<DesignSystemShowcase
 		open={viewState.designSystemOpen}
 		onOpenChange={(open) => {

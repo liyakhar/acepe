@@ -3,10 +3,10 @@
 	 * GitStatusList — Staged and unstaged file sections with collapsible headers.
 	 * Uses GitFileTree for tree-organized file display within each section.
 	 */
-	import ArrowCounterClockwise from "phosphor-svelte/lib/ArrowCounterClockwise";
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
-	import FileMinus from "phosphor-svelte/lib/FileMinus";
-	import Plus from "phosphor-svelte/lib/Plus";
+	import { ArrowCounterClockwise } from "phosphor-svelte";
+	import { CaretRight } from "phosphor-svelte";
+	import { FileMinus } from "phosphor-svelte";
+	import { Plus } from "phosphor-svelte";
 
 	import { cn } from "../../lib/utils.js";
 	import type { GitStatusFile } from "./types.js";

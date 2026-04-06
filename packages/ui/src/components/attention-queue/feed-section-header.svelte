@@ -1,8 +1,8 @@
 <script lang="ts">
-	import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-	import Eye from "phosphor-svelte/lib/Eye";
-	import Keyboard from "phosphor-svelte/lib/Keyboard";
-	import Warning from "phosphor-svelte/lib/Warning";
+	import { CheckCircle } from "phosphor-svelte";
+	import { Eye } from "phosphor-svelte";
+	import { Keyboard } from "phosphor-svelte";
+	import { Warning } from "phosphor-svelte";
 	import type { SectionedFeedSectionId } from "./types.js";
 
 	import { BuildIcon, PlanIcon } from "../icons/index.js";

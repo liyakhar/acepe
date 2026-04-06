@@ -1,6 +1,7 @@
 <script lang="ts">
-import { FilePathBadge, TextShimmer } from "@acepe/ui";
-import Trash from "phosphor-svelte/lib/Trash";
+import { FilePathBadge } from "@acepe/ui/file-path-badge";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
+import { Trash } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import { getSessionStore } from "../../store/index.js";
 import type { TurnState } from "../../store/types.js";

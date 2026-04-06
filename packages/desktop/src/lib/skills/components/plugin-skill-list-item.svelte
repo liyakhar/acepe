@@ -1,5 +1,5 @@
 <script lang="ts">
-import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
+import { PuzzlePiece } from "phosphor-svelte";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 
 import type { PluginSkill } from "../types/index.js";

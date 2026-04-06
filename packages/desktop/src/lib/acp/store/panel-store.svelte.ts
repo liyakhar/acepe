@@ -28,9 +28,9 @@ import {
 } from "./file-panel-ownership.js";
 import type { FilePanel } from "./file-panel-type.js";
 import { DEFAULT_FILE_PANEL_WIDTH, MIN_FILE_PANEL_WIDTH } from "./file-panel-type.js";
-import { openGitModalPanel } from "./git-modal-state.js";
+import { openGitModalPanel, type GitModalPanel } from "./git-modal-state.js";
 import type { GitPanel, GitPanelInitialTarget } from "./git-panel-type.js";
-import { DEFAULT_GIT_PANEL_WIDTH, MIN_GIT_PANEL_WIDTH } from "./git-panel-type.js";
+import { DEFAULT_GIT_PANEL_WIDTH } from "./git-panel-type.js";
 import type { ReviewPanel } from "./review-panel-type.js";
 import { DEFAULT_REVIEW_PANEL_WIDTH, MIN_REVIEW_PANEL_WIDTH } from "./review-panel-type.js";
 import type { SessionStore } from "./session-store.svelte.js";
@@ -54,6 +54,10 @@ import { DEFAULT_PANEL_HOT_STATE, DEFAULT_PANEL_WIDTH, MIN_PANEL_WIDTH } from ".
 const PANEL_STORE_KEY = Symbol("panel-store");
 const logger = createLogger({ id: "panel-store", name: "PanelStore" });
 const DEFAULT_ATTACHED_FILE_PANEL_WIDTH = DEFAULT_FILE_PANEL_WIDTH;
+
+interface GitDialogState extends GitModalPanel {
+	initialTarget?: GitPanelInitialTarget;
+}
 
 export class PanelStore {
 	workspacePanels = $state<WorkspacePanel[]>([]);
@@ -176,6 +180,13 @@ export class PanelStore {
 		this.focusedPanelId = panelId;
 		if (this.viewMode === "single" || this.fullscreenPanelId !== null) {
 			this.switchFullscreen(panelId);
+		}
+		if (this.viewMode !== "multi") {
+			const panel = this.findTopLevelWorkspacePanel(panelId);
+			if (panel?.projectPath) {
+				this.focusedViewProjectPath = panel.projectPath;
+				this.scrollX = 0;
+			}
 		}
 	}
 
@@ -352,6 +363,7 @@ export class PanelStore {
 	);
 
 	readonly gitPanelCount = $derived(this.gitPanels.length);
+	gitDialog = $state<GitDialogState | null>(null);
 
 	readonly browserPanelCount = $derived(this.browserPanels.length);
 
@@ -619,7 +631,7 @@ export class PanelStore {
 		}
 
 		if (panel.kind === "git") {
-			this.closeGitPanel(panelId);
+			this.closeLegacyGitPanel(panelId);
 			return;
 		}
 
@@ -1870,73 +1882,72 @@ export class PanelStore {
 	}
 
 	// ============================================
-	// GIT PANEL MANAGEMENT
+	// GIT DIALOG MANAGEMENT
 	// ============================================
 
 	/**
-	 * Open a git panel for a project.
-	 * If already open, returns the existing panel.
+	 * Open source control in a single dialog for a project.
 	 */
-	openGitPanel(
+	openGitDialog(
 		projectPath: string,
 		width?: number,
 		initialTarget?: GitPanelInitialTarget
-	): GitPanel {
+	): GitDialogState {
 		const result = openGitModalPanel(
-			this.gitPanels,
+			this.gitDialog ? [this.gitDialog] : [],
 			projectPath,
 			width ?? DEFAULT_GIT_PANEL_WIDTH,
 			() => crypto.randomUUID()
 		);
 
 		const activePanelId = result.activePanel.id;
-		const activePanel = initialTarget
-			? { ...result.activePanel, initialTarget }
-			: result.activePanel;
+		const nextDialogs = result.panels.map((panel) => {
+			const nextInitialTarget =
+				panel.id === activePanelId && initialTarget !== undefined
+					? initialTarget
+					: panel.initialTarget;
+			return {
+				id: panel.id,
+				projectPath: panel.projectPath,
+				width: panel.width,
+				initialTarget: nextInitialTarget,
+			};
+		});
+		const activeDialog = nextDialogs.find((panel) => panel.id === activePanelId);
+		if (!activeDialog) {
+			throw new Error(`Missing git dialog after opening ${projectPath}`);
+		}
 
-		this.gitPanels = result.panels.map((panel) =>
-			panel.id === activePanelId ? activePanel : panel
-		);
-		this.focusOpenedTopLevelPanel(activePanel.id);
+		this.gitDialog = activeDialog;
+		if (this.viewMode !== "multi") {
+			this.focusedViewProjectPath = projectPath;
+			this.scrollX = 0;
+		}
 		this.onPersist();
 
-		logger.debug("Opened git panel", { projectPath, panelId: activePanel.id });
-		return activePanel;
+		logger.debug("Opened git dialog", { projectPath, panelId: activeDialog.id });
+		return activeDialog;
 	}
 
 	/**
-	 * Close a git panel by ID.
+	 * Close the source control dialog.
 	 */
-	closeGitPanel(panelId: string): void {
+	closeGitDialog(): void {
+		if (this.gitDialog === null) {
+			return;
+		}
+		const panelId = this.gitDialog.id;
+		this.gitDialog = null;
+		this.onPersist();
+		logger.debug("Closed git dialog", { panelId });
+	}
+
+	private closeLegacyGitPanel(panelId: string): void {
 		const closeState = this.captureTopLevelPanelCloseState(panelId);
-		this.gitPanels = this.gitPanels.filter((p) => p.id !== panelId);
+		this.gitPanels = this.gitPanels.filter((panel) => panel.id !== panelId);
 		this.applyTopLevelPanelCloseState(closeState);
 		this.onPersist();
-		logger.debug("Closed git panel", { panelId });
-	}
-
-	/**
-	 * Resize a git panel.
-	 */
-	resizeGitPanel(panelId: string, delta: number): void {
-		this.gitPanels = this.gitPanels.map((p) =>
-			p.id === panelId ? { ...p, width: Math.max(p.width + delta, MIN_GIT_PANEL_WIDTH) } : p
-		);
-		this.onPersist();
-	}
-
-	/**
-	 * Get a git panel by ID.
-	 */
-	getGitPanel(panelId: string): GitPanel | undefined {
-		return this.gitPanels.find((p) => p.id === panelId);
-	}
-
-	/**
-	 * Check if a git panel is open for a project.
-	 */
-	isGitPanelOpenForProject(projectPath: string): boolean {
-		return this.gitPanelByProjectPath.has(projectPath);
+		logger.debug("Closed legacy git panel", { panelId });
 	}
 
 	// ============================================

@@ -1,5 +1,5 @@
 <script lang="ts">
-import User from "phosphor-svelte/lib/User";
+import { User } from "phosphor-svelte";
 import { Avatar, AvatarFallback } from "$lib/components/ui/avatar/index.js";
 import * as m from "$lib/paraglide/messages.js";
 </script>

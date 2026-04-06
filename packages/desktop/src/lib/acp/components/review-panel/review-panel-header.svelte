@@ -1,7 +1,7 @@
 <script lang="ts">
 import { FilePathBadge } from "@acepe/ui";
-import IconChevronLeft from "@tabler/icons-svelte/icons/chevron-left";
-import IconChevronRight from "@tabler/icons-svelte/icons/chevron-right";
+import { IconChevronLeft } from "@tabler/icons-svelte";
+import { IconChevronRight } from "@tabler/icons-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import * as m from "$lib/paraglide/messages.js";
 

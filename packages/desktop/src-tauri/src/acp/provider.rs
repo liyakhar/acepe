@@ -150,6 +150,14 @@ pub trait AgentProvider: Send + Sync {
         Some(self.map_outbound_mode_id(mode_id))
     }
 
+    /// Resolve the provider-native runtime mode to apply for the current working directory.
+    ///
+    /// This lets providers own settings-aware mode inheritance instead of pushing
+    /// provider-specific policy down into runtime clients.
+    fn resolve_runtime_mode_id(&self, requested_mode_id: Option<&str>, _cwd: &Path) -> String {
+        requested_mode_id.unwrap_or("default").to_string()
+    }
+
     /// Optional fallback model candidate if provider returns empty models list.
     fn model_fallback_for_empty_list(
         &self,

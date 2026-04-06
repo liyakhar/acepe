@@ -1,6 +1,6 @@
 <script lang="ts">
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
-	import CaretDown from "phosphor-svelte/lib/CaretDown";
+	import { CaretRight } from "phosphor-svelte";
+	import { CaretDown } from "phosphor-svelte";
 	import ToolLabel from "./tool-label.svelte";
 	import { FilePathBadge } from "../file-path-badge/index.js";
 	import type { AgentToolStatus } from "./types.js";

@@ -61,13 +61,14 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("getQueueItemTaskDisplay");
 		expect(source).toContain("taskCard: KanbanTaskCardData | null");
 		expect(source).toContain("projectPath={item.projectPath}");
-		expect(source).toContain('import PermissionActionBar from "$lib/acp/components/tool-calls/permission-action-bar.svelte"');
+		expect(source).toContain('import PermissionBar from "$lib/acp/components/tool-calls/permission-bar.svelte"');
 		expect(source).toContain("buildQueueItemQuestionUiState");
 		expect(source).toContain("questionIndexBySession = $state(new SvelteMap");
 		expect(source).toContain("function getCurrentQuestionIndex(item: ThreadBoardItem): number");
 		expect(source).toContain("function handlePrevQuestion(sessionId: string, currentQuestionIndex: number): void");
 		expect(source).toContain("function handleNextQuestion(");
-		expect(source).toContain("<PermissionActionBar");
+		expect(source).toContain("<PermissionBar");
+		expect(source).toContain("sessionId={item.sessionId}");
 		expect(source).toContain("permission={permission}");
 		expect(source).toContain("projectPath={item.projectPath}");
 		expect(source).toContain("<AttentionQueueQuestionCard");
@@ -222,5 +223,31 @@ describe("kanban empty-column contract", () => {
 
 		expect(source).toContain('const hasUnseenCompletion = item.status === "needs_review" ? false : item.state.attention.hasUnseenCompletion;');
 		expect(source).toContain("hasUnseenCompletion,");
+	});
+
+	it("maps live kanban tool rows to a simple verb plus optional file chip", () => {
+		expect(existsSync(kanbanViewPath)).toBe(true);
+		if (!existsSync(kanbanViewPath)) return;
+
+		const source = readFileSync(kanbanViewPath, "utf8");
+
+		expect(source).toContain(
+			'import { resolveCompactToolDisplay } from "$lib/acp/components/tool-calls/tool-definition-registry.js"'
+		);
+		expect(source).not.toContain("getToolCompactDisplayText");
+		expect(source).toContain("return resolveCompactToolDisplay({");
+		expect(source).toContain("toolCall: toolDisplay.toolCall,");
+		expect(source).toContain("toolKind: toolDisplay.toolKind,");
+		expect(source).toContain("turnState: toolDisplay.turnState,");
+	});
+
+	it("prefers the compact subtitle for execute tools when there is no file path", () => {
+		expect(existsSync(kanbanViewPath)).toBe(true);
+		if (!existsSync(kanbanViewPath)) return;
+
+		const source = readFileSync(kanbanViewPath, "utf8");
+
+		expect(source).toContain("resolveCompactToolDisplay");
+		expect(source).not.toContain("getToolKindSubtitle(toolDisplay.toolKind, tc)");
 	});
 });

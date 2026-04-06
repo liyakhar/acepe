@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconTerminal2 from "@tabler/icons-svelte/icons/terminal-2";
+import { IconTerminal2 } from "@tabler/icons-svelte";
 
 import type { TerminalContent } from "../../../schemas/tool-call-content.schema.js";
 

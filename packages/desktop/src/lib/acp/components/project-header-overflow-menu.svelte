@@ -1,11 +1,11 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { mergeProps } from "bits-ui";
-import DotsThreeVertical from "phosphor-svelte/lib/DotsThreeVertical";
-import Palette from "phosphor-svelte/lib/Palette";
-import Rows from "phosphor-svelte/lib/Rows";
-import Trash from "phosphor-svelte/lib/Trash";
-import TreeView from "phosphor-svelte/lib/TreeView";
+import { DotsThreeVertical } from "phosphor-svelte";
+import { Palette } from "phosphor-svelte";
+import { Rows } from "phosphor-svelte";
+import { Trash } from "phosphor-svelte";
+import { TreeView } from "phosphor-svelte";
 import * as Popover from "$lib/components/ui/popover/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";

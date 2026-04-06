@@ -1,7 +1,7 @@
 <script lang="ts">
-import Browser from "phosphor-svelte/lib/Browser";
-import Terminal from "phosphor-svelte/lib/Terminal";
-import X from "phosphor-svelte/lib/X";
+import { Browser } from "phosphor-svelte";
+import { Terminal } from "phosphor-svelte";
+import { X } from "phosphor-svelte";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { getAgentIcon } from "../constants/thread-list-constants.js";

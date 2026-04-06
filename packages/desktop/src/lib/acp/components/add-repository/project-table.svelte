@@ -1,7 +1,7 @@
 <script lang="ts">
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import CircleNotch from "phosphor-svelte/lib/CircleNotch";
-import FolderSimple from "phosphor-svelte/lib/FolderSimple";
+import { CheckCircle } from "phosphor-svelte";
+import { CircleNotch } from "phosphor-svelte";
+import { FolderSimple } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import ActionsCell from "./cells/actions-cell.svelte";
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 import { Colors } from "@acepe/ui";
-import Star from "phosphor-svelte/lib/Star";
+import { Star } from "phosphor-svelte";
 import { cn } from "$lib/utils.js";
 
 interface Props {

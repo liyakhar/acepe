@@ -10,7 +10,21 @@ describe("permission bar contract", () => {
 		expect(source).toContain("<FilePathBadge {filePath} interactive={false} size=\"sm\" />");
 	});
 
-	it("filters out permissions already represented by tool-call entries", () => {
+	it("derives session-bar visibility through the shared helper", () => {
 		expect(source).toContain("visiblePermissionsForSessionBar");
+	});
+
+	it("renders the permission actions inside a single header row with optional command below", () => {
+		expect(source).toContain('import { EmbeddedPanelHeader, HeaderActionCell, HeaderTitleCell } from "@acepe/ui/panel-header";');
+		expect(source).toContain("<EmbeddedPanelHeader");
+		expect(source).toContain("<HeaderTitleCell");
+		expect(source).toContain("<PermissionActionBar permission={currentPermission} inline hideHeader />");
+		expect(source).toContain("<VoiceDownloadProgress");
+		expect(source).not.toContain('<div class="flex items-center justify-end">');
+	});
+
+	it("removes the extra border chrome from the permission toolbar", () => {
+		expect(source).not.toContain("border border-border/60");
+		expect(source).toContain('<EmbeddedPanelHeader class="!border-b-0 bg-transparent">');
 	});
 });

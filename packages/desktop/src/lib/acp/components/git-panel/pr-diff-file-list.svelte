@@ -1,6 +1,6 @@
 <script lang="ts">
 import { DiffPill, getFileIconSrc, getFallbackIconSrc } from "@acepe/ui";
-import CaretRight from "phosphor-svelte/lib/CaretRight";
+import { CaretRight } from "phosphor-svelte";
 
 import type { FileDiff as FileDiffType } from "../../types/github-integration.js";
 import PierreDiffView from "../diff-viewer/pierre-diff-view.svelte";

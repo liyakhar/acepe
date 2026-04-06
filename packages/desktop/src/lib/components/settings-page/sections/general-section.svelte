@@ -1,8 +1,8 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { invoke } from "@tauri-apps/api/core";
-import Check from "phosphor-svelte/lib/Check";
-import Warning from "phosphor-svelte/lib/Warning";
+import { Check } from "phosphor-svelte";
+import { Warning } from "phosphor-svelte";
 import { ThemeToggle } from "$lib/components/theme/index.js";
 import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";
 import { Button } from "$lib/components/ui/button/index.js";

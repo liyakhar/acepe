@@ -1,8 +1,8 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import Gear from "phosphor-svelte/lib/Gear";
-import Palette from "phosphor-svelte/lib/Palette";
-import Trash from "phosphor-svelte/lib/Trash";
+import { Gear } from "phosphor-svelte";
+import { Palette } from "phosphor-svelte";
+import { Trash } from "phosphor-svelte";
 import * as Popover from "$lib/components/ui/popover/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";

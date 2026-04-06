@@ -1,9 +1,8 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
-import IconCheck from "@tabler/icons-svelte/icons/check";
-import IconX from "@tabler/icons-svelte/icons/x";
-import ArrowsInLineVertical from "phosphor-svelte/lib/ArrowsInLineVertical";
-import ArrowsOutLineVertical from "phosphor-svelte/lib/ArrowsOutLineVertical";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
+import { IconCheck } from "@tabler/icons-svelte";
+import { IconX } from "@tabler/icons-svelte";
+import { ArrowsInLineVertical, ArrowsOutLineVertical } from "phosphor-svelte";
 import type { ToolCallStatus } from "$lib/services/converted-session-types.js";
 
 import type { ToolStatusResult } from "../../../../utils/tool-state-utils.js";

@@ -4,9 +4,9 @@ import type { AgentPanelResizeEdgeProps } from "../types/agent-panel-resize-edge
 let { isDragging, onPointerDown, onPointerMove, onPointerUp }: AgentPanelResizeEdgeProps = $props();
 </script>
 
-<!-- Wider invisible hit target; 1px line idle, 3px on hover/drag only (avoids stacking with panel border-r) -->
+<!-- Wider invisible hit target, inset to avoid overlapping header/footer controls. -->
 <div
-	class="absolute top-0 right-0 z-10 flex h-full w-3 cursor-col-resize justify-end touch-none"
+	class="absolute top-7 bottom-7 right-0 z-10 flex w-3 cursor-col-resize justify-end touch-none"
 	onpointerdown={onPointerDown}
 	onpointermove={onPointerMove}
 	onpointerup={onPointerUp}

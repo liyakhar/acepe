@@ -1,13 +1,16 @@
 <script lang="ts">
-	import { FilePathBadge } from "@acepe/ui";
-	import ArrowsLeftRight from "phosphor-svelte/lib/ArrowsLeftRight";
-	import File from "phosphor-svelte/lib/File";
-	import GlobeHemisphereWest from "phosphor-svelte/lib/GlobeHemisphereWest";
-	import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
-	import PencilSimple from "phosphor-svelte/lib/PencilSimple";
-	import ShieldWarning from "phosphor-svelte/lib/ShieldWarning";
-	import Terminal from "phosphor-svelte/lib/Terminal";
-	import Trash from "phosphor-svelte/lib/Trash";
+	import { FilePathBadge } from "@acepe/ui/file-path-badge";
+	import { EmbeddedPanelHeader, HeaderActionCell, HeaderTitleCell } from "@acepe/ui/panel-header";
+	import {
+		ArrowsLeftRight,
+		File,
+		GlobeHemisphereWest,
+		MagnifyingGlass,
+		PencilSimple,
+		ShieldWarning,
+		Terminal,
+		Trash,
+	} from "phosphor-svelte";
 	import { getPermissionStore } from "../../store/permission-store.svelte.js";
 	import { getSessionStore } from "../../store/session-store.svelte.js";
 	import type { PermissionRequest } from "../../types/permission.js";
@@ -62,51 +65,61 @@
 	{@const verb = compactDisplay.label}
 	{@const purpleColor = Colors[COLOR_NAMES.PURPLE]}
 	<div class="mx-auto w-full max-w-[320px] px-3">
-		<div class="flex min-w-0 flex-col gap-1 overflow-hidden rounded-sm border border-border/60 bg-accent/30 px-1.5 py-1 permission-card-enter">
-			<!-- Header row: tool icon + file chip/summary + progress -->
-			<div class="flex min-w-0 items-center gap-1.5">
-				<span
-					class="inline-flex shrink-0 items-center justify-center"
-					aria-label={verb}
-					title={verb}
-				>
-					{#if kind === "edit"}
-						<PencilSimple weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "read"}
-						<File weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "execute"}
-						<Terminal weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "search"}
-						<MagnifyingGlass weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "fetch" || kind === "web_search"}
-						<GlobeHemisphereWest weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "delete"}
-						<Trash weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "move"}
-						<ArrowsLeftRight weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else}
-						<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
-					{/if}
-				</span>
-				<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
-				{#if filePath}
-					<div class="min-w-0 flex-1 cursor-pointer">
-						<FilePathBadge {filePath} interactive={false} size="sm" />
+		<div class="flex min-w-0 flex-col gap-1 overflow-hidden rounded-sm bg-accent/30 px-1.5 py-1 permission-card-enter">
+			<EmbeddedPanelHeader class="!border-b-0 bg-transparent">
+				<HeaderTitleCell compactPadding>
+					<div class="flex min-w-0 items-center gap-1.5 w-full">
+						<span
+							class="inline-flex shrink-0 items-center justify-center"
+							aria-label={verb}
+							title={verb}
+						>
+							{#if kind === "edit"}
+								<PencilSimple weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+							{:else if kind === "read"}
+								<File weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+							{:else if kind === "execute"}
+								<Terminal weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+							{:else if kind === "search"}
+								<MagnifyingGlass weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+							{:else if kind === "fetch" || kind === "web_search"}
+								<GlobeHemisphereWest weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+							{:else if kind === "delete"}
+								<Trash weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+							{:else if kind === "move"}
+								<ArrowsLeftRight weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+							{:else}
+								<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
+							{/if}
+						</span>
+						<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
+						{#if filePath}
+							<div class="min-w-0 flex-1 cursor-pointer">
+								<FilePathBadge {filePath} interactive={false} size="sm" />
+							</div>
+						{/if}
 					</div>
-				{/if}
+				</HeaderTitleCell>
+				<HeaderActionCell withDivider={false}>
+					<div class="flex items-center px-1">
+						<PermissionActionBar permission={currentPermission} inline hideHeader />
+					</div>
+				</HeaderActionCell>
 				{#if sessionProgress}
-					<div class="shrink-0 ml-auto">
-						<VoiceDownloadProgress
-							ariaLabel={progressLabel}
-							compact={true}
-							label=""
-							percent={sessionProgress.total > 0 ? Math.round(((sessionProgress.completed + 1) / sessionProgress.total) * 100) : 0}
-							segmentCount={sessionProgress.total}
-							showPercent={false}
-						/>
-					</div>
+					<HeaderActionCell>
+						<div class="flex items-center px-1.5">
+							<VoiceDownloadProgress
+								ariaLabel={progressLabel}
+								compact={true}
+								label=""
+								percent={sessionProgress.total > 0 ? Math.round(((sessionProgress.completed + 1) / sessionProgress.total) * 100) : 0}
+								segmentCount={sessionProgress.total}
+								showPercent={false}
+							/>
+						</div>
+					</HeaderActionCell>
 				{/if}
-			</div>
+			</EmbeddedPanelHeader>
 
 			<!-- Command display for execute permissions -->
 			{#if command}
@@ -117,10 +130,6 @@
 				</div>
 			{/if}
 
-			<!-- Action buttons: right-aligned with labels -->
-			<div class="flex items-center justify-end">
-				<PermissionActionBar permission={currentPermission} inline hideHeader />
-			</div>
 		</div>
 	</div>
 {/if}

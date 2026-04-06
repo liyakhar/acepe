@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { Snippet } from "svelte";
-	import FolderPlus from "phosphor-svelte/lib/FolderPlus";
-	import GearSix from "phosphor-svelte/lib/GearSix";
-	import Sidebar from "phosphor-svelte/lib/Sidebar";
+	import { FolderPlus } from "phosphor-svelte";
+	import { GearSix } from "phosphor-svelte";
+	import { Sidebar } from "phosphor-svelte";
 	import AppSearchButton from "./app-search-button.svelte";
 
 	interface Props {

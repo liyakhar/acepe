@@ -24,9 +24,7 @@ describe("model selector structure", () => {
 	});
 
 	it("renders model selector triggers without the legacy CPU icon", () => {
-		expect(modelSelectorSource).not.toContain('from "phosphor-svelte/lib/Cpu"');
 		expect(modelSelectorSource).not.toContain("<Cpu");
-		expect(modelSelectorTriggerSource).not.toContain('from "phosphor-svelte/lib/Cpu"');
 		expect(modelSelectorTriggerSource).not.toContain("<Cpu");
 	});
 });

@@ -1,10 +1,10 @@
 <script lang="ts">
-import IconEye from "@tabler/icons-svelte/icons/eye";
-import IconEyeOff from "@tabler/icons-svelte/icons/eye-off";
-import IconPlus from "@tabler/icons-svelte/icons/plus";
-import IconTrash from "@tabler/icons-svelte/icons/trash";
-import FloppyDisk from "phosphor-svelte/lib/FloppyDisk";
-import SlidersHorizontal from "phosphor-svelte/lib/SlidersHorizontal";
+import { IconEye } from "@tabler/icons-svelte";
+import { IconEyeOff } from "@tabler/icons-svelte";
+import { IconPlus } from "@tabler/icons-svelte";
+import { IconTrash } from "@tabler/icons-svelte";
+import { FloppyDisk } from "phosphor-svelte";
+import { SlidersHorizontal } from "phosphor-svelte";
 import {
 	Button,
 	Dialog,

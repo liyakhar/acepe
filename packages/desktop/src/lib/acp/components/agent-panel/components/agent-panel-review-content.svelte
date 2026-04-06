@@ -1,6 +1,6 @@
 <script lang="ts">
-import IconMaximize from "@tabler/icons-svelte/icons/maximize";
-import IconX from "@tabler/icons-svelte/icons/x";
+import { IconMaximize } from "@tabler/icons-svelte";
+import { IconX } from "@tabler/icons-svelte";
 import { SvelteMap } from "svelte/reactivity";
 import { toast } from "svelte-sonner";
 import { Button } from "$lib/components/ui/button/index.js";

@@ -1,8 +1,8 @@
 <script lang="ts">
 import { FilePathBadge } from "@acepe/ui";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import CircleDashed from "phosphor-svelte/lib/CircleDashed";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { CheckCircle } from "phosphor-svelte";
+import { CircleDashed } from "phosphor-svelte";
+import { XCircle } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 
 import type { ModifiedFileEntry } from "../modified-files/types/modified-file-entry.js";

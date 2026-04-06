@@ -1,6 +1,6 @@
 <script lang="ts">
-import IconPencil from "@tabler/icons-svelte/icons/pencil";
-import IconX from "@tabler/icons-svelte/icons/x";
+import { IconPencil } from "@tabler/icons-svelte";
+import { IconX } from "@tabler/icons-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import { Kbd, KbdGroup } from "$lib/components/ui/kbd/index.js";
 import type { Keybinding } from "$lib/keybindings/types.js";

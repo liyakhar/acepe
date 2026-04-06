@@ -1,6 +1,6 @@
 <script lang="ts">
-	import ListChecks from "phosphor-svelte/lib/ListChecks";
-	import CheckCircle from "phosphor-svelte/lib/CheckCircle";
+	import { ListChecks } from "phosphor-svelte";
+	import { CheckCircle } from "phosphor-svelte";
 	import { TextShimmer } from "../text-shimmer/index.js";
 	import AgentToolCard from "./agent-tool-card.svelte";
 	import TodoNumberIcon from "./todo-number-icon.svelte";

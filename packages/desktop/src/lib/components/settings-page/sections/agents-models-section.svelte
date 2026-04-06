@@ -8,8 +8,8 @@ import {
 	HeaderCell,
 	HeaderTitleCell,
 } from "@acepe/ui/panel-header";
-import CaretDown from "phosphor-svelte/lib/CaretDown";
-import Check from "phosphor-svelte/lib/Check";
+import { CaretDown } from "phosphor-svelte";
+import { Check } from "phosphor-svelte";
 import { toast } from "svelte-sonner";
 import AgentIcon from "$lib/acp/components/agent-icon.svelte";
 import * as preferencesStore from "$lib/acp/store/agent-model-preferences-store.svelte.js";

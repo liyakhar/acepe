@@ -1,7 +1,7 @@
 <script lang="ts">
 import { Colors } from "@acepe/ui/colors";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { CheckCircle } from "phosphor-svelte";
+import { XCircle } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 
 interface Props {

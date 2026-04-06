@@ -1,5 +1,5 @@
 <script lang="ts">
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { XCircle } from "phosphor-svelte";
 import { Card } from "$lib/components/ui/card/index.js";
 import * as m from "$lib/paraglide/messages.js";
 

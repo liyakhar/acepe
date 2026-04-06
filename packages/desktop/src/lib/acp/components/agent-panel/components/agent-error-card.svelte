@@ -1,5 +1,5 @@
 <script lang="ts">
-import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+import { WarningCircle } from "phosphor-svelte";
 import AnimatedChevron from "../../animated-chevron.svelte";
 
 interface Props {

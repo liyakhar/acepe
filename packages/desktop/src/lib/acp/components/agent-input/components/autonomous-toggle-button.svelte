@@ -1,7 +1,7 @@
 <script lang="ts">
 import { Colors } from "$lib/acp/utils/colors.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
-import Shield from "phosphor-svelte/lib/Shield";
+import { Shield } from "phosphor-svelte";
 
 interface AutonomousToggleButtonProps {
 	readonly active: boolean;

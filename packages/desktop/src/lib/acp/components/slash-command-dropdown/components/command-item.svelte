@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconTerminal from "@tabler/icons-svelte/icons/terminal";
+import { IconTerminal } from "@tabler/icons-svelte";
 
 import type { AvailableCommand } from "../../../types/available-command.js";
 

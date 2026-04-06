@@ -1,12 +1,12 @@
 <script lang="ts">
 import { Colors } from "@acepe/ui/colors";
 import { EmbeddedIconButton, HeaderActionCell } from "@acepe/ui/panel-header";
-import CaretDown from "phosphor-svelte/lib/CaretDown";
-import CaretLeft from "phosphor-svelte/lib/CaretLeft";
-import CaretRight from "phosphor-svelte/lib/CaretRight";
-import CaretUp from "phosphor-svelte/lib/CaretUp";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { CaretDown } from "phosphor-svelte";
+import { CaretLeft } from "phosphor-svelte";
+import { CaretRight } from "phosphor-svelte";
+import { CaretUp } from "phosphor-svelte";
+import { CheckCircle } from "phosphor-svelte";
+import { XCircle } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 
 interface Props {

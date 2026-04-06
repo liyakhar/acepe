@@ -1,5 +1,5 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
 import type { Snippet } from "svelte";
 
 import type { ToolStatusResult } from "../../../utils/tool-state-utils.js";

@@ -567,7 +567,7 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                     .await;
                 cc_sdk::PermissionResult::Deny(cc_sdk::PermissionResultDeny {
                     message: "Permission denied or timed out".to_string(),
-                    interrupt: false,
+                    interrupt: true,
                 })
             }
         }
@@ -777,6 +777,7 @@ pub struct CcSdkClaudeClient {
     pending_options: Option<cc_sdk::ClaudeCodeOptions>,
     pending_mode_id: Option<String>,
     pending_model_id: Option<String>,
+    current_cwd: Option<PathBuf>,
 }
 
 impl CcSdkClaudeClient {
@@ -785,7 +786,6 @@ impl CcSdkClaudeClient {
         app_handle: AppHandle,
         cwd: PathBuf,
     ) -> AcpResult<Self> {
-        let _ = cwd; // stored implicitly via the options built at session creation time
         let db = app_handle
             .try_state::<DbConn>()
             .map(|state| state.inner().clone());
@@ -805,6 +805,7 @@ impl CcSdkClaudeClient {
             pending_options: None,
             pending_mode_id: None,
             pending_model_id: None,
+            current_cwd: Some(cwd),
         })
     }
 
@@ -856,10 +857,12 @@ impl CcSdkClaudeClient {
             cc_sdk::SettingSource::Project,
             cc_sdk::SettingSource::Local,
         ]);
-
-        if let Some(mode_id) = &self.pending_mode_id {
-            builder = builder.permission_mode(map_to_claude_permission_mode(mode_id));
-        }
+        builder = builder.permission_mode(map_to_claude_permission_mode(
+            &self.provider.resolve_runtime_mode_id(
+                self.pending_mode_id.as_deref(),
+                std::path::Path::new(cwd),
+            ),
+        ));
 
         if let Some(model_id) = &self.pending_model_id {
             builder = builder.model(model_id.clone());
@@ -1099,12 +1102,17 @@ impl CcSdkClaudeClient {
         let Some(sdk_client) = &self.sdk_client else {
             return Ok(());
         };
+        let permission_mode = self
+            .current_cwd
+            .as_deref()
+            .map(|cwd| self.provider.resolve_runtime_mode_id(Some(mode_id), cwd))
+            .unwrap_or_else(|| mode_id.to_string());
 
         sdk_client
             .lock()
             .await
             .set_permission_mode(claude_permission_mode_name(map_to_claude_permission_mode(
-                mode_id,
+                &permission_mode,
             )))
             .await
             .map_err(|error| AcpError::ProtocolError(error.to_string()))
@@ -1602,6 +1610,10 @@ async fn run_streaming_bridge(
                         );
                         continue;
                     }
+                    rewrite_generic_turn_failed_from_permission_deny(&bridge, &mut update).await;
+                    if matches!(update, SessionUpdate::TurnComplete { .. }) {
+                        bridge.clear_terminal_deny_message().await;
+                    }
                     dispatch_cc_sdk_update(
                         &dispatcher,
                         &task_reconciler,
@@ -1742,6 +1754,36 @@ fn build_permission_metadata(tool_name: &str, raw_input: &Value, agent_type: Age
     }
 
     Value::Object(metadata)
+}
+
+async fn rewrite_generic_turn_failed_from_permission_deny(
+    bridge: &PermissionBridge,
+    update: &mut SessionUpdate,
+) {
+    let SessionUpdate::TurnError { error, .. } = update else {
+        return;
+    };
+
+    let TurnErrorData::Legacy(message) = error else {
+        bridge.clear_terminal_deny_message().await;
+        return;
+    };
+
+    if message != "Turn failed" {
+        bridge.clear_terminal_deny_message().await;
+        return;
+    }
+
+    let Some(deny_message) = bridge.take_terminal_deny_message().await else {
+        return;
+    };
+
+    *error = TurnErrorData::Structured(TurnErrorInfo {
+        message: deny_message,
+        kind: TurnErrorKind::Recoverable,
+        code: None,
+        source: Some(TurnErrorSource::Unknown),
+    });
 }
 
 fn build_question_answer_map(
@@ -2015,6 +2057,7 @@ impl AgentClient for CcSdkClaudeClient {
     async fn new_session(&mut self, cwd: String) -> AcpResult<NewSessionResponse> {
         let session_id = Uuid::new_v4().to_string();
         self.reset_stream_runtime_state();
+        self.current_cwd = Some(PathBuf::from(&cwd));
         let options = self.build_options(&cwd, &session_id, None, false);
         // Defer connection until the first send_prompt so the initial user
         // message is passed to connect() and the CLI starts processing it
@@ -2048,6 +2091,7 @@ impl AgentClient for CcSdkClaudeClient {
         cwd: String,
     ) -> AcpResult<ResumeSessionResponse> {
         self.reset_stream_runtime_state();
+        self.current_cwd = Some(PathBuf::from(&cwd));
         self.reset_pending_mode_for_safe_resume();
         let history_session_id = self.history_session_id_for_app_session(&session_id).await;
         if !self.session_has_persisted_history(&session_id, &cwd).await {
@@ -2105,6 +2149,7 @@ impl AgentClient for CcSdkClaudeClient {
     ) -> AcpResult<NewSessionResponse> {
         let new_session_id = Uuid::new_v4().to_string();
         self.reset_stream_runtime_state();
+        self.current_cwd = Some(PathBuf::from(&cwd));
         self.pending_options =
             Some(self.build_options(&cwd, &new_session_id, Some(session_id.clone()), true));
         let models = self.hydrated_session_model_state().await;
@@ -2418,12 +2463,15 @@ impl AgentClient for CcSdkClaudeClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::permissions::PendingPermissionKind;
+    use super::*;
     use crate::acp::session_update::ContentChunk;
     use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
     use cc_sdk::{CanUseTool, HookCallback};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{LazyLock, Mutex as StdMutex};
+
+    static HOME_ENV_LOCK: LazyLock<StdMutex<()>> = LazyLock::new(|| StdMutex::new(()));
 
     struct TestModelDiscoveryProvider {
         discovery_calls: Arc<AtomicUsize>,
@@ -2592,6 +2640,7 @@ mod tests {
             pending_options: None,
             pending_mode_id: None,
             pending_model_id: None,
+            current_cwd: Some(PathBuf::from("/tmp")),
         }
     }
 
@@ -2635,6 +2684,41 @@ mod tests {
                 cc_sdk::SettingSource::Project,
                 cc_sdk::SettingSource::Local,
             ])
+        );
+    }
+
+    #[test]
+    fn build_options_respects_bypass_permissions_from_claude_user_settings_when_mode_unset() {
+        let _guard = HOME_ENV_LOCK.lock().expect("lock HOME env");
+        let previous_home = std::env::var_os("HOME");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(home.join(".claude")).expect("create claude dir");
+        std::fs::create_dir_all(&project).expect("create project dir");
+        std::fs::write(
+            home.join(".claude").join("settings.json"),
+            r#"{
+  "skipDangerousModePermissionPrompt": true,
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  }
+}"#,
+        )
+        .expect("write settings");
+        std::env::set_var("HOME", &home);
+
+        let client = make_test_client();
+        let options = client.build_options(&project.to_string_lossy(), "session-1", None, false);
+
+        match previous_home {
+            Some(previous_home) => std::env::set_var("HOME", previous_home),
+            None => std::env::remove_var("HOME"),
+        }
+
+        assert_eq!(
+            options.permission_mode,
+            cc_sdk::PermissionMode::BypassPermissions
         );
     }
 
@@ -4725,5 +4809,82 @@ mod tests {
             has_completion,
             "expected the next assistant message_start to settle the prior ToolSearch call"
         );
+    }
+
+    #[tokio::test]
+    async fn run_streaming_bridge_rewrites_generic_turn_failed_after_permission_deny() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let bridge = Arc::new(PermissionBridge::new());
+        let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
+        let request_id = bridge.next_id();
+        let registration = bridge
+            .register_tool(
+                request_id,
+                ToolPermissionRequest {
+                    tool_call_id: "toolu_denied".to_string(),
+                    tool_name: "Bash".to_string(),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+        bridge
+            .clear_request(request_id, "Permission denied by user")
+            .await;
+        let resolved = registration
+            .receiver
+            .await
+            .expect("permission request should resolve");
+        assert!(matches!(resolved, cc_sdk::PermissionResult::Deny(_)));
+
+        let context = StreamingBridgeContext {
+            dispatcher,
+            bridge,
+            tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+            provider,
+            db: None,
+        };
+
+        let stream = futures::stream::iter(vec![Ok(cc_sdk::Message::Result {
+            subtype: "error_during_execution".to_string(),
+            duration_ms: 1000,
+            duration_api_ms: 500,
+            is_error: true,
+            num_turns: 1,
+            session_id: "provider-session".to_string(),
+            total_cost_usd: None,
+            usage: None,
+            result: None,
+            structured_output: None,
+            stop_reason: Some("tool_use".to_string()),
+        })]);
+
+        run_streaming_bridge(stream, "session-bridge".to_string(), context).await;
+
+        let captured = sink.lock().expect("sink lock");
+        let turn_error = captured
+            .iter()
+            .find_map(|event| match &event.payload {
+                crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
+                    match update.as_ref() {
+                        SessionUpdate::TurnError { error, .. } => Some(error.clone()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .expect("expected turn error update");
+
+        match turn_error {
+            TurnErrorData::Structured(payload) => {
+                assert_eq!(payload.message, "Permission denied by user");
+                assert_eq!(payload.kind, TurnErrorKind::Recoverable);
+            }
+            TurnErrorData::Legacy(message) => {
+                panic!("expected structured deny message, got legacy {message}");
+            }
+        }
     }
 }

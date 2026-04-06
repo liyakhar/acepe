@@ -23,7 +23,6 @@ import {
 	type AgentWorkspacePanel,
 	type BrowserWorkspacePanel,
 	type FileWorkspacePanel,
-	type GitWorkspacePanel,
 	type Panel,
 	type PersistedBrowserPanelState,
 	type PersistedTerminalPanelGroupState,
@@ -32,7 +31,6 @@ import {
 	type PersistedFilePanelState,
 	type PersistedFileWorkspacePanelState,
 	type PersistedAgentWorkspacePanelState,
-	type PersistedGitWorkspacePanelState,
 	type PersistedReviewWorkspacePanelState,
 	type PersistedReviewFullscreenState,
 	type PersistedSqlStudioState,
@@ -226,7 +224,7 @@ function createModifiedFilesStateLookup(
 export function serializeWorkspacePanels(
 	workspacePanels: ReadonlyArray<WorkspacePanel>
 ): PersistedWorkspacePanelState[] {
-	return workspacePanels.map((panel) => {
+	return workspacePanels.reduce<PersistedWorkspacePanelState[]>((persistedPanels, panel) => {
 		if (panel.kind === "agent") {
 			const persisted: PersistedAgentWorkspacePanelState = {
 				id: panel.id,
@@ -244,7 +242,8 @@ export function serializeWorkspacePanels(
 				sessionTitle: panel.sessionTitle ?? undefined,
 				sequenceId: panel.sequenceId ?? undefined,
 			};
-			return persisted;
+			persistedPanels.push(persisted);
+			return persistedPanels;
 		}
 
 		if (panel.kind === "file") {
@@ -258,7 +257,8 @@ export function serializeWorkspacePanels(
 				targetLine: panel.targetLine,
 				targetColumn: panel.targetColumn,
 			};
-			return persisted;
+			persistedPanels.push(persisted);
+			return persistedPanels;
 		}
 
 		if (panel.kind === "terminal") {
@@ -270,7 +270,8 @@ export function serializeWorkspacePanels(
 				ownerPanelId: panel.ownerPanelId,
 				groupId: panel.groupId,
 			};
-			return persisted;
+			persistedPanels.push(persisted);
+			return persistedPanels;
 		}
 
 		if (panel.kind === "review") {
@@ -284,19 +285,12 @@ export function serializeWorkspacePanels(
 				totalEditCount: panel.modifiedFilesState.totalEditCount,
 				selectedFileIndex: panel.selectedFileIndex,
 			};
-			return persisted;
+			persistedPanels.push(persisted);
+			return persistedPanels;
 		}
 
 		if (panel.kind === "git") {
-			const persisted: PersistedGitWorkspacePanelState = {
-				id: panel.id,
-				kind: "git",
-				projectPath: panel.projectPath,
-				width: panel.width,
-				ownerPanelId: panel.ownerPanelId,
-				initialTarget: panel.initialTarget,
-			};
-			return persisted;
+			return persistedPanels;
 		}
 
 		const persisted: PersistedBrowserWorkspacePanelState = {
@@ -308,14 +302,15 @@ export function serializeWorkspacePanels(
 			url: panel.url,
 			title: panel.title,
 		};
-		return persisted;
-	});
+		persistedPanels.push(persisted);
+		return persistedPanels;
+	}, []);
 }
 
 export function hydratePersistedWorkspacePanels(
 	persistedPanels: ReadonlyArray<PersistedWorkspacePanelState>
 ): WorkspacePanel[] {
-	return persistedPanels.map((panel) => {
+	return persistedPanels.reduce<WorkspacePanel[]>((workspacePanels, panel) => {
 		const clampedWidth = Math.max(panel.width, MIN_PANEL_WIDTH);
 		if (panel.kind === "agent") {
 			const hydrated: AgentWorkspacePanel = {
@@ -334,7 +329,8 @@ export function hydratePersistedWorkspacePanels(
 				sessionTitle: panel.sessionTitle ? panel.sessionTitle : null,
 				sequenceId: panel.sequenceId ?? null,
 			};
-			return hydrated;
+			workspacePanels.push(hydrated);
+			return workspacePanels;
 		}
 
 		if (panel.kind === "file") {
@@ -348,7 +344,8 @@ export function hydratePersistedWorkspacePanels(
 				targetLine: panel.targetLine,
 				targetColumn: panel.targetColumn,
 			};
-			return hydrated;
+			workspacePanels.push(hydrated);
+			return workspacePanels;
 		}
 
 		if (panel.kind === "terminal") {
@@ -360,7 +357,8 @@ export function hydratePersistedWorkspacePanels(
 				ownerPanelId: panel.ownerPanelId,
 				groupId: panel.groupId,
 			};
-			return hydrated;
+			workspacePanels.push(hydrated);
+			return workspacePanels;
 		}
 
 		if (panel.kind === "review") {
@@ -379,19 +377,12 @@ export function hydratePersistedWorkspacePanels(
 				},
 				selectedFileIndex: panel.selectedFileIndex,
 			};
-			return hydrated;
+			workspacePanels.push(hydrated);
+			return workspacePanels;
 		}
 
 		if (panel.kind === "git") {
-			const hydrated: GitWorkspacePanel = {
-				id: panel.id ? panel.id : crypto.randomUUID(),
-				kind: "git",
-				projectPath: panel.projectPath,
-				width: clampedWidth,
-				ownerPanelId: panel.ownerPanelId,
-				initialTarget: panel.initialTarget,
-			};
-			return hydrated;
+			return workspacePanels;
 		}
 
 		const hydrated: BrowserWorkspacePanel = {
@@ -403,8 +394,9 @@ export function hydratePersistedWorkspacePanels(
 			url: panel.url,
 			title: panel.title,
 		};
-		return hydrated;
-	});
+		workspacePanels.push(hydrated);
+		return workspacePanels;
+	}, []);
 }
 
 /**

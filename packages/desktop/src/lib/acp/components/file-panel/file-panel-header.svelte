@@ -1,7 +1,7 @@
 <script lang="ts">
 import { FilePanelHeader as FilePanelHeaderLayout } from "@acepe/ui/file-panel";
 import { CloseAction, EmbeddedIconButton } from "@acepe/ui/panel-header";
-import FolderOpen from "phosphor-svelte/lib/FolderOpen";
+import { FolderOpen } from "phosphor-svelte";
 import { toast } from "svelte-sonner";
 import { FileIcon } from "$lib/components/ui/file-icon/index.js";
 import * as m from "$lib/paraglide/messages.js";

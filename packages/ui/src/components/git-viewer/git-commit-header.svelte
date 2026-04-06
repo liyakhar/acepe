@@ -1,9 +1,9 @@
 <script lang="ts">
-	import GitCommit from "phosphor-svelte/lib/GitCommit";
-	import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
-	import CaretDown from "phosphor-svelte/lib/CaretDown";
-	import Copy from "phosphor-svelte/lib/Copy";
-	import Check from "phosphor-svelte/lib/Check";
+	import { GitCommit } from "phosphor-svelte";
+	import { ArrowSquareOut } from "phosphor-svelte";
+	import { CaretDown } from "phosphor-svelte";
+	import { Copy } from "phosphor-svelte";
+	import { Check } from "phosphor-svelte";
 
 	import { DiffPill } from "../diff-pill/index.js";
 	import { cn } from "../../lib/utils.js";

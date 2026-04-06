@@ -1,9 +1,9 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { IconCircleCheckFilled } from "@tabler/icons-svelte";
-import Brain from "phosphor-svelte/lib/Brain";
-import Lightning from "phosphor-svelte/lib/Lightning";
-import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
+import { Brain } from "phosphor-svelte";
+import { Lightning } from "phosphor-svelte";
+import { ShieldCheck } from "phosphor-svelte";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 
 import type { ConfigOptionData } from "../../services/converted-session-types.js";

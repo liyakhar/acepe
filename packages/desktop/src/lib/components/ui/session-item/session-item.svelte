@@ -1,11 +1,11 @@
 <script lang="ts">
 import { ActivityEntry } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import IconChevronDown from "@tabler/icons-svelte/icons/chevron-down";
-import IconChevronRight from "@tabler/icons-svelte/icons/chevron-right";
-import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
-import Archive from "phosphor-svelte/lib/Archive";
-import Tree from "phosphor-svelte/lib/Tree";
+import { IconChevronDown } from "@tabler/icons-svelte";
+import { IconChevronRight } from "@tabler/icons-svelte";
+import { IconDotsVertical } from "@tabler/icons-svelte";
+import { Archive } from "phosphor-svelte";
+import { Tree } from "phosphor-svelte";
 import { tick } from "svelte";
 import PrStateIcon from "$lib/acp/components/pr-state-icon.svelte";
 import { toast } from "svelte-sonner";

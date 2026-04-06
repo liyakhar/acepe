@@ -6,17 +6,16 @@
  * In inline mode: shows PlanCard with plan preview and Build/Review/Deepen actions.
  * In sidebar mode: shows embedded header bar; plan content in the sidebar panel.
  */
+import { AgentToolCard } from "@acepe/ui/agent-panel";
+import { BuildIcon, PlanIcon } from "@acepe/ui/icons";
 import {
-	BuildIcon,
 	EmbeddedPanelHeader,
 	HeaderActionCell,
 	HeaderTitleCell,
-	PlanIcon,
-} from "@acepe/ui";
-import { AgentToolCard } from "@acepe/ui/agent-panel";
+} from "@acepe/ui/panel-header";
 import type { PlanCardStatus } from "@acepe/ui/plan-card";
 import { PlanCard } from "@acepe/ui/plan-card";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { XCircle } from "phosphor-svelte";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { usePlanInline } from "../../hooks/use-plan-inline.svelte.js";
@@ -28,7 +27,6 @@ import { getSessionStore } from "../../store/session-store.svelte.js";
 import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";
 import { findExitPlanPermission, getExitPlanDisplayPlan } from "./exit-plan-helpers.js";
-import PlanDialog from "../plan-dialog.svelte";
 
 interface Props {
 	toolCall: ToolCall;
@@ -181,11 +179,14 @@ const cardStatus = $derived.by((): PlanCardStatus => {
 	</PlanCard>
 
 	{#if displayPlan}
-		<PlanDialog
-			plan={displayPlan}
-			open={inline.showPlanDialog}
-			onOpenChange={(open) => (inline.showPlanDialog = open)}
-		/>
+		{#await import("../plan-dialog.svelte") then module}
+			{@const PlanDialog = module.default}
+			<PlanDialog
+				plan={displayPlan}
+				open={inline.showPlanDialog}
+				onOpenChange={(open) => (inline.showPlanDialog = open)}
+			/>
+		{/await}
 	{/if}
 {:else}
 	<!-- Sidebar mode: original compact card -->

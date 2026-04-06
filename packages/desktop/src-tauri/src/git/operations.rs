@@ -403,6 +403,38 @@ fn parse_shortstat(output: &str) -> (u64, u64, u64) {
     (files, insertions, deletions)
 }
 
+fn normalize_absolute_repo_path(workdir: &Path, raw_path: &Path) -> Option<PathBuf> {
+    if !raw_path.is_absolute() {
+        return Some(raw_path.to_path_buf());
+    }
+
+    if let Ok(relative_path) = raw_path.strip_prefix(workdir) {
+        return Some(relative_path.to_path_buf());
+    }
+
+    let canonical_workdir =
+        std::fs::canonicalize(workdir).unwrap_or_else(|_| workdir.to_path_buf());
+
+    let candidate_path = if raw_path.exists() {
+        std::fs::canonicalize(raw_path).unwrap_or_else(|_| raw_path.to_path_buf())
+    } else if let Some(parent) = raw_path.parent() {
+        let canonical_parent =
+            std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        if let Some(file_name) = raw_path.file_name() {
+            canonical_parent.join(file_name)
+        } else {
+            raw_path.to_path_buf()
+        }
+    } else {
+        raw_path.to_path_buf()
+    };
+
+    candidate_path
+        .strip_prefix(&canonical_workdir)
+        .ok()
+        .map(Path::to_path_buf)
+}
+
 // ─── Stage / Unstage ────────────────────────────────────────────────────────
 
 /// Stage specific files (add to index).
@@ -424,31 +456,22 @@ pub async fn git_stage_files(project_path: String, files: Vec<String>) -> Result
         for file in &files {
             let raw_path = Path::new(file);
 
-            // Convert absolute paths to repo-relative paths
-            let file_path = if raw_path.is_absolute() {
-                raw_path.strip_prefix(workdir).map_err(|_| {
-                    format!(
-                        "File {} is not inside repository working directory {}",
-                        file,
-                        workdir.display()
-                    )
-                })?
-            } else {
-                raw_path
+            let Some(file_path) = normalize_absolute_repo_path(workdir, raw_path) else {
+                continue;
             };
 
             // Check if the file exists on disk
-            let full_path = workdir.join(file_path);
+            let full_path = workdir.join(&file_path);
 
             if full_path.exists() {
                 // File exists: add to index (handles both new and modified)
                 index
-                    .add_path(file_path)
+                    .add_path(&file_path)
                     .map_err(|e| format!("Failed to stage {}: {}", file, e))?;
             } else {
                 // File doesn't exist: remove from index (deleted file)
                 index
-                    .remove_path(file_path)
+                    .remove_path(&file_path)
                     .map_err(|e| format!("Failed to stage deletion of {}: {}", file, e))?;
             }
         }
@@ -1001,8 +1024,19 @@ pub async fn git_run_stacked_action(
         }
     }
 
-    // New branches always need -u; existing branches check remote status
-    let needs_upstream = do_push && (created_branch || remote_status.tracking_branch.is_empty());
+    let push_remote = if remote_status.remote.is_empty() {
+        "origin".to_string()
+    } else {
+        remote_status.remote.clone()
+    };
+    let expected_tracking_branch = format!("{}/{}", push_remote, branch);
+
+    // New branches need -u, and existing branches need it when tracking is missing or points at a
+    // different remote ref than the current branch.
+    let needs_upstream = do_push
+        && (created_branch
+            || remote_status.tracking_branch.is_empty()
+            || remote_status.tracking_branch != expected_tracking_branch);
 
     let path_clone = path.clone();
     let msg = commit_message.clone();
@@ -1093,7 +1127,7 @@ pub async fn git_run_stacked_action(
 
     let push_step = if do_push {
         let push_args: Vec<&str> = if needs_upstream {
-            vec!["push", "--no-verify", "-u", "origin", &branch]
+            vec!["push", "--no-verify", "-u", push_remote.as_str(), &branch]
         } else {
             vec!["push", "--no-verify"]
         };
@@ -1101,7 +1135,7 @@ pub async fn git_run_stacked_action(
             .await
             .map_err(|_| "Push timed out".to_string())??;
         let upstream = if needs_upstream {
-            format!("origin/{}", branch)
+            expected_tracking_branch.clone()
         } else {
             remote_status.tracking_branch
         };
@@ -1172,13 +1206,14 @@ pub async fn git_run_stacked_action(
 mod tests {
     use std::fs;
     use std::path::Path;
+    use std::process::Command;
 
     use git2::IndexAddOption;
     use tempfile::TempDir;
 
     use crate::file_index::git::open_repository;
 
-    use super::{do_commit, has_staged_changes};
+    use super::{do_commit, git_run_stacked_action, git_stage_files, has_staged_changes};
 
     /// Create a new git repo in a temp dir with user config set (required for commits).
     fn init_repo_with_config() -> (TempDir, git2::Repository) {
@@ -1192,6 +1227,21 @@ mod tests {
             .set_str("user.email", "test@example.com")
             .expect("set user.email");
         (dir, repo)
+    }
+
+    fn run_test_git(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
     #[test]
@@ -1304,5 +1354,118 @@ mod tests {
         );
         drop(repo);
         drop(dir);
+    }
+
+    #[tokio::test]
+    async fn git_stage_files_ignores_absolute_paths_outside_worktree() {
+        let (dir, repo) = init_repo_with_config();
+        let tracked_path = dir.path().join("tracked.txt");
+        fs::write(&tracked_path, "tracked content").expect("write tracked file");
+        let outside_dir = TempDir::new().expect("outside temp dir");
+        let outside_path = outside_dir.path().join("video-progress-review.json");
+        fs::write(&outside_path, "{}").expect("write outside file");
+
+        let result = git_stage_files(
+            dir.path().display().to_string(),
+            vec![
+                "tracked.txt".to_string(),
+                outside_path.display().to_string(),
+            ],
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "staging should ignore outside-worktree files instead of failing: {result:?}"
+        );
+
+        let index = repo.index().expect("index");
+        assert!(
+            index.get_path(Path::new("tracked.txt"), 0).is_some(),
+            "tracked file should still be staged"
+        );
+        assert!(
+            index
+                .get_path(Path::new("video-progress-review.json"), 0)
+                .is_none(),
+            "outside-worktree file should not be added to the index"
+        );
+
+        drop(repo);
+        drop(outside_dir);
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn git_run_stacked_action_repoints_mismatched_upstream_before_push() {
+        let remote_dir = TempDir::new().expect("remote dir");
+        run_test_git(remote_dir.path(), &["init", "--bare"]);
+
+        let (dir, repo) = init_repo_with_config();
+        run_test_git(dir.path(), &["checkout", "-b", "main"]);
+
+        let file_path = dir.path().join("file.txt");
+        fs::write(&file_path, "initial").expect("write initial file");
+        run_test_git(dir.path(), &["add", "file.txt"]);
+        do_commit(dir.path(), "Initial commit").expect("initial commit");
+
+        let remote_path = remote_dir.path().to_string_lossy().into_owned();
+        run_test_git(dir.path(), &["remote", "add", "origin", remote_path.as_str()]);
+        run_test_git(dir.path(), &["push", "-u", "origin", "main"]);
+
+        run_test_git(dir.path(), &["checkout", "-b", "acepe/bright-falcon"]);
+        run_test_git(
+            dir.path(),
+            &[
+                "branch",
+                "--set-upstream-to=origin/main",
+                "acepe/bright-falcon",
+            ],
+        );
+        run_test_git(dir.path(), &["config", "push.default", "simple"]);
+
+        fs::write(&file_path, "feature").expect("write feature file");
+        run_test_git(dir.path(), &["add", "file.txt"]);
+
+        let result = git_run_stacked_action(
+            dir.path().display().to_string(),
+            "commit_push".to_string(),
+            "Update feature branch".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "expected stacked push to repair mismatched upstream, got: {result:?}"
+        );
+
+        let result = result.expect("stacked action result");
+        assert_eq!(result.push.branch.as_deref(), Some("acepe/bright-falcon"));
+        assert_eq!(
+            result.push.upstream_branch.as_deref(),
+            Some("origin/acepe/bright-falcon")
+        );
+        assert_eq!(
+            run_test_git(
+                dir.path(),
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            ),
+            "origin/acepe/bright-falcon"
+        );
+        assert!(
+            run_test_git(
+                remote_dir.path(),
+                &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+            )
+            .lines()
+            .any(|branch| branch == "acepe/bright-falcon"),
+            "expected remote to contain pushed feature branch"
+        );
+
+        drop(repo);
+        drop(dir);
+        drop(remote_dir);
     }
 }

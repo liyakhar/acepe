@@ -1,10 +1,7 @@
 <script lang="ts">
-import { FilePathBadge } from "@acepe/ui";
+import { FilePathBadge } from "@acepe/ui/file-path-badge";
 import { Button } from "@acepe/ui/button";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
-import ShieldWarning from "phosphor-svelte/lib/ShieldWarning";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { CheckCircle, ShieldCheck, ShieldWarning, XCircle } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import { getPermissionStore } from "../../store/permission-store.svelte.js";
 import type { PermissionRequest } from "../../types/permission.js";
@@ -45,7 +42,7 @@ const buttonClass = $derived(compact || inline ? "justify-center" : "flex-1 just
 </script>
 
 <div class="flex min-w-0 flex-col gap-1" class:w-full={!inline}>
-	{#if !hideHeader}
+	{#snippet permissionSummary()}
 		<div class="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
 			<ShieldWarning weight="fill" class="size-3 shrink-0" style="color: {purpleColor}" />
 			<span class="shrink-0 font-medium text-muted-foreground">{compactDisplay.label}</span>
@@ -57,6 +54,10 @@ const buttonClass = $derived(compact || inline ? "justify-center" : "flex-1 just
 				<code class="min-w-0 flex-1 truncate font-mono text-foreground/70">$ {compactDisplay.command}</code>
 			{/if}
 		</div>
+	{/snippet}
+
+	{#if !hideHeader}
+		{@render permissionSummary()}
 	{/if}
 
 	<div class="flex items-center gap-1" class:w-full={!inline && !compact} class:justify-end={inline || compact}>

@@ -14,7 +14,7 @@ import {
 	PlanIcon,
 	ProjectLetterBadge,
 } from "@acepe/ui";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { XCircle } from "phosphor-svelte";
 import type { QueueItem } from "$lib/acp/store/queue/types.js";
 import * as m from "$lib/paraglide/messages.js";
 import {
@@ -476,7 +476,7 @@ function handleNextQuestion() {
 		{agentBadge}
 	>
 		{#snippet actionBar()}
-			<PermissionActionBar permission={pendingPermission} compact />
+			<PermissionActionBar permission={pendingPermission} compact hideHeader />
 		{/snippet}
 	</PermissionFeedItem>
 {:else if isPlanApproval}

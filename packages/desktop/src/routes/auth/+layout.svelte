@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconArrowLeft from "@tabler/icons-svelte/icons/arrow-left";
+import { IconArrowLeft } from "@tabler/icons-svelte";
 import AnimatedBackground from "$lib/components/animated-background.svelte";
 import Logo from "$lib/components/logo.svelte";
 import { Button } from "$lib/components/ui/button/index.js";

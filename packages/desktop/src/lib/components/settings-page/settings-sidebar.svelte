@@ -1,13 +1,13 @@
 <script lang="ts">
-import Archive from "phosphor-svelte/lib/Archive";
-import ChatCircle from "phosphor-svelte/lib/ChatCircle";
-import FolderSimple from "phosphor-svelte/lib/FolderSimple";
-import GearFine from "phosphor-svelte/lib/GearFine";
-import Keyboard from "phosphor-svelte/lib/Keyboard";
-import Microphone from "phosphor-svelte/lib/Microphone";
-import Robot from "phosphor-svelte/lib/Robot";
-import Stack from "phosphor-svelte/lib/Stack";
-import Tree from "phosphor-svelte/lib/Tree";
+import { Archive } from "phosphor-svelte";
+import { ChatCircle } from "phosphor-svelte";
+import { FolderSimple } from "phosphor-svelte";
+import { GearFine } from "phosphor-svelte";
+import { Keyboard } from "phosphor-svelte";
+import { Microphone } from "phosphor-svelte";
+import { Robot } from "phosphor-svelte";
+import { Stack } from "phosphor-svelte";
+import { Tree } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import { cn } from "$lib/utils.js";
 

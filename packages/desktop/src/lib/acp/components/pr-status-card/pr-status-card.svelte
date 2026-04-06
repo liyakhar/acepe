@@ -18,7 +18,7 @@
 	import "@acepe/ui/markdown-prose.css";
 	import { openUrl } from "@tauri-apps/plugin-opener";
 	import { Result } from "neverthrow";
-	import GitPullRequest from "phosphor-svelte/lib/GitPullRequest";
+	import { GitPullRequest } from "phosphor-svelte";
 	import { Spinner } from "$lib/components/ui/spinner/index.js";
 	import DiffViewerModal from "../diff-viewer/diff-viewer-modal.svelte";
 	import * as m from "$lib/paraglide/messages.js";

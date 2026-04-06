@@ -1,7 +1,13 @@
 use super::super::provider::{command_exists, AgentProvider, ModelFallbackCandidate, SpawnConfig};
+use super::claude_code_settings::resolve_claude_runtime_mode_id;
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::session_update::PlanSource;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
+use std::path::Path;
+
+const CLAUDE_OPUS_MODEL_ID: &str = "claude-opus-4-6";
+const CLAUDE_SONNET_MODEL_ID: &str = "claude-sonnet-4-6";
+const CLAUDE_HAIKU_MODEL_ID: &str = "claude-haiku-4-5-20251001";
 
 /// Claude Code Agent Provider — uses cc-sdk for direct Rust ↔ Claude CLI communication
 pub struct ClaudeCodeProvider;
@@ -70,17 +76,17 @@ impl AgentProvider for ClaudeCodeProvider {
     fn default_model_candidates(&self) -> Vec<ModelFallbackCandidate> {
         vec![
             ModelFallbackCandidate {
-                model_id: cc_sdk::model_recommendation::best_model().to_string(),
+                model_id: CLAUDE_OPUS_MODEL_ID.to_string(),
                 name: "Claude Opus 4.6".to_string(),
                 description: Some("Most capable Claude model".to_string()),
             },
             ModelFallbackCandidate {
-                model_id: cc_sdk::model_recommendation::balanced_model().to_string(),
-                name: "Claude Sonnet 4.5".to_string(),
+                model_id: CLAUDE_SONNET_MODEL_ID.to_string(),
+                name: "Claude Sonnet 4.6".to_string(),
                 description: Some("Balanced Claude model for most tasks".to_string()),
             },
             ModelFallbackCandidate {
-                model_id: cc_sdk::model_recommendation::cheapest_model().to_string(),
+                model_id: CLAUDE_HAIKU_MODEL_ID.to_string(),
                 name: "Claude Haiku 4.5".to_string(),
                 description: Some("Fastest and cheapest Claude model".to_string()),
             },
@@ -89,7 +95,7 @@ impl AgentProvider for ClaudeCodeProvider {
 
     fn normalize_mode_id(&self, id: &str) -> String {
         match id {
-            "default" | "acceptEdits" => "build".to_string(),
+            "default" | "acceptEdits" | "bypassPermissions" => "build".to_string(),
             other => other.to_string(),
         }
     }
@@ -122,6 +128,10 @@ impl AgentProvider for ClaudeCodeProvider {
 
     fn default_plan_source(&self) -> PlanSource {
         PlanSource::Deterministic
+    }
+
+    fn resolve_runtime_mode_id(&self, requested_mode_id: Option<&str>, cwd: &Path) -> String {
+        resolve_claude_runtime_mode_id(requested_mode_id, cwd)
     }
 
     fn uses_task_reconciler(&self) -> bool {
@@ -198,6 +208,9 @@ fn push_unique_spawn_config(configs: &mut Vec<SpawnConfig>, candidate: SpawnConf
 #[cfg(test)]
 mod tests {
     use super::*;
+    const CLAUDE_PROVIDER_SOURCE: &str = include_str!("claude_code.rs");
+    const CLAUDE_PROVIDER_SETTINGS_SOURCE: &str = include_str!("claude_code_settings.rs");
+    const CC_SDK_CLIENT_SOURCE: &str = include_str!("../client/cc_sdk_client.rs");
 
     #[test]
     fn spawn_config_never_panics() {
@@ -252,7 +265,7 @@ mod tests {
             .any(|model| model.model_id == "claude-opus-4-6"));
         assert!(models
             .iter()
-            .any(|model| model.model_id == "claude-sonnet-4-5-20250929"));
+            .any(|model| model.model_id == "claude-sonnet-4-6"));
         assert!(models
             .iter()
             .any(|model| model.model_id == "claude-haiku-4-5-20251001"));
@@ -282,5 +295,28 @@ mod tests {
             Some("plan".to_string())
         );
         assert_eq!(provider.map_execution_profile_mode_id("plan", true), None);
+    }
+
+    #[test]
+    fn claude_provider_normalizes_bypass_permissions_to_build() {
+        let provider = ClaudeCodeProvider;
+
+        assert_eq!(provider.normalize_mode_id("bypassPermissions"), "build");
+    }
+
+    #[test]
+    fn claude_provider_owns_permission_mode_resolution_logic() {
+        assert!(
+            CLAUDE_PROVIDER_SOURCE.contains("resolve_runtime_mode_id"),
+            "Claude provider should own runtime mode resolution"
+        );
+        assert!(
+            CLAUDE_PROVIDER_SETTINGS_SOURCE.contains("configured_claude_permission_mode"),
+            "Claude provider helper should own settings-based permission resolution"
+        );
+        assert!(
+            !CC_SDK_CLIENT_SOURCE.contains("configured_claude_permission_mode"),
+            "cc_sdk_client should not parse Claude settings directly"
+        );
     }
 }

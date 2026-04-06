@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconChevronRight from "@tabler/icons-svelte/icons/chevron-right";
+import { IconChevronRight } from "@tabler/icons-svelte";
 import * as m from "$lib/paraglide/messages.js";
 
 interface Props {

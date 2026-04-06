@@ -8,20 +8,20 @@ import {
 	ShaderFitOptions,
 	ShaderMount,
 } from "@paper-design/shaders";
-import Bug from "phosphor-svelte/lib/Bug";
-import Lightning from "phosphor-svelte/lib/Lightning";
-import NumberCircleEight from "phosphor-svelte/lib/NumberCircleEight";
-import NumberCircleFive from "phosphor-svelte/lib/NumberCircleFive";
-import NumberCircleFour from "phosphor-svelte/lib/NumberCircleFour";
-import NumberCircleNine from "phosphor-svelte/lib/NumberCircleNine";
-import NumberCircleOne from "phosphor-svelte/lib/NumberCircleOne";
-import NumberCircleSeven from "phosphor-svelte/lib/NumberCircleSeven";
-import NumberCircleSix from "phosphor-svelte/lib/NumberCircleSix";
-import NumberCircleThree from "phosphor-svelte/lib/NumberCircleThree";
-import NumberCircleTwo from "phosphor-svelte/lib/NumberCircleTwo";
-import RocketLaunch from "phosphor-svelte/lib/RocketLaunch";
-import Warning from "phosphor-svelte/lib/Warning";
-import X from "phosphor-svelte/lib/X";
+import { Bug } from "phosphor-svelte";
+import { Lightning } from "phosphor-svelte";
+import { NumberCircleEight } from "phosphor-svelte";
+import { NumberCircleFive } from "phosphor-svelte";
+import { NumberCircleFour } from "phosphor-svelte";
+import { NumberCircleNine } from "phosphor-svelte";
+import { NumberCircleOne } from "phosphor-svelte";
+import { NumberCircleSeven } from "phosphor-svelte";
+import { NumberCircleSix } from "phosphor-svelte";
+import { NumberCircleThree } from "phosphor-svelte";
+import { NumberCircleTwo } from "phosphor-svelte";
+import { RocketLaunch } from "phosphor-svelte";
+import { Warning } from "phosphor-svelte";
+import { X } from "phosphor-svelte";
 import { type Component, onDestroy, onMount } from "svelte";
 import { Colors } from "$lib/acp/utils/colors.js";
 import type { ChangelogEntry, ChangeType } from "$lib/changelog/index.js";

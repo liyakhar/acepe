@@ -1,6 +1,6 @@
 use super::codex_native_config::{
-    build_codex_native_new_session_response, build_codex_native_resume_session_response,
-    build_codex_turn_start_params_from_input, default_codex_native_config_state,
+    build_codex_native_new_session_response_with_state, build_codex_native_resume_session_response,
+    build_codex_turn_start_params_from_input, load_codex_native_config_state,
     resolve_codex_execution_profile_mode_id, set_codex_native_config_option,
     set_codex_native_model, CodexExecutionProfile, CodexInteractionMode, CodexNativeConfigState,
     CodexTurnInputItem,
@@ -75,6 +75,7 @@ impl CodexNativeClient {
             .try_state::<DbConn>()
             .map(|state| state.inner().clone());
         let dispatcher = AcpUiEventDispatcher::new(Some(app_handle), DispatchPolicy::default());
+        let config_state = load_codex_native_config_state(&cwd)?;
 
         Ok(Self {
             provider,
@@ -94,7 +95,7 @@ impl CodexNativeClient {
             provider_thread_id: None,
             current_turn_id: None,
             execution_profile: CodexExecutionProfile::Standard,
-            config_state: default_codex_native_config_state(),
+            config_state,
             current_mode_id: "build".to_string(),
             initialized: false,
         })
@@ -184,7 +185,8 @@ impl CodexNativeClient {
     }
 
     async fn build_new_session_response(&self, session_id: String) -> NewSessionResponse {
-        let mut response = build_codex_native_new_session_response(session_id);
+        let mut response =
+            build_codex_native_new_session_response_with_state(session_id, &self.config_state);
         response.modes.current_mode_id = self.current_mode_id.clone();
         response
     }

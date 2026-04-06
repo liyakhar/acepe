@@ -33,5 +33,5 @@ export function visiblePermissionsForSessionBar(
 	permissions: ReadonlyArray<PermissionRequest>,
 	entries: ReadonlyArray<SessionEntry>
 ): PermissionRequest[] {
-	return permissions.filter((permission) => !isPermissionRepresentedByToolCall(permission, entries));
+	return permissions.filter((permission) => !shouldHidePermissionBarForExitPlan(permission, entries));
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
-	import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
-	import CaretDown from "phosphor-svelte/lib/CaretDown";
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
+	import { ArrowSquareOut } from "phosphor-svelte";
+	import { CaretDown } from "phosphor-svelte";
+	import { CaretRight } from "phosphor-svelte";
 	import AgentToolCard from "./agent-tool-card.svelte";
 	import ToolLabel from "./tool-label.svelte";
 	import type { AgentToolStatus } from "./types.js";

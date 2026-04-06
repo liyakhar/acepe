@@ -1,7 +1,7 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
-import IconExternalLink from "@tabler/icons-svelte/icons/external-link";
-import IconPackage from "@tabler/icons-svelte/icons/package";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
+import { IconExternalLink } from "@tabler/icons-svelte";
+import { IconPackage } from "@tabler/icons-svelte";
 
 import type { SkillContent } from "../../../schemas/tool-call-content.schema.js";
 

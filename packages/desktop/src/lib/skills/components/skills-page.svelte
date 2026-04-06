@@ -1,9 +1,9 @@
 <script lang="ts">
 import { okAsync } from "neverthrow";
-import Copy from "phosphor-svelte/lib/Copy";
-import FileText from "phosphor-svelte/lib/FileText";
-import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
-import Trash from "phosphor-svelte/lib/Trash";
+import { Copy } from "phosphor-svelte";
+import { FileText } from "phosphor-svelte";
+import { PuzzlePiece } from "phosphor-svelte";
+import { Trash } from "phosphor-svelte";
 import { onMount } from "svelte";
 import {
 	EmbeddedPanelHeader,

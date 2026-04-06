@@ -1,5 +1,5 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
 import FileIcon from "@lucide/svelte/icons/file";
 import { Button } from "$lib/components/ui/button/index.js";
 import { openFileInEditor } from "$lib/utils/tauri-client.js";

@@ -1,5 +1,5 @@
 <script lang="ts">
-import Plus from "phosphor-svelte/lib/Plus";
+import { Plus } from "phosphor-svelte";
 import SkillsPage from "$lib/skills/components/skills-page.svelte";
 import SettingsSectionHeader from "../settings-section-header.svelte";
 

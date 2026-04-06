@@ -1,5 +1,5 @@
 <script lang="ts">
-import FloppyDisk from "phosphor-svelte/lib/FloppyDisk";
+import { FloppyDisk } from "phosphor-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import { CodeMirrorEditor } from "$lib/components/ui/codemirror-editor/index.js";
 import * as Dialog from "$lib/components/ui/dialog/index.js";

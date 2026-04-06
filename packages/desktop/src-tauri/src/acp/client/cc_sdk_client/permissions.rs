@@ -158,6 +158,7 @@ struct PermissionBridgeState {
     pending: HashMap<u64, PendingPermissionRequest>,
     approval_groups: HashMap<String, Vec<u64>>,
     resolved_approval_results: HashMap<String, Value>,
+    terminal_deny_message: Option<String>,
 }
 
 #[derive(Debug)]
@@ -348,6 +349,11 @@ impl PermissionBridge {
                     .resolved_approval_results
                     .insert(group_key, result.clone());
             }
+            if !response_outcome_allows(result) && !pending_requests[0].kind.is_question() {
+                state.terminal_deny_message = Some(
+                    deny_message_from_ui_result(result, "Permission denied by user").to_string(),
+                );
+            }
             pending_requests
         };
         let kind = pending_requests[0].kind.clone();
@@ -376,7 +382,18 @@ impl PermissionBridge {
     pub(super) async fn clear_request(&self, id: u64, message: &str) {
         let pending_requests = {
             let mut state = self.state.lock().await;
-            Self::take_request_bundle(&mut state, id)
+            let pending_requests = Self::take_request_bundle(&mut state, id);
+            if let Some(requests) = pending_requests.as_ref() {
+                if let Some(group_key) = requests[0].approval_group_key.clone() {
+                    state
+                        .resolved_approval_results
+                        .insert(group_key, denied_ui_result(message));
+                }
+                if !requests[0].kind.is_question() {
+                    state.terminal_deny_message = Some(message.to_string());
+                }
+            }
+            pending_requests
         };
 
         let Some(pending_requests) = pending_requests else {
@@ -386,12 +403,7 @@ impl PermissionBridge {
         for pending_request in pending_requests {
             match pending_request.sender {
                 PendingPermissionResponder::Tool(sender) => {
-                    let _ = sender.send(cc_sdk::PermissionResult::Deny(
-                        cc_sdk::PermissionResultDeny {
-                            message: message.to_string(),
-                            interrupt: false,
-                        },
-                    ));
+                    let _ = sender.send(denied_permission_result(&pending_request.kind, message));
                 }
                 PendingPermissionResponder::Hook(sender) => {
                     let _ = sender.send(build_denied_hook_output_from_kind(
@@ -406,8 +418,16 @@ impl PermissionBridge {
     pub(super) async fn drain_all_as_denied(&self) {
         let pending_requests = {
             let mut state = self.state.lock().await;
+            let had_terminal_permission = state
+                .pending
+                .values()
+                .any(|pending| !pending.kind.is_question());
             state.approval_groups.clear();
             state.resolved_approval_results.clear();
+            if had_terminal_permission {
+                state.terminal_deny_message =
+                    Some("Permission denied or connection closed".to_string());
+            }
             state
                 .pending
                 .drain()
@@ -418,11 +438,9 @@ impl PermissionBridge {
         for pending in pending_requests {
             match pending.sender {
                 PendingPermissionResponder::Tool(sender) => {
-                    let _ = sender.send(cc_sdk::PermissionResult::Deny(
-                        cc_sdk::PermissionResultDeny {
-                            message: "Permission denied or connection closed".to_string(),
-                            interrupt: false,
-                        },
+                    let _ = sender.send(denied_permission_result(
+                        &pending.kind,
+                        "Permission denied or connection closed",
                     ));
                 }
                 PendingPermissionResponder::Hook(sender) => {
@@ -433,6 +451,16 @@ impl PermissionBridge {
                 }
             }
         }
+    }
+
+    pub(super) async fn take_terminal_deny_message(&self) -> Option<String> {
+        let mut state = self.state.lock().await;
+        state.terminal_deny_message.take()
+    }
+
+    pub(super) async fn clear_terminal_deny_message(&self) {
+        let mut state = self.state.lock().await;
+        state.terminal_deny_message = None;
     }
 }
 
@@ -501,15 +529,28 @@ fn permission_result_from_ui_result(
             updated_permissions,
         })
     } else {
-        cc_sdk::PermissionResult::Deny(cc_sdk::PermissionResultDeny {
-            message: if kind.is_question() {
-                "Question cancelled by user".to_string()
-            } else {
-                "Permission denied by user".to_string()
-            },
-            interrupt: false,
-        })
+        denied_permission_result(
+            kind,
+            deny_message_from_ui_result(
+                result,
+                if kind.is_question() {
+                    "Question cancelled by user"
+                } else {
+                    "Permission denied by user"
+                },
+            ),
+        )
     }
+}
+
+fn denied_permission_result(
+    kind: &PendingPermissionKind,
+    message: &str,
+) -> cc_sdk::PermissionResult {
+    cc_sdk::PermissionResult::Deny(cc_sdk::PermissionResultDeny {
+        message: message.to_string(),
+        interrupt: !kind.is_question(),
+    })
 }
 
 fn build_denied_hook_output_from_kind(
@@ -521,7 +562,7 @@ fn build_denied_hook_output_from_kind(
         serde_json::json!({
             "behavior": "deny",
             "message": message,
-            "interrupt": false,
+            "interrupt": !kind.is_question(),
         }),
     )
 }
@@ -531,7 +572,10 @@ fn hook_output_from_ui_result(
     result: &Value,
 ) -> cc_sdk::HookJSONOutput {
     if !response_outcome_allows(result) {
-        return build_denied_hook_output_from_kind(kind, "Permission denied by user");
+        return build_denied_hook_output_from_kind(
+            kind,
+            deny_message_from_ui_result(result, "Permission denied by user"),
+        );
     }
 
     let PendingPermissionKind::Hook {
@@ -558,6 +602,23 @@ fn hook_output_from_ui_result(
     }
 
     hook_output_with_decision(kind, decision)
+}
+
+fn denied_ui_result(message: &str) -> Value {
+    serde_json::json!({
+        "outcome": {
+            "outcome": "cancelled",
+            "optionId": "reject"
+        },
+        "acepeDenyMessage": message,
+    })
+}
+
+fn deny_message_from_ui_result<'a>(result: &'a Value, default_message: &'a str) -> &'a str {
+    result
+        .get("acepeDenyMessage")
+        .and_then(|value| value.as_str())
+        .unwrap_or(default_message)
 }
 
 fn hook_output_with_decision(
@@ -608,4 +669,118 @@ fn choose_always_permission_updates(
         directories: None,
         destination: Some(cc_sdk::PermissionUpdateDestination::Session),
     }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_permission_denials_interrupt_the_session() {
+        let result = permission_result_from_ui_result(
+            &PendingPermissionKind::Tool {
+                tool_call_id: "toolu_1".to_string(),
+                tool_name: "Bash".to_string(),
+                permission_suggestions: Vec::new(),
+            },
+            &serde_json::json!({
+                "outcome": { "outcome": "cancelled", "optionId": "reject" }
+            }),
+        );
+
+        let cc_sdk::PermissionResult::Deny(deny) = result else {
+            panic!("expected deny result");
+        };
+
+        assert_eq!(deny.message, "Permission denied by user");
+        assert!(deny.interrupt);
+    }
+
+    #[test]
+    fn question_denials_do_not_interrupt_the_session() {
+        let result = permission_result_from_ui_result(
+            &PendingPermissionKind::Question {
+                tool_call_id: "toolu_question".to_string(),
+                original_input: serde_json::json!({ "questions": [] }),
+            },
+            &serde_json::json!({
+                "outcome": { "outcome": "cancelled", "optionId": "reject" }
+            }),
+        );
+
+        let cc_sdk::PermissionResult::Deny(deny) = result else {
+            panic!("expected deny result");
+        };
+
+        assert_eq!(deny.message, "Question cancelled by user");
+        assert!(!deny.interrupt);
+    }
+
+    #[test]
+    fn hook_permission_denials_interrupt_the_session() {
+        let output = build_denied_hook_output_from_kind(
+            &PendingPermissionKind::Hook {
+                tool_call_id: "toolu_hook".to_string(),
+                tool_name: "Edit".to_string(),
+                original_input: serde_json::json!({}),
+                permission_suggestions: Vec::new(),
+            },
+            "Permission denied by user",
+        );
+
+        let cc_sdk::HookJSONOutput::Sync(sync_output) = output else {
+            panic!("expected sync hook output");
+        };
+        let serialized = serde_json::to_value(sync_output).expect("serialize hook output");
+
+        assert_eq!(
+            serialized["hookSpecificOutput"]["decision"]["interrupt"],
+            Value::Bool(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_request_caches_denials_for_late_hook_callbacks() {
+        let bridge = PermissionBridge::new();
+        let registration = bridge
+            .register_tool(
+                1,
+                ToolPermissionRequest {
+                    tool_call_id: "toolu_shared".to_string(),
+                    tool_name: "Bash".to_string(),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        bridge
+            .clear_request(1, "Permission denied or timed out")
+            .await;
+
+        let cc_sdk::PermissionResult::Deny(deny) = registration
+            .receiver
+            .await
+            .expect("tool request should resolve after clear_request")
+        else {
+            panic!("expected deny result");
+        };
+        assert!(deny.interrupt);
+
+        let late_registration = bridge
+            .register_hook(
+                2,
+                HookPermissionRequest {
+                    tool_call_id: "toolu_shared".to_string(),
+                    tool_name: "Bash".to_string(),
+                    original_input: serde_json::json!({}),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        assert_eq!(
+            late_registration.ui_dispatch,
+            PermissionUiDispatch::ResolvedFromCache
+        );
+    }
 }

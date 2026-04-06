@@ -6,9 +6,9 @@
 <script lang="ts">
 import { PillButton } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import Check from "phosphor-svelte/lib/Check";
-import DotsThreeVertical from "phosphor-svelte/lib/DotsThreeVertical";
-import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
+import { Check } from "phosphor-svelte";
+import { DotsThreeVertical } from "phosphor-svelte";
+import { DownloadSimple } from "phosphor-svelte";
 
 import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
 import * as m from "$lib/paraglide/messages.js";

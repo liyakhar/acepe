@@ -2,7 +2,7 @@
 import { PlanIcon } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { IconCircleCheckFilled } from "@tabler/icons-svelte";
-import Check from "phosphor-svelte/lib/Check";
+import { Check } from "phosphor-svelte";
 import ClaudeCodeIcon from "$lib/acp/components/claude-code-icon.svelte";
 import CodexIcon from "$lib/acp/components/codex-icon.svelte";
 import CursorIcon from "$lib/acp/components/cursor-icon.svelte";

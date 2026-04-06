@@ -16,8 +16,8 @@ import {
 	ShaderFitOptions,
 	ShaderMount,
 } from "@paper-design/shaders";
-import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
-import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+import { ArrowsClockwise } from "phosphor-svelte";
+import { WarningCircle } from "phosphor-svelte";
 import { onDestroy, onMount } from "svelte";
 import * as m from "$lib/paraglide/messages.js";
 

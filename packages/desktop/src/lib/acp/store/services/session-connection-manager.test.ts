@@ -1043,7 +1043,7 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 		setExecutionProfile.mockReturnValue(okAsync(undefined));
 	});
 
-	it("optimistically toggles Autonomous and clears the transition on success", async () => {
+	it("applies Autonomous only after the execution profile succeeds", async () => {
 		const manager = createManager({
 			stateReader,
 			stateWriter,
@@ -1058,10 +1058,10 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 
 		expect(setExecutionProfile).toHaveBeenCalledWith(sessionId, "build", true);
 		expect(hotState.updateHotState).toHaveBeenNthCalledWith(1, sessionId, {
-			autonomousEnabled: true,
 			autonomousTransition: "enabling",
 		});
 		expect(hotState.updateHotState).toHaveBeenNthCalledWith(2, sessionId, {
+			autonomousEnabled: true,
 			autonomousTransition: "idle",
 		});
 	});
@@ -1119,7 +1119,6 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 		expect(result.isErr()).toBe(true);
 
 		expect(hotState.updateHotState).toHaveBeenNthCalledWith(1, sessionId, {
-			autonomousEnabled: true,
 			autonomousTransition: "enabling",
 		});
 		expect(hotState.updateHotState).toHaveBeenNthCalledWith(2, sessionId, {

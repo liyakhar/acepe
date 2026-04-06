@@ -5,12 +5,12 @@
 	 * All data-driven via props, no Tauri coupling.
 	 */
 	import type { Snippet } from "svelte";
-	import ArrowUp from "phosphor-svelte/lib/ArrowUp";
-	import ArrowDown from "phosphor-svelte/lib/ArrowDown";
-	import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
-	import GitDiff from "phosphor-svelte/lib/GitDiff";
-	import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise";
-	import Package from "phosphor-svelte/lib/Package";
+	import { ArrowUp } from "phosphor-svelte";
+	import { ArrowDown } from "phosphor-svelte";
+	import { ArrowsClockwise } from "phosphor-svelte";
+	import { GitDiff } from "phosphor-svelte";
+	import { ClockCounterClockwise } from "phosphor-svelte";
+	import { Package } from "phosphor-svelte";
 
 	import { cn } from "../../lib/utils.js";
 	import type { GitStatusFile, GitStashEntry, GitLogEntry, GitLogEntryFile, GitRemoteStatus } from "./types.js";
@@ -51,6 +51,7 @@
 		onCommitMessageChange?: (message: string) => void;
 		onCommit?: (message: string) => void;
 		onGenerate?: () => void;
+		commitMicButton?: Snippet;
 		generating?: boolean;
 		onPush?: () => void;
 		onPull?: () => void;
@@ -92,6 +93,7 @@
 		onCommitMessageChange,
 		onCommit,
 		onGenerate,
+		commitMicButton,
 		generating = false,
 		onPush,
 		onPull,
@@ -215,8 +217,9 @@
 			onMessageChange={onCommitMessageChange ?? (() => {})}
 			onCommit={onCommit ?? (() => {})}
 			{onGenerate}
+			micButton={commitMicButton}
 			{generating}
-			disabled={stagedFiles.length === 0}
+			submitDisabled={stagedFiles.length === 0}
 		/>
 	{/if}
 </div>

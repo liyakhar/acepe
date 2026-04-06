@@ -1,8 +1,8 @@
 <script lang="ts">
-	import GitPullRequest from "phosphor-svelte/lib/GitPullRequest";
-	import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
-	import CaretDown from "phosphor-svelte/lib/CaretDown";
-	import GitMerge from "phosphor-svelte/lib/GitMerge";
+	import { GitPullRequest } from "phosphor-svelte";
+	import { ArrowSquareOut } from "phosphor-svelte";
+	import { CaretDown } from "phosphor-svelte";
+	import { GitMerge } from "phosphor-svelte";
 
 	import { DiffPill } from "../diff-pill/index.js";
 	import { cn } from "../../lib/utils.js";

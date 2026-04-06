@@ -1,7 +1,7 @@
 <script lang="ts">
 import { PillButton } from "@acepe/ui";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
+import { CheckCircle } from "phosphor-svelte";
+import { DownloadSimple } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 
 interface Props {

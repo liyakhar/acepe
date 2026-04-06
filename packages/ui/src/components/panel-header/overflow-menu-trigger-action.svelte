@@ -1,5 +1,5 @@
 <script lang="ts">
-	import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
+	import { IconDotsVertical } from "@tabler/icons-svelte";
 
 	import EmbeddedIconButton from "./embedded-icon-button.svelte";
 

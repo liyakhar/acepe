@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconSend from "@tabler/icons-svelte/icons/send";
+import { IconSend } from "@tabler/icons-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import { Textarea } from "$lib/components/ui/textarea/index.js";

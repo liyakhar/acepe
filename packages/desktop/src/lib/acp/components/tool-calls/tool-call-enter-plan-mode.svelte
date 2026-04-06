@@ -6,12 +6,12 @@
  * Displays the plan file path and status.
  */
 
-import { FilePathBadge, TextShimmer } from "@acepe/ui";
 import { AgentToolCard } from "@acepe/ui/agent-panel";
-import FolderOpen from "phosphor-svelte/lib/FolderOpen";
-import Notepad from "phosphor-svelte/lib/Notepad";
-import { toast } from "svelte-sonner";
+import { FilePathBadge } from "@acepe/ui/file-path-badge";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
+import { FolderOpen, Notepad } from "phosphor-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
+import { toastError } from "$lib/components/ui/sonner/toast-bridge.js";
 import type { SessionPlanResponse } from "$lib/services/converted-session-types.js";
 import { revealInFinder, tauriClient } from "$lib/utils/tauri-client.js";
 import { getPanelStore } from "../../store/panel-store.svelte.js";
@@ -78,10 +78,9 @@ const fileName = $derived(
 	sessionPlan?.slug ? `${sessionPlan.slug}.md` : (planFilePath?.split("/").pop() ?? null)
 );
 
-// Actions
 function handleOpenPlanInFinder() {
 	if (!planFilePath) {
-		toast.error("Plan file path not available");
+		toastError("Plan file path not available");
 		return;
 	}
 
@@ -90,7 +89,7 @@ function handleOpenPlanInFinder() {
 			// Success - no toast needed
 		},
 		() => {
-			toast.error("Failed to open plan in Finder");
+			toastError("Failed to open plan in Finder");
 		}
 	);
 }

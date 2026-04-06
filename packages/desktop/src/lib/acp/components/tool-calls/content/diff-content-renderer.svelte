@@ -1,6 +1,6 @@
 <script lang="ts">
-import { DiffPill } from "@acepe/ui";
-import IconFile from "@tabler/icons-svelte/icons/file";
+import { DiffPill } from "@acepe/ui/diff-pill";
+import { IconFile } from "@tabler/icons-svelte";
 import * as Diff from "diff";
 
 import type { DiffContent } from "../../../schemas/tool-call-content.schema.js";

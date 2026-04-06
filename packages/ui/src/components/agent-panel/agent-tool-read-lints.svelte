@@ -1,5 +1,5 @@
 <script lang="ts">
-	import CaretRight from "phosphor-svelte/lib/CaretRight";
+	import { CaretRight } from "phosphor-svelte";
 
 	import AgentToolCard from "./agent-tool-card.svelte";
 	import ToolLabel from "./tool-label.svelte";

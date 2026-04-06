@@ -1,6 +1,6 @@
 <script lang="ts">
 import { SegmentedProgress, TextShimmer, TodoNumberIcon } from "@acepe/ui";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
+import { CheckCircle } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import type { SessionEntry } from "../application/dto/session-entry.js";
 import type { SessionStatus } from "../application/dto/session-status.js";

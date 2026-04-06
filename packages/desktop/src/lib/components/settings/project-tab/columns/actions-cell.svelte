@@ -1,8 +1,8 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";
-import IconEye from "@tabler/icons-svelte/icons/eye";
-import IconFolder from "@tabler/icons-svelte/icons/folder";
+import { IconDotsVertical } from "@tabler/icons-svelte";
+import { IconEye } from "@tabler/icons-svelte";
+import { IconFolder } from "@tabler/icons-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import * as m from "$lib/paraglide/messages.js";
 

@@ -1,17 +1,15 @@
 <script lang="ts">
+import type { PlanCardStatus } from "@acepe/ui/plan-card";
+import { BuildIcon, PlanIcon } from "@acepe/ui/icons";
 import {
-	BuildIcon,
 	EmbeddedPanelHeader,
 	HeaderActionCell,
 	HeaderTitleCell,
-	PlanIcon,
-	TextShimmer,
-} from "@acepe/ui";
-import type { PlanCardStatus } from "@acepe/ui/plan-card";
+} from "@acepe/ui/panel-header";
 import { PlanCard } from "@acepe/ui/plan-card";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
 import { Result } from "neverthrow";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { CheckCircle, XCircle } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import type { AcpError } from "../../errors/index.js";
 import { usePlanInline } from "../../hooks/use-plan-inline.svelte.js";
@@ -22,7 +20,6 @@ import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";
 import { COLOR_NAMES, Colors } from "../../utils/colors.js";
 import { getToolStatus } from "../../utils/tool-state-utils.js";
-import PlanDialog from "../plan-dialog.svelte";
 import { ToolCallThinkState } from "./tool-call-think/state/tool-call-think-state.svelte.js";
 
 interface Props {
@@ -166,11 +163,14 @@ const cardStatus = $derived.by((): PlanCardStatus => {
 	{/if}
 
 	{#if inline.plan}
-		<PlanDialog
-			plan={inline.plan}
-			open={inline.showPlanDialog}
-			onOpenChange={(open) => (inline.showPlanDialog = open)}
-		/>
+		{#await import("../plan-dialog.svelte") then module}
+			{@const PlanDialog = module.default}
+			<PlanDialog
+				plan={inline.plan}
+				open={inline.showPlanDialog}
+				onOpenChange={(open) => (inline.showPlanDialog = open)}
+			/>
+		{/await}
 	{/if}
 {:else if isCreating}
 	<!-- Sidebar mode: original loading shimmer (no card wrapper) -->

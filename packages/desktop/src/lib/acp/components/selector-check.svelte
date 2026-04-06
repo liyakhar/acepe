@@ -1,5 +1,5 @@
 <script lang="ts">
-import IconCheck from "@tabler/icons-svelte/icons/check";
+import { IconCheck } from "@tabler/icons-svelte";
 
 interface Props {
 	visible: boolean;

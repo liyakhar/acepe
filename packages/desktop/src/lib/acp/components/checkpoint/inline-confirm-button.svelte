@@ -1,6 +1,6 @@
 <script lang="ts">
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import X from "phosphor-svelte/lib/X";
+import { CheckCircle } from "phosphor-svelte";
+import { X } from "phosphor-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import { cn } from "$lib/utils.js";
 

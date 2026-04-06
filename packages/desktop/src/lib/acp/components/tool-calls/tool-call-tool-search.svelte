@@ -1,7 +1,7 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
 import { AgentToolCard } from "@acepe/ui/agent-panel";
-import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
+import { MagnifyingGlass } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import { getSessionStore } from "../../store/index.js";
 import type { TurnState } from "../../store/types.js";

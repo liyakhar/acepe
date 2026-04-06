@@ -1,6 +1,6 @@
 <script lang="ts">
-	import HardDrives from "phosphor-svelte/lib/HardDrives";
-	import Play from "phosphor-svelte/lib/Play";
+	import { HardDrives } from "phosphor-svelte";
+	import { Play } from "phosphor-svelte";
 	import { cn } from "../../lib/utils.js";
 
 	interface Props {

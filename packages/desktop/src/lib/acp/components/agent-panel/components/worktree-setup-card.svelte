@@ -1,6 +1,6 @@
 <script lang="ts">
 import { Spinner } from "$lib/components/ui/spinner/index.js";
-import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+import { WarningCircle } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import type { WorktreeSetupState } from "../logic/worktree-setup-events.js";
 import AnimatedChevron from "../../animated-chevron.svelte";

@@ -3,12 +3,7 @@
    * SqlStudioSidebar — Connections list + schema tree sidebar.
    * Matches the git panel's dense, monospace design language.
    */
-  import CaretRight from "phosphor-svelte/lib/CaretRight";
-  import FolderSimple from "phosphor-svelte/lib/FolderSimple";
-  import { default as TableIcon } from "phosphor-svelte/lib/Table";
-  import Trash from "phosphor-svelte/lib/Trash";
-  import Plus from "phosphor-svelte/lib/Plus";
-  import Key from "phosphor-svelte/lib/Key";
+  import { CaretRight, FolderSimple, Table as TableIcon, Trash, Plus, Key } from "phosphor-svelte";
   import { TAG_COLORS } from "../../lib/colors.js";
   import { cn } from "../../lib/utils.js";
   import type { SqlConnection, SqlSchemaInfo } from "./types.js";

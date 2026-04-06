@@ -1,17 +1,17 @@
 <script lang="ts">
 import { DiffPill } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import IconChevronRight from "@tabler/icons-svelte/icons/chevron-right";
-import IconCopy from "@tabler/icons-svelte/icons/copy";
-import IconDots from "@tabler/icons-svelte/icons/dots";
-import IconFilePlus from "@tabler/icons-svelte/icons/file-plus";
-import IconPencil from "@tabler/icons-svelte/icons/pencil";
-import IconRotateClockwise from "@tabler/icons-svelte/icons/rotate-clockwise";
-import IconTrash from "@tabler/icons-svelte/icons/trash";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import FolderOpen from "phosphor-svelte/lib/FolderOpen";
-import FolderPlus from "phosphor-svelte/lib/FolderPlus";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { IconChevronRight } from "@tabler/icons-svelte";
+import { IconCopy } from "@tabler/icons-svelte";
+import { IconDots } from "@tabler/icons-svelte";
+import { IconFilePlus } from "@tabler/icons-svelte";
+import { IconPencil } from "@tabler/icons-svelte";
+import { IconRotateClockwise } from "@tabler/icons-svelte";
+import { IconTrash } from "@tabler/icons-svelte";
+import { CheckCircle } from "phosphor-svelte";
+import { FolderOpen } from "phosphor-svelte";
+import { FolderPlus } from "phosphor-svelte";
+import { XCircle } from "phosphor-svelte";
 import { tick } from "svelte";
 import CopyButton from "$lib/acp/components/messages/copy-button.svelte";
 import * as ContextMenu from "$lib/components/ui/context-menu/index.js";

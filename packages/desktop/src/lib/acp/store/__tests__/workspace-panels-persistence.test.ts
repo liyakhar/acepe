@@ -6,7 +6,7 @@ import {
 } from "../workspace-store.svelte.js";
 
 describe("workspace panel persistence", () => {
-	it("serializes supported workspace panel kinds", () => {
+	it("serializes supported workspace panel kinds except source control", () => {
 		const persisted = serializeWorkspacePanels([
 			{
 				id: "agent-1",
@@ -64,14 +64,6 @@ describe("workspace panel persistence", () => {
 				},
 				selectedFileIndex: 0,
 			},
-			{
-				id: "git-1",
-				kind: "git",
-				projectPath: "/tmp/project",
-				width: 500,
-				ownerPanelId: null,
-				initialTarget: { section: "prs", prNumber: 42 },
-			},
 		]);
 
 		expect(persisted).toEqual([
@@ -126,14 +118,6 @@ describe("workspace panel persistence", () => {
 				files: [],
 				totalEditCount: 0,
 				selectedFileIndex: 0,
-			},
-			{
-				id: "git-1",
-				kind: "git",
-				projectPath: "/tmp/project",
-				width: 500,
-				ownerPanelId: null,
-				initialTarget: { section: "prs", prNumber: 42 },
 			},
 		]);
 	});
@@ -200,7 +184,7 @@ describe("workspace panel persistence", () => {
 		]);
 	});
 
-	it("hydrates review and git panels as top-level workspace panels", () => {
+	it("ignores persisted source control panels during hydration", () => {
 		const panels = hydratePersistedWorkspacePanels([
 			{
 				id: "review-1",
@@ -236,14 +220,6 @@ describe("workspace panel persistence", () => {
 					totalEditCount: 0,
 				},
 				selectedFileIndex: 0,
-			},
-			{
-				id: "git-1",
-				kind: "git",
-				projectPath: "/tmp/project",
-				width: 500,
-				ownerPanelId: null,
-				initialTarget: { section: "prs", prNumber: 42 },
 			},
 		]);
 	});

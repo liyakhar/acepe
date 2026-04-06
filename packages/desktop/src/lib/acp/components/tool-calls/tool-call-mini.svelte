@@ -1,5 +1,5 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
 import { getToolKindSubtitle, getToolKindTitle } from "../../registry/tool-kind-ui-registry.js";
 import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";

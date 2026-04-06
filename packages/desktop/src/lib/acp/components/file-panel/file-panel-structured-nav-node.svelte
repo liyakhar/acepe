@@ -1,6 +1,6 @@
 <script lang="ts">
-import CaretDown from "phosphor-svelte/lib/CaretDown";
-import CaretRight from "phosphor-svelte/lib/CaretRight";
+import { CaretDown } from "phosphor-svelte";
+import { CaretRight } from "phosphor-svelte";
 
 import {
 	isStructuredContainer,

@@ -1,8 +1,8 @@
 <script lang="ts">
-import IconCheck from "@tabler/icons-svelte/icons/check";
-import IconEye from "@tabler/icons-svelte/icons/eye";
-import IconEyeOff from "@tabler/icons-svelte/icons/eye-off";
-import IconX from "@tabler/icons-svelte/icons/x";
+import { IconCheck } from "@tabler/icons-svelte";
+import { IconEye } from "@tabler/icons-svelte";
+import { IconEyeOff } from "@tabler/icons-svelte";
+import { IconX } from "@tabler/icons-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import { Input } from "$lib/components/ui/input/index.js";
 import * as m from "$lib/paraglide/messages.js";

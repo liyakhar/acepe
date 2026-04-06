@@ -1,6 +1,6 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
-import IconSparkles from "@tabler/icons-svelte/icons/sparkles";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
+import { IconSparkles } from "@tabler/icons-svelte";
 
 import type { TaskContent } from "../../../schemas/tool-call-content.schema.js";
 

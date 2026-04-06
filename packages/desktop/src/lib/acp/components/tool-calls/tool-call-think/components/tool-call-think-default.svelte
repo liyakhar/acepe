@@ -1,5 +1,5 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
+import { TextShimmer } from "@acepe/ui/text-shimmer";
 import type { ToolCall } from "../../../../types/tool-call.js";
 import type { ToolCallThinkState } from "../state/tool-call-think-state.svelte.js";
 

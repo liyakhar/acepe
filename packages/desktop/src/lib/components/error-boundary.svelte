@@ -1,8 +1,8 @@
 <script lang="ts">
 import { EmbeddedIconButton, EmbeddedPanelHeader, HeaderActionCell, HeaderTitleCell } from "@acepe/ui/panel-header";
 import { ResultAsync } from "neverthrow";
-import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
-import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+import { ArrowsClockwise } from "phosphor-svelte";
+import { WarningCircle } from "phosphor-svelte";
 import { getSingletonHighlighter, type Highlighter } from "shiki";
 import type { Snippet } from "svelte";
 import { onMount } from "svelte";

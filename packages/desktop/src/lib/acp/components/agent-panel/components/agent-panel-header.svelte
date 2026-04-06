@@ -12,9 +12,9 @@ import {
 	HeaderTitleCell,
 	OverflowMenuTriggerAction,
 } from "@acepe/ui/panel-header";
-import ArrowUUpLeft from "phosphor-svelte/lib/ArrowUUpLeft";
-import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
-import Tree from "phosphor-svelte/lib/Tree";
+import { ArrowUUpLeft } from "phosphor-svelte";
+import { DownloadSimple } from "phosphor-svelte";
+import { Tree } from "phosphor-svelte";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";
 

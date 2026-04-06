@@ -165,6 +165,15 @@ impl AgentParser for ClaudeCodeParser {
 }
 
 impl ClaudeCodeParser {
+    fn extract_result_context_window(data: &serde_json::Value) -> Option<u64> {
+        let model_usage = data.get("modelUsage")?.as_object()?;
+
+        model_usage
+            .values()
+            .filter_map(|entry| entry.get("contextWindow").and_then(|value| value.as_u64()))
+            .max()
+    }
+
     pub fn parse_update_type_name_impl(&self, update_type: &str) -> Option<UpdateType> {
         match update_type {
             "usageUpdate" | "usage_update" => Some(UpdateType::UsageTelemetryUpdate),
@@ -476,7 +485,42 @@ impl ClaudeCodeParser {
                 .get("timestampMs")
                 .or_else(|| data.get("timestamp_ms"))
                 .and_then(|value| value.as_i64()),
-            context_window_size: data.get("size").and_then(|value| value.as_u64()),
+            context_window_size: data
+                .get("size")
+                .and_then(|value| value.as_u64())
+                .or_else(|| Self::extract_result_context_window(data)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClaudeCodeParser;
+
+    #[test]
+    fn parses_context_window_from_result_model_usage() {
+        let parser = ClaudeCodeParser;
+        let parsed = parser
+            .parse_usage_telemetry_impl(
+                &serde_json::json!({
+                    "type": "result",
+                    "session_id": "ses-123",
+                    "usage": {
+                        "input_tokens": 3,
+                        "output_tokens": 5
+                    },
+                    "modelUsage": {
+                        "claude-sonnet-4-6": {
+                            "contextWindow": 200000,
+                            "maxOutputTokens": 32000
+                        }
+                    }
+                }),
+                None,
+            )
+            .expect("result telemetry should parse");
+
+        assert_eq!(parsed.session_id, "ses-123");
+        assert_eq!(parsed.context_window_size, Some(200000));
     }
 }

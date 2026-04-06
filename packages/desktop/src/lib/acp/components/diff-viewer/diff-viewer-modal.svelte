@@ -6,9 +6,9 @@ import {
 	type GitViewerFile,
 	LoadingIcon,
 } from "@acepe/ui";
-import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
-import WarningCircle from "phosphor-svelte/lib/WarningCircle";
-import X from "phosphor-svelte/lib/X";
+import { ArrowsClockwise } from "phosphor-svelte";
+import { WarningCircle } from "phosphor-svelte";
+import { X } from "phosphor-svelte";
 import EmbeddedModalShell from "$lib/components/ui/embedded-modal-shell.svelte";
 import { fetchCommitDiff, fetchPrDiff } from "../../services/github-service.js";
 import type { CommitDiff, GitHubError, PrDiff } from "../../types/github-integration.js";

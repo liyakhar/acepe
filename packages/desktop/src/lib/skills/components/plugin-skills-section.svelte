@@ -1,6 +1,6 @@
 <script lang="ts">
-import CaretRight from "phosphor-svelte/lib/CaretRight";
-import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
+import { CaretRight } from "phosphor-svelte";
+import { PuzzlePiece } from "phosphor-svelte";
 import { SvelteSet } from "svelte/reactivity";
 import * as Collapsible from "$lib/components/ui/collapsible/index.js";
 

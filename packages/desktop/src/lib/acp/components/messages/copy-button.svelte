@@ -1,8 +1,8 @@
 <script lang="ts">
-import IconCheck from "@tabler/icons-svelte/icons/check";
+import { IconCheck } from "@tabler/icons-svelte";
 import { ResultAsync } from "neverthrow";
-import Copy from "phosphor-svelte/lib/Copy";
-import { toast } from "svelte-sonner";
+import { Copy } from "phosphor-svelte";
+import { toastError, toastSuccess } from "$lib/components/ui/sonner/toast-bridge.js";
 import * as m from "$lib/paraglide/messages.js";
 
 interface Props {
@@ -97,12 +97,12 @@ async function handleClick(event?: MouseEvent) {
 		const result = getText();
 		textToCopy = typeof result === "string" ? result : await result;
 	} else {
-		toast.error(m.toast_no_content_to_copy());
+		toastError(m.toast_no_content_to_copy());
 		return;
 	}
 
 	if (!textToCopy.trim()) {
-		toast.error(m.toast_no_content_to_copy());
+		toastError(m.toast_no_content_to_copy());
 		return;
 	}
 
@@ -111,14 +111,14 @@ async function handleClick(event?: MouseEvent) {
 		(e) => new Error(`Failed to copy: ${String(e)}`)
 	)
 		.map(() => {
-			toast.success(m.toast_copied_to_clipboard());
+			toastSuccess(m.toast_copied_to_clipboard());
 			internalCopied = true;
 			setTimeout(() => {
 				internalCopied = false;
 			}, 2000);
 		})
 		.mapErr((e) => {
-			toast.error(m.message_input_copy_failed());
+			toastError(m.message_input_copy_failed());
 			console.error("Failed to copy:", e);
 		});
 }

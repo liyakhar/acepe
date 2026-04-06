@@ -1,8 +1,8 @@
 <script lang="ts">
 import { DiffPill, FilePathBadge } from "@acepe/ui";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import CircleDashed from "phosphor-svelte/lib/CircleDashed";
-import XCircle from "phosphor-svelte/lib/XCircle";
+import { CheckCircle } from "phosphor-svelte";
+import { CircleDashed } from "phosphor-svelte";
+import { XCircle } from "phosphor-svelte";
 
 import type { FileReviewStatus } from "../../review-panel/review-session-state.js";
 import type { ModifiedFileEntry } from "../types/modified-file-entry.js";

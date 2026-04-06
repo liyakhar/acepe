@@ -1,75 +1,12 @@
 <script lang="ts">
-import type { Component } from "svelte";
-import { useSessionContext } from "../../hooks/use-session-context.js";
-import { getPermissionStore } from "../../store/permission-store.svelte.js";
-import type { TurnState } from "../../store/types.js";
-import type { PermissionRequest } from "../../types/permission.js";
-import type { ToolCall } from "../../types/tool-call.js";
-import { formatToolElapsedLabel, getToolStatus } from "../../utils/tool-state-utils.js";
-import PermissionActionBar from "./permission-action-bar.svelte";
-import {
-	resolveToolOperation,
-	type ToolRouteKey,
-} from "./resolve-tool-operation.js";
-// Dedicated tool components - each kind has its own component
-import ToolCallCreatePlan from "./tool-call-create-plan.svelte";
-import ToolCallDelete from "./tool-call-delete.svelte";
-import ToolCallEdit from "./tool-call-edit.svelte";
-import ToolCallEnterPlanMode from "./tool-call-enter-plan-mode.svelte";
-import ToolCallExecute from "./tool-call-execute.svelte";
-import ToolCallExitPlanMode from "./tool-call-exit-plan-mode.svelte";
-import ToolCallFetch from "./tool-call-fetch.svelte";
-import ToolCallQuestion from "./tool-call-question.svelte";
-import ToolCallRead from "./tool-call-read.svelte";
-import ToolCallReadLints from "./tool-call-read-lints.svelte";
-import ToolCallSearch from "./tool-call-search.svelte";
-import ToolCallSkill from "./tool-call-skill.svelte";
-import ToolCallTask from "./tool-call-task.svelte";
-import ToolCallTaskOutput from "./tool-call-task-output.svelte";
-import ToolCallThink from "./tool-call-think.svelte";
-import ToolCallTodo from "./tool-call-todo.svelte";
-import ToolCallToolSearch from "./tool-call-tool-search.svelte";
-import ToolCallWebSearch from "./tool-call-web-search.svelte";
-import ToolCallFallback from "./tool-call-fallback.svelte";
-
-/**
- * Props for tool call components.
- */
-type ToolComponentProps = {
-	toolCall: ToolCall;
-	turnState?: TurnState;
-	projectPath?: string;
-	elapsedLabel?: string | null;
-	pendingPermission?: PermissionRequest | null;
-};
-
-/**
- * Kind → Component mapping for tools with dedicated components.
- * Each kind routes directly to its dedicated component.
- * Tools not listed here use ToolCallFallback.
- */
-const DEDICATED_COMPONENTS: Partial<Record<ToolRouteKey, Component<ToolComponentProps>>> = {
-	read: ToolCallRead,
-	read_lints: ToolCallReadLints,
-	edit: ToolCallEdit,
-	execute: ToolCallExecute,
-	search: ToolCallSearch,
-	glob: ToolCallSearch,
-	fetch: ToolCallFetch,
-	web_search: ToolCallWebSearch,
-	enter_plan_mode: ToolCallEnterPlanMode,
-	exit_plan_mode: ToolCallExitPlanMode,
-	create_plan: ToolCallCreatePlan,
-	delete: ToolCallDelete,
-	// Each agent tool has its own dedicated component
-	think: ToolCallThink,
-	todo: ToolCallTodo,
-	question: ToolCallQuestion,
-	task: ToolCallTask,
-	task_output: ToolCallTaskOutput,
-	skill: ToolCallSkill,
-	tool_search: ToolCallToolSearch,
-};
+	import { useSessionContext } from "../../hooks/use-session-context.js";
+	import { getPermissionStore } from "../../store/permission-store.svelte.js";
+	import type { TurnState } from "../../store/types.js";
+	import type { PermissionRequest } from "../../types/permission.js";
+	import type { ToolCall } from "../../types/tool-call.js";
+	import { formatToolElapsedLabel, getToolStatus } from "../../utils/tool-state-utils.js";
+	import { resolveToolOperation } from "./resolve-tool-operation.js";
+	import { getToolDefinition } from "./tool-definition-registry.js";
 
 interface Props {
 	toolCall: ToolCall;
@@ -89,9 +26,10 @@ const pendingPermission = $derived(
 	permissionStore.getForToolCall(sessionContext?.sessionId, toolCall.id)
 );
 const resolvedOperation = $derived(resolveToolOperation(toolCall, pendingPermission));
-const ToolComponent = $derived(
-	DEDICATED_COMPONENTS[resolvedOperation.routeKey] ?? ToolCallFallback
+const toolDefinition = $derived(
+	getToolDefinition(resolvedOperation.toolCall, resolvedOperation.resolvedKind)
 );
+const ToolComponent = $derived(toolDefinition.component);
 
 const toolStatus = $derived(getToolStatus(toolCall, turnState));
 const elapsedLabel = $derived(
@@ -127,9 +65,4 @@ $effect(() => {
 		{elapsedLabel}
 		pendingPermission={pendingPermission ?? null}
 	/>
-	{#if resolvedOperation.shouldShowInlinePermissionActionBar && pendingPermission}
-		<div class="flex justify-end">
-			<PermissionActionBar permission={pendingPermission} inline hideHeader />
-		</div>
-	{/if}
 </div>

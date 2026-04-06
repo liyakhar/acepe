@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onMount, untrack } from "svelte";
-import Check from "phosphor-svelte/lib/Check";
-import X from "phosphor-svelte/lib/X";
+import { Check } from "phosphor-svelte";
+import { X } from "phosphor-svelte";
 
 interface Props {
 	mode: "preview" | "edit";

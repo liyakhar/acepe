@@ -1,8 +1,8 @@
 <script lang="ts">
-	import IconArrowRight from "@tabler/icons-svelte/icons/arrow-right";
-	import IconArrowLeft from "@tabler/icons-svelte/icons/arrow-left";
-	import IconRefresh from "@tabler/icons-svelte/icons/refresh";
-	import IconExternalLink from "@tabler/icons-svelte/icons/external-link";
+	import { IconArrowRight } from "@tabler/icons-svelte";
+	import { IconArrowLeft } from "@tabler/icons-svelte";
+	import { IconRefresh } from "@tabler/icons-svelte";
+	import { IconExternalLink } from "@tabler/icons-svelte";
 
 	import EmbeddedIconButton from "./embedded-icon-button.svelte";
 

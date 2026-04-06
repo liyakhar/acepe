@@ -3,7 +3,6 @@ import { ProjectCard } from "@acepe/ui";
 import { onMount } from "svelte";
 import { BrowserPanel } from "$lib/acp/components/browser-panel/index.js";
 import { FilePanel } from "$lib/acp/components/file-panel/index.js";
-import { GitPanel } from "$lib/acp/components/git-panel/index.js";
 import { AgentPanel } from "$lib/acp/components/index.js";
 import { ReviewPanel } from "$lib/acp/components/review-panel/index.js";
 import { TerminalPanel, TerminalTabs } from "$lib/acp/components/terminal-panel/index.js";
@@ -123,7 +122,7 @@ const allGroups = $derived(
 		panelStore.reviewPanels,
 		panelStore.terminalPanelGroups,
 		panelStore.browserPanels,
-		panelStore.gitPanels,
+		[],
 		projectManager.projects
 	)
 );
@@ -135,7 +134,7 @@ const topLevelPanelsWithProject = $derived.by(() => {
 		topLevelPanels.push({ id: panel.id, projectPath: panel.sessionProjectPath });
 	}
 	for (const panel of panelStore.workspacePanels) {
-		if (panel.kind === "agent" || panel.ownerPanelId !== null) {
+		if (panel.kind === "agent" || panel.kind === "git" || panel.ownerPanelId !== null) {
 			continue;
 		}
 		topLevelPanels.push({ id: panel.id, projectPath: panel.projectPath });
@@ -187,11 +186,6 @@ const fullscreenTopLevelPanel = $derived.by(() => {
 	const browserPanel = panelStore.browserPanels.find((panel) => panel.id === fullscreenPanelRef.id);
 	if (browserPanel) {
 		return { kind: "browser", panel: browserPanel } as const;
-	}
-
-	const gitPanel = panelStore.gitPanels.find((panel) => panel.id === fullscreenPanelRef.id);
-	if (gitPanel) {
-		return { kind: "git", panel: gitPanel } as const;
 	}
 
 	return null;
@@ -370,29 +364,6 @@ const terminalTabsPanelStore = $derived.by(() => ({
 					onClose={() => panelStore.closeBrowserPanel(browserPanel.id)}
 					onResize={(panelId, delta) => panelStore.resizeBrowserPanel(panelId, delta)}
 				/>
-			{:else if fullscreenTopLevelPanel.kind === "git"}
-				{@const gitPanel = fullscreenTopLevelPanel.panel}
-				{@const project = projectManager.projects.find((p) => p.path === gitPanel.projectPath)}
-				<GitPanel
-					panelId={gitPanel.id}
-					projectPath={gitPanel.projectPath}
-					projectName={project ? project.name : m.project_unknown()}
-					projectColor={project?.color}
-					width={gitPanel.width}
-					initialTarget={gitPanel.initialTarget}
-					isFullscreenEmbedded={true}
-					hideProjectBadge={true}
-					onClose={() => panelStore.closeGitPanel(gitPanel.id)}
-					onResize={(panelId: string, delta: number) => panelStore.resizeGitPanel(panelId, delta)}
-					onRequestGeneration={(prompt) => {
-						const agentPanel = panelsWithState.find(
-							(panel) => panel.sessionProjectPath === gitPanel.projectPath && panel.sessionId
-						);
-						if (agentPanel?.sessionId) {
-							sessionStore.sendMessage(agentPanel.sessionId, prompt);
-						}
-					}}
-				/>
 			{/if}
 		{:else if viewModeState.layout === "kanban"}
 			<KanbanView {projectManager} {state} />
@@ -453,31 +424,9 @@ const terminalTabsPanelStore = $derived.by(() => ({
 							url={browserPanel.url}
 							title={browserPanel.title}
 							width={browserPanel.width}
-							isFillContainer={!hasAgentPanels && group.gitPanels.length === 0}
+							isFillContainer={!hasAgentPanels}
 							onClose={() => panelStore.closeBrowserPanel(browserPanel.id)}
 							onResize={(panelId, delta) => panelStore.resizeBrowserPanel(panelId, delta)}
-						/>
-					{/each}
-
-					<!-- Git panels -->
-					{#each group.gitPanels as gitPanel (gitPanel.id)}
-						<GitPanel
-							panelId={gitPanel.id}
-							projectPath={gitPanel.projectPath}
-							projectName={group.projectName}
-							projectColor={group.projectColor}
-							width={gitPanel.width}
-							initialTarget={gitPanel.initialTarget}
-							onClose={() => panelStore.closeGitPanel(gitPanel.id)}
-							onResize={(panelId: string, delta: number) => panelStore.resizeGitPanel(panelId, delta)}
-							onRequestGeneration={(prompt) => {
-								const agentPanel = panelsWithState.find(
-									(panel) => panel.sessionProjectPath === gitPanel.projectPath && panel.sessionId
-								);
-								if (agentPanel?.sessionId) {
-									sessionStore.sendMessage(agentPanel.sessionId, prompt);
-								}
-							}}
 						/>
 					{/each}
 

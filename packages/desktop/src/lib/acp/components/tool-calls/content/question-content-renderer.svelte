@@ -1,8 +1,8 @@
 <script lang="ts">
 import { Colors } from "@acepe/ui/colors";
-import IconCircle from "@tabler/icons-svelte/icons/circle";
-import IconHelpCircleFilled from "@tabler/icons-svelte/icons/help-circle-filled";
-import IconSquare from "@tabler/icons-svelte/icons/square";
+import { IconCircle } from "@tabler/icons-svelte";
+import { IconHelpCircleFilled } from "@tabler/icons-svelte";
+import { IconSquare } from "@tabler/icons-svelte";
 import { Kbd } from "$lib/components/ui/kbd/index.js";
 
 import type { QuestionContent } from "../../../schemas/tool-call-content.schema.js";

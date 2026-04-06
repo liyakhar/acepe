@@ -1,10 +1,10 @@
 <script lang="ts">
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-import IconCheck from "@tabler/icons-svelte/icons/check";
-import IconChevronDown from "@tabler/icons-svelte/icons/chevron-down";
-import IconClock from "@tabler/icons-svelte/icons/clock";
-import IconSearch from "@tabler/icons-svelte/icons/search";
-import IconStar from "@tabler/icons-svelte/icons/star";
+import { IconCheck } from "@tabler/icons-svelte";
+import { IconChevronDown } from "@tabler/icons-svelte";
+import { IconClock } from "@tabler/icons-svelte";
+import { IconSearch } from "@tabler/icons-svelte";
+import { IconStar } from "@tabler/icons-svelte";
 import { Button } from "$lib/components/ui/button/index.js";
 import { Input } from "$lib/components/ui/input/index.js";
 import { cn } from "$lib/utils.js";

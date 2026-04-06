@@ -5,21 +5,21 @@ import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { AppTopBar } from "@acepe/ui/app-layout";
 import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import Bug from "phosphor-svelte/lib/Bug";
-import Columns from "phosphor-svelte/lib/Columns";
-import DiscordLogo from "phosphor-svelte/lib/DiscordLogo";
-import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
-import GithubLogo from "phosphor-svelte/lib/GithubLogo";
-import HardDrives from "phosphor-svelte/lib/HardDrives";
-import Kanban from "phosphor-svelte/lib/Kanban";
-import Palette from "phosphor-svelte/lib/Palette";
-import Robot from "phosphor-svelte/lib/Robot";
-import Rows from "phosphor-svelte/lib/Rows";
-import Sidebar from "phosphor-svelte/lib/Sidebar";
-import SlidersHorizontal from "phosphor-svelte/lib/SlidersHorizontal";
-import Square from "phosphor-svelte/lib/Square";
-import SquaresFour from "phosphor-svelte/lib/SquaresFour";
-import Wrench from "phosphor-svelte/lib/Wrench";
+import { Bug } from "phosphor-svelte";
+import { Columns } from "phosphor-svelte";
+import { DiscordLogo } from "phosphor-svelte";
+import { DownloadSimple } from "phosphor-svelte";
+import { GithubLogo } from "phosphor-svelte";
+import { HardDrives } from "phosphor-svelte";
+import { Kanban } from "phosphor-svelte";
+import { Palette } from "phosphor-svelte";
+import { Robot } from "phosphor-svelte";
+import { Rows } from "phosphor-svelte";
+import { Sidebar } from "phosphor-svelte";
+import { SlidersHorizontal } from "phosphor-svelte";
+import { Square } from "phosphor-svelte";
+import { SquaresFour } from "phosphor-svelte";
+import { Wrench } from "phosphor-svelte";
 import type { Snippet } from "svelte";
 import { getPanelStore } from "$lib/acp/store/index.js";
 import type { ViewMode } from "$lib/acp/store/types.js";
@@ -226,17 +226,25 @@ function preventDropdownItemSelection(event: Event): void {
 			</DropdownMenu.Root>
 		{/snippet}
 		{#if panelStore.viewMode === "kanban"}
-			<Button
-				variant="headerAction"
-				size="headerAction"
-				class="gap-2 border-transparent hover:border-transparent"
-				onclick={() => viewState.handleNewThread()}
-			>
-				<Robot weight="fill" class="h-3.5 w-3.5" style="color: {Colors.purple}" />
-				<span>New Agent</span>
-			</Button>
+			<div class="flex items-center">
+				<div class="flex items-center pl-2 pr-2">
+					<Button
+						variant="headerAction"
+						size="headerAction"
+						class="gap-2 border-transparent hover:border-transparent"
+						onclick={() => viewState.handleNewThread()}
+					>
+						<Robot weight="fill" class="h-3.5 w-3.5" style="color: {Colors.purple}" />
+						<span>New Agent</span>
+					</Button>
+				</div>
+				<div class="flex items-center">
+					{@render layoutControl()}
+				</div>
+			</div>
+		{:else}
+			{@render layoutControl()}
 		{/if}
-		{@render layoutControl()}
 		<Tooltip.Root>
 			<Tooltip.Trigger>
 				<button

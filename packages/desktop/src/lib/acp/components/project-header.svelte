@@ -1,6 +1,6 @@
 <script lang="ts">
 import { ProjectLetterBadge } from "@acepe/ui";
-import CaretDown from "phosphor-svelte/lib/CaretDown";
+import { CaretDown } from "phosphor-svelte";
 import type { Snippet } from "svelte";
 
 import type { Project } from "../logic/project-manager.svelte.js";

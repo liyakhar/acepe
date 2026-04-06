@@ -1,5 +1,5 @@
 <script lang="ts">
-import { PlanIcon } from "@acepe/ui";
+import { PlanIcon } from "@acepe/ui/icons";
 import {
 	CloseAction,
 	EmbeddedIconButton,
@@ -7,9 +7,9 @@ import {
 	HeaderActionCell,
 	HeaderTitleCell,
 } from "@acepe/ui/panel-header";
-import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
-import { toast } from "svelte-sonner";
+import { DownloadSimple } from "phosphor-svelte";
 import * as Dialog from "$lib/components/ui/dialog/index.js";
+import { toastSuccess } from "$lib/components/ui/sonner/toast-bridge.js";
 import * as m from "$lib/paraglide/messages.js";
 
 import type { SessionPlanResponse } from "../../services/claude-history.js";
@@ -40,7 +40,7 @@ function downloadAsMarkdown() {
 	a.click();
 	document.body.removeChild(a);
 	URL.revokeObjectURL(url);
-	toast.success(m.plan_downloaded());
+	toastSuccess(m.plan_downloaded());
 }
 </script>
 

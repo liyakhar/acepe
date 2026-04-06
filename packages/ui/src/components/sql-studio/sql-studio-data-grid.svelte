@@ -3,8 +3,8 @@
 	 * SqlStudioDataGrid — Compact monospace data table for SQL Studio.
 	 * Matches the git panel's dense, monospace design language.
 	 */
-	import CaretUp from "phosphor-svelte/lib/CaretUp";
-	import CaretDown from "phosphor-svelte/lib/CaretDown";
+	import { CaretUp } from "phosphor-svelte";
+	import { CaretDown } from "phosphor-svelte";
 	import { cn } from "../../lib/utils.js";
 	import type { SqlSortDirection } from "./types.js";
 

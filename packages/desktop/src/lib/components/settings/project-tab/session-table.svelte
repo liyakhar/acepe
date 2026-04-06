@@ -1,12 +1,12 @@
 <script lang="ts">
-import IconArrowDown from "@tabler/icons-svelte/icons/arrow-down";
-import IconArrowUp from "@tabler/icons-svelte/icons/arrow-up";
-import IconChevronLeft from "@tabler/icons-svelte/icons/chevron-left";
-import IconChevronRight from "@tabler/icons-svelte/icons/chevron-right";
-import IconChevronsLeft from "@tabler/icons-svelte/icons/chevrons-left";
-import IconChevronsRight from "@tabler/icons-svelte/icons/chevrons-right";
-import IconSearch from "@tabler/icons-svelte/icons/search";
-import IconSelector from "@tabler/icons-svelte/icons/selector";
+import { IconArrowDown } from "@tabler/icons-svelte";
+import { IconArrowUp } from "@tabler/icons-svelte";
+import { IconChevronLeft } from "@tabler/icons-svelte";
+import { IconChevronRight } from "@tabler/icons-svelte";
+import { IconChevronsLeft } from "@tabler/icons-svelte";
+import { IconChevronsRight } from "@tabler/icons-svelte";
+import { IconSearch } from "@tabler/icons-svelte";
+import { IconSelector } from "@tabler/icons-svelte";
 import type { SessionSummary } from "$lib/acp/application/dto/session.js";
 import type { Project } from "$lib/acp/logic/project-manager.svelte.js";
 import * as m from "$lib/paraglide/messages.js";

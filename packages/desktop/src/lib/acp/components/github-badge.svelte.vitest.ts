@@ -30,13 +30,13 @@ vi.mock("../hooks/use-session-context.js", () => ({
 	useSessionContext: () => null,
 }));
 
-const openGitPanelMock = vi.fn();
+const openGitDialogMock = vi.fn();
 const fetchCommitDiffMock = vi.fn();
 const fetchPrDiffMock = vi.fn();
 
 vi.mock("../store/panel-store.svelte.js", () => ({
 	getPanelStore: () => ({
-		openGitPanel: openGitPanelMock,
+		openGitDialog: openGitDialogMock,
 	}),
 }));
 
@@ -49,7 +49,7 @@ const { default: GitHubBadgeComponent } = await import("./github-badge.svelte");
 
 describe("GitHubBadge", () => {
 	beforeEach(() => {
-		openGitPanelMock.mockClear();
+		openGitDialogMock.mockClear();
 		fetchCommitDiffMock.mockReset();
 		fetchCommitDiffMock.mockResolvedValue({
 			match: (onOk: (diff: { files: Array<{ additions?: number; deletions?: number }> }) => void) => {

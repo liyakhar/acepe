@@ -1,10 +1,10 @@
 <script lang="ts">
 import { PlanIcon } from "@acepe/ui";
-import CaretDown from "phosphor-svelte/lib/CaretDown";
-import CaretRight from "phosphor-svelte/lib/CaretRight";
-import CheckCircle from "phosphor-svelte/lib/CheckCircle";
-import CircleDashed from "phosphor-svelte/lib/CircleDashed";
-import Folder from "phosphor-svelte/lib/Folder";
+import { CaretDown } from "phosphor-svelte";
+import { CaretRight } from "phosphor-svelte";
+import { CheckCircle } from "phosphor-svelte";
+import { CircleDashed } from "phosphor-svelte";
+import { Folder } from "phosphor-svelte";
 import { Colors } from "$lib/acp/utils/colors.js";
 
 import {

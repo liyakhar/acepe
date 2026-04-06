@@ -1,8 +1,8 @@
 <script lang="ts">
-import IconArrowUp from "@tabler/icons-svelte/icons/arrow-up";
+import { IconArrowUp } from "@tabler/icons-svelte";
 import { Result } from "neverthrow";
-import ImageSquare from "phosphor-svelte/lib/ImageSquare";
-import Stop from "phosphor-svelte/lib/Stop";
+import { ImageSquare } from "phosphor-svelte";
+import { Stop } from "phosphor-svelte";
 import { onDestroy, onMount } from "svelte";
 import { toast } from "svelte-sonner";
 import { Button } from "$lib/components/ui/button/index.js";
@@ -221,7 +221,7 @@ const autonomousSupportState = $derived.by(() =>
 );
 
 const autonomousToggleActive = $derived(
-	sessionHotState ? sessionHotState.autonomousEnabled : false
+	sessionHotState ? sessionHotState.autonomousEnabled : provisionalAutonomousEnabled
 );
 
 const autonomousToggleBusy = $derived(
@@ -229,10 +229,6 @@ const autonomousToggleBusy = $derived(
 );
 
 const autonomousToggleDisabled = $derived.by(() => {
-	if (!props.sessionId) {
-		return true;
-	}
-
 	if (autonomousToggleBusy) {
 		return true;
 	}
@@ -448,6 +444,7 @@ let isShiftPressed = $state(false);
 let isApplyingProvisionalToolbarSelections = $state(false);
 let provisionalModeId = $state<string | null>(null);
 let provisionalModelId = $state<string | null>(null);
+let provisionalAutonomousEnabled = $state(false);
 let editorRef: HTMLDivElement | null = $state(null);
 let overlayMode: "preview" | "edit" | null = $state(null);
 let overlayRefId: string | null = $state(null);
@@ -1200,6 +1197,7 @@ async function handleSend() {
 			content: prepared.content,
 			panelId: props.panelId,
 			sessionId: props.sessionId,
+			initialAutonomousEnabled: provisionalAutonomousEnabled,
 			initialModeId: provisionalModeId,
 			initialModelId: provisionalModelId,
 			selectedAgentId: props.selectedAgentId,
@@ -1312,10 +1310,35 @@ async function handleModeChange(modeId: string) {
 		return;
 	}
 	provisionalModeId = modeId;
+	if (
+		provisionalAutonomousEnabled &&
+		!resolveAutonomousSupport({
+			agentId: capabilitiesAgentId,
+			connectionPhase: null,
+			currentUiModeId: modeId,
+			agents: agentStore.agents,
+		}).supported
+	) {
+		provisionalAutonomousEnabled = false;
+		autonomousStatusMessage =
+			"Autonomous turned off because this mode is unsupported for the current agent.";
+	}
 }
 
 async function handleAutonomousToggle(): Promise<void> {
-	if (!props.sessionId || autonomousToggleDisabled || !sessionHotState) {
+	if (autonomousToggleDisabled) {
+		return;
+	}
+
+	if (!props.sessionId) {
+		provisionalAutonomousEnabled = !provisionalAutonomousEnabled;
+		if (!provisionalAutonomousEnabled) {
+			autonomousStatusMessage = "Future actions now require approval again.";
+		}
+		return;
+	}
+
+	if (!sessionHotState) {
 		return;
 	}
 

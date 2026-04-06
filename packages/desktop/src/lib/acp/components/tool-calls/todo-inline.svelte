@@ -1,6 +1,6 @@
 <script lang="ts">
 import { AgentToolCard } from "@acepe/ui/agent-panel";
-import ListChecks from "phosphor-svelte/lib/ListChecks";
+import { ListChecks } from "phosphor-svelte";
 import * as Table from "$lib/components/ui/table/index.js";
 import * as m from "$lib/paraglide/messages.js";
 

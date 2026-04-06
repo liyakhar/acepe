@@ -1,5 +1,4 @@
 <script lang="ts">
-	import HashStraight from "phosphor-svelte/lib/HashStraight";
 	import { Colors } from "../../lib/colors.js";
 
 	interface Props {
@@ -11,7 +10,7 @@
 		size?: number;
 		/** Override font size in px (default: size * 0.55) */
 		fontSize?: number;
-		/** Per-project sequence ID. When provided, renders #N to the left of the badge. */
+		/** Per-project sequence ID. When provided, renders N to the left of the badge. */
 		sequenceId?: number | null;
 		/** Additional CSS classes */
 		class?: string;
@@ -63,15 +62,9 @@
 			"
 		>
 			<span
-				class="inline-flex items-center leading-none"
-				style="gap: 0px; color: color-mix(in srgb, {displayColor} 30%, black);"
-			>
-				<HashStraight size={size * 0.6} weight="bold" />
-				<span
-					class="font-mono font-bold"
-					style="font-size: {size * 0.6}px;"
-				>{sequenceId}</span>
-			</span>
+				class="font-black leading-none"
+				style="font-size: {fontSize}px; color: color-mix(in srgb, {displayColor} 30%, black);"
+			>{sequenceId}</span>
 		</span>
 	{/if}
 </span>
