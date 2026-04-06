@@ -41,7 +41,7 @@ describe("getSpawnableSessionAgents", () => {
 					id: "custom-agent",
 					name: "Custom Agent",
 					icon: "custom-agent",
-					availability_kind: { kind: "bundled" },
+					availability_kind: { kind: "installable", installed: true },
 				},
 				{
 					id: "cursor",

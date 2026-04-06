@@ -167,7 +167,13 @@ export {
 	PlanIcon,
 	RevertIcon,
 } from "./components/icons/index.js";
-export { InlineArtefactBadge } from "./components/inline-artefact-badge/index.js";
+export {
+	InlineArtefactBadge,
+	buildInlineArtefactIconClassName,
+	buildInlineArtefactLabelClassName,
+	INLINE_ARTEFACT_CLIPBOARD_PATH,
+	INLINE_ARTEFACT_PACKAGE_PATH,
+} from "./components/inline-artefact-badge/index.js";
 export { Input, Root as InputRoot } from "./components/input/index.js";
 export type {
 	KanbanCardData,
@@ -253,3 +259,4 @@ export type {
 } from "./lib/utils";
 // Re-export utilities
 export { cn } from "./lib/utils";
+export { buildChipShellClassName } from "./components/chip/index.js";
