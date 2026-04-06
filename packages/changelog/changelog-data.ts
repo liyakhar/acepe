@@ -47,6 +47,19 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: "2026.4.9",
+		date: "2026-04-06",
+		highlights:
+			"Native image drops now stay scoped to the composer even when the app view is zoomed.",
+		changes: [
+			{
+				type: "fix",
+				description:
+					"Native file drag hit-testing now uses zoom-aware composer bounds so image drops no longer activate outside the composer.",
+			},
+		],
+	},
+	{
 		version: "2026.3.33",
 		date: "2026-03-29",
 		highlights:
