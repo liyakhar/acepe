@@ -1,7 +1,7 @@
 #!/bin/bash
 # Generate all Acepe icons from a single source
-# Colors: #f5d0b0 (light peach), #e8956a (medium orange), #f57c25 (dark orange)
-# Background: #1e1e2e (dark navy)
+# Primary: dark bars on #F1EEE6 cream background
+# Dark variant: gold #EBCB8B bars on #1A1A1A
 
 set -e
 
@@ -12,17 +12,14 @@ STATIC_DIR="$DESKTOP_DIR/static"
 ASSETS_DIR="$(dirname "$(dirname "$DESKTOP_DIR")")/assets"
 SOURCE_LOGO="$ASSETS_DIR/logo.svg"
 SOURCE_LOGO_DARK="$ASSETS_DIR/logo-dark.svg"
+LOGO_SOURCE_BACKGROUND="#F1EEE6"
 MASTER_ICON_PNG="/tmp/acepe_icon_master.png"
 DARK_LOGO_BACKGROUND="#1A1A1A"
 DARK_LOGO_FOREGROUND="#EBCB8B"
-WEBSITE_LOGO_FOREGROUND="#000000"
-WEBSITE_LOGO_DARK_FOREGROUND="#EBCB8B"
 LOGO_DARK_TRANSPARENT_PNG="/tmp/acepe_logo_dark_mark.png"
 LOGO_DARK_ALPHA_PNG="/tmp/acepe_logo_dark_alpha.png"
 LOGO_DARK_MASK_PNG="/tmp/acepe_logo_dark_mask.png"
 LOGO_DARK_MASK_BASE64="/tmp/acepe_logo_dark_mask.base64"
-WEBSITE_LOGO_MASK_PNG="/tmp/acepe_website_logo_mask.png"
-WEBSITE_LOGO_MASK_BASE64="/tmp/acepe_website_logo_mask.base64"
 
 echo "Generating Acepe icons..."
 
@@ -48,7 +45,7 @@ magick "$MASTER_ICON_PNG" -resize 32x32 \
 echo "✓ Generated favicon.png"
 
 # Build a flat gold-on-dark SVG variant from the full-size master icon to preserve edge detail.
-magick "$MASTER_ICON_PNG" -alpha on -fuzz 22% -transparent "#F1EDE2" "$LOGO_DARK_TRANSPARENT_PNG"
+magick "$MASTER_ICON_PNG" -alpha on -fuzz 15% -transparent "$LOGO_SOURCE_BACKGROUND" "$LOGO_DARK_TRANSPARENT_PNG"
 magick "$LOGO_DARK_TRANSPARENT_PNG" -alpha extract "$LOGO_DARK_ALPHA_PNG"
 magick -size 1024x1024 xc:white "$LOGO_DARK_ALPHA_PNG" \
   -alpha off \
@@ -79,33 +76,30 @@ if [ -d "$WEBSITE_DIR" ]; then
   mkdir -p "$WEBSITE_ASSETS"
   cp "$SOURCE_LOGO" "$WEBSITE_STATIC/favicon.svg"
   cp "$SOURCE_LOGO" "$WEBSITE_ASSETS/favicon.svg"
-  cp "$LOGO_DARK_MASK_PNG" "$WEBSITE_LOGO_MASK_PNG"
-  base64 < "$WEBSITE_LOGO_MASK_PNG" | tr -d '\n' > "$WEBSITE_LOGO_MASK_BASE64"
 
-  cat > "$WEBSITE_ASSETS/logo.svg" <<EOF
-<svg width="140" height="140" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg">
-<mask id="mark-mask" x="0" y="0" width="140" height="140" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
-<image width="140" height="140" preserveAspectRatio="none" href="data:image/png;base64,$(cat "$WEBSITE_LOGO_MASK_BASE64")"/>
-</mask>
-<rect width="140" height="140" fill="$WEBSITE_LOGO_FOREGROUND" mask="url(#mark-mask)"/>
-</svg>
-EOF
-
-  cat > "$WEBSITE_ASSETS/logo-light.svg" <<EOF
-<svg width="140" height="140" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg">
-<mask id="mark-mask" x="0" y="0" width="140" height="140" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
-<image width="140" height="140" preserveAspectRatio="none" href="data:image/png;base64,$(cat "$WEBSITE_LOGO_MASK_BASE64")"/>
-</mask>
-<rect width="140" height="140" fill="$WEBSITE_LOGO_DARK_FOREGROUND" mask="url(#mark-mask)"/>
-</svg>
-EOF
-
-  # Website favicon PNGs (with dark background for better visibility)
+  # Website favicon PNGs
   magick "$MASTER_ICON_PNG" -resize 16x16 -define png:color-type=6 "$WEBSITE_STATIC/favicon-16x16.png"
   magick "$MASTER_ICON_PNG" -resize 32x32 -define png:color-type=6 "$WEBSITE_STATIC/favicon-32x32.png"
   magick "$MASTER_ICON_PNG" -resize 192x192 -define png:color-type=6 "$WEBSITE_STATIC/favicon-192x192.png"
   magick "$MASTER_ICON_PNG" -resize 512x512 -define png:color-type=6 "$WEBSITE_STATIC/favicon-512x512.png"
   magick "$MASTER_ICON_PNG" -resize 180x180 -define png:color-type=6 "$WEBSITE_STATIC/apple-touch-icon.png"
+
+  # Favicon.ico (multi-resolution for legacy browsers)
+  magick "$MASTER_ICON_PNG" -resize 48x48 -define icon:auto-resize=48,32,16 "$WEBSITE_STATIC/favicon.ico"
+
+  # OG image (1200x630 social preview with logo centered on brand background)
+  magick -size 1200x630 "xc:$LOGO_SOURCE_BACKGROUND" \
+    \( "$MASTER_ICON_PNG" -resize 400x400 \) \
+    -gravity center -composite \
+    "$WEBSITE_STATIC/og-image.png"
+  magick "$WEBSITE_STATIC/og-image.png" -quality 90 "$WEBSITE_STATIC/og-image.jpg"
+
+  # Patch Android launcher background (bunx tauri icon resets it to #fff)
+  ANDROID_BG_FILE="$ICONS_DIR/android/values/ic_launcher_background.xml"
+  if [ -f "$ANDROID_BG_FILE" ]; then
+    sed -i '' "s/#fff/$LOGO_SOURCE_BACKGROUND/g" "$ANDROID_BG_FILE"
+    echo "✓ Patched Android launcher background to $LOGO_SOURCE_BACKGROUND"
+  fi
 
   echo "✓ Generated website icons"
 fi

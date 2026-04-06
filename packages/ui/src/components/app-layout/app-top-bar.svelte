@@ -3,7 +3,6 @@
 	import FolderPlus from "phosphor-svelte/lib/FolderPlus";
 	import GearSix from "phosphor-svelte/lib/GearSix";
 	import Sidebar from "phosphor-svelte/lib/Sidebar";
-	import { HeaderCell, EmbeddedIconButton } from "../panel-header/index.js";
 	import AppSearchButton from "./app-search-button.svelte";
 
 	interface Props {
@@ -71,28 +70,29 @@
 				<div class="h-3 w-3 rounded-full bg-[#28CA42]"></div>
 			</div>
 		{/if}
-		<div class="flex items-center h-full divide-x divide-border/50 border-x border-border/50">
+		<div class="flex items-center gap-1">
 			{#if showSidebarToggle}
-				<HeaderCell withDivider={false}>
-					{#snippet children()}
-						<EmbeddedIconButton title="Toggle sidebar" ariaLabel="Toggle Sidebar" onclick={onToggleSidebar}>
-							<Sidebar class={ICON} weight="fill" />
-						</EmbeddedIconButton>
-					{/snippet}
-				</HeaderCell>
+				<button
+					class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+					title="Toggle sidebar"
+					aria-label="Toggle Sidebar"
+					onclick={onToggleSidebar}
+				>
+					<Sidebar class={ICON} weight="fill" />
+				</button>
 			{/if}
 			{#if showAddProject}
-				<HeaderCell withDivider={false}>
-					{#snippet children()}
-						{#if addProjectButton}
-							{@render addProjectButton()}
-						{:else}
-							<EmbeddedIconButton title="Add project" ariaLabel="Add Project">
-								<FolderPlus class={ICON} weight="fill" />
-							</EmbeddedIconButton>
-						{/if}
-					{/snippet}
-				</HeaderCell>
+				{#if addProjectButton}
+					{@render addProjectButton()}
+				{:else}
+					<button
+						class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+						title="Add project"
+						aria-label="Add Project"
+					>
+						<FolderPlus class={ICON} weight="fill" />
+					</button>
+				{/if}
 			{/if}
 		</div>
 		{#if extraLeftActions}
@@ -108,27 +108,24 @@
 	</div>
 
 	<!-- Right: extra actions + settings + avatar -->
-	<div class="flex items-center h-full divide-x divide-border/50 border-r border-border/50 {showRightSectionLeadingBorder ? 'border-l border-border/50' : ''}">
+	<div class="flex items-center gap-1 pr-2">
 		{#if extraRightActions}
 			{@render extraRightActions()}
 		{/if}
-		<HeaderCell withDivider={false}>
-			{#snippet children()}
-				<EmbeddedIconButton title="Settings" ariaLabel="Settings" onclick={onSettings}>
-					<GearSix class={ICON} weight="fill" />
-				</EmbeddedIconButton>
-			{/snippet}
-		</HeaderCell>
+		<button
+			class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+			title="Settings"
+			aria-label="Settings"
+			onclick={onSettings}
+		>
+			<GearSix class={ICON} weight="fill" />
+		</button>
 		{#if showAvatar}
-			<HeaderCell withDivider={false} class="pr-3">
-				{#snippet children()}
-					{#if avatar}
-						{@render avatar()}
-					{:else}
-						<div class="h-6 w-6 rounded-full bg-gradient-to-br from-primary/40 to-primary/20 border border-border"></div>
-					{/if}
-				{/snippet}
-			</HeaderCell>
+			{#if avatar}
+				{@render avatar()}
+			{:else}
+				<div class="h-6 w-6 rounded-full bg-gradient-to-br from-primary/40 to-primary/20 border border-border"></div>
+			{/if}
 		{/if}
 	</div>
 </div>

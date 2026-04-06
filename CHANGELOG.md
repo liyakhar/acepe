@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Codex native client now routes `session/update` JSON-RPC notifications through the session update parser, enabling Codex-originated tool calls to appear in the UI
+- New sessions can start with Autonomous enabled before the first message, including Codex build sessions mapped to a full-access execution profile
 - Config option selector shows a reasoning-effort icon indicator when reasoning level changes
 - Markdown streaming sections split and reveal progressively during agent responses instead of updating the entire block
+- Project badges can append per-project sequence numbers in agent panel and kanban cards
 - Streaming log calls added to Codex native client for debugging event flow
 - Contract tests for permission bar, agent-tool-edit, config selector reasoning icon, and resolve-tool-call-edit-diffs
-- Markdown now renders during streaming with throttled 150ms sync rendering and a leading-edge first frame, instead of showing raw text until the stream finishes
+- Markdown streaming now keeps settled sections stable while only the live tail refreshes, including open fenced code blocks
 - Kanban board gains a Needs Review column (pink, eye icon) for unseen completions before they move to Done
 - Views can override Cmd+T to show a custom new-session flow such as the kanban new-agent dialog
 - Cargo profiles for faster Tauri dev builds (opt-level 2 for dependencies) and leaner releases (thin LTO, strip, single codegen unit)
@@ -23,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Tool call edit and permission bar components redesigned with a dedicated diff resolution layer
 - Session title formatting extracted to shared `formatSessionTitleForDisplay`, replacing duplicated capitalize-and-fallback logic across agent panel and kanban view
-- Website Logo component replaced with direct themed asset imports for simpler dark/light mode switching
+- Website branding now routes through a shared `Logo` component sourced from `favicon.svg`
 - App chrome refined with accent border and rounded corners on the main window
+- Icon generation now emits website favicon and OG assets from the shared logo source and patches the Android launcher background
 - Workspace dependency versions aligned across desktop, website, and ui packages (Vite 7, SvelteKit 2.49, Svelte 5.45, TypeScript 5.9)
 - Remaining `once_cell::Lazy` statics replaced with `std::sync::LazyLock` and the direct `once_cell` dependency removed
 - Stale `lucide-svelte` and `phosphor-icons-svelte` dependencies removed from manifests and lockfile
@@ -40,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Text delta whitespace preserved in Codex native streaming — leading spaces in LLM tokens (e.g. `" world"`) are no longer trimmed, fixing broken inter-word spacing
+- Reconnecting a thread with an already-bound ACP session no longer issues a duplicate resume
+- Codex turn interrupts now include the active turn id
+- Session title overrides now survive transcript refreshes and reveal the latest derived title when cleared
 - OpenCode runtime root resolved from the repository or worktree root instead of the raw working directory, preventing duplicate processes and leaked LSP servers
 - Open PR button stays visible with its loading spinner during PR creation instead of vanishing instantly
 - Website logo dark/light theme assets now display correctly in their respective modes

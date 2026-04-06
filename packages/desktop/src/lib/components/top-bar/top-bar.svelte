@@ -3,7 +3,6 @@ import { Button } from "@acepe/ui/button";
 import { COLOR_NAMES, Colors } from "@acepe/ui/colors";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { AppTopBar } from "@acepe/ui/app-layout";
-import { EmbeddedIconButton, HeaderCell } from "@acepe/ui/panel-header";
 import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Bug from "phosphor-svelte/lib/Bug";
@@ -41,6 +40,7 @@ interface Props {
 	onRetryUpdateClick?: () => void;
 	onDevShowUpdatePage?: () => void;
 	onDevShowDesignSystem?: () => void;
+	showSidebarToggle?: boolean;
 }
 
 let {
@@ -51,6 +51,7 @@ let {
 	onRetryUpdateClick,
 	onDevShowUpdatePage,
 	onDevShowDesignSystem,
+	showSidebarToggle = true,
 }: Props = $props();
 
 const panelStore = getPanelStore();
@@ -94,7 +95,7 @@ function preventDropdownItemSelection(event: Event): void {
 	windowDraggable
 	showTrafficLights={false}
 	searchLabel={m.top_bar_command_palette()}
-	showSidebarToggle={true}
+	{showSidebarToggle}
 	showAddProject={!!addProjectButton}
 	{addProjectButton}
 	onToggleSidebar={() => viewState.setSidebarOpen(!viewState.sidebarOpen)}
@@ -151,9 +152,14 @@ function preventDropdownItemSelection(event: Event): void {
 					{#snippet child({ props }: DropdownMenuTriggerChildProps)}
 						<Tooltip.Root>
 							<Tooltip.Trigger>
-								<EmbeddedIconButton {...props} title="Layout" ariaLabel="Layout Settings">
+								<button
+									{...props}
+									class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+									title="Layout"
+									aria-label="Layout Settings"
+								>
 									<SlidersHorizontal class="size-4" weight="fill" />
-								</EmbeddedIconButton>
+								</button>
 							</Tooltip.Trigger>
 							<Tooltip.Content>Layout</Tooltip.Content>
 						</Tooltip.Root>
@@ -220,126 +226,115 @@ function preventDropdownItemSelection(event: Event): void {
 			</DropdownMenu.Root>
 		{/snippet}
 		{#if panelStore.viewMode === "kanban"}
-			<div class="flex items-center">
-				<div class="flex items-center pl-2 pr-2">
-					<Button
-						variant="headerAction"
-						size="headerAction"
-						class="gap-2 border-transparent hover:border-transparent"
-						onclick={() => viewState.handleNewThread()}
-					>
-						<Robot weight="fill" class="h-3.5 w-3.5" style="color: {Colors.purple}" />
-						<span>New Agent</span>
-					</Button>
-				</div>
-				{@render layoutControl()}
-			</div>
-		{:else}
-			<HeaderCell withDivider={false}>
-				{@render layoutControl()}
-			</HeaderCell>
+			<Button
+				variant="headerAction"
+				size="headerAction"
+				class="gap-2 border-transparent hover:border-transparent"
+				onclick={() => viewState.handleNewThread()}
+			>
+				<Robot weight="fill" class="h-3.5 w-3.5" style="color: {Colors.purple}" />
+				<span>New Agent</span>
+			</Button>
 		{/if}
-		<HeaderCell withDivider={false}>
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					<EmbeddedIconButton
-						title="Feedback"
-						ariaLabel="Feedback"
-						onclick={() => openUrl("https://github.com/flazouh/acepe/issues")}
-					>
-						<Bug weight="fill" class="size-4" style="color: #FF5D5A" />
-					</EmbeddedIconButton>
-				</Tooltip.Trigger>
-				<Tooltip.Content>Feedback</Tooltip.Content>
-			</Tooltip.Root>
-		</HeaderCell>
-		<HeaderCell withDivider={false}>
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					<EmbeddedIconButton
-						title="Join Discord"
-						ariaLabel="Discord"
-						onclick={() => openUrl("https://discord.gg/5YhW7T7qhS")}
-					>
-						<DiscordLogo class="size-4" style="color: #6C75E8" weight="fill" />
-					</EmbeddedIconButton>
-				</Tooltip.Trigger>
-				<Tooltip.Content>Join Discord</Tooltip.Content>
-			</Tooltip.Root>
-		</HeaderCell>
-		<HeaderCell withDivider={false}>
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					<EmbeddedIconButton
-						title="GitHub"
-						ariaLabel="GitHub"
-						onclick={() => openUrl("https://github.com/flazouh/acepe")}
-					>
-						<GithubLogo class="size-4" weight="fill" />
-					</EmbeddedIconButton>
-				</Tooltip.Trigger>
-				<Tooltip.Content>GitHub</Tooltip.Content>
-			</Tooltip.Root>
-		</HeaderCell>
-		<HeaderCell withDivider={false}>
-			<ThemeToggle />
-		</HeaderCell>
+		{@render layoutControl()}
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				<button
+					class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+					title="Feedback"
+					aria-label="Feedback"
+					onclick={() => openUrl("https://github.com/flazouh/acepe/issues")}
+				>
+					<Bug weight="fill" class="size-4" style="color: #FF5D5A" />
+				</button>
+			</Tooltip.Trigger>
+			<Tooltip.Content>Feedback</Tooltip.Content>
+		</Tooltip.Root>
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				<button
+					class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+					title="Join Discord"
+					aria-label="Discord"
+					onclick={() => openUrl("https://discord.gg/5YhW7T7qhS")}
+				>
+					<DiscordLogo class="size-4" style="color: #6C75E8" weight="fill" />
+				</button>
+			</Tooltip.Trigger>
+			<Tooltip.Content>Join Discord</Tooltip.Content>
+		</Tooltip.Root>
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				<button
+					class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+					title="GitHub"
+					aria-label="GitHub"
+					onclick={() => openUrl("https://github.com/flazouh/acepe")}
+				>
+					<GithubLogo class="size-4" weight="fill" />
+				</button>
+			</Tooltip.Trigger>
+			<Tooltip.Content>GitHub</Tooltip.Content>
+		</Tooltip.Root>
+		<ThemeToggle />
 		{#if import.meta.env.DEV && (onDevShowUpdatePage || onDevShowDesignSystem)}
-			<HeaderCell withDivider={false}>
-				<DropdownMenu.Root>
-					<DropdownMenu.Trigger>
-						{#snippet child({ props }: DropdownMenuTriggerChildProps)}
-							<Tooltip.Root>
-								<Tooltip.Trigger>
-									<EmbeddedIconButton {...props} title="Dev Tools" ariaLabel="Dev Tools">
-										<Wrench class="size-4" weight="fill" style="color: #FAD83C" />
-									</EmbeddedIconButton>
-								</Tooltip.Trigger>
-								<Tooltip.Content>Dev Tools</Tooltip.Content>
-							</Tooltip.Root>
-						{/snippet}
-					</DropdownMenu.Trigger>
-					<DropdownMenu.Content align="end" class="min-w-[160px] p-0 text-[11px]">
-						<DropdownMenu.Group>
-							<DropdownMenu.GroupHeading
-								class="px-2 py-1 text-[11px] font-semibold text-muted-foreground border-b border-border/20"
-							>Dev Overlays</DropdownMenu.GroupHeading>
-							{#if onDevShowUpdatePage}
-								<DropdownMenu.Item
-									class="cursor-pointer rounded-none px-2 py-1 text-[11px]"
-									onclick={onDevShowUpdatePage}
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger>
+					{#snippet child({ props }: DropdownMenuTriggerChildProps)}
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								<button
+									{...props}
+									class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+									title="Dev Tools"
+									aria-label="Dev Tools"
 								>
-									<DownloadSimple class="size-4" weight="fill" />
-									<span>Update Page</span>
-								</DropdownMenu.Item>
-							{/if}
-							{#if onDevShowDesignSystem}
-								<DropdownMenu.Item
-									class="cursor-pointer rounded-none px-2 py-1 text-[11px]"
-									onclick={onDevShowDesignSystem}
-								>
-									<Palette class="size-4" weight="fill" />
-									<span>Design System</span>
-								</DropdownMenu.Item>
-							{/if}
-						</DropdownMenu.Group>
-					</DropdownMenu.Content>
-				</DropdownMenu.Root>
-			</HeaderCell>
+									<Wrench class="size-4" weight="fill" style="color: #FAD83C" />
+								</button>
+							</Tooltip.Trigger>
+							<Tooltip.Content>Dev Tools</Tooltip.Content>
+						</Tooltip.Root>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content align="end" class="min-w-[160px] p-0 text-[11px]">
+					<DropdownMenu.Group>
+						<DropdownMenu.GroupHeading
+							class="px-2 py-1 text-[11px] font-semibold text-muted-foreground border-b border-border/20"
+						>Dev Overlays</DropdownMenu.GroupHeading>
+						{#if onDevShowUpdatePage}
+							<DropdownMenu.Item
+								class="cursor-pointer rounded-none px-2 py-1 text-[11px]"
+								onclick={onDevShowUpdatePage}
+							>
+								<DownloadSimple class="size-4" weight="fill" />
+								<span>Update Page</span>
+							</DropdownMenu.Item>
+						{/if}
+						{#if onDevShowDesignSystem}
+							<DropdownMenu.Item
+								class="cursor-pointer rounded-none px-2 py-1 text-[11px]"
+								onclick={onDevShowDesignSystem}
+							>
+								<Palette class="size-4" weight="fill" />
+								<span>Design System</span>
+							</DropdownMenu.Item>
+						{/if}
+					</DropdownMenu.Group>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
 		{/if}
-		<HeaderCell withDivider={false}>
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					<EmbeddedIconButton
-						title="Database Manager"
-						ariaLabel="Database Manager"
-						onclick={() => viewState.toggleSqlStudio()}
-					>
-						<HardDrives weight="fill" class="size-4" />
-					</EmbeddedIconButton>
-				</Tooltip.Trigger>
-				<Tooltip.Content>Database Manager</Tooltip.Content>
-			</Tooltip.Root>
-		</HeaderCell>
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				<button
+					class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+					title="Database Manager"
+					aria-label="Database Manager"
+					onclick={() => viewState.toggleSqlStudio()}
+				>
+					<HardDrives weight="fill" class="size-4" />
+				</button>
+			</Tooltip.Trigger>
+			<Tooltip.Content>Database Manager</Tooltip.Content>
+		</Tooltip.Root>
 	{/snippet}
 </AppTopBar>

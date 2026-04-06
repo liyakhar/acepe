@@ -20,8 +20,7 @@ import type {
 } from "@acepe/ui/attention-queue";
 import AgentIconsRow from "$lib/components/agent-icons-row.svelte";
 import Header from "$lib/components/header.svelte";
-import logoForLight from "$lib/assets/logo.svg";
-import logoForDark from "$lib/assets/logo-light-bg.svg";
+import Logo from "$lib/components/logo.svelte";
 import { websiteThemeStore } from "$lib/theme/theme.js";
 import {
 	Stack,
@@ -727,8 +726,7 @@ const features = [
 				<!-- Brand -->
 				<div class="col-span-2 md:col-span-1">
 					<a href="/" class="mb-3 inline-flex items-center gap-2">
-						<img src={logoForLight} alt="" class="h-6 w-6 dark:hidden" />
-						<img src={logoForDark} alt="" class="hidden h-6 w-6 dark:block" />
+						<Logo class="h-6 w-6" />
 						<span class="text-base font-bold tracking-wide">{m.app_name()}</span>
 					</a>
 					<p class="max-w-[200px] text-[13px] leading-relaxed text-muted-foreground">

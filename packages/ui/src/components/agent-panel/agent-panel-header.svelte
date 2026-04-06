@@ -70,10 +70,7 @@
 	{:else}
 		{#if projectName && projectColor}
 			<HeaderCell withDivider={false}>
-				<ProjectLetterBadge name={projectName} color={projectColor} size={14} class="shrink-0" />
-				{#if sequenceId != null}
-					<span class="font-mono text-[10px] text-muted-foreground/70">#{sequenceId}</span>
-				{/if}
+				<ProjectLetterBadge name={projectName} color={projectColor} size={14} sequenceId={sequenceId} class="shrink-0" />
 			</HeaderCell>
 		{/if}
 		{#if agentIconSrc}

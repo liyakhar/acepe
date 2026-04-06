@@ -1,5 +1,4 @@
 <script lang="ts">
-import { EmbeddedIconButton } from "@acepe/ui/panel-header";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { okAsync, ResultAsync } from "neverthrow";
@@ -956,10 +955,10 @@ onDestroy(() => {
 });
 </script>
 
-<ThemeProvider class="overflow-hidden h-dvh p-0.5 bg-[#FFC799]">
-	<div class="flex flex-col h-full min-h-0 gap-0.5 bg-background overflow-hidden">
+<ThemeProvider class="overflow-hidden h-dvh bg-background">
+	<div class="flex flex-col h-full min-h-0 pb-0.5 overflow-hidden">
 		<!-- Top bar -->
-		<div class="shrink-0 bg-card/50 border border-border rounded-xl overflow-hidden">
+		<div class="shrink-0 overflow-hidden">
 			<TopBar
 				{viewState}
 				updaterState={updaterState}
@@ -981,13 +980,14 @@ onDestroy(() => {
 				}}
 			>
 				{#snippet addProjectButton()}
-					<EmbeddedIconButton
+					<button
+						class="flex items-center justify-center size-6 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
 						title={m.add_repository_button()}
-						ariaLabel={m.add_repository_button()}
+						aria-label={m.add_repository_button()}
 						onclick={() => (addProjectDialogOpen = true)}
 					>
 						<FolderPlus class="size-4" weight="fill" />
-					</EmbeddedIconButton>
+					</button>
 				{/snippet}
 			</TopBar>
 		</div>

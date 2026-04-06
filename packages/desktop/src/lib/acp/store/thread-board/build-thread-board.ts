@@ -68,7 +68,7 @@ function toThreadBoardItem(source: ThreadBoardSource, status: ThreadBoardStatus)
 		todoProgress: source.todoProgress,
 		connectionError: source.connectionError,
 		state: source.state,
-		sequenceId: source.sequenceId,
+		sequenceId: source.sequenceId ?? null,
 		status,
 	};
 }
