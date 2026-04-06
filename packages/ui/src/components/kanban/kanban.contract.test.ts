@@ -91,7 +91,7 @@ describe("kanban UI contract", () => {
 		expect(cardSource).toContain('data-testid="kanban-card"');
 		expect(cardSource).toContain('data-testid="kanban-card-header"');
 		expect(cardSource).toContain('data-testid="kanban-card-tally"');
-		expect(cardSource).toContain('`${card.projectName.charAt(0).toUpperCase()} #${card.sequenceId}`');
+		expect(cardSource).toContain('`${projectBadgeSource.charAt(0).toUpperCase()}#${card.sequenceId}`');
 		expect(cardSource).toContain("AgentToolTask");
 		expect(cardSource).toContain("description={card.taskCard.summary}");
 		expect(cardSource).toContain("status={card.taskCard.isStreaming ? \"running\" : \"done\"}");

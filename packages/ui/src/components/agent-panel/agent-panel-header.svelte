@@ -55,7 +55,7 @@
 
 	const projectBadgeLabel =
 		projectName && sequenceId != null
-			? `${projectName.charAt(0).toUpperCase()} #${sequenceId}`
+			? `${projectName.charAt(0).toUpperCase()}#${sequenceId}`
 			: projectName
 				? projectName.charAt(0).toUpperCase()
 				: null;

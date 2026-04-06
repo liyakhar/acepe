@@ -69,7 +69,7 @@ import type { KanbanCardData } from "./types.js";
 	});
 	const projectBadgeLabel = $derived(
 		card.sequenceId !== null
-			? `${projectBadgeSource.charAt(0).toUpperCase()} #${card.sequenceId}`
+			? `${projectBadgeSource.charAt(0).toUpperCase()}#${card.sequenceId}`
 			: projectBadgeSource.charAt(0).toUpperCase()
 	);
 
