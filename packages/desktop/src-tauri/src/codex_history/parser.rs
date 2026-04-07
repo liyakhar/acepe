@@ -211,6 +211,7 @@ pub async fn load_session(
                                         Some(kind.as_str()),
                                     )
                                     .unwrap_or(ToolArguments::Other { raw: raw_arguments }),
+                                raw_input: None,
                                 skill_meta: None,
                                 locations: None,
                                 normalized_questions,
@@ -273,6 +274,7 @@ pub async fn load_session(
         stats,
         title,
         created_at,
+        current_mode_id: None,
     }))
 }
 

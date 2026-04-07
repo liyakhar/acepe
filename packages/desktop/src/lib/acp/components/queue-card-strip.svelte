@@ -89,7 +89,7 @@ function handleSendNow(messageId: string): void {
 </script>
 
 {#if count > 0}
-	<div class="w-full px-5">
+	<div class="w-full">
 		<!-- Message rows (always visible, above the bar) -->
 		<div class="rounded-t-lg bg-accent/50 overflow-hidden">
 			<div class="flex flex-col max-h-[260px] overflow-y-auto">

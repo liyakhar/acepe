@@ -144,6 +144,10 @@ fn enrich_tool_call_data(
         tool_call.arguments = candidate_arguments;
     }
 
+    if tool_call.raw_input.is_none() {
+        tool_call.raw_input = Some(persisted.input.clone());
+    }
+
     if tool_call.kind.is_none() || tool_call.kind == Some(ToolKind::Other) {
         let candidate_kind = tool_call.arguments.tool_kind();
         if candidate_kind != ToolKind::Other {
@@ -459,6 +463,7 @@ mod tests {
                 id: "call-1".to_string(),
                 name: "Read File".to_string(),
                 arguments: ToolArguments::Read { file_path: None },
+                raw_input: None,
                 status: ToolCallStatus::Pending,
                 result: None,
                 kind: Some(ToolKind::Read),
@@ -481,6 +486,14 @@ mod tests {
         match enriched {
             SessionUpdate::ToolCall { tool_call, .. } => {
                 assert_eq!(tool_call.arguments.tool_kind(), ToolKind::Read);
+                assert_eq!(
+                    tool_call.raw_input,
+                    Some(serde_json::json!({
+                        "path": "/tmp/example.rs",
+                        "offset": 1,
+                        "limit": 20
+                    }))
+                );
                 match tool_call.arguments {
                     ToolArguments::Read { file_path } => {
                         assert_eq!(file_path.as_deref(), Some("/tmp/example.rs"));

@@ -58,6 +58,7 @@ const updatePagePath = resolve(
 	import.meta.dir,
 	"./lib/components/update-available/update-available-page.svelte"
 );
+const englishMessagesPath = resolve(import.meta.dir, "../messages/en.json");
 const translationBrandingPath = resolve(
 	import.meta.dir,
 	"./lib/i18n/components/translation-branding.svelte"
@@ -300,5 +301,46 @@ describe("desktop logo branding", () => {
 		if (welcomeSource) {
 			expect(welcomeSource).toContain("logo");
 		}
+	});
+
+	it("keeps the onboarding splash aligned with current branding", () => {
+		if (!existsSync(welcomeScreenPath) || !existsSync(englishMessagesPath)) return;
+
+		const welcomeSource = readFileSync(welcomeScreenPath, "utf8");
+		const englishMessages = readFileSync(englishMessagesPath, "utf8");
+
+		expect(welcomeSource).toContain('{ id: "copilot"');
+		expect(welcomeSource).toContain('rounded-[20%]');
+		expect(welcomeSource).toContain('bg-background p-8');
+		expect(welcomeSource).toContain('Button, PillButton');
+		expect(welcomeSource).toContain('variant="headerAction"');
+		expect(welcomeSource).toContain('size="headerAction"');
+		expect(welcomeSource).toContain('group/open-pr');
+		expect(welcomeSource).toContain('rounded-xl border border-border/50 bg-muted overflow-hidden');
+		expect(welcomeSource).toContain('rounded-none border-0');
+		expect(welcomeSource).toContain('bg-transparent');
+		expect(welcomeSource).toContain('shadow-none');
+		expect(welcomeSource).toContain('px-3');
+		expect(welcomeSource).toContain('h-9');
+		expect(welcomeSource).not.toContain('group/open-pr h-10');
+		expect(welcomeSource).not.toContain('rounded-full border-0');
+		expect(welcomeSource).toContain('{m.splash_enter()}');
+		expect(welcomeSource).not.toContain('rounded-full bg-foreground');
+		expect(welcomeSource).not.toContain(
+			'class="shrink-0 text-foreground/80 transition-colors group-hover/open-pr:text-foreground"'
+		);
+		expect(welcomeSource).toContain('grid-cols-3');
+		expect(welcomeSource).toContain('grid-rows-2');
+		expect(welcomeSource).not.toContain('<AgentCard');
+		expect(welcomeSource).not.toContain(
+			'<div class="flex items-center rounded-xl border border-border/50 bg-muted overflow-hidden">'
+		);
+		expect(welcomeSource).toContain('opacity-100');
+		expect(welcomeSource).toContain('opacity-50');
+		expect(welcomeSource).toContain('{m.common_confirm()}');
+		expect(welcomeSource).not.toContain('{m.welcome_continue()}');
+		expect(englishMessages).toContain(
+			'"splash_description": "Your unified interface for AI coding agents. Work with Claude, Copilot, Codex, and other agents in parallel, all in one place."'
+		);
 	});
 });

@@ -83,6 +83,25 @@ describe("SessionStore loadSessionById title update", () => {
 		expect(storedSession?.title).toBe("My Actual Session Title");
 	});
 
+	it("hydrates current mode from canonical session load data", async () => {
+		const session = {
+			...mockSession({ title: "Plan Session" }),
+			currentModeId: "plan",
+		} as ConvertedSession;
+		vi.mocked(api.getSession).mockReturnValue(okAsync(session));
+
+		await store.loadSessionById("session-123", "/test/path", "claude-code").match(
+			(loadedSession) => loadedSession,
+			(error) => {
+				throw error;
+			}
+		);
+
+		const hotState = store.getHotState("session-123");
+		expect(hotState.currentMode?.id).toBe("plan");
+		expect(hotState.currentMode?.name).toBe("Plan");
+	});
+
 	it("uses fallback title when API returns no title", async () => {
 		// Arrange: Mock API returning session without title (e.g. legacy backend)
 		const session = mockSession({ title: "", entries: [] });

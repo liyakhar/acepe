@@ -7,7 +7,7 @@
 //! This module normalizes Claude Code's separate-event pattern into
 //! pre-assembled `ToolCallData` with `task_children` populated.
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use std::collections::HashMap;
 
 use super::parsers::AgentType;
@@ -47,7 +47,13 @@ pub struct TaskReconciler {
 
     /// Child ID → Parent ID for fast lookup during updates.
     child_to_parent: HashMap<String, String>,
+
+    /// Recently terminal tool IDs. Late same-ID traffic after terminal emission
+    /// should be ignored rather than resurrecting a finished invocation.
+    terminal_tool_call_ids: IndexSet<String>,
 }
+
+const MAX_TERMINAL_TOOL_CALL_IDS: usize = 1024;
 
 /// Result of processing a tool call or update.
 #[derive(Debug)]
@@ -88,6 +94,14 @@ impl TaskReconciler {
         tool_call: ToolCallData,
         infer_implicit_child_parent: bool,
     ) -> Vec<ReconcilerOutput> {
+        if self.terminal_tool_call_ids.contains(&tool_call.id) {
+            tracing::warn!(
+                tool_call_id = %tool_call.id,
+                "Ignoring late same-id tool_call after terminal emission"
+            );
+            return vec![];
+        }
+
         if self.active_tool_calls.contains_key(&tool_call.id) {
             let (merged_tool_call, should_cleanup) = {
                 let existing = self
@@ -101,6 +115,7 @@ impl TaskReconciler {
             };
             if should_cleanup {
                 self.active_tool_calls.remove(&merged_tool_call.id);
+                self.mark_terminal_tool_call(merged_tool_call.id.clone());
             }
             return vec![ReconcilerOutput::EmitToolCallUpdate(tool_call_to_update(
                 &merged_tool_call,
@@ -127,6 +142,8 @@ impl TaskReconciler {
         if !is_terminal_status(&tool_call.status) {
             self.active_tool_calls
                 .insert(tool_call.id.clone(), tool_call.clone());
+        } else {
+            self.mark_terminal_tool_call(tool_call.id.clone());
         }
         vec![ReconcilerOutput::EmitToolCall(tool_call)]
     }
@@ -136,6 +153,14 @@ impl TaskReconciler {
     /// Returns outputs to emit to the frontend.
     pub fn handle_tool_call_update(&mut self, update: ToolCallUpdateData) -> Vec<ReconcilerOutput> {
         let tool_call_id = &update.tool_call_id;
+
+        if self.terminal_tool_call_ids.contains(tool_call_id) {
+            tracing::warn!(
+                tool_call_id = %tool_call_id,
+                "Ignoring late same-id tool_call_update after terminal emission"
+            );
+            return vec![];
+        }
 
         // Check if this is a child update
         if let Some(parent_id) = self.child_to_parent.get(tool_call_id).cloned() {
@@ -160,6 +185,7 @@ impl TaskReconciler {
             };
             if should_cleanup {
                 self.active_tool_calls.remove(tool_call_id);
+                self.mark_terminal_tool_call(tool_call_id.clone());
             }
         }
 
@@ -174,14 +200,15 @@ impl TaskReconciler {
         tool_call: ToolCallData,
     ) -> Vec<ReconcilerOutput> {
         let child_id = tool_call.id.clone();
+        let child_is_terminal = is_terminal_status(&tool_call.status);
 
         // Register the child → parent mapping
         self.child_to_parent
             .insert(child_id.clone(), parent_id.clone());
 
-        if let Some(parent) = self.active_tasks.get_mut(&parent_id) {
+        let outputs = if let Some(parent) = self.active_tasks.get_mut(&parent_id) {
             // Parent exists → attach child and emit updated parent
-            parent.children.insert(child_id, tool_call);
+            parent.children.insert(child_id.clone(), tool_call);
             if let Some(assembled) = self.assemble_task(&parent_id) {
                 vec![ReconcilerOutput::EmitToolCall(assembled)]
             } else {
@@ -195,12 +222,19 @@ impl TaskReconciler {
                 .or_default()
                 .push(tool_call);
             vec![ReconcilerOutput::Buffered]
+        };
+
+        if child_is_terminal {
+            self.mark_terminal_tool_call(child_id);
         }
+
+        outputs
     }
 
     /// Handle a parent task arriving.
     fn handle_parent_task(&mut self, tool_call: ToolCallData) -> Vec<ReconcilerOutput> {
         let task_id = tool_call.id.clone();
+        let task_is_terminal = is_terminal_status(&tool_call.status);
 
         // Create buffered task
         let mut buffered = BufferedTask {
@@ -220,20 +254,24 @@ impl TaskReconciler {
         self.active_tasks.insert(task_id.clone(), buffered);
 
         // Emit initial task state (may have children if they arrived early)
-        if let Some(assembled) = self.assemble_task(&task_id) {
+        let outputs = if let Some(assembled) = self.assemble_task(&task_id) {
             vec![ReconcilerOutput::EmitToolCall(assembled)]
         } else {
             tracing::warn!(task_id = %task_id, "Task missing after insertion");
             vec![ReconcilerOutput::Buffered]
+        };
+
+        if task_is_terminal {
+            self.cleanup_task(&task_id);
         }
+
+        outputs
     }
 
     /// Handle an update to a child tool call.
     ///
-    /// Performance optimization: Instead of re-emitting the entire parent with all children
-    /// (O(n²) behavior when sub-agents run many tool calls), we:
-    /// 1. Update the child in our internal state
-    /// 2. Emit just the update - frontend tracks the parent-child relationship
+    /// The backend owns parent/child assembly semantics, so child mutations
+    /// re-emit the assembled parent snapshot after internal state is updated.
     fn handle_child_update(
         &mut self,
         parent_id: &str,
@@ -245,8 +283,16 @@ impl TaskReconciler {
                 apply_update_to_tool_call(child, &update);
             }
 
-            // Emit just the update - frontend handles parent-child relationship
-            vec![ReconcilerOutput::EmitToolCallUpdate(update)]
+            if let Some(assembled) = self.assemble_task(parent_id) {
+                vec![ReconcilerOutput::EmitToolCall(assembled)]
+            } else {
+                tracing::warn!(
+                    parent_id = %parent_id,
+                    child_id = %update.tool_call_id,
+                    "Parent missing while re-emitting child mutation"
+                );
+                vec![ReconcilerOutput::EmitToolCallUpdate(update)]
+            }
         } else {
             // Parent not found - pass through
             vec![ReconcilerOutput::EmitToolCallUpdate(update)]
@@ -339,9 +385,21 @@ impl TaskReconciler {
     /// Cleanup a completed task and its child mappings.
     fn cleanup_task(&mut self, task_id: &str) {
         if let Some(task) = self.active_tasks.remove(task_id) {
-            for child_id in task.children.keys() {
-                self.child_to_parent.remove(child_id);
+            let child_ids: Vec<_> = task.children.keys().cloned().collect();
+            self.mark_terminal_tool_call(task_id.to_string());
+            for child_id in child_ids {
+                self.mark_terminal_tool_call(child_id.clone());
+                self.child_to_parent.remove(&child_id);
             }
+        }
+    }
+
+    fn mark_terminal_tool_call(&mut self, tool_call_id: String) {
+        self.terminal_tool_call_ids.shift_remove(&tool_call_id);
+        self.terminal_tool_call_ids.insert(tool_call_id);
+
+        while self.terminal_tool_call_ids.len() > MAX_TERMINAL_TOOL_CALL_IDS {
+            self.terminal_tool_call_ids.shift_remove_index(0);
         }
     }
 }
@@ -448,6 +506,7 @@ fn merge_tool_call(current: ToolCallData, incoming: ToolCallData) -> ToolCallDat
         id: current.id,
         name: incoming.name,
         arguments: merge_tool_arguments(current.arguments, incoming.arguments),
+        raw_input: incoming.raw_input.or(current.raw_input),
         status: incoming.status,
         result: incoming.result.or(current.result),
         kind: incoming.kind.or(current.kind),
@@ -487,6 +546,7 @@ mod tests {
                 skill_args: None,
                 raw: None,
             },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: Some(ToolKind::Task),
@@ -517,6 +577,7 @@ mod tests {
                 skill_args: None,
                 raw: None,
             },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: Some(ToolKind::Task),
@@ -540,6 +601,7 @@ mod tests {
             arguments: ToolArguments::Read {
                 file_path: Some("/test/file.rs".to_string()),
             },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: Some(ToolKind::Read),
@@ -563,6 +625,7 @@ mod tests {
             arguments: ToolArguments::Read {
                 file_path: Some("/test/file.rs".to_string()),
             },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: Some(ToolKind::Read),
@@ -698,15 +761,22 @@ mod tests {
         };
         let outputs = reconciler.handle_tool_call_update(update);
 
-        // Should emit just the update (not full parent) for performance
+        // Child mutations should re-emit the assembled parent so the frontend
+        // does not need to own parent/child merge semantics.
         assert_eq!(outputs.len(), 1);
         match &outputs[0] {
-            ReconcilerOutput::EmitToolCallUpdate(upd) => {
-                assert_eq!(upd.tool_call_id, "child-1");
-                assert_eq!(upd.status, Some(ToolCallStatus::Completed));
-                assert_eq!(upd.title, Some("Read file.rs".to_string()));
+            ReconcilerOutput::EmitToolCall(parent) => {
+                assert_eq!(parent.id, "task-1");
+                let children = parent
+                    .task_children
+                    .as_ref()
+                    .expect("assembled parent should include child state");
+                assert_eq!(children.len(), 1);
+                assert_eq!(children[0].id, "child-1");
+                assert_eq!(children[0].status, ToolCallStatus::Completed);
+                assert_eq!(children[0].title, Some("Read file.rs".to_string()));
             }
-            _ => panic!("Expected EmitToolCallUpdate, not EmitToolCall"),
+            _ => panic!("Expected EmitToolCall re-emission, not child update"),
         }
 
         // Verify internal state is still updated correctly
@@ -840,6 +910,7 @@ mod tests {
             id: "tool-1".to_string(),
             name: "Read".to_string(),
             arguments: ToolArguments::Read { file_path: None },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: Some(ToolKind::Read),
@@ -860,6 +931,7 @@ mod tests {
             arguments: ToolArguments::Read {
                 file_path: Some("/tmp/example.rs".to_string()),
             },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: Some(ToolKind::Read),
@@ -906,6 +978,7 @@ mod tests {
             arguments: ToolArguments::Other {
                 raw: serde_json::Value::Null,
             },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: None,
@@ -926,6 +999,7 @@ mod tests {
             arguments: ToolArguments::Other {
                 raw: serde_json::Value::Null,
             },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: None,
@@ -961,6 +1035,7 @@ mod tests {
                     content: None,
                 }],
             },
+            raw_input: None,
             status: ToolCallStatus::Pending,
             result: None,
             kind: Some(ToolKind::Edit),
@@ -986,6 +1061,7 @@ mod tests {
                     content: None,
                 }],
             },
+            raw_input: None,
             status: ToolCallStatus::Completed,
             result: None,
             kind: Some(ToolKind::Edit),
@@ -1021,6 +1097,124 @@ mod tests {
             },
             other => panic!("Expected EmitToolCallUpdate, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn late_same_id_tool_call_after_terminal_is_ignored() {
+        let mut reconciler = TaskReconciler::new();
+
+        let first_outputs = reconciler.handle_tool_call(make_regular_tool_call("tool-1"));
+        assert!(matches!(
+            &first_outputs[0],
+            ReconcilerOutput::EmitToolCall(tool_call) if tool_call.id == "tool-1"
+        ));
+
+        let terminal_outputs = reconciler.handle_tool_call_update(ToolCallUpdateData {
+            tool_call_id: "tool-1".to_string(),
+            status: Some(ToolCallStatus::Completed),
+            result: Some(serde_json::json!({"done": true})),
+            content: None,
+            raw_output: None,
+            title: Some("Done".to_string()),
+            locations: None,
+            streaming_input_delta: None,
+            normalized_todos: None,
+            normalized_questions: None,
+            streaming_arguments: None,
+            streaming_plan: None,
+            arguments: None,
+            failure_reason: None,
+        });
+        assert_eq!(terminal_outputs.len(), 1);
+
+        let late_outputs = reconciler.handle_tool_call(make_regular_tool_call("tool-1"));
+        assert!(late_outputs.is_empty());
+    }
+
+    #[test]
+    fn late_same_id_tool_call_update_after_terminal_is_ignored() {
+        let mut reconciler = TaskReconciler::new();
+
+        reconciler.handle_tool_call(make_regular_tool_call("tool-1"));
+        let terminal_outputs = reconciler.handle_tool_call_update(ToolCallUpdateData {
+            tool_call_id: "tool-1".to_string(),
+            status: Some(ToolCallStatus::Completed),
+            result: Some(serde_json::json!({"done": true})),
+            content: None,
+            raw_output: None,
+            title: Some("Done".to_string()),
+            locations: None,
+            streaming_input_delta: None,
+            normalized_todos: None,
+            normalized_questions: None,
+            streaming_arguments: None,
+            streaming_plan: None,
+            arguments: None,
+            failure_reason: None,
+        });
+        assert_eq!(terminal_outputs.len(), 1);
+
+        let late_outputs = reconciler.handle_tool_call_update(ToolCallUpdateData {
+            tool_call_id: "tool-1".to_string(),
+            status: Some(ToolCallStatus::InProgress),
+            result: None,
+            content: None,
+            raw_output: None,
+            title: Some("Late replay".to_string()),
+            locations: None,
+            streaming_input_delta: None,
+            normalized_todos: None,
+            normalized_questions: None,
+            streaming_arguments: None,
+            streaming_plan: None,
+            arguments: None,
+            failure_reason: None,
+        });
+        assert!(late_outputs.is_empty());
+    }
+
+    #[test]
+    fn late_child_update_after_parent_completion_is_ignored() {
+        let mut reconciler = TaskReconciler::new();
+
+        reconciler.handle_tool_call(make_task_tool_call("task-1"));
+        reconciler.handle_tool_call(make_child_tool_call("child-1", "task-1"));
+
+        let terminal_outputs = reconciler.handle_tool_call_update(ToolCallUpdateData {
+            tool_call_id: "task-1".to_string(),
+            status: Some(ToolCallStatus::Completed),
+            result: Some(serde_json::json!({"summary": "done"})),
+            content: None,
+            raw_output: None,
+            title: None,
+            locations: None,
+            streaming_input_delta: None,
+            normalized_todos: None,
+            normalized_questions: None,
+            streaming_arguments: None,
+            streaming_plan: None,
+            arguments: None,
+            failure_reason: None,
+        });
+        assert_eq!(terminal_outputs.len(), 1);
+
+        let late_outputs = reconciler.handle_tool_call_update(ToolCallUpdateData {
+            tool_call_id: "child-1".to_string(),
+            status: Some(ToolCallStatus::Completed),
+            result: Some(serde_json::json!({"content": "late"})),
+            content: None,
+            raw_output: None,
+            title: Some("Late child".to_string()),
+            locations: None,
+            streaming_input_delta: None,
+            normalized_todos: None,
+            normalized_questions: None,
+            streaming_arguments: None,
+            streaming_plan: None,
+            arguments: None,
+            failure_reason: None,
+        });
+        assert!(late_outputs.is_empty());
     }
 
     #[test]
@@ -1178,6 +1372,7 @@ mod tests {
                     content: None,
                 }],
             },
+            raw_input: None,
             status: ToolCallStatus::InProgress,
             result: None,
             kind: Some(ToolKind::Edit),

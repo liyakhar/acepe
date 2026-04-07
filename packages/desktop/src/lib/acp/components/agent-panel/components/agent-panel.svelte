@@ -1672,109 +1672,83 @@ function handleCheckpointRevertComplete() {
 						</div>
 					{/if}
 						<div class="flex shrink-0 flex-col gap-0.5">
-							{#if showInlineErrorCard}
-								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-									<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
-										<AgentErrorCard
-											title="Connection error"
-											summary={errorInfo.details?.split("\n")[0]?.slice(0, 80) ?? "Failed to connect to agent"}
-											details={errorInfo.details ?? "Unknown error"}
-											onRetry={handleRetryConnection}
-											onDismiss={handleDismissError}
-											onCreateIssue={handleCreateIssueFromError}
-										/>
-									</div>
-								</div>
-							{/if}
-							{#if worktreeSetupState?.isVisible}
-								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-									<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
-										<WorktreeSetupCard state={worktreeSetupState} />
-									</div>
-								</div>
-							{/if}
-							{#if agentInstallState}
-								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-									<div class={centeredFullscreenContent ? "w-full max-w-4xl" : ""}>
-										<AgentInstallCard
-											agentId={agentInstallState.agentId}
-											agentName={agentInstallState.agentName}
-											stage={agentInstallState.stage}
-											progress={agentInstallState.progress}
-										/>
-									</div>
-								</div>
-							{/if}
-							{#if sessionId}
-								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-										<PermissionBar
-											sessionId={sessionId}
-											projectPath={effectiveProjectPath ?? sessionProjectPath}
-										/>
-									</div>
-								</div>
-							{/if}
-							{#if effectivePathForGit && (createdPr || createPrRunning || streamingShipData)}
-								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-										{#key prCardRenderKey}
-											<PrStatusCard
-												projectPath={effectivePathForGit}
-												prNumber={createdPr}
-												isCreating={createPrRunning}
-												prDetails={prDetails}
-												fetchError={prFetchError}
-												streamingData={streamingShipData}
-											/>
-										{/key}
-									</div>
-								</div>
-							{/if}
-							{#if modifiedFilesState}
-								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-										<ModifiedFilesHeader
-											{modifiedFilesState}
-											{sessionId}
-											{onEnterReviewMode}
-											onOpenFullscreenReview={onOpenFullscreenReview && sessionId
-												? (_, fileIndex) => onOpenFullscreenReview(sessionId, fileIndex)
-												: undefined}
-											onCreatePr={createdPr ? undefined : (config) => void handleCreatePr(config)}
-											createPrLoading={createPrRunning}
-											{createPrLabel}
-											onMerge={createdPr && prDetails && prDetails.state !== "MERGED"
-												? (strategy) => void handleMergePr(strategy)
-												: undefined}
-											merging={mergePrRunning}
-											prState={prDetails ? prDetails.state : null}
-											{availableAgents}
-											currentAgentId={sessionAgentId ? sessionAgentId : selectedAgentId}
-											currentModelId={sessionCurrentModelId}
-											{effectiveTheme}
-										/>
-									</div>
-								</div>
-							{/if}
 							<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
 								<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-									<TodoHeader
-										{sessionId}
-										entries={sessionEntries}
-										isConnected={sessionHotState?.isConnected ?? false}
-										status={sessionStatus ?? "idle"}
-										isStreaming={sessionIsStreaming}
-									/>
-								</div>
-							</div>
-							{#if sessionId}
-								<div class={centeredFullscreenContent ? "flex justify-center" : ""}>
-									<div class={centeredFullscreenContent ? "w-full max-w-[60%]" : ""}>
-										<QueueCardStrip {sessionId} />
+									<div class="flex flex-col gap-0.5 px-5">
+										{#if showInlineErrorCard}
+											<AgentErrorCard
+												title="Connection error"
+												summary={errorInfo.details?.split("\n")[0]?.slice(0, 80) ?? "Failed to connect to agent"}
+												details={errorInfo.details ?? "Unknown error"}
+												onRetry={handleRetryConnection}
+												onDismiss={handleDismissError}
+												onCreateIssue={handleCreateIssueFromError}
+											/>
+										{/if}
+										{#if worktreeSetupState?.isVisible}
+											<WorktreeSetupCard state={worktreeSetupState} />
+										{/if}
+										{#if agentInstallState}
+											<AgentInstallCard
+												agentId={agentInstallState.agentId}
+												agentName={agentInstallState.agentName}
+												stage={agentInstallState.stage}
+												progress={agentInstallState.progress}
+											/>
+										{/if}
+										{#if sessionId}
+											<PermissionBar
+												sessionId={sessionId}
+												projectPath={effectiveProjectPath ?? sessionProjectPath}
+											/>
+										{/if}
+										{#if effectivePathForGit && (createdPr || createPrRunning || streamingShipData)}
+											{#key prCardRenderKey}
+												<PrStatusCard
+													projectPath={effectivePathForGit}
+													prNumber={createdPr}
+													isCreating={createPrRunning}
+													prDetails={prDetails}
+													fetchError={prFetchError}
+													streamingData={streamingShipData}
+												/>
+											{/key}
+										{/if}
+										{#if modifiedFilesState}
+											<ModifiedFilesHeader
+												{modifiedFilesState}
+												{sessionId}
+												{onEnterReviewMode}
+												onOpenFullscreenReview={onOpenFullscreenReview && sessionId
+													? (_, fileIndex) => onOpenFullscreenReview(sessionId, fileIndex)
+													: undefined}
+												onCreatePr={createdPr ? undefined : (config) => void handleCreatePr(config)}
+												createPrLoading={createPrRunning}
+												{createPrLabel}
+												onMerge={createdPr && prDetails && prDetails.state !== "MERGED"
+													? (strategy) => void handleMergePr(strategy)
+													: undefined}
+												merging={mergePrRunning}
+												prState={prDetails ? prDetails.state : null}
+												{availableAgents}
+												currentAgentId={sessionAgentId ? sessionAgentId : selectedAgentId}
+												currentModelId={sessionCurrentModelId}
+												{effectiveTheme}
+											/>
+										{/if}
+										<TodoHeader
+											{sessionId}
+											entries={sessionEntries}
+											isConnected={sessionHotState?.isConnected ?? false}
+											status={sessionStatus ?? "idle"}
+											isStreaming={sessionIsStreaming}
+										/>
+										{#if sessionId}
+											<QueueCardStrip {sessionId} />
+										{/if}
 									</div>
 								</div>
-							{/if}
+							</div>
 							<div
 								class="shrink-0 px-2 pb-2 {centeredFullscreenContent ? 'flex justify-center' : ''}"
 								data-input-area

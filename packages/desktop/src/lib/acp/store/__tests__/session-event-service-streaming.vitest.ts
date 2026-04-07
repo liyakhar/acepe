@@ -25,9 +25,6 @@ function createMockHandler(): SessionEventHandler {
 		aggregateUserChunk: vi.fn().mockReturnValue(okAsync(undefined)),
 		createToolCallEntry: vi.fn(),
 		updateToolCallEntry: vi.fn(),
-		updateChildInParent: vi.fn(),
-		setStreamingArguments: vi.fn(),
-		getStreamingArguments: vi.fn(),
 		updateAvailableCommands: vi.fn(),
 		ensureStreamingState: vi.fn(),
 		handleStreamEntry: vi.fn(),
@@ -135,10 +132,7 @@ describe("SessionEventService streaming delta handling", () => {
 		);
 	});
 
-	it("should NOT call updateChildInParent for empty string streaming delta", () => {
-		// This is the key test for the bug fix:
-		// Empty string "" is a valid streaming delta and should NOT fall through
-		// to updateChildInParent which would create a placeholder entry
+	it("routes empty string streaming deltas through canonical tool updates", () => {
 		const update: SessionUpdate = {
 			type: "toolCallUpdate",
 			update: {
@@ -156,12 +150,10 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		// Key assertion: should NOT call updateChildInParent
-		// (which creates placeholder entries with name: "Tool", kind: "other")
-		expect(handler.updateChildInParent).not.toHaveBeenCalled();
+		expect(handler.updateToolCallEntry).toHaveBeenCalledWith("session-123", update.update);
 	});
 
-	it("should NOT call updateChildInParent for non-empty streaming delta", () => {
+	it("routes non-empty streaming deltas through canonical tool updates", () => {
 		const update: SessionUpdate = {
 			type: "toolCallUpdate",
 			update: {
@@ -179,11 +171,10 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		// Should NOT call updateChildInParent
-		expect(handler.updateChildInParent).not.toHaveBeenCalled();
+		expect(handler.updateToolCallEntry).toHaveBeenCalledWith("session-123", update.update);
 	});
 
-	it("should call updateChildInParent for tool_call_update without streamingInputDelta", () => {
+	it("should call updateToolCallEntry for tool_call_update without streamingInputDelta", () => {
 		const update: SessionUpdate = {
 			type: "toolCallUpdate",
 			update: {
@@ -201,11 +192,11 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		// Should call updateChildInParent for regular updates (no streaming delta)
-		expect(handler.updateChildInParent).toHaveBeenCalledWith("session-123", update.update);
+		// Should call updateToolCallEntry for regular updates (no streaming delta)
+		expect(handler.updateToolCallEntry).toHaveBeenCalledWith("session-123", update.update);
 	});
 
-	it("should call updateChildInParent when streamingInputDelta is undefined", () => {
+	it("should call updateToolCallEntry when streamingInputDelta is undefined", () => {
 		const update: SessionUpdate = {
 			type: "toolCallUpdate",
 			update: {
@@ -223,8 +214,8 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		// Should call updateChildInParent for regular updates
-		expect(handler.updateChildInParent).toHaveBeenCalled();
+		// Should call updateToolCallEntry for regular updates
+		expect(handler.updateToolCallEntry).toHaveBeenCalled();
 	});
 
 	it("should forward status updates even when streamingInputDelta is present", () => {
@@ -245,7 +236,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateChildInParent).toHaveBeenCalledWith(
+		expect(handler.updateToolCallEntry).toHaveBeenCalledWith(
 			"session-123",
 			expect.objectContaining({
 				toolCallId: "tool-123",
@@ -275,16 +266,23 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.setStreamingArguments).toHaveBeenCalledWith("session-123", "tool-123", {
-			kind: "edit",
-			edits: [{ filePath: "/Users/example/.claude/plans/test.md", oldString: null, newString: null, content: "# Plan" }],
-		});
-		expect(handler.updateChildInParent).toHaveBeenCalledWith(
+		expect(handler.updateToolCallEntry).toHaveBeenCalledWith(
 			"session-123",
 			expect.objectContaining({
 				toolCallId: "tool-123",
 				status: "completed",
 				title: "Write `/Users/example/.claude/plans/test.md`",
+				streamingArguments: {
+					kind: "edit",
+					edits: [
+						{
+							filePath: "/Users/example/.claude/plans/test.md",
+							oldString: null,
+							newString: null,
+							content: "# Plan",
+						},
+					],
+				},
 			})
 		);
 	});
@@ -327,7 +325,7 @@ describe("SessionEventService streaming delta handling", () => {
 		expect(handler.handleStreamComplete).not.toHaveBeenCalled();
 	});
 
-	it("coalesces streamingArguments updates for the same tool before flush", async () => {
+	it("routes streamingArguments updates through the canonical tool update path", () => {
 		markHandlerTurnAsStreaming(handler);
 		const firstUpdate: SessionUpdate = {
 			type: "toolCallUpdate",
@@ -351,20 +349,21 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(firstUpdate, handler);
 		service.handleSessionUpdate(secondUpdate, handler);
 
-		expect(handler.setStreamingArguments).not.toHaveBeenCalled();
-
-		await new Promise((resolve) => setTimeout(resolve, 20));
-
-		expect(handler.setStreamingArguments).toHaveBeenCalledTimes(1);
-		expect(handler.setStreamingArguments).toHaveBeenCalledWith("session-123", "tool-123", {
-			kind: "execute",
-			command: "bun test",
-		});
+		expect(handler.updateToolCallEntry).toHaveBeenCalledTimes(2);
+		expect(handler.updateToolCallEntry).toHaveBeenNthCalledWith(
+			1,
+			"session-123",
+			firstUpdate.update
+		);
+		expect(handler.updateToolCallEntry).toHaveBeenNthCalledWith(
+			2,
+			"session-123",
+			secondUpdate.update
+		);
 	});
 
-	it("flushes coalesced streamingArguments once per tool across multiple tools", async () => {
+	it("routes streamingArguments updates uniformly across multiple tools", () => {
 		markHandlerTurnAsStreaming(handler);
-		const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
 
 		service.handleSessionUpdate(
 			{
@@ -400,25 +399,34 @@ describe("SessionEventService streaming delta handling", () => {
 			handler
 		);
 
-		expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
-		expect(handler.setStreamingArguments).not.toHaveBeenCalled();
-
-		await new Promise((resolve) => setTimeout(resolve, 20));
-
-		expect(handler.setStreamingArguments).toHaveBeenCalledTimes(2);
-		expect(handler.setStreamingArguments).toHaveBeenCalledWith("session-123", "tool-a", {
-			kind: "read",
-			file_path: "/a2",
-		});
-		expect(handler.setStreamingArguments).toHaveBeenCalledWith("session-123", "tool-b", {
-			kind: "read",
-			file_path: "/b",
-		});
-
-		setTimeoutSpy.mockRestore();
+		expect(handler.updateToolCallEntry).toHaveBeenCalledTimes(3);
+		expect(handler.updateToolCallEntry).toHaveBeenNthCalledWith(
+			1,
+			"session-123",
+			expect.objectContaining({
+				toolCallId: "tool-a",
+				streamingArguments: { kind: "read", file_path: "/a" },
+			})
+		);
+		expect(handler.updateToolCallEntry).toHaveBeenNthCalledWith(
+			2,
+			"session-123",
+			expect.objectContaining({
+				toolCallId: "tool-b",
+				streamingArguments: { kind: "read", file_path: "/b" },
+			})
+		);
+		expect(handler.updateToolCallEntry).toHaveBeenNthCalledWith(
+			3,
+			"session-123",
+			expect.objectContaining({
+				toolCallId: "tool-a",
+				streamingArguments: { kind: "read", file_path: "/a2" },
+			})
+		);
 	});
 
-	it("forwards lifecycle fields immediately while coalescing non-terminal streamingArguments", async () => {
+	it("forwards lifecycle fields through canonical tool updates when streamingArguments are present", () => {
 		markHandlerTurnAsStreaming(handler);
 		const update: SessionUpdate = {
 			type: "toolCallUpdate",
@@ -433,7 +441,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateChildInParent).toHaveBeenCalledWith(
+		expect(handler.updateToolCallEntry).toHaveBeenCalledWith(
 			"session-123",
 			expect.objectContaining({
 				toolCallId: "tool-123",
@@ -441,13 +449,9 @@ describe("SessionEventService streaming delta handling", () => {
 				title: "Running command",
 			})
 		);
-		expect(handler.setStreamingArguments).not.toHaveBeenCalled();
-
-		await new Promise((resolve) => setTimeout(resolve, 20));
-		expect(handler.setStreamingArguments).toHaveBeenCalledTimes(1);
 	});
 
-	it("drops queued streamingArguments when terminal status arrives before flush", async () => {
+	it("keeps later terminal updates on the same canonical tool update path", () => {
 		markHandlerTurnAsStreaming(handler);
 		service.handleSessionUpdate(
 			{
@@ -474,16 +478,13 @@ describe("SessionEventService streaming delta handling", () => {
 			handler
 		);
 
-		expect(handler.updateChildInParent).toHaveBeenCalledWith(
+		expect(handler.updateToolCallEntry).toHaveBeenCalledWith(
 			"session-123",
 			expect.objectContaining({
 				toolCallId: "tool-123",
 				status: "completed",
 			})
 		);
-
-		await new Promise((resolve) => setTimeout(resolve, 20));
-		expect(handler.setStreamingArguments).not.toHaveBeenCalled();
 	});
 
 	it("should not aggregate text chunk when session does not exist yet", () => {
@@ -621,9 +622,6 @@ describe("SessionEventService streaming delta handling", () => {
 				.mockImplementation((id: string, chunk) => entryStore.aggregateUserChunk(id, chunk)),
 			createToolCallEntry: vi.fn(),
 			updateToolCallEntry: vi.fn(),
-			updateChildInParent: vi.fn(),
-			setStreamingArguments: vi.fn(),
-			getStreamingArguments: vi.fn(),
 			updateAvailableCommands: vi.fn(),
 			ensureStreamingState: vi.fn(),
 			handleStreamEntry: vi.fn(),
@@ -907,13 +905,13 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, suppressedHandler);
 
-		expect(suppressedHandler.updateChildInParent).toHaveBeenCalledWith(
+		expect(suppressedHandler.updateToolCallEntry).toHaveBeenCalledWith(
 			"session-123",
 			update.update
 		);
 	});
 
-	it("falls back to plan mode update when enter_plan_mode tool call starts", () => {
+	it("does not infer plan mode from enter_plan_mode tool calls", () => {
 		const update: SessionUpdate = {
 			type: "toolCall",
 			session_id: "session-123",
@@ -932,7 +930,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateCurrentMode).toHaveBeenCalledWith("session-123", "plan");
+		expect(handler.updateCurrentMode).not.toHaveBeenCalled();
 	});
 
 	it("creates Cursor tool calls without frontend suppression (backend handles pre-tool dedup)", () => {
@@ -1194,6 +1192,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(firstUpdate, handler);
 		service.handleSessionUpdate(secondUpdate, handler);
 
-		expect(handler.updateChildInParent).toHaveBeenCalledTimes(2);
+		expect(handler.updateToolCallEntry).toHaveBeenCalledTimes(2);
 	});
 });

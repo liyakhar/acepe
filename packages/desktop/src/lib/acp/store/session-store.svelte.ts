@@ -151,7 +151,13 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	constructor() {
 		this.eventService = new SessionEventService();
 		// Create repository with this store as the state reader/writer
-		this.repository = new SessionRepository(this, this, this.entryStore, this.connectionService);
+		this.repository = new SessionRepository(
+			this,
+			this,
+			this.entryStore,
+			this.connectionService,
+			this.hotStateStore
+		);
 		// Create connection manager
 		this.connectionMgr = new SessionConnectionManager(
 			this,
@@ -921,26 +927,6 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	 */
 	updateToolCallEntry(sessionId: string, update: ToolCallUpdate): void {
 		this.messagingSvc.updateToolCallEntry(sessionId, update);
-	}
-
-	/**
-	 * Update a child tool call within its parent's taskChildren array.
-	 * Uses O(1) child-to-parent index for fast lookup.
-	 */
-	updateChildInParent(sessionId: string, childUpdate: ToolCallUpdate): void {
-		this.messagingSvc.updateChildInParent(sessionId, childUpdate);
-	}
-
-	/**
-	 * Store pre-parsed streaming arguments from Rust.
-	 * Used for progressive display of tool arguments as they stream in.
-	 */
-	setStreamingArguments(
-		sessionId: string,
-		toolCallId: string,
-		args: import("$lib/services/converted-session-types.js").ToolArguments
-	): void {
-		this.entryStore.setStreamingArguments(sessionId, toolCallId, args);
 	}
 
 	/**

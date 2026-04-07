@@ -77,13 +77,6 @@ export interface IEntryManager {
 	updateToolCallEntry(sessionId: string, update: ToolCallUpdate): void;
 
 	/**
-	 * Update a child tool call within its parent's taskChildren array.
-	 * Uses O(1) child-to-parent index for fast lookup.
-	 * Falls back to regular updateToolCallEntry if child-parent relationship is unknown.
-	 */
-	updateChildInParent(sessionId: string, childUpdate: ToolCallUpdate): void;
-
-	/**
 	 * Aggregate assistant chunk.
 	 * Appends chunk content to the current assistant entry, creating a new entry if needed.
 	 */

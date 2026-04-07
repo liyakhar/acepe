@@ -10,7 +10,6 @@ import type { ResultAsync } from "neverthrow";
 import type {
 	ConfigOptionData,
 	ContentBlock,
-	ToolArguments,
 	ToolCallData,
 } from "../../services/converted-session-types.js";
 import type { AppError } from "../errors/app-error.js";
@@ -73,27 +72,6 @@ export interface SessionEventHandler {
 	 * Update an existing tool call entry.
 	 */
 	updateToolCallEntry(sessionId: string, update: ToolCallUpdate): void;
-
-	/**
-	 * Update a child tool call within its parent's taskChildren array.
-	 * Uses O(1) child-to-parent index for fast lookup.
-	 * Falls back to updateToolCallEntry if the child-parent relationship is unknown.
-	 */
-	updateChildInParent(sessionId: string, childUpdate: ToolCallUpdate): void;
-
-	/**
-	 * Store pre-parsed streaming arguments from Rust.
-	 * Used for progressive display of tool arguments as they stream in.
-	 * @param sessionId - Session ID (used for cleanup tracking)
-	 * @param toolCallId - Tool call ID
-	 * @param args - Typed ToolArguments from Rust
-	 */
-	setStreamingArguments(sessionId: string, toolCallId: string, args: ToolArguments): void;
-
-	/**
-	 * Get the streaming arguments for a tool call.
-	 */
-	getStreamingArguments(toolCallId: string): ToolArguments | undefined;
 
 	/**
 	 * Update available commands for a session.

@@ -21,7 +21,6 @@ import type {
 import type { AppError } from "../errors/app-error.js";
 import { AgentError } from "../errors/app-error.js";
 import { EventSubscriber } from "../logic/event-subscriber";
-import { CanonicalModeId } from "../types/canonical-mode-id.js";
 import { createPermissionRequest, type PermissionRequest } from "../types/permission";
 import type { QuestionRequest } from "../types/question";
 import { createLogger } from "../utils/logger.js";
@@ -121,12 +120,6 @@ export interface SessionEventServiceCallbacks {
 	onTurnComplete?: (sessionId: string) => void;
 }
 
-interface PendingStreamingArgumentsEntry {
-	sessionId: string;
-	toolCallId: string;
-	args: ToolArguments;
-}
-
 export class SessionEventService {
 	// Event subscriber for session updates
 	private eventSubscriber: EventSubscriber | null = null;
@@ -144,11 +137,7 @@ export class SessionEventService {
 	private static readonly WARN_EVENTS_PER_SECOND = 200;
 	private static readonly WARN_REPLAY_CHUNK_DURATION_MS = 8;
 	private static readonly WARN_PENDING_BACKLOG_SIZE = 100;
-	private static readonly STREAMING_ARGUMENTS_FLUSH_INTERVAL_MS = 16;
 	private pendingFlushTimeouts = new SvelteMap<string, ReturnType<typeof setTimeout>>();
-	private pendingStreamingArguments = new SvelteMap<string, PendingStreamingArgumentsEntry>();
-	private pendingStreamingArgumentsFlushTimeoutId: ReturnType<typeof setTimeout> | null = null;
-	private pendingStreamingArgumentsFlushHandler: SessionEventHandler | null = null;
 	private telemetryIntervalId: ReturnType<typeof setInterval> | null = null;
 	private telemetryWindowStartMs = Date.now();
 	private telemetryEventCount = 0;
@@ -156,11 +145,6 @@ export class SessionEventService {
 	private telemetryMaxPendingBacklog = 0;
 	private telemetryMaxReplayChunkDurationMs = 0;
 	private telemetryMaxReplayChunkSize = 0;
-	private telemetryStreamingArgumentsFastPathUpdates = 0;
-	private telemetryStreamingArgumentsFlushWrites = 0;
-	private telemetryStreamingArgumentsImmediateWrites = 0;
-	private telemetryStreamingArgumentsOverwrites = 0;
-	private telemetryMaxPendingStreamingArguments = 0;
 	private telemetryLastWarnAt = new SvelteMap<
 		"events" | "chunk" | "backlog" | "disconnected",
 		number
@@ -176,16 +160,8 @@ export class SessionEventService {
 	private static readonly REPLAY_FINGERPRINT_TTL_MS = 15 * 60 * 1000;
 	private static readonly REPLAY_CHUNK_DUPLICATE_WINDOW_MS = 3000;
 
-	// Track exit_plan_mode tool call IDs so we can sync mode on completion.
-	// During live sessions, currentModeUpdate handles this. During loadSession
-	// replay, only tool call events arrive — no currentModeUpdate.
-	private exitPlanModeToolCallIds = new SvelteSet<string>();
-
 	// Callbacks for permission/question handling
 	private callbacks: SessionEventServiceCallbacks = {};
-
-	// Handler reference for processing updates (set during initialization)
-	private currentHandler: SessionEventHandler | null = null;
 
 	/**
 	 * Set callbacks for handling permission and question requests.
@@ -221,9 +197,6 @@ export class SessionEventService {
 			this.eventSubscriber = null;
 		}
 
-		// Store handler for RAF-based batch flushes
-		this.currentHandler = handler;
-
 		const subscriber = new EventSubscriber();
 		return subscriber
 			.subscribe((update: SessionUpdate) => {
@@ -239,7 +212,6 @@ export class SessionEventService {
 			.mapErr((error) => {
 				this.eventSubscriber = null;
 				this.eventSubscriptionId = null;
-				this.currentHandler = null;
 				logger.error("Failed to initialize session update subscription", { error });
 				return new AgentError(
 					"initializeSessionUpdates",
@@ -252,22 +224,12 @@ export class SessionEventService {
 	 * Cleanup session update subscription.
 	 */
 	cleanupSessionUpdates(): void {
-		// Clear handler reference
-		this.currentHandler = null;
-
 		for (const timeoutId of this.pendingFlushTimeouts.values()) {
 			clearTimeout(timeoutId);
 		}
 		this.pendingFlushTimeouts.clear();
-		if (this.pendingStreamingArgumentsFlushTimeoutId !== null) {
-			clearTimeout(this.pendingStreamingArgumentsFlushTimeoutId);
-			this.pendingStreamingArgumentsFlushTimeoutId = null;
-		}
-		this.pendingStreamingArguments.clear();
-		this.pendingStreamingArgumentsFlushHandler = null;
 		this.replaySuppressedSessionIds.clear();
 		this.replayFingerprintState.clear();
-		this.exitPlanModeToolCallIds.clear();
 		this.stopTelemetryReporter();
 
 		if (this.eventSubscriber && this.eventSubscriptionId) {
@@ -354,60 +316,6 @@ export class SessionEventService {
 
 		this.recordInboundEvent();
 
-		if (update.type === "toolCallUpdate" && isTerminalToolCallStatus(update.update.status)) {
-			this.dropPendingStreamingArguments(sessionId, update.update.toolCallId);
-		}
-
-		// Fast path for streaming tool call updates - skip logging but process directly
-		// Rust sends pre-parsed streaming_arguments; no client-side parsing needed
-		const hasStreamingUpdate =
-			update.type === "toolCallUpdate" &&
-			(update.update.streamingArguments != null || update.update.streamingInputDelta != null);
-		if (hasStreamingUpdate) {
-			if (!this.hasKnownSession(handler, sessionId)) {
-				this.bufferPendingEvent(sessionId, update);
-				return;
-			}
-
-			if (update.update.streamingArguments != null) {
-				this.telemetryStreamingArgumentsFastPathUpdates++;
-				if (isTerminalToolCallStatus(update.update.status)) {
-					handler.setStreamingArguments(
-						sessionId,
-						update.update.toolCallId,
-						update.update.streamingArguments
-					);
-					this.telemetryStreamingArgumentsImmediateWrites++;
-				} else {
-					this.queueStreamingArgumentsUpdate(
-						sessionId,
-						update.update.toolCallId,
-						update.update.streamingArguments,
-						handler
-					);
-				}
-			}
-
-			// Some providers may include lifecycle fields (status/result/title/etc.)
-			// in the same update as streaming deltas. Forward those updates so we
-			// do not drop completion state while still handling streaming fast-path.
-			const hasLifecycleFields =
-				update.update.status != null ||
-				update.update.result != null ||
-				update.update.content != null ||
-				update.update.rawOutput != null ||
-				update.update.title != null ||
-				update.update.locations != null ||
-				update.update.arguments != null ||
-				update.update.failureReason != null ||
-				update.update.normalizedTodos != null ||
-				update.update.normalizedQuestions != null;
-			if (hasLifecycleFields) {
-				handler.updateChildInParent(sessionId, update.update);
-			}
-			return;
-		}
-
 		// Fast path for message/thought text chunks - process directly
 		// Rust batcher already accumulates text at 16ms intervals
 		if (update.type === "agentMessageChunk" || update.type === "agentThoughtChunk") {
@@ -480,38 +388,20 @@ export class SessionEventService {
 					toolKind: update.tool_call.kind,
 				});
 				handler.createToolCallEntry(sessionId, update.tool_call);
-				// Some agents do not emit currentModeUpdate when entering plan mode.
-				// Keep UI mode state synchronized from canonical enter_plan_mode tool calls.
-				if (update.tool_call.kind === "enter_plan_mode" && update.tool_call.status !== "failed") {
-					handler.updateCurrentMode(sessionId, CanonicalModeId.PLAN);
-				}
-				// Track exit_plan_mode tool calls so we can sync mode on completion.
-				// Can't set mode here because exit requires user approval first.
-				if (update.tool_call.kind === "exit_plan_mode") {
-					this.exitPlanModeToolCallIds.add(update.tool_call.id);
-				}
 				handler.ensureStreamingState(sessionId);
 				break;
 
 			case "toolCallUpdate":
 				// Streaming input deltas are handled by fast path above
 				// Regular tool call update (status, result, etc.)
-				// Use updateChildInParent which handles both children (O(1) lookup)
-				// and regular tool calls (falls back to updateToolCallEntry)
+				// Apply canonical backend-owned tool updates directly; the frontend no longer
+				// reconstructs child mutations from child-only deltas.
 				logger.debug("Updating tool call entry (may be child)", {
 					sessionId,
 					toolCallId: update.update.toolCallId,
 					status: update.update.status,
 				});
-				handler.updateChildInParent(sessionId, update.update);
-				// Sync mode when exit_plan_mode completes (needed during loadSession
-				// replay since the agent doesn't emit currentModeUpdate for history).
-				if (
-					update.update.status === "completed" &&
-					this.exitPlanModeToolCallIds.delete(update.update.toolCallId)
-				) {
-					handler.updateCurrentMode(sessionId, CanonicalModeId.BUILD);
-				}
+				handler.updateToolCallEntry(sessionId, update.update);
 				break;
 
 			case "permissionRequest":
@@ -986,11 +876,6 @@ export class SessionEventService {
 		this.telemetryMaxPendingBacklog = 0;
 		this.telemetryMaxReplayChunkDurationMs = 0;
 		this.telemetryMaxReplayChunkSize = 0;
-		this.telemetryStreamingArgumentsFastPathUpdates = 0;
-		this.telemetryStreamingArgumentsFlushWrites = 0;
-		this.telemetryStreamingArgumentsImmediateWrites = 0;
-		this.telemetryStreamingArgumentsOverwrites = 0;
-		this.telemetryMaxPendingStreamingArguments = 0;
 
 		this.telemetryIntervalId = setInterval(() => {
 			const now = Date.now();
@@ -1006,11 +891,6 @@ export class SessionEventService {
 					maxPendingBacklog: this.telemetryMaxPendingBacklog,
 					maxReplayChunkDurationMs: Number(this.telemetryMaxReplayChunkDurationMs.toFixed(2)),
 					maxReplayChunkSize: this.telemetryMaxReplayChunkSize,
-					streamingArgsFastPathUpdates: this.telemetryStreamingArgumentsFastPathUpdates,
-					streamingArgsFlushWrites: this.telemetryStreamingArgumentsFlushWrites,
-					streamingArgsImmediateWrites: this.telemetryStreamingArgumentsImmediateWrites,
-					streamingArgsOverwrites: this.telemetryStreamingArgumentsOverwrites,
-					maxPendingStreamingArgs: this.telemetryMaxPendingStreamingArguments,
 				});
 			}
 
@@ -1028,11 +908,6 @@ export class SessionEventService {
 			this.telemetryMaxPendingBacklog = 0;
 			this.telemetryMaxReplayChunkDurationMs = 0;
 			this.telemetryMaxReplayChunkSize = 0;
-			this.telemetryStreamingArgumentsFastPathUpdates = 0;
-			this.telemetryStreamingArgumentsFlushWrites = 0;
-			this.telemetryStreamingArgumentsImmediateWrites = 0;
-			this.telemetryStreamingArgumentsOverwrites = 0;
-			this.telemetryMaxPendingStreamingArguments = 0;
 		}, SessionEventService.TELEMETRY_REPORT_INTERVAL_MS);
 	}
 
@@ -1045,65 +920,6 @@ export class SessionEventService {
 
 	private recordInboundEvent(): void {
 		this.telemetryEventCount++;
-	}
-
-	private buildStreamingArgumentsKey(sessionId: string, toolCallId: string): string {
-		return `${sessionId}\u0000${toolCallId}`;
-	}
-
-	private queueStreamingArgumentsUpdate(
-		sessionId: string,
-		toolCallId: string,
-		args: ToolArguments,
-		handler: SessionEventHandler
-	): void {
-		const key = this.buildStreamingArgumentsKey(sessionId, toolCallId);
-		if (this.pendingStreamingArguments.has(key)) {
-			this.telemetryStreamingArgumentsOverwrites++;
-		}
-		this.pendingStreamingArguments.set(key, { sessionId, toolCallId, args });
-		this.telemetryMaxPendingStreamingArguments = Math.max(
-			this.telemetryMaxPendingStreamingArguments,
-			this.pendingStreamingArguments.size
-		);
-		this.scheduleStreamingArgumentsFlush(handler);
-	}
-
-	private dropPendingStreamingArguments(sessionId: string, toolCallId: string): void {
-		const key = this.buildStreamingArgumentsKey(sessionId, toolCallId);
-		this.pendingStreamingArguments.delete(key);
-	}
-
-	private scheduleStreamingArgumentsFlush(handler: SessionEventHandler): void {
-		this.pendingStreamingArgumentsFlushHandler = handler;
-		if (this.pendingStreamingArgumentsFlushTimeoutId !== null) {
-			return;
-		}
-
-		this.pendingStreamingArgumentsFlushTimeoutId = setTimeout(() => {
-			this.pendingStreamingArgumentsFlushTimeoutId = null;
-			this.flushPendingStreamingArguments();
-		}, SessionEventService.STREAMING_ARGUMENTS_FLUSH_INTERVAL_MS);
-	}
-
-	private flushPendingStreamingArguments(): void {
-		if (this.pendingStreamingArguments.size === 0) {
-			return;
-		}
-
-		const handler = this.pendingStreamingArgumentsFlushHandler;
-		if (!handler) {
-			this.pendingStreamingArguments.clear();
-			return;
-		}
-
-		const entries = Array.from(this.pendingStreamingArguments.values());
-		this.pendingStreamingArguments.clear();
-
-		for (const entry of entries) {
-			handler.setStreamingArguments(entry.sessionId, entry.toolCallId, entry.args);
-			this.telemetryStreamingArgumentsFlushWrites++;
-		}
 	}
 
 	private warnWithCooldown(

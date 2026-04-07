@@ -58,7 +58,7 @@ export type ContentChunk = { content: ContentBlock }
 /**
  * Tool call data.
  */
-export type ToolCallData = { id: string; name: string; arguments: ToolArguments; status: ToolCallStatus; result?: JsonValue | null; kind?: ToolKind | null; title?: string | null; locations?: ToolCallLocation[] | null; skillMeta?: SkillMeta | null; 
+export type ToolCallData = { id: string; name: string; arguments: ToolArguments; rawInput?: JsonValue | null; status: ToolCallStatus; result?: JsonValue | null; kind?: ToolKind | null; title?: string | null; locations?: ToolCallLocation[] | null; skillMeta?: SkillMeta | null; 
 /**
  * Normalized questions extracted from question tool calls.
  * This provides a unified format for questions across all agents.
@@ -476,7 +476,7 @@ export type StoredEntry = { type: "user"; id: string; message: StoredUserMessage
  * Result of converting a full session to stored entries.
  * Returned by get_converted_session command.
  */
-export type ConvertedSession = { entries: StoredEntry[]; stats: SessionStats; title: string; createdAt: string }
+export type ConvertedSession = { entries: StoredEntry[]; stats: SessionStats; title: string; createdAt: string; currentModeId?: string | null }
 
 /**
  * Response for session plan request.

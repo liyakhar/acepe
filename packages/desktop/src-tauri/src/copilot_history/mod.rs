@@ -391,6 +391,7 @@ fn merge_replay_tool_call(current: ToolCallData, incoming: ToolCallData) -> Tool
         id: current.id,
         name: incoming.name,
         arguments: merge_replay_tool_arguments(current.arguments, incoming.arguments),
+        raw_input: incoming.raw_input.or(current.raw_input),
         status: incoming.status,
         result: incoming.result.or(current.result),
         kind: incoming.kind.or(current.kind),
@@ -500,6 +501,7 @@ impl ReplayAccumulator {
                 .first_event_timestamp
                 .unwrap_or_else(|| Utc::now().to_rfc3339()),
             entries: self.entries,
+            current_mode_id: None,
         }
     }
 
@@ -662,6 +664,7 @@ mod tests {
                             arguments: ToolArguments::Read {
                                 file_path: Some("/repo/README.md".to_string()),
                             },
+                            raw_input: None,
                             status: ToolCallStatus::Pending,
                             result: None,
                             kind: Some(ToolKind::Read),
@@ -733,6 +736,7 @@ mod tests {
             arguments: ToolArguments::Read {
                 file_path: Some("/repo/README.md".to_string()),
             },
+            raw_input: None,
             status: ToolCallStatus::Completed,
             result: Some(serde_json::json!({ "content": "Acepe" })),
             kind: Some(ToolKind::Read),
@@ -768,6 +772,7 @@ mod tests {
                                 skill_args: None,
                                 raw: None,
                             },
+                            raw_input: None,
                             status: ToolCallStatus::Pending,
                             result: None,
                             kind: Some(ToolKind::Task),
@@ -801,6 +806,7 @@ mod tests {
                                 skill_args: None,
                                 raw: None,
                             },
+                            raw_input: None,
                             status: ToolCallStatus::Pending,
                             result: None,
                             kind: Some(ToolKind::Task),

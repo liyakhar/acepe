@@ -115,7 +115,6 @@ function createEntryManager(preloadedSessionIds: Set<string>): IEntryManager {
 		clearEntries: () => {},
 		createToolCallEntry: () => {},
 		updateToolCallEntry: () => {},
-		updateChildInParent: () => {},
 		aggregateAssistantChunk: () => {
 			throw new Error("Not implemented for test");
 		},

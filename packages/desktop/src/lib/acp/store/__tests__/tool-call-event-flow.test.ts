@@ -20,6 +20,26 @@ import type { SessionEntry } from "../../application/dto/session.js";
 
 import { SessionEntryStore } from "../session-entry-store.svelte.js";
 
+function applyStreamingArguments(
+	entryStore: SessionEntryStore,
+	sessionId: string,
+	toolCallId: string,
+	streamingArguments: Parameters<SessionEntryStore["updateToolCallEntry"]>[1]["streamingArguments"]
+): void {
+	entryStore.updateToolCallEntry(sessionId, {
+		toolCallId,
+		status: null,
+		result: null,
+		content: null,
+		rawOutput: null,
+		title: null,
+		locations: null,
+		normalizedTodos: null,
+		normalizedQuestions: null,
+		streamingArguments,
+	});
+}
+
 /**
  * Create a mock tool_call SessionUpdate matching what Rust sends.
  *
@@ -493,7 +513,7 @@ describe("Tool Call Event Flow", () => {
 			});
 
 			// Step 2: Streaming deltas arrive — streaming args accumulate
-			entryStore.setStreamingArguments(sessionId, toolCallId, {
+			applyStreamingArguments(entryStore, sessionId, toolCallId, {
 				kind: "edit" as const,
 				edits: [{ filePath: "/path/to/plan.md", oldString: null, newString: null, content: "# The Plan\n\nThis is the full plan content..." }],
 			});
@@ -750,7 +770,7 @@ describe("Tool Call Event Flow", () => {
 			});
 
 			// Set streaming args
-			entryStore.setStreamingArguments(sessionId, toolCallId, {
+			applyStreamingArguments(entryStore, sessionId, toolCallId, {
 				kind: "read",
 				file_path: "/some/file.ts",
 			});
@@ -797,11 +817,11 @@ describe("Tool Call Event Flow", () => {
 			});
 
 			// Log replay step 2: progressive streaming deltas produce parsed arguments.
-			entryStore.setStreamingArguments(sessionId, toolCallId, {
+			applyStreamingArguments(entryStore, sessionId, toolCallId, {
 				kind: "edit",
 				edits: [{ filePath, oldString: null, newString: null, content: null }],
 			});
-			entryStore.setStreamingArguments(sessionId, toolCallId, {
+			applyStreamingArguments(entryStore, sessionId, toolCallId, {
 				kind: "edit",
 				edits: [{ filePath, oldString: "# Test Plan", newString: "# Test Plan\n\nThis is a test plan...", content: null }],
 			});

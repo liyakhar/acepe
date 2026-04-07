@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { FilePathBadge } from "@acepe/ui/file-path-badge";
-	import { EmbeddedPanelHeader, HeaderActionCell, HeaderTitleCell } from "@acepe/ui/panel-header";
 	import {
 		ArrowsLeftRight,
 		File,
@@ -65,72 +64,67 @@
 	{@const verb = compactDisplay.label}
 	{@const purpleColor = Colors[COLOR_NAMES.PURPLE]}
 	<div class="w-full">
-		<div class="overflow-hidden rounded-md border border-border bg-muted/30 permission-card-enter">
-			<EmbeddedPanelHeader class={command ? "bg-transparent" : "!border-b-0 bg-transparent"}>
-				<HeaderTitleCell compactPadding>
-					<div class="flex min-w-0 items-center gap-1.5 w-full">
-						<span
-							class="inline-flex shrink-0 items-center justify-center"
-							aria-label={verb}
-							title={verb}
-						>
-							{#if kind === "edit"}
-								<PencilSimple weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-							{:else if kind === "read"}
-								<File weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-							{:else if kind === "execute"}
-								<Terminal weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-							{:else if kind === "search"}
-								<MagnifyingGlass weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-							{:else if kind === "fetch" || kind === "web_search"}
-								<GlobeHemisphereWest weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-							{:else if kind === "delete"}
-								<Trash weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-							{:else if kind === "move"}
-								<ArrowsLeftRight weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-							{:else}
-								<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
-							{/if}
-						</span>
-						<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
-						{#if filePath}
-							<div class="min-w-0 flex-1 cursor-pointer">
-								<FilePathBadge {filePath} interactive={false} size="sm" />
-							</div>
-						{/if}
+		<div
+			class="w-full flex items-center justify-between px-3 py-1 rounded-md border border-border bg-muted/30 permission-card-enter {command ? 'rounded-b-none border-b-0' : ''}"
+		>
+			<div class="flex min-w-0 items-center gap-1.5 w-full text-[0.6875rem]">
+				<span
+					class="inline-flex shrink-0 items-center justify-center"
+					aria-label={verb}
+					title={verb}
+				>
+					{#if kind === "edit"}
+						<PencilSimple weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "read"}
+						<File weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "execute"}
+						<Terminal weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "search"}
+						<MagnifyingGlass weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "fetch" || kind === "web_search"}
+						<GlobeHemisphereWest weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "delete"}
+						<Trash weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else if kind === "move"}
+						<ArrowsLeftRight weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+					{:else}
+						<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
+					{/if}
+				</span>
+				<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
+				{#if filePath}
+					<div class="min-w-0 flex-1 cursor-pointer">
+						<FilePathBadge {filePath} interactive={false} size="sm" />
 					</div>
-				</HeaderTitleCell>
-				<HeaderActionCell withDivider={false}>
-					<div class="flex items-center px-1">
-						<PermissionActionBar permission={currentPermission} inline hideHeader />
-					</div>
-				</HeaderActionCell>
-				{#if sessionProgress}
-					<HeaderActionCell withDivider={false}>
-						<div class="flex items-center px-1.5">
-							<VoiceDownloadProgress
-								ariaLabel={progressLabel}
-								compact={true}
-								label=""
-								percent={sessionProgress.total > 0 ? Math.round(((sessionProgress.completed + 1) / sessionProgress.total) * 100) : 0}
-								segmentCount={sessionProgress.total}
-								showPercent={false}
-							/>
-						</div>
-					</HeaderActionCell>
 				{/if}
-			</EmbeddedPanelHeader>
+			</div>
+
+			<div class="ml-2 flex shrink-0 items-center gap-1">
+				<PermissionActionBar permission={currentPermission} inline hideHeader />
+				{#if sessionProgress}
+					<div class="flex items-center">
+						<VoiceDownloadProgress
+							ariaLabel={progressLabel}
+							compact={true}
+							label=""
+							percent={sessionProgress.total > 0 ? Math.round(((sessionProgress.completed + 1) / sessionProgress.total) * 100) : 0}
+							segmentCount={sessionProgress.total}
+							showPercent={false}
+						/>
+					</div>
+				{/if}
+			</div>
+		</div>
 
 			<!-- Command display for execute permissions -->
 			{#if command}
-				<div class="max-h-[72px] overflow-y-auto border-t border-border/50 bg-muted/30 px-2 py-1">
+				<div class="max-h-[72px] overflow-y-auto rounded-b-md border border-border border-t-0 bg-muted/30 px-2 py-0.5">
 					<code class="block min-w-0 whitespace-pre-wrap break-words font-mono text-[10px] text-foreground/70"
 						>$ {command}</code
 					>
 				</div>
 			{/if}
 
-		</div>
 	</div>
 {/if}
 

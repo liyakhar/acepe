@@ -275,6 +275,7 @@ fn translate_item_started(
             id: id.to_string(),
             name: fields.name,
             arguments: fields.arguments,
+            raw_input: None,
             status,
             result: None,
             kind: Some(fields.kind),

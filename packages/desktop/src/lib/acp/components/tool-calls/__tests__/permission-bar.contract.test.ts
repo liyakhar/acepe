@@ -15,20 +15,17 @@ describe("permission bar contract", () => {
 	});
 
 	it("renders the permission actions inside a single header row with optional command below", () => {
-		expect(source).toContain('import { EmbeddedPanelHeader, HeaderActionCell, HeaderTitleCell } from "@acepe/ui/panel-header";');
-		expect(source).toContain("<EmbeddedPanelHeader");
-		expect(source).toContain("<HeaderTitleCell");
+		expect(source).toContain(
+			'class="w-full flex items-center justify-between px-3 py-1 rounded-md border border-border bg-muted/30 permission-card-enter'
+		);
 		expect(source).toContain("<PermissionActionBar permission={currentPermission} inline hideHeader />");
 		expect(source).toContain("<VoiceDownloadProgress");
-		expect(source).not.toContain('<div class="flex items-center justify-end">');
+		expect(source).toContain('<div class="ml-2 flex shrink-0 items-center gap-1">');
 	});
 
 	it("matches the shared header chrome instead of using a custom inset card skin", () => {
 		expect(source).toContain('<div class="w-full">');
-		expect(source).toContain(
-			'<div class="overflow-hidden rounded-md border border-border bg-muted/30 permission-card-enter">'
-		);
-		expect(source).toContain('<EmbeddedPanelHeader class={command ? "bg-transparent" : "!border-b-0 bg-transparent"}>');
+		expect(source).toContain('rounded-md border border-border bg-muted/30');
 	});
 
 	it("does not cap the permission toolbar width", () => {
@@ -36,6 +33,6 @@ describe("permission bar contract", () => {
 	});
 
 	it("removes the divider before the tally bar", () => {
-		expect(source).toMatch(/<HeaderActionCell withDivider=\{false\}>[\s\S]*<VoiceDownloadProgress/);
+		expect(source).not.toContain("HeaderActionCell");
 	});
 });

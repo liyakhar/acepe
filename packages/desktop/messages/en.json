@@ -753,7 +753,7 @@
 	"pr_card_retry": "Retry",
 	"pr_card_merge_failed": "Merge failed: {error}",
 	"splash_welcome": "Welcome to Acepe",
-	"splash_description": "Your unified interface for AI coding agents. Work with Claude, Codex, and other agents in parallel, all in one place.",
+	"splash_description": "Your unified interface for AI coding agents. Work with Claude, Copilot, Codex, and other agents in parallel, all in one place.",
 	"splash_description_secondary": "",
 	"splash_enter": "Get Started",
 	"changelog_title": "What's New in",

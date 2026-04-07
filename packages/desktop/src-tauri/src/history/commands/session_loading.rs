@@ -43,6 +43,46 @@ fn apply_session_title_metadata(
     session
 }
 
+fn derive_current_mode_id_from_entries(
+    entries: &[crate::session_jsonl::types::StoredEntry],
+) -> Option<String> {
+    let mut current_mode_id: Option<String> = None;
+
+    for entry in entries {
+        let crate::session_jsonl::types::StoredEntry::ToolCall { message, .. } = entry else {
+            continue;
+        };
+
+        let Some(kind) = message.kind else {
+            continue;
+        };
+
+        match kind {
+            crate::acp::session_update::ToolKind::EnterPlanMode
+                if message.status != crate::acp::session_update::ToolCallStatus::Failed =>
+            {
+                current_mode_id = Some("plan".to_string());
+            }
+            crate::acp::session_update::ToolKind::ExitPlanMode
+                if message.status == crate::acp::session_update::ToolCallStatus::Completed =>
+            {
+                current_mode_id = Some("build".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    current_mode_id
+}
+
+fn apply_derived_current_mode_metadata(mut session: ConvertedSession) -> ConvertedSession {
+    if session.current_mode_id.is_none() {
+        session.current_mode_id = derive_current_mode_id_from_entries(&session.entries);
+    }
+
+    session
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_unified_session(
@@ -328,6 +368,7 @@ pub async fn get_unified_session(
 
     let result = result
         .or_else(|| Some(ConvertedSession::empty(&session_id)))
+        .map(apply_derived_current_mode_metadata)
         .map(|session| apply_session_title_metadata(session, session_metadata.as_ref()));
 
     tracing::info!(
@@ -340,10 +381,13 @@ pub async fn get_unified_session(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_session_title_metadata, fallback_project_path_for_history_load};
+    use super::{
+        apply_session_title_metadata, fallback_project_path_for_history_load,
+    };
+    use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
     use crate::acp::types::CanonicalAgentId;
     use crate::db::repository::SessionMetadataRow;
-    use crate::session_jsonl::types::{ConvertedSession, SessionStats};
+    use crate::session_jsonl::types::{ConvertedSession, SessionStats, StoredEntry};
 
     fn make_session(title: &str) -> ConvertedSession {
         ConvertedSession {
@@ -351,6 +395,35 @@ mod tests {
             stats: SessionStats::default(),
             title: title.to_string(),
             created_at: "2026-04-06T00:00:00Z".to_string(),
+            current_mode_id: None,
+        }
+    }
+
+    fn make_tool_call_entry(id: &str, kind: ToolKind, status: ToolCallStatus) -> StoredEntry {
+        StoredEntry::ToolCall {
+            id: id.to_string(),
+            message: ToolCallData {
+                id: id.to_string(),
+                name: kind.as_str().to_string(),
+                arguments: ToolArguments::PlanMode {
+                    mode: Some("plan".to_string()),
+                },
+                raw_input: None,
+                status,
+                result: None,
+                kind: Some(kind),
+                title: None,
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                normalized_todos: None,
+                parent_tool_use_id: None,
+                task_children: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+            },
+            timestamp: None,
         }
     }
 
@@ -389,6 +462,53 @@ mod tests {
             apply_session_title_metadata(make_session("Original Transcript Title"), Some(&row));
 
         assert_eq!(converted.title, "Autonomous Mode");
+    }
+
+    #[test]
+    fn derives_plan_mode_from_enter_plan_mode_entries() {
+        let session = ConvertedSession {
+            entries: vec![make_tool_call_entry(
+                "tool-enter-plan-1",
+                ToolKind::EnterPlanMode,
+                ToolCallStatus::Completed,
+            )],
+            stats: SessionStats::default(),
+            title: "Plan session".to_string(),
+            created_at: "2026-04-06T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+
+        assert_eq!(
+            super::derive_current_mode_id_from_entries(&session.entries),
+            Some("plan".to_string())
+        );
+    }
+
+    #[test]
+    fn keeps_plan_mode_when_exit_plan_mode_is_not_completed() {
+        let session = ConvertedSession {
+            entries: vec![
+                make_tool_call_entry(
+                    "tool-enter-plan-1",
+                    ToolKind::EnterPlanMode,
+                    ToolCallStatus::Completed,
+                ),
+                make_tool_call_entry(
+                    "tool-exit-plan-1",
+                    ToolKind::ExitPlanMode,
+                    ToolCallStatus::Pending,
+                ),
+            ],
+            stats: SessionStats::default(),
+            title: "Pending exit".to_string(),
+            created_at: "2026-04-06T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+
+        assert_eq!(
+            super::derive_current_mode_id_from_entries(&session.entries),
+            Some("plan".to_string())
+        );
     }
 }
 

@@ -56,6 +56,7 @@ fn parse_task_children_from_metadata(
             arguments: ToolArguments::Other {
                 raw: serde_json::json!({}),
             },
+            raw_input: None,
             skill_meta: None,
             locations: None,
             normalized_questions: None,
@@ -161,6 +162,7 @@ pub fn convert_opencode_messages_to_session(
         stats,
         title,
         created_at,
+        current_mode_id: None,
     })
 }
 
@@ -306,6 +308,7 @@ fn convert_opencode_assistant_message(
                         result: result.map(serde_json::Value::String),
                         kind: Some(kind),
                         arguments,
+                        raw_input: None,
                         skill_meta: None, // OpenCode doesn't support skill meta yet
                         locations: None,
                         normalized_questions,

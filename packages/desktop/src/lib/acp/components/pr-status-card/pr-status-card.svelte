@@ -113,7 +113,7 @@
 </script>
 
 {#if isVisible}
-	<div class="w-full px-5">
+	<div class="w-full">
 		<!-- Header bar -->
 		<div
 			role="button"

@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::acp::session_update::{
-    PlanData, QuestionItem, SessionUpdate, TodoItem, ToolArguments, ToolCallUpdateData,
+    PlanData, QuestionItem, SessionUpdate, TodoItem, ToolArguments, ToolCallData,
+    ToolCallUpdateData,
     TurnErrorData,
 };
 use crate::acp::types::ContentBlock;
@@ -113,10 +114,12 @@ impl StreamingDeltaBatcher {
             // Tool call boundaries must not overtake buffered message chunks.
             // Flush pending session text first to preserve stream order in UI.
             SessionUpdate::ToolCall {
+                tool_call,
                 session_id: Some(session_id),
                 ..
             } => {
                 let mut results = self.flush_message_buffers_for_session(session_id);
+                results.extend(self.flush_tool_deltas_for_call(tool_call));
                 results.push(update);
                 results
             }
@@ -385,6 +388,40 @@ impl StreamingDeltaBatcher {
     /// Flush a specific tool's buffer if it exists.
     fn flush_one_delta(&mut self, tool_call_id: &str) -> Option<SessionUpdate> {
         self.emit_tool_delta(tool_call_id).into_iter().next()
+    }
+
+    fn collect_tool_call_ids(tool_call: &ToolCallData, tool_call_ids: &mut Vec<String>) {
+        tool_call_ids.push(tool_call.id.clone());
+
+        if let Some(children) = &tool_call.task_children {
+            for child in children {
+                Self::collect_tool_call_ids(child, tool_call_ids);
+            }
+        }
+    }
+
+    fn flush_tool_deltas_for_call(&mut self, tool_call: &ToolCallData) -> Vec<SessionUpdate> {
+        let mut tool_call_ids = Vec::new();
+        Self::collect_tool_call_ids(tool_call, &mut tool_call_ids);
+
+        let mut buffered_ids: Vec<_> = tool_call_ids
+            .into_iter()
+            .filter_map(|tool_call_id| {
+                self.delta_buffers
+                    .get(&tool_call_id)
+                    .map(|buffer| (tool_call_id, buffer.first_received))
+            })
+            .collect();
+        buffered_ids.sort_by_key(|(_, first_received)| *first_received);
+
+        let mut results = Vec::new();
+        for (tool_call_id, _) in buffered_ids {
+            if let Some(flushed) = self.flush_one_delta(&tool_call_id) {
+                results.push(flushed);
+            }
+        }
+
+        results
     }
 
     /// Total number of active buffers.
@@ -781,6 +818,7 @@ mod tests {
                 arguments: ToolArguments::Execute {
                     command: Some("echo ok".to_string()),
                 },
+                raw_input: None,
                 status: crate::acp::session_update::ToolCallStatus::Pending,
                 result: None,
                 kind: Some(crate::acp::session_update::ToolKind::Execute),
@@ -791,6 +829,58 @@ mod tests {
                 normalized_todos: None,
                 parent_tool_use_id: None,
                 task_children: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+            },
+            session_id: Some("session-1".to_string()),
+        }
+    }
+
+    fn make_parent_tool_call_with_child(parent_id: &str, child_id: &str) -> SessionUpdate {
+        SessionUpdate::ToolCall {
+            tool_call: crate::acp::session_update::ToolCallData {
+                id: parent_id.to_string(),
+                name: "Task".to_string(),
+                arguments: ToolArguments::Think {
+                    description: Some("Parent task".to_string()),
+                    prompt: Some("Run a child tool".to_string()),
+                    subagent_type: Some("task".to_string()),
+                    skill: None,
+                    skill_args: None,
+                    raw: None,
+                },
+                raw_input: None,
+                status: crate::acp::session_update::ToolCallStatus::InProgress,
+                result: None,
+                kind: Some(crate::acp::session_update::ToolKind::Task),
+                title: Some("Task".to_string()),
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                normalized_todos: None,
+                parent_tool_use_id: None,
+                task_children: Some(vec![ToolCallData {
+                    id: child_id.to_string(),
+                    name: "Read".to_string(),
+                    arguments: ToolArguments::Read {
+                        file_path: Some("/tmp/example.txt".to_string()),
+                    },
+                    raw_input: None,
+                    status: crate::acp::session_update::ToolCallStatus::InProgress,
+                    result: None,
+                    kind: Some(crate::acp::session_update::ToolKind::Read),
+                    title: Some("Read file".to_string()),
+                    locations: None,
+                    skill_meta: None,
+                    normalized_questions: None,
+                    normalized_todos: None,
+                    parent_tool_use_id: Some(parent_id.to_string()),
+                    task_children: None,
+                    question_answer: None,
+                    awaiting_plan_approval: false,
+                    plan_approval_request_id: None,
+                }]),
                 question_answer: None,
                 awaiting_plan_approval: false,
                 plan_approval_request_id: None,
@@ -1160,6 +1250,40 @@ mod tests {
 
         assert!(matches!(result[0], SessionUpdate::AgentMessageChunk { .. }));
         assert!(matches!(result[1], SessionUpdate::ToolCall { .. }));
+    }
+
+    #[test]
+    fn flushes_pending_child_delta_before_parent_tool_call_boundary() {
+        let mut batcher = StreamingDeltaBatcher::new();
+
+        let _ = batcher.process(make_delta_update("child-1", "{\"path\":"));
+        let _ = batcher.process(make_delta_update("child-1", "\"/tmp/example.txt\"}"));
+        assert!(batcher.has_pending());
+
+        let result = batcher.process(make_parent_tool_call_with_child("parent-1", "child-1"));
+        assert_eq!(result.len(), 2);
+
+        if let SessionUpdate::ToolCallUpdate { update, .. } = &result[0] {
+            assert_eq!(update.tool_call_id, "child-1");
+            assert_eq!(
+                update.streaming_input_delta.as_deref(),
+                Some("{\"path\":\"/tmp/example.txt\"}")
+            );
+        } else {
+            panic!("Expected flushed child ToolCallUpdate");
+        }
+
+        if let SessionUpdate::ToolCall { tool_call, .. } = &result[1] {
+            assert_eq!(tool_call.id, "parent-1");
+            let children = tool_call
+                .task_children
+                .as_ref()
+                .expect("parent snapshot should include child");
+            assert_eq!(children.len(), 1);
+            assert_eq!(children[0].id, "child-1");
+        } else {
+            panic!("Expected parent ToolCall snapshot");
+        }
     }
 
     #[test]

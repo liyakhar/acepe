@@ -414,6 +414,7 @@ fn normalize_cursor_create_plan(
                 arguments: ToolArguments::Other {
                     raw: params.clone(),
                 },
+                raw_input: Some(params.clone()),
                 status: ToolCallStatus::Completed,
                 result: None,
                 kind: Some(ToolKind::CreatePlan),

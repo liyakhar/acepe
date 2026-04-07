@@ -19,7 +19,7 @@ const progressPercent = $derived(progress < 0 ? 0 : progress > 1 ? 100 : progres
 
 </script>
 
-<div class="w-full px-5">
+<div class="w-full">
 	<div
 		role="button"
 		tabindex="0"

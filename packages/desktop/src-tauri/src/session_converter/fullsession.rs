@@ -221,6 +221,7 @@ pub(crate) fn convert_full_session_to_entries_with_agent(
         stats: session.stats.clone(),
         title: session.title.clone(),
         created_at: session.created_at.clone(),
+        current_mode_id: None,
     }
 }
 
@@ -421,6 +422,7 @@ fn convert_assistant_message(
                         result: result.map(serde_json::Value::String),
                         kind: Some(kind),
                         arguments: parse_tool_arguments_for_agent(agent_type, name, input, kind),
+                        raw_input: Some(input.clone()),
                         skill_meta,
                         locations: None,
                         normalized_questions,

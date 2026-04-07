@@ -120,7 +120,7 @@ describe("PrStatusCard", () => {
 
 		await fireEvent.click(header as HTMLElement);
 
-		const cardRoot = container.querySelector(".w-full.px-5.mb-1");
+		const cardRoot = container.firstElementChild;
 		expect(cardRoot).not.toBeNull();
 		expect(cardRoot?.firstElementChild).toBe(header);
 		expect(cardRoot?.lastElementChild).not.toBe(header);

@@ -3,7 +3,7 @@
 //! [`CcSdkClaudeClient`] communicates with the Claude Code CLI via the `cc_sdk` Rust
 //! crate directly — no Bun subprocess or JSON-RPC stdio indirection.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,7 +16,6 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
-use crate::acp::agent_context::with_agent;
 use crate::acp::client::{
     InitializeResponse, ListSessionsResponse, NewSessionResponse, ResumeSessionResponse,
 };
@@ -31,9 +30,9 @@ use crate::acp::model_display::get_transformer;
 use crate::acp::parsers::{get_parser, AgentType};
 use crate::acp::provider::AgentProvider;
 use crate::acp::session_update::{
-    build_tool_call_update_from_raw, parse_normalized_questions, QuestionData, QuestionItem,
-    RawToolCallUpdateInput, SessionUpdate, ToolCallStatus, ToolCallUpdateData, ToolReference,
-    TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
+    parse_normalized_questions, QuestionData, QuestionItem, SessionUpdate, ToolCallStatus,
+    ToolCallUpdateData, ToolReference, TurnErrorData, TurnErrorInfo, TurnErrorKind,
+    TurnErrorSource,
 };
 use crate::acp::streaming_log::{log_debug_event, log_emitted_event, log_streaming_event};
 use crate::acp::task_reconciler::TaskReconciler;
@@ -1204,24 +1203,6 @@ struct StreamingBridgeContext {
     db: Option<DbConn>,
 }
 
-fn note_pending_stream_tool_call(pending_tool_call_ids: &mut VecDeque<String>, tool_call_id: &str) {
-    if pending_tool_call_ids
-        .iter()
-        .any(|pending_tool_call_id| pending_tool_call_id == tool_call_id)
-    {
-        return;
-    }
-
-    pending_tool_call_ids.push_back(tool_call_id.to_string());
-}
-
-fn resolve_pending_stream_tool_call(
-    pending_tool_call_ids: &mut VecDeque<String>,
-    tool_call_id: &str,
-) {
-    pending_tool_call_ids.retain(|pending_tool_call_id| pending_tool_call_id != tool_call_id);
-}
-
 fn terminal_tool_call_id(update: &SessionUpdate) -> Option<&str> {
     match update {
         SessionUpdate::ToolCallUpdate { update, .. }
@@ -1234,42 +1215,6 @@ fn terminal_tool_call_id(update: &SessionUpdate) -> Option<&str> {
         }
         _ => None,
     }
-}
-
-async fn take_synthetic_tool_completions_for_resumed_tool_turn(
-    pending_tool_call_ids: &mut VecDeque<String>,
-    pending_questions: &Arc<Mutex<HashMap<String, PendingQuestionState>>>,
-    session_id: &str,
-) -> Vec<SessionUpdate> {
-    let active_question_ids = pending_questions
-        .lock()
-        .await
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>();
-
-    let mut retained_tool_call_ids = VecDeque::new();
-    let mut synthetic_updates = Vec::new();
-
-    while let Some(tool_call_id) = pending_tool_call_ids.pop_front() {
-        if active_question_ids.contains(&tool_call_id) {
-            retained_tool_call_ids.push_back(tool_call_id);
-            continue;
-        }
-
-        synthetic_updates.push(SessionUpdate::ToolCallUpdate {
-            update: ToolCallUpdateData {
-                tool_call_id,
-                status: Some(ToolCallStatus::Completed),
-                ..Default::default()
-            },
-            session_id: Some(session_id.to_string()),
-        });
-    }
-
-    *pending_tool_call_ids = retained_tool_call_ids;
-
-    synthetic_updates
 }
 
 async fn run_streaming_bridge(
@@ -1291,9 +1236,6 @@ async fn run_streaming_bridge(
     tracing::info!(session_id = %session_id, "cc-sdk bridge: started, waiting for messages...");
     let mut message_count: u64 = 0;
     let mut turn_stream_state = crate::acp::parsers::cc_sdk_bridge::CcSdkTurnStreamState::default();
-    let mut stream_tool_blocks: HashMap<u64, (String, String)> = HashMap::new();
-    let mut pending_tool_call_ids = VecDeque::new();
-    let mut awaiting_tool_turn_resume = false;
     let mut observed_provider_session_id: Option<String> = None;
 
     while let Some(result) = stream.next().await {
@@ -1316,191 +1258,6 @@ async fn run_streaming_bridge(
                 message_count += 1;
                 if let Ok(raw_json) = serde_json::to_value(&msg) {
                     log_streaming_event(&session_id, &raw_json);
-                }
-                if let cc_sdk::Message::StreamEvent { event, .. } = &msg {
-                    if let Some(event_type) = event.get("type").and_then(|value| value.as_str()) {
-                        if event_type == "message_start" && awaiting_tool_turn_resume {
-                            let synthetic_updates =
-                                take_synthetic_tool_completions_for_resumed_tool_turn(
-                                    &mut pending_tool_call_ids,
-                                    &pending_questions,
-                                    &session_id,
-                                )
-                                .await;
-
-                            for synthetic_update in synthetic_updates {
-                                dispatch_cc_sdk_update(
-                                    &dispatcher,
-                                    &task_reconciler,
-                                    provider.as_ref(),
-                                    synthetic_update,
-                                );
-                            }
-
-                            awaiting_tool_turn_resume = false;
-                        }
-
-                        if event_type == "content_block_start" {
-                            if let Some(block) = event.get("content_block") {
-                                let is_tool_use =
-                                    block.get("type").and_then(|v| v.as_str()) == Some("tool_use");
-                                if is_tool_use {
-                                    let index = event.get("index").and_then(|v| v.as_u64());
-                                    let id = block.get("id").and_then(|v| v.as_str());
-                                    let name = block.get("name").and_then(|v| v.as_str());
-                                    if let (Some(index), Some(id), Some(name)) = (index, id, name) {
-                                        stream_tool_blocks
-                                            .insert(index, (id.to_string(), name.to_string()));
-                                        note_pending_stream_tool_call(
-                                            &mut pending_tool_call_ids,
-                                            id,
-                                        );
-                                        tool_call_tracker
-                                            .record_with_input(
-                                                name.to_string(),
-                                                id.to_string(),
-                                                block.get("input"),
-                                            )
-                                            .await;
-                                        approval_callback_tracker
-                                            .note_tool_use_started(&session_id, name, id)
-                                            .await;
-                                        let approval_callback_tracker_clone =
-                                            approval_callback_tracker.clone();
-                                        let session_id_clone = session_id.clone();
-                                        let tool_call_id = id.to_string();
-                                        tokio::spawn(async move {
-                                            tokio::time::sleep(Duration::from_secs(2)).await;
-                                            approval_callback_tracker_clone
-                                                .warn_if_callback_missing(
-                                                    &session_id_clone,
-                                                    &tool_call_id,
-                                                )
-                                                .await;
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                        if event_type == "content_block_delta" {
-                            if let Some(delta_type) = event
-                                .get("delta")
-                                .and_then(|delta| delta.get("type"))
-                                .and_then(|value| value.as_str())
-                            {
-                                if delta_type == "text_delta" {
-                                    turn_stream_state.saw_text_delta = true;
-                                }
-                                if delta_type == "thinking_delta" {
-                                    turn_stream_state.saw_thinking_delta = true;
-                                }
-                                if delta_type == "input_json_delta" {
-                                    let index = event.get("index").and_then(|v| v.as_u64());
-                                    let partial_json = event
-                                        .get("delta")
-                                        .and_then(|delta| delta.get("partial_json"))
-                                        .and_then(|value| value.as_str());
-                                    if let (Some(index), Some(partial_json)) = (index, partial_json)
-                                    {
-                                        if let Some((tool_call_id, tool_name)) =
-                                            stream_tool_blocks.get(&index)
-                                        {
-                                            let raw_update = RawToolCallUpdateInput {
-                                                id: tool_call_id.clone(),
-                                                status: None,
-                                                result: None,
-                                                content: None,
-                                                title: None,
-                                                locations: None,
-                                                streaming_input_delta: Some(
-                                                    partial_json.to_string(),
-                                                ),
-                                                tool_name: Some(tool_name.clone()),
-                                                raw_input: None,
-                                                kind: None,
-                                            };
-                                            let parser = get_parser(AgentType::ClaudeCode);
-                                            let update = with_agent(AgentType::ClaudeCode, || {
-                                                build_tool_call_update_from_raw(
-                                                    parser,
-                                                    raw_update,
-                                                    Some(session_id.as_str()),
-                                                )
-                                            });
-                                            dispatch_cc_sdk_update(
-                                                &dispatcher,
-                                                &task_reconciler,
-                                                provider.as_ref(),
-                                                SessionUpdate::ToolCallUpdate {
-                                                    update,
-                                                    session_id: Some(session_id.clone()),
-                                                },
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if event_type == "message_delta" {
-                            awaiting_tool_turn_resume = event
-                                .get("delta")
-                                .and_then(|delta| delta.get("stop_reason"))
-                                .and_then(|value| value.as_str())
-                                == Some("tool_use");
-                        }
-                        // Extract model from message_start event
-                        if event_type == "message_start" {
-                            if let Some(model) = event
-                                .get("message")
-                                .and_then(|m| m.get("model"))
-                                .and_then(|v| v.as_str())
-                            {
-                                turn_stream_state.model_id = Some(model.to_string());
-                            }
-                        }
-                        // Track tool_name → tool_use_id for the permission handler.
-                        // content_block_start with type "tool_use" arrives on the
-                        // stream BEFORE the CLI control channel fires can_use_tool.
-                        if event_type == "content_block_start" {
-                            if let Some(block) = event.get("content_block") {
-                                let is_tool_use =
-                                    block.get("type").and_then(|v| v.as_str()) == Some("tool_use");
-                                if is_tool_use {
-                                    if let (Some(id), Some(name)) = (
-                                        block.get("id").and_then(|v| v.as_str()),
-                                        block.get("name").and_then(|v| v.as_str()),
-                                    ) {
-                                        tool_call_tracker
-                                            .record_with_input(
-                                                name.to_string(),
-                                                id.to_string(),
-                                                block.get("input"),
-                                            )
-                                            .await;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // Extract model from Assistant message as fallback
-                if let cc_sdk::Message::Assistant { message, .. } = &msg {
-                    for block in &message.content {
-                        if let cc_sdk::ContentBlock::ToolUse(tool_use) = block {
-                            tool_call_tracker
-                                .record_with_input(
-                                    tool_use.name.clone(),
-                                    tool_use.id.clone(),
-                                    Some(&tool_use.input),
-                                )
-                                .await;
-                        }
-                    }
-                    if let Some(model) = &message.model {
-                        if turn_stream_state.model_id.is_none() {
-                            turn_stream_state.model_id = Some(model.clone());
-                        }
-                    }
                 }
                 let msg_type = match &msg {
                     cc_sdk::Message::Assistant { .. } => "Assistant",
@@ -1554,11 +1311,11 @@ async fn run_streaming_bridge(
                 );
 
                 let updates =
-                    crate::acp::parsers::cc_sdk_bridge::translate_cc_sdk_message_with_turn_state(
+                    crate::acp::parsers::cc_sdk_bridge::translate_cc_sdk_message_with_mut_turn_state(
                         crate::acp::parsers::AgentType::ClaudeCode,
                         msg,
                         Some(session_id.clone()),
-                        turn_stream_state.clone(),
+                        &mut turn_stream_state,
                     );
                 tracing::info!(
                     session_id = %session_id,
@@ -1566,8 +1323,37 @@ async fn run_streaming_bridge(
                     "cc-sdk bridge: translated to session updates"
                 );
                 for mut update in updates {
+                    if let SessionUpdate::ToolCall { tool_call, .. } = &update {
+                        if matches!(
+                            tool_call.status,
+                            ToolCallStatus::Pending | ToolCallStatus::InProgress
+                        ) {
+                            tool_call_tracker
+                                .record_with_input(
+                                    tool_call.name.clone(),
+                                    tool_call.id.clone(),
+                                    tool_call.raw_input.as_ref(),
+                                )
+                                .await;
+                            approval_callback_tracker
+                                .note_tool_use_started(&session_id, &tool_call.name, &tool_call.id)
+                                .await;
+                            let approval_callback_tracker_clone = approval_callback_tracker.clone();
+                            let session_id_clone = session_id.clone();
+                            let tool_call_id = tool_call.id.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                approval_callback_tracker_clone
+                                    .warn_if_callback_missing(&session_id_clone, &tool_call_id)
+                                    .await;
+                            });
+                        }
+                    }
                     if let Some(tool_call_id) = terminal_tool_call_id(&update) {
-                        resolve_pending_stream_tool_call(&mut pending_tool_call_ids, tool_call_id);
+                        crate::acp::parsers::cc_sdk_bridge::resolve_pending_tool_call(
+                            &mut turn_stream_state,
+                            tool_call_id,
+                        );
                     }
                     if !annotate_pending_question_request(&bridge, &pending_questions, &mut update)
                         .await
@@ -1596,7 +1382,6 @@ async fn run_streaming_bridge(
                         update,
                         SessionUpdate::TurnComplete { .. } | SessionUpdate::TurnError { .. }
                     ) {
-                        awaiting_tool_turn_resume = false;
                         // Reset per-turn stream state but preserve model_id across turns
                         let preserved_model = turn_stream_state.model_id.clone();
                         turn_stream_state =
@@ -2531,6 +2316,7 @@ mod tests {
                 arguments: ToolArguments::Other {
                     raw: serde_json::Value::Null,
                 },
+                raw_input: None,
                 status: ToolCallStatus::InProgress,
                 result: None,
                 kind: Some(ToolKind::Task),
@@ -2566,6 +2352,11 @@ mod tests {
                         "subagent_type": "Explore"
                     })),
                 },
+                raw_input: Some(serde_json::json!({
+                    "description": "Find all tool call components",
+                    "prompt": "Inventory tool call cards in the codebase",
+                    "subagent_type": "Explore"
+                })),
                 status: ToolCallStatus::InProgress,
                 result: None,
                 kind: Some(ToolKind::Task),
@@ -2604,6 +2395,7 @@ mod tests {
                 id: id.to_string(),
                 name: name.to_string(),
                 arguments,
+                raw_input: None,
                 status: ToolCallStatus::InProgress,
                 result: None,
                 kind: Some(kind),
@@ -4399,6 +4191,7 @@ mod tests {
                     arguments: ToolArguments::Read {
                         file_path: Some("/tmp/file.rs".to_string()),
                     },
+                    raw_input: None,
                     status: ToolCallStatus::InProgress,
                     result: None,
                     kind: Some(ToolKind::Read),
@@ -4448,6 +4241,7 @@ mod tests {
                     arguments: ToolArguments::Read {
                         file_path: Some("/tmp/file.rs".to_string()),
                     },
+                    raw_input: None,
                     status: ToolCallStatus::InProgress,
                     result: None,
                     kind: Some(ToolKind::Read),
@@ -4699,6 +4493,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn production_client_source_does_not_translate_input_json_delta_inline() {
+        let source = include_str!("cc_sdk_client.rs");
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(
+            !production_source.contains("if delta_type == \"input_json_delta\""),
+            "cc_sdk_client should not own Claude input_json_delta translation once the provider edge is canonical"
+        );
+    }
+
+    #[test]
+    fn production_client_source_does_not_read_tool_input_from_raw_content_block_start() {
+        let source = include_str!("cc_sdk_client.rs");
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(
+            !production_source.contains("block.get(\"input\")"),
+            "cc_sdk_client should consume canonical tool raw_input from ToolCall events instead of reading raw content_block_start payloads"
+        );
+    }
+
+    #[test]
+    fn production_client_source_does_not_own_tool_turn_resume_state() {
+        let source = include_str!("cc_sdk_client.rs");
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(
+            !production_source.contains("awaiting_tool_turn_resume"),
+            "cc_sdk_client should not own Claude message_delta/message_start tool-turn resume state"
+        );
+    }
+
     #[tokio::test]
     async fn run_streaming_bridge_completes_unresolved_tool_use_when_next_message_starts() {
         let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
@@ -4808,6 +4635,91 @@ mod tests {
         assert!(
             has_completion,
             "expected the next assistant message_start to settle the prior ToolSearch call"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_streaming_bridge_completes_unresolved_assistant_tool_use_without_raw_start() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
+        let context = StreamingBridgeContext {
+            dispatcher,
+            bridge: Arc::new(PermissionBridge::new()),
+            tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+            provider,
+            db: None,
+        };
+
+        let stream = futures::stream::iter(vec![
+            Ok(cc_sdk::Message::Assistant {
+                message: cc_sdk::AssistantMessage {
+                    content: vec![cc_sdk::ContentBlock::ToolUse(cc_sdk::ToolUseContent {
+                        id: "toolu_search_assistant_only".to_string(),
+                        name: "ToolSearch".to_string(),
+                        input: serde_json::json!({
+                            "query": "select:AskUserQuestion",
+                            "max_results": 1
+                        }),
+                    })],
+                    model: Some("claude-sonnet-4-6".to_string()),
+                    usage: None,
+                    error: None,
+                    parent_tool_use_id: None,
+                },
+            }),
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "message-delta-tool-use".to_string(),
+                session_id: "provider-session".to_string(),
+                event: serde_json::json!({
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "tool_use",
+                        "stop_sequence": null
+                    }
+                }),
+                parent_tool_use_id: None,
+            }),
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "message-stop-tool-use".to_string(),
+                session_id: "provider-session".to_string(),
+                event: serde_json::json!({ "type": "message_stop" }),
+                parent_tool_use_id: None,
+            }),
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "msg-start-2".to_string(),
+                session_id: "provider-session".to_string(),
+                event: serde_json::json!({
+                    "type": "message_start",
+                    "message": {
+                        "content": [],
+                        "model": "claude-sonnet-4-6"
+                    }
+                }),
+                parent_tool_use_id: None,
+            }),
+        ]);
+
+        run_streaming_bridge(stream, "session-bridge".to_string(), context).await;
+
+        let captured = sink.lock().expect("sink lock");
+        let has_completion = captured.iter().any(|event| match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
+                matches!(
+                    update.as_ref(),
+                    SessionUpdate::ToolCallUpdate { update, .. }
+                        if update.tool_call_id == "toolu_search_assistant_only"
+                            && update.status == Some(ToolCallStatus::Completed)
+                )
+            }
+            _ => false,
+        });
+
+        assert!(
+            has_completion,
+            "expected assistant-only tool calls to be tracked for synthetic completion on the next message_start"
         );
     }
 

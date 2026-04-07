@@ -1,5 +1,5 @@
 <script lang="ts">
-import { ArrowRightIcon, PillButton } from "@acepe/ui";
+import { Button, PillButton } from "@acepe/ui";
 import {
 	GrainGradientShapes,
 	type GrainGradientUniforms,
@@ -14,22 +14,24 @@ import { ResultAsync } from "neverthrow";
 import { onDestroy, onMount } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import { toast } from "svelte-sonner";
-import { AgentCard } from "$lib/acp/components/agent-card/index.js";
 import AgentIcon from "$lib/acp/components/agent-icon.svelte";
-import { getAgentIcon } from "$lib/acp/constants/thread-list-constants.js";
 import { getAgentPreferencesStore, getAgentStore } from "$lib/acp/store/index.js";
-import { useTheme } from "$lib/components/theme/context.svelte.js";
+import Logo from "$lib/components/logo.svelte";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
-import logo from "../../../../../../../assets/logo.svg?url";
 import type { ProjectWithSessions } from "../add-repository/open-project-dialog-props.js";
 
+import {
+	shouldShowDiscoveredProject,
+	sortProjectsBySessionCount,
+} from "../add-repository/project-discovery.js";
 import ProjectTable from "../add-repository/project-table.svelte";
 import type { WelcomeScreenProps } from "./welcome-screen-props.js";
 
 const SPLASH_AGENTS: { id: string; alt: string }[] = [
 	{ id: "claude-code", alt: "Claude" },
+	{ id: "copilot", alt: "GitHub Copilot" },
 	{ id: "codex", alt: "Codex" },
 	{ id: "cursor", alt: "Cursor" },
 	{ id: "opencode", alt: "OpenCode" },
@@ -50,8 +52,6 @@ let shaderMountRef: ShaderMount | null = null;
 
 const agentStore = getAgentStore();
 const agentPreferencesStore = getAgentPreferencesStore();
-const themeState = useTheme();
-const theme = $derived(themeState.effectiveTheme);
 const filteredProjects = $derived(
 	filterProjectsBySelectedAgents(onboardingProjects, onboardingSelectedAgents)
 );
@@ -74,7 +74,7 @@ function advanceFromSplash() {
 }
 
 function getOnboardingDefaultAgents(): string[] {
-	return agentStore.agents.map((agent) => agent.id);
+	return [];
 }
 
 function toggleOnboardingAgent(agentId: string): void {
@@ -162,8 +162,8 @@ async function loadOnboardingProjects(): Promise<void> {
 	pathsResult.match(
 		(projectInfos) => {
 			const deduped = new Map<string, ProjectWithSessions>();
-			for (const info of projectInfos) {
-				if (info.path === "/" || info.path === "global") continue;
+			const discoverableProjectInfos = projectInfos.filter(shouldShowDiscoveredProject);
+			for (const info of discoverableProjectInfos) {
 				if (deduped.has(info.path)) continue;
 				deduped.set(info.path, {
 					path: info.path,
@@ -180,21 +180,33 @@ async function loadOnboardingProjects(): Promise<void> {
 				void tauriClient.history.countSessionsForProject(path).match(
 					(counts) => {
 						const total = Object.values(counts.counts).reduce((sum, count) => sum + count, 0);
-						onboardingProjects = onboardingProjects.map((project) =>
-							project.path === path
-								? {
-										...project,
-										agentCounts: new Map(
-											Object.entries(counts.counts).map(([agentId, count]) => [agentId, count])
-										),
-										totalSessions: total,
-									}
-								: project
+						onboardingProjects = sortProjectsBySessionCount(
+							onboardingProjects.map((project) =>
+								project.path === path
+									? {
+											path: project.path,
+											name: project.name,
+											agentCounts: new Map(
+												Object.entries(counts.counts).map(([agentId, count]) => [agentId, count])
+											),
+											totalSessions: total,
+										}
+									: project
+							)
 						);
 					},
 					() => {
-						onboardingProjects = onboardingProjects.map((project) =>
-							project.path === path ? { ...project, totalSessions: "error" } : project
+						onboardingProjects = sortProjectsBySessionCount(
+							onboardingProjects.map((project) =>
+								project.path === path
+									? {
+											path: project.path,
+											name: project.name,
+											agentCounts: project.agentCounts,
+											totalSessions: "error",
+										}
+									: project
+							)
 						);
 					}
 				);
@@ -300,11 +312,11 @@ async function finishOnboarding(): Promise<void> {
 	{#if onboardingStep === "splash"}
 		<!-- Splash: 16:9 card with welcome message -->
 		<div
-			class="flex flex-col rounded-2xl bg-background/80 p-8 w-[640px] aspect-video"
+			class="flex aspect-video w-[640px] flex-col rounded-2xl bg-background p-8"
 		>
 			<!-- Top Left: Logo + Label -->
 			<div class="flex items-center gap-3">
-				<img src={logo} alt="Acepe Logo" class="w-8 h-8" />
+				<Logo class="h-8 w-8 rounded-[20%]" />
 				<span class="text-lg font-semibold tracking-wider text-foreground">ACEPE</span>
 			</div>
 
@@ -323,23 +335,31 @@ async function finishOnboarding(): Promise<void> {
 						<AgentIcon agentId={agent.id} size={20} class="opacity-60" />
 					{/each}
 				</div>
-				<PillButton variant="primary" onclick={advanceFromSplash}>
-					{#snippet trailingIcon()}
-						<ArrowRightIcon size="lg" />
-					{/snippet}
-					{m.splash_enter()}
-				</PillButton>
+				<div class="flex items-center rounded-xl border border-border/50 bg-muted overflow-hidden text-[0.6875rem] shrink-0">
+					<Button
+						variant="headerAction"
+						size="headerAction"
+						class="group/open-pr h-9 gap-2 rounded-none border-0 bg-transparent px-3 text-sm shadow-none"
+						onclick={advanceFromSplash}
+					>
+						<span>{m.splash_enter()}</span>
+					</Button>
+				</div>
 			</div>
 		</div>
 	{:else}
 		<!-- Agents / Projects / Scanning steps -->
-		<div class="flex items-center gap-3 mb-8">
-			<img src={logo} alt="Acepe Logo" class="w-10 h-10" />
-			<h1 class="font-sans font-semibold text-3xl tracking-tight text-foreground">ACEPE</h1>
-		</div>
+		{#if onboardingStep !== "projects"}
+			<div class="flex items-center gap-3 mb-8">
+				<Logo class="h-10 w-10 rounded-[20%]" />
+				<h1 class="font-sans font-semibold text-3xl tracking-tight text-foreground">ACEPE</h1>
+			</div>
+		{/if}
 
 		<div
-			class="w-full max-w-3xl border border-border/50 rounded-xl bg-background p-6"
+			class="w-full rounded-xl border border-border/50 bg-background {onboardingStep === 'projects'
+				? 'mx-auto flex max-h-[min(560px,calc(100vh-10rem))] max-w-2xl flex-col overflow-hidden p-5'
+				: 'max-w-3xl p-6'}"
 		>
 			{#if onboardingStep === "agents"}
 				<div class="space-y-6">
@@ -350,40 +370,44 @@ async function finishOnboarding(): Promise<void> {
 						</p>
 					</div>
 
-					<div class="grid grid-cols-2 gap-4 w-fit mx-auto">
+					<div class="grid w-fit grid-cols-3 grid-rows-2 gap-4 mx-auto">
 						{#each agentStore.agents as agent (agent.id)}
-							<AgentCard
-								agentId={agent.id}
-							agentName={agent.name}
-							iconSrc={getAgentIcon(agent.id, theme)}
-							isSelected={onboardingSelectedAgents.includes(agent.id)}
-							onclick={() => toggleOnboardingAgent(agent.id)}
-						/>
+							<Button
+								variant="headerAction"
+								size="headerAction"
+								class="h-14 w-14 justify-center rounded-xl border-0 bg-transparent p-0 shadow-none"
+								aria-label={agent.name}
+								aria-pressed={onboardingSelectedAgents.includes(agent.id)}
+								title={agent.name}
+								onclick={() => toggleOnboardingAgent(agent.id)}
+							>
+								<AgentIcon
+									agentId={agent.id}
+									size={28}
+									class={onboardingSelectedAgents.includes(agent.id)
+										? "opacity-100 transition-opacity"
+										: "opacity-50 transition-opacity"}
+								/>
+							</Button>
 						{/each}
 					</div>
 
 					<div class="flex justify-end gap-3">
-						<PillButton
-							variant="primary"
-							disabled={onboardingSelectedAgents.length === 0}
-							onclick={() => (onboardingStep = "projects")}
-						>
-							{#snippet trailingIcon()}
-								<ArrowRightIcon size="lg" />
-							{/snippet}
-							{m.welcome_continue()}
-						</PillButton>
+						<div class="flex items-center rounded-xl border border-border/50 bg-muted overflow-hidden text-[0.6875rem] shrink-0">
+							<Button
+								variant="headerAction"
+								size="headerAction"
+								class="h-9 rounded-none border-0 bg-transparent px-3 text-sm shadow-none"
+								disabled={onboardingSelectedAgents.length === 0}
+								onclick={() => (onboardingStep = "projects")}
+							>
+								{m.common_confirm()}
+							</Button>
+						</div>
 					</div>
 				</div>
 			{:else if onboardingStep === "projects"}
-				<div class="space-y-4">
-					<div class="text-center space-y-2">
-						<h2 class="text-2xl font-semibold">{m.welcome_onboarding_select_projects()}</h2>
-						<p class="text-sm text-muted-foreground">
-							{m.welcome_onboarding_select_projects_description()}
-						</p>
-					</div>
-
+				<div class="flex min-h-0 flex-col space-y-4">
 					{#if filteredProjects.length === 0 && !onboardingProjectsLoading}
 						<div class="flex flex-col items-center justify-center py-12 text-center space-y-3">
 							<p class="text-sm text-muted-foreground">{m.onboarding_projects_no_match()}</p>
@@ -392,7 +416,7 @@ async function finishOnboarding(): Promise<void> {
 							</p>
 						</div>
 					{:else}
-						<div class="max-h-[320px] overflow-y-auto">
+						<div class="min-h-0 flex-1 overflow-y-auto">
 							<ProjectTable
 								projects={filteredProjects}
 								loading={onboardingProjectsLoading}
@@ -404,19 +428,30 @@ async function finishOnboarding(): Promise<void> {
 					{/if}
 
 					<div class="flex justify-between pt-4">
-						<PillButton variant="outline" onclick={() => (onboardingStep = "agents")}>
-							{m.common_back()}
-						</PillButton>
+						<div class="flex items-center rounded-xl border border-border/50 bg-muted overflow-hidden text-[0.6875rem] shrink-0">
+							<Button
+								variant="headerAction"
+								size="headerAction"
+								class="h-9 rounded-none border-0 bg-transparent px-3 text-sm shadow-none"
+								onclick={() => (onboardingStep = "agents")}
+							>
+								{m.common_back()}
+							</Button>
+						</div>
 						<div class="flex gap-3">
 							<PillButton variant="ghost" onclick={() => finishOnboarding()}>
 								{m.welcome_skip_for_now()}
 							</PillButton>
-							<PillButton variant="primary" onclick={() => finishOnboarding()}>
-								{#snippet trailingIcon()}
-									<ArrowRightIcon size="lg" />
-								{/snippet}
-								{m.welcome_finish()}
-							</PillButton>
+							<div class="flex items-center rounded-xl border border-border/50 bg-muted overflow-hidden text-[0.6875rem] shrink-0">
+								<Button
+									variant="headerAction"
+									size="headerAction"
+									class="h-9 rounded-none border-0 bg-transparent px-3 text-sm shadow-none"
+									onclick={() => finishOnboarding()}
+								>
+									{m.welcome_finish()}
+								</Button>
+							</div>
 						</div>
 					</div>
 				</div>

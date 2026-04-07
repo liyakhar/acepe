@@ -44,6 +44,8 @@ pub struct ProjectInfo {
     pub path: String,
     /// Agent source that discovered this project
     pub agent_id: String,
+    /// Whether the discovered path is a git worktree instead of the main project root
+    pub is_worktree: bool,
 }
 
 /// Session counts for a specific project, keyed by agent ID.

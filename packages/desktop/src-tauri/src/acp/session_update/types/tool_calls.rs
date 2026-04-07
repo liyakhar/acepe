@@ -239,6 +239,8 @@ pub struct ToolCallData {
     pub id: String,
     pub name: String,
     pub arguments: ToolArguments,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_input: Option<serde_json::Value>,
     pub status: ToolCallStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
@@ -429,6 +431,7 @@ impl<'de> serde::Deserialize<'de> for ToolCallData {
             id: String,
             name: String,
             arguments: serde_json::Value,
+            raw_input: Option<serde_json::Value>,
             status: ToolCallStatus,
             kind: Option<ToolKind>,
             result: Option<serde_json::Value>,
@@ -493,6 +496,7 @@ impl<'de> serde::Deserialize<'de> for ToolCallData {
             id: raw.id,
             name,
             arguments,
+            raw_input: raw.raw_input,
             status: raw.status,
             kind: Some(kind),
             result: raw.result,

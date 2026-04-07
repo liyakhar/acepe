@@ -407,6 +407,8 @@ pub struct ConvertedSession {
     pub title: String,
     #[serde(rename = "createdAt")]
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "currentModeId")]
+    pub current_mode_id: Option<String>,
 }
 
 impl ConvertedSession {
@@ -422,6 +424,7 @@ impl ConvertedSession {
             stats: SessionStats::default(),
             title: format!("Session {short_id}"),
             created_at: chrono::Utc::now().to_rfc3339(),
+            current_mode_id: None,
         }
     }
 }

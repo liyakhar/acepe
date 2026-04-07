@@ -90,6 +90,66 @@ function createToolCallEntry(id: string): SessionEntry {
 	};
 }
 
+function createTrackedManager(
+	initialEntries?: Array<{ sessionId: string; entry: SessionEntry }>
+): {
+	manager: ToolCallManager;
+	entryStore: IEntryStoreInternal;
+	entryIndex: IEntryIndex;
+} {
+	const entriesBySession = new Map<string, SessionEntry[]>();
+	for (const item of initialEntries ?? []) {
+		const existingEntries = entriesBySession.get(item.sessionId) ?? [];
+		existingEntries.push(item.entry);
+		entriesBySession.set(item.sessionId, existingEntries);
+	}
+
+	const entryStore = createMockEntryStore({
+		getEntries: vi.fn((sessionId: string) => entriesBySession.get(sessionId) ?? []),
+		addEntry: vi.fn((sessionId: string, entry: SessionEntry) => {
+			const existingEntries = entriesBySession.get(sessionId) ?? [];
+			existingEntries.push(entry);
+			entriesBySession.set(sessionId, existingEntries);
+		}),
+		updateEntry: vi.fn((sessionId: string, index: number, entry: SessionEntry) => {
+			const existingEntries = entriesBySession.get(sessionId) ?? [];
+			existingEntries[index] = entry;
+			entriesBySession.set(sessionId, existingEntries);
+		}),
+		hasSession: vi.fn((sessionId: string) => entriesBySession.has(sessionId)),
+	});
+	const entryIndex = createMockEntryIndex({
+		getToolCallIdIndex: vi.fn((sessionId: string, toolCallId: string) => {
+			const entries = entriesBySession.get(sessionId) ?? [];
+			const index = entries.findIndex(
+				(entry) => entry.type === "tool_call" && entry.message.id === toolCallId
+			);
+			return index >= 0 ? index : undefined;
+		}),
+	});
+
+	return {
+		manager: new ToolCallManager(entryStore, entryIndex),
+		entryStore,
+		entryIndex,
+	};
+}
+
+function applyStreamingArguments(
+	manager: ToolCallManager,
+	sessionId: string,
+	toolCallId: string,
+	args: ToolArguments
+): void {
+	const result = manager.updateEntry(
+		sessionId,
+		createToolCallUpdate(toolCallId, {
+			streamingArguments: args,
+		})
+	);
+	expect(result.isOk()).toBe(true);
+}
+
 // ============================================
 // PURE FUNCTIONS
 // ============================================
@@ -461,12 +521,12 @@ describe("ToolCallManager", () => {
 		});
 
 		it("does NOT clear streaming arguments on create (deferred to completion)", () => {
-			const entryStore = createMockEntryStore();
-			const entryIndex = createMockEntryIndex();
-			const manager = new ToolCallManager(entryStore, entryIndex);
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+			]);
 
 			// Set streaming args first
-			manager.setStreamingArguments("s1", "tc-1", { kind: "read", file_path: "/foo" });
+			applyStreamingArguments(manager, "s1", "tc-1", { kind: "read", file_path: "/foo" });
 			expect(manager.getStreamingArguments("tc-1")).toBeDefined();
 
 			// Create entry does NOT clear them — streaming args stay as reactive fallback
@@ -475,26 +535,6 @@ describe("ToolCallManager", () => {
 			expect(manager.getStreamingArguments("tc-1")).toBeDefined();
 		});
 
-		it("indexes task children for O(1) lookup", () => {
-			const entryStore = createMockEntryStore();
-			const entryIndex = createMockEntryIndex();
-			const manager = new ToolCallManager(entryStore, entryIndex);
-
-			const childData = createToolCallData("child-1", { name: "SubTask" });
-			const data = createToolCallData("parent-1", {
-				name: "Task",
-				taskChildren: [childData],
-			});
-
-			manager.createEntry("s1", data);
-
-			// Now update the child - it should be found via the index
-			const childUpdate = createToolCallUpdate("child-1", { status: "completed" });
-			const result = manager.updateChildInParent("s1", childUpdate);
-			// Should find the parent — but since parent is in addEntry (not committed),
-			// we need to verify it fell back to updateEntry
-			expect(result.isOk()).toBe(true);
-		});
 	});
 
 	// ============================================
@@ -502,6 +542,36 @@ describe("ToolCallManager", () => {
 	// ============================================
 
 	describe("updateEntry", () => {
+		it("ignores streaming-only updates when the tool call does not exist yet", () => {
+			const entryStore = createMockEntryStore();
+			const entryIndex = createMockEntryIndex();
+			const manager = new ToolCallManager(entryStore, entryIndex);
+
+			const update = createToolCallUpdate("tc-streaming-only", {
+				streamingArguments: { kind: "execute", command: "bun test" },
+			});
+			const result = manager.updateEntry("s1", update);
+
+			expect(result.isOk()).toBe(true);
+			expect(entryStore.addEntry).not.toHaveBeenCalled();
+			expect(entryStore.updateEntry).not.toHaveBeenCalled();
+		});
+
+		it("ignores raw streaming delta-only updates when the tool call does not exist yet", () => {
+			const entryStore = createMockEntryStore();
+			const entryIndex = createMockEntryIndex();
+			const manager = new ToolCallManager(entryStore, entryIndex);
+
+			const update = createToolCallUpdate("tc-streaming-delta-only", {
+				streamingInputDelta: "{\"command\":\"bun",
+			});
+			const result = manager.updateEntry("s1", update);
+
+			expect(result.isOk()).toBe(true);
+			expect(entryStore.addEntry).not.toHaveBeenCalled();
+			expect(entryStore.updateEntry).not.toHaveBeenCalled();
+		});
+
 		it("creates a placeholder entry when tool call does not exist", () => {
 			const entryStore = createMockEntryStore();
 			const entryIndex = createMockEntryIndex();
@@ -760,236 +830,47 @@ describe("ToolCallManager", () => {
 	});
 
 	// ============================================
-	// updateChildInParent
-	// ============================================
-
-	describe("updateChildInParent", () => {
-		it("falls back to regular update when child is not indexed", () => {
-			const entryStore = createMockEntryStore();
-			const entryIndex = createMockEntryIndex();
-			const manager = new ToolCallManager(entryStore, entryIndex);
-
-			const childUpdate = createToolCallUpdate("unknown-child", { status: "completed" });
-			const result = manager.updateChildInParent("s1", childUpdate);
-
-			expect(result.isOk()).toBe(true);
-			// Should fall back to addEntry (creating placeholder since entry doesn't exist)
-			expect(entryStore.addEntry).toHaveBeenCalled();
-		});
-
-		it("updates child within parent taskChildren", () => {
-			const childData = createToolCallData("child-1", { name: "SubTask", status: "pending" });
-			const parentEntry: SessionEntry = {
-				id: "parent-1",
-				type: "tool_call",
-				message: {
-					id: "parent-1",
-					name: "Task",
-					status: "in_progress",
-					arguments: { kind: "other" as const, raw: {} },
-					taskChildren: [childData],
-					awaitingPlanApproval: false,
-				},
-				timestamp: new Date(),
-				isStreaming: true,
-			};
-
-			const entryStore = createMockEntryStore({
-				getEntries: vi.fn(() => [parentEntry]),
-			});
-			const entryIndex = createMockEntryIndex({
-				getToolCallIdIndex: vi.fn((_, toolCallId) => (toolCallId === "parent-1" ? 0 : undefined)),
-			});
-			const manager = new ToolCallManager(entryStore, entryIndex);
-
-			// First create the parent to index children
-			manager.createEntry(
-				"s1",
-				createToolCallData("parent-1", {
-					name: "Task",
-					status: "in_progress",
-					taskChildren: [childData],
-				})
-			);
-
-			// Now update the child
-			const childUpdate = createToolCallUpdate("child-1", { status: "completed" });
-			const result = manager.updateChildInParent("s1", childUpdate);
-
-			expect(result.isOk()).toBe(true);
-			// Should update via parent, not addEntry
-			expect(entryStore.updateEntry).toHaveBeenCalledWith(
-				"s1",
-				0,
-				expect.objectContaining({
-					id: "parent-1",
-					type: "tool_call",
-				})
-			);
-		});
-
-		it("applies child arguments from update payload", () => {
-			const childData = createToolCallData("child-1", {
-				name: "Edit",
-				status: "pending",
-				kind: "edit",
-				arguments: {
-					kind: "edit",
-					edits: [{ filePath: null, oldString: null, newString: null, content: null }],
-				},
-			});
-			const parentEntry: SessionEntry = {
-				id: "parent-1",
-				type: "tool_call",
-				message: {
-					id: "parent-1",
-					name: "Task",
-					status: "in_progress",
-					arguments: { kind: "other", raw: {} },
-					taskChildren: [childData],
-					awaitingPlanApproval: false,
-				},
-				timestamp: new Date(),
-				isStreaming: true,
-			};
-
-			const entryStore = createMockEntryStore({
-				getEntries: vi.fn(() => [parentEntry]),
-			});
-			const entryIndex = createMockEntryIndex({
-				getToolCallIdIndex: vi.fn((_, toolCallId) => (toolCallId === "parent-1" ? 0 : undefined)),
-			});
-			const manager = new ToolCallManager(entryStore, entryIndex);
-
-			manager.createEntry(
-				"s1",
-				createToolCallData("parent-1", {
-					name: "Task",
-					status: "in_progress",
-					taskChildren: [childData],
-				})
-			);
-
-			const childUpdate = createToolCallUpdate("child-1", {
-				status: "completed",
-				arguments: {
-					kind: "edit",
-					edits: [{ filePath: "/src/agent-input-ui.svelte", oldString: "before", newString: "after", content: null }],
-				},
-			});
-			const result = manager.updateChildInParent("s1", childUpdate);
-
-			expect(result.isOk()).toBe(true);
-			const updateCalls = (entryStore.updateEntry as ReturnType<typeof vi.fn>).mock.calls;
-			const updatedParentEntry = updateCalls[updateCalls.length - 1]?.[2] as SessionEntry;
-			expect(updatedParentEntry.type).toBe("tool_call");
-			if (updatedParentEntry.type === "tool_call") {
-				const updatedChild = updatedParentEntry.message.taskChildren?.[0];
-				expect(updatedChild?.status).toBe("completed");
-				expect(updatedChild?.arguments).toEqual({
-					kind: "edit",
-					edits: [{ filePath: "/src/agent-input-ui.svelte", oldString: "before", newString: "after", content: null }],
-				});
-			}
-		});
-
-		it("falls back when session mismatch", () => {
-			const entryStore = createMockEntryStore();
-			const entryIndex = createMockEntryIndex();
-			const manager = new ToolCallManager(entryStore, entryIndex);
-
-			// Create parent in session s1 to index child
-			const childData = createToolCallData("child-1");
-			manager.createEntry(
-				"s1",
-				createToolCallData("parent-1", {
-					taskChildren: [childData],
-				})
-			);
-
-			// Try to update child from session s2
-			const childUpdate = createToolCallUpdate("child-1", { status: "completed" });
-			const result = manager.updateChildInParent("s2", childUpdate);
-
-			expect(result.isOk()).toBe(true);
-			// Falls back to regular update (creates placeholder in s2)
-		});
-
-		it("falls back when parent not found", () => {
-			const entryStore = createMockEntryStore();
-			const entryIndex = createMockEntryIndex();
-			const manager = new ToolCallManager(entryStore, entryIndex);
-
-			// Create parent to index child
-			const childData = createToolCallData("child-1");
-			manager.createEntry(
-				"s1",
-				createToolCallData("parent-1", {
-					taskChildren: [childData],
-				})
-			);
-
-			// Parent is not in getEntries() (mock returns empty array)
-			// so findToolCallEntryRef will not find it
-			const childUpdate = createToolCallUpdate("child-1", { status: "completed" });
-			const result = manager.updateChildInParent("s1", childUpdate);
-
-			expect(result.isOk()).toBe(true);
-		});
-
-		it("returns ok when parent has no taskChildren", () => {
-			const parentEntry: SessionEntry = {
-				id: "parent-1",
-				type: "tool_call",
-				message: {
-					id: "parent-1",
-					name: "Task",
-					status: "in_progress",
-					arguments: { kind: "other" as const, raw: {} },
-					// No taskChildren
-					awaitingPlanApproval: false,
-				},
-				timestamp: new Date(),
-				isStreaming: true,
-			};
-
-			const entryStore = createMockEntryStore({
-				getEntries: vi.fn(() => [parentEntry]),
-			});
-			const entryIndex = createMockEntryIndex({
-				getToolCallIdIndex: vi.fn((_, toolCallId) => (toolCallId === "parent-1" ? 0 : undefined)),
-			});
-			const manager = new ToolCallManager(entryStore, entryIndex);
-
-			// Manually index a child for parent (simulating prior state)
-			const childData = createToolCallData("child-1");
-			manager.createEntry(
-				"s1",
-				createToolCallData("parent-1", {
-					taskChildren: [childData],
-				})
-			);
-
-			// But parent entry we return has no taskChildren
-			const childUpdate = createToolCallUpdate("child-1", { status: "completed" });
-			const result = manager.updateChildInParent("s1", childUpdate);
-
-			expect(result.isOk()).toBe(true);
-		});
-	});
-
-	// ============================================
 	// STREAMING ARGUMENTS
 	// ============================================
 
 	describe("streaming arguments", () => {
-		it("sets and gets streaming arguments", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+		it("updates and gets streaming arguments through canonical tool updates", () => {
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+			]);
 
 			const args: ToolArguments = { kind: "read", file_path: "/foo/bar.ts" };
-			manager.setStreamingArguments("s1", "tc-1", args);
+			applyStreamingArguments(manager, "s1", "tc-1", args);
 
 			expect(manager.getStreamingArguments("tc-1")).toEqual(args);
+		});
+
+		it("stores progressive arguments on the canonical tool entry", () => {
+			const existingEntry = createToolCallEntry("tc-1");
+			const entries = [existingEntry];
+			const entryStore = createMockEntryStore({
+				getEntries: vi.fn(() => entries),
+				updateEntry: vi.fn((_, index, entry) => {
+					entries[index] = entry;
+				}),
+			});
+			const entryIndex = createMockEntryIndex({
+				getToolCallIdIndex: vi.fn((_, toolCallId) => (toolCallId === "tc-1" ? 0 : undefined)),
+			});
+			const manager = new ToolCallManager(entryStore, entryIndex);
+
+			const args: ToolArguments = { kind: "read", file_path: "/foo/bar.ts" };
+			applyStreamingArguments(manager, "s1", "tc-1", args);
+
+			expect(entryStore.updateEntry).toHaveBeenCalledWith(
+				"s1",
+				0,
+				expect.objectContaining({
+					message: expect.objectContaining({
+						progressiveArguments: args,
+					}),
+				})
+			);
 		});
 
 		it("returns undefined for unknown tool call", () => {
@@ -999,49 +880,59 @@ describe("ToolCallManager", () => {
 		});
 
 		it("clears streaming arguments for a tool call", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+			]);
 
-			manager.setStreamingArguments("s1", "tc-1", { kind: "read", file_path: "/foo" });
+			applyStreamingArguments(manager, "s1", "tc-1", { kind: "read", file_path: "/foo" });
 			manager.clearStreamingArguments("tc-1");
 
 			expect(manager.getStreamingArguments("tc-1")).toBeUndefined();
 		});
 
 		it("overwrites existing streaming arguments", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+			]);
 
-			manager.setStreamingArguments("s1", "tc-1", { kind: "read", file_path: "/first" });
-			manager.setStreamingArguments("s1", "tc-1", { kind: "read", file_path: "/second" });
+			applyStreamingArguments(manager, "s1", "tc-1", { kind: "read", file_path: "/first" });
+			applyStreamingArguments(manager, "s1", "tc-1", { kind: "read", file_path: "/second" });
 
 			expect(manager.getStreamingArguments("tc-1")).toEqual({ kind: "read", file_path: "/second" });
 		});
 
-		it("skips no-op writes when streaming arguments are identical", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+		it("keeps canonical streaming arguments stable across identical updates", () => {
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+			]);
 
 			const firstArgs: ToolArguments = { kind: "execute", command: "bun test" };
 			const identicalArgs: ToolArguments = { kind: "execute", command: "bun test" };
 
-			manager.setStreamingArguments("s1", "tc-1", firstArgs);
-			manager.setStreamingArguments("s1", "tc-1", identicalArgs);
+			applyStreamingArguments(manager, "s1", "tc-1", firstArgs);
+			applyStreamingArguments(manager, "s1", "tc-1", identicalArgs);
 
-			expect(manager.getStreamingArguments("tc-1")).toBe(firstArgs);
+			expect(manager.getStreamingArguments("tc-1")).toEqual(firstArgs);
 		});
 
-		it("writes when streaming arguments change", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+		it("updates canonical streaming arguments when the payload changes", () => {
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+			]);
 
 			const firstArgs: ToolArguments = { kind: "read", file_path: "/first" };
 			const changedArgs: ToolArguments = { kind: "read", file_path: "/second" };
 
-			manager.setStreamingArguments("s1", "tc-1", firstArgs);
-			manager.setStreamingArguments("s1", "tc-1", changedArgs);
+			applyStreamingArguments(manager, "s1", "tc-1", firstArgs);
+			applyStreamingArguments(manager, "s1", "tc-1", changedArgs);
 
-			expect(manager.getStreamingArguments("tc-1")).toBe(changedArgs);
+			expect(manager.getStreamingArguments("tc-1")).toEqual(changedArgs);
 		});
 
-		it("skips no-op writes when task output arguments are identical", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+		it("supports task output progressive arguments through canonical updates", () => {
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+			]);
 
 			const firstArgs: ToolArguments = {
 				kind: "taskOutput",
@@ -1054,51 +945,63 @@ describe("ToolCallManager", () => {
 				timeout: 30,
 			};
 
-			manager.setStreamingArguments("s1", "tc-1", firstArgs);
-			manager.setStreamingArguments("s1", "tc-1", identicalArgs);
+			applyStreamingArguments(manager, "s1", "tc-1", firstArgs);
+			applyStreamingArguments(manager, "s1", "tc-1", identicalArgs);
 
-			expect(manager.getStreamingArguments("tc-1")).toBe(firstArgs);
+			expect(manager.getStreamingArguments("tc-1")).toEqual(firstArgs);
 		});
 
-		it("dedupe is isolated per tool and session", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+		it("isolates progressive arguments per tool and session", () => {
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+				{ sessionId: "s2", entry: createToolCallEntry("tc-2") },
+				{ sessionId: "s1", entry: createToolCallEntry("tc-3") },
+			]);
 
 			const s1Args: ToolArguments = { kind: "read", file_path: "/same" };
 			const s2Args: ToolArguments = { kind: "read", file_path: "/same" };
 			const otherToolArgs: ToolArguments = { kind: "read", file_path: "/same" };
 
-			manager.setStreamingArguments("s1", "tc-1", s1Args);
-			manager.setStreamingArguments("s2", "tc-2", s2Args);
-			manager.setStreamingArguments("s1", "tc-3", otherToolArgs);
+			applyStreamingArguments(manager, "s1", "tc-1", s1Args);
+			applyStreamingArguments(manager, "s2", "tc-2", s2Args);
+			applyStreamingArguments(manager, "s1", "tc-3", otherToolArgs);
 
-			expect(manager.getStreamingArguments("tc-1")).toBe(s1Args);
-			expect(manager.getStreamingArguments("tc-2")).toBe(s2Args);
-			expect(manager.getStreamingArguments("tc-3")).toBe(otherToolArgs);
+			expect(manager.getStreamingArguments("tc-1")).toEqual(s1Args);
+			expect(manager.getStreamingArguments("tc-2")).toEqual(s2Args);
+			expect(manager.getStreamingArguments("tc-3")).toEqual(otherToolArgs);
 		});
 
-		it("drops streaming arguments when session limit exceeded", () => {
+		it("drops streaming-only updates when session limit exceeded", () => {
 			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
 
 			// Fill up to MAX_SESSIONS (100)
 			for (let i = 0; i < 100; i++) {
-				manager.setStreamingArguments(`session-${i}`, `tc-${i}`, { kind: "other", raw: {} });
+				applyStreamingArguments(manager, `session-${i}`, `tc-${i}`, { kind: "other", raw: {} });
 			}
 
 			// Session 101 should be dropped
-			manager.setStreamingArguments("session-overflow", "tc-overflow", { kind: "other", raw: {} });
+			applyStreamingArguments(manager, "session-overflow", "tc-overflow", {
+				kind: "other",
+				raw: {},
+			});
 			expect(manager.getStreamingArguments("tc-overflow")).toBeUndefined();
 		});
 
 		it("allows adding to existing session even when limit is reached", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+			const { manager } = createTrackedManager();
 
 			// Fill up to MAX_SESSIONS (100)
 			for (let i = 0; i < 100; i++) {
-				manager.setStreamingArguments(`session-${i}`, `tc-${i}`, { kind: "other", raw: {} });
+				manager.createEntry(`session-${i}`, createToolCallData(`tc-${i}`));
+				applyStreamingArguments(manager, `session-${i}`, `tc-${i}`, { kind: "other", raw: {} });
 			}
 
 			// Adding to an existing session should work
-			manager.setStreamingArguments("session-0", "tc-extra", { kind: "read", file_path: "/new" });
+			manager.createEntry("session-0", createToolCallData("tc-extra"));
+			applyStreamingArguments(manager, "session-0", "tc-extra", {
+				kind: "read",
+				file_path: "/new",
+			});
 			expect(manager.getStreamingArguments("tc-extra")).toEqual({
 				kind: "read",
 				file_path: "/new",
@@ -1117,10 +1020,10 @@ describe("ToolCallManager", () => {
 			expect(ids.size).toBe(0);
 		});
 
-		it("returns tool call IDs after streaming arguments are set", () => {
+		it("returns tool call IDs after canonical tool entries are created", () => {
 			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
-			manager.setStreamingArguments("s1", "tc-1", { kind: "other", raw: {} });
-			manager.setStreamingArguments("s1", "tc-2", { kind: "other", raw: {} });
+			manager.createEntry("s1", createToolCallData("tc-1"));
+			manager.createEntry("s1", createToolCallData("tc-2"));
 
 			const ids = manager.getToolCallIdsForSession("s1");
 			expect(ids.size).toBe(2);
@@ -1130,8 +1033,8 @@ describe("ToolCallManager", () => {
 
 		it("isolates tool call IDs per session", () => {
 			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
-			manager.setStreamingArguments("s1", "tc-1", { kind: "other", raw: {} });
-			manager.setStreamingArguments("s2", "tc-2", { kind: "other", raw: {} });
+			manager.createEntry("s1", createToolCallData("tc-1"));
+			manager.createEntry("s2", createToolCallData("tc-2"));
 
 			expect(manager.getToolCallIdsForSession("s1").has("tc-1")).toBe(true);
 			expect(manager.getToolCallIdsForSession("s1").has("tc-2")).toBe(false);
@@ -1144,11 +1047,14 @@ describe("ToolCallManager", () => {
 
 	describe("clearSession", () => {
 		it("clears all state for a session", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+				{ sessionId: "s1", entry: createToolCallEntry("tc-2") },
+			]);
 
 			// Set up state
-			manager.setStreamingArguments("s1", "tc-1", { kind: "read", file_path: "/foo" });
-			manager.setStreamingArguments("s1", "tc-2", { kind: "other", raw: {} });
+			applyStreamingArguments(manager, "s1", "tc-1", { kind: "read", file_path: "/foo" });
+			applyStreamingArguments(manager, "s1", "tc-2", { kind: "other", raw: {} });
 
 			// Clear
 			manager.clearSession("s1");
@@ -1159,10 +1065,13 @@ describe("ToolCallManager", () => {
 		});
 
 		it("does not affect other sessions", () => {
-			const manager = new ToolCallManager(createMockEntryStore(), createMockEntryIndex());
+			const { manager } = createTrackedManager([
+				{ sessionId: "s1", entry: createToolCallEntry("tc-1") },
+				{ sessionId: "s2", entry: createToolCallEntry("tc-2") },
+			]);
 
-			manager.setStreamingArguments("s1", "tc-1", { kind: "other", raw: {} });
-			manager.setStreamingArguments("s2", "tc-2", { kind: "read", file_path: "/bar" });
+			applyStreamingArguments(manager, "s1", "tc-1", { kind: "other", raw: {} });
+			applyStreamingArguments(manager, "s2", "tc-2", { kind: "read", file_path: "/bar" });
 
 			manager.clearSession("s1");
 
@@ -1189,18 +1098,11 @@ describe("ToolCallManager", () => {
 					taskChildren: [childData],
 				})
 			);
-			// Also set streaming arguments so sessionToolCallIds is populated
-			manager.setStreamingArguments("s1", "parent-1", { kind: "other", raw: {} });
 
 			// Clear session
 			manager.clearSession("s1");
 
-			// Child-to-parent index should be cleared
-			// Verify by trying to update the child - it should fall back to regular update
-			const childUpdate = createToolCallUpdate("child-1", { status: "completed" });
-			manager.updateChildInParent("s1", childUpdate);
-			// Falls back to addEntry (not parent update)
-			expect(entryStore.addEntry).toHaveBeenCalled();
+			expect(manager.getStreamingArguments("parent-1")).toBeUndefined();
 		});
 	});
 });

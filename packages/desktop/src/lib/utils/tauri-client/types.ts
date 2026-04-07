@@ -10,6 +10,8 @@ export interface ProjectInfo {
 	path: string;
 	/** Agent source that discovered this project */
 	agent_id: string;
+	/** Whether this path is a git worktree instead of the main repo root */
+	is_worktree: boolean;
 }
 
 /** Single timing stage for session load audit */

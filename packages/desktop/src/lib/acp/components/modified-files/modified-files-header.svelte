@@ -368,7 +368,7 @@ function handlePromptResetClick(): void {
 </script>
 
 {#if modifiedFilesState}
-	<div class="w-full px-5">
+	<div class="w-full">
 		<!-- Inline Expanded File List (in document flow) -->
 		{#if isExpanded}
 			<div class="rounded-t-md bg-muted/30 overflow-hidden border border-b-0 border-border">

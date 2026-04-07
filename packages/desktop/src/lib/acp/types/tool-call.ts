@@ -9,6 +9,7 @@ export type {
 
 // Import the data types directly to avoid circular dependencies
 import type {
+	ToolArguments,
 	ToolCallData as _ToolCallData,
 	ToolCallUpdateData as _ToolCallUpdateData,
 } from "../../services/converted-session-types.js";
@@ -18,8 +19,12 @@ interface ToolCallTiming {
 	completedAtMs?: number;
 }
 
+export interface ToolCall extends _ToolCallData, ToolCallTiming {
+	progressiveArguments?: ToolArguments;
+	taskChildren?: ToolCall[] | null;
+}
+
 // Legacy aliases for backward compatibility
 export type ToolCallUpdate = _ToolCallUpdateData;
-export type ToolCall = _ToolCallData & ToolCallTiming;
 export type ToolCallData = _ToolCallData;
 export type ToolCallUpdateData = _ToolCallUpdateData;

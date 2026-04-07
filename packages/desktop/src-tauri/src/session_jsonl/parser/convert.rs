@@ -66,6 +66,7 @@ pub fn convert_full_session_to_entries(session: &FullSession) -> ConvertedSessio
         stats: session.stats.clone(),
         title: session.title.clone(),
         created_at: session.created_at.clone(),
+        current_mode_id: None,
     }
 }
 
@@ -174,6 +175,7 @@ fn convert_assistant_message(
                         arguments: get_parser(AgentType::ClaudeCode)
                             .parse_typed_tool_arguments(Some(name), input, Some(kind.as_str()))
                             .unwrap_or(ToolArguments::Other { raw: input.clone() }),
+                        raw_input: Some(input.clone()),
                         skill_meta: None, // Skill meta is populated by session_converter
                         locations: None,
                         normalized_questions,

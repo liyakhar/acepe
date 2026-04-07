@@ -12,6 +12,26 @@ vi.mock("../../utils/logger.js", () => ({
 
 import { SessionEntryStore } from "../session-entry-store.svelte.js";
 
+function applyStreamingArguments(
+	store: SessionEntryStore,
+	sessionId: string,
+	toolCallId: string,
+	streamingArguments: Parameters<SessionEntryStore["updateToolCallEntry"]>[1]["streamingArguments"]
+): void {
+	store.updateToolCallEntry(sessionId, {
+		toolCallId,
+		status: null,
+		result: null,
+		content: null,
+		rawOutput: null,
+		title: null,
+		locations: null,
+		normalizedTodos: null,
+		normalizedQuestions: null,
+		streamingArguments,
+	});
+}
+
 describe("SessionEntryStore - Streaming Arguments", () => {
 	let store: SessionEntryStore;
 
@@ -19,9 +39,21 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 		store = new SessionEntryStore();
 	});
 
-	describe("setStreamingArguments / getStreamingArguments", () => {
-		it("should store and retrieve streaming arguments", () => {
-			store.setStreamingArguments("session1", "tool1", {
+	describe("updateToolCallEntry / getStreamingArguments", () => {
+		it("should store and retrieve streaming arguments from canonical updates", () => {
+			store.createToolCallEntry("session1", {
+				id: "tool1",
+				name: "Edit",
+				arguments: { kind: "edit", edits: [{ filePath: null, oldString: null, newString: null, content: null }] },
+				status: "pending",
+				kind: "edit",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			applyStreamingArguments(store, "session1", "tool1", {
 				kind: "edit",
 				edits: [{ filePath: "/path/to/file.ts", oldString: null, newString: "content", content: null }],
 			});
@@ -34,9 +66,48 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 		});
 
 		it("should track tool calls per session", () => {
-			store.setStreamingArguments("session1", "tool1", { kind: "execute", command: "ls -la" });
-			store.setStreamingArguments("session1", "tool2", { kind: "search", query: "test" });
-			store.setStreamingArguments("session2", "tool3", { kind: "read", file_path: "/tmp/file" });
+			store.createToolCallEntry("session1", {
+				id: "tool1",
+				name: "Bash",
+				arguments: { kind: "execute", command: null },
+				status: "pending",
+				kind: "execute",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			store.createToolCallEntry("session1", {
+				id: "tool2",
+				name: "Search",
+				arguments: { kind: "search", query: null, file_path: null },
+				status: "pending",
+				kind: "search",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			store.createToolCallEntry("session2", {
+				id: "tool3",
+				name: "Read",
+				arguments: { kind: "read", file_path: null },
+				status: "pending",
+				kind: "read",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			applyStreamingArguments(store, "session1", "tool1", { kind: "execute", command: "ls -la" });
+			applyStreamingArguments(store, "session1", "tool2", { kind: "search", query: "test" });
+			applyStreamingArguments(store, "session2", "tool3", {
+				kind: "read",
+				file_path: "/tmp/file",
+			});
 
 			expect(store.getStreamingArguments("tool1")).toEqual({ kind: "execute", command: "ls -la" });
 			expect(store.getStreamingArguments("tool2")).toEqual({ kind: "search", query: "test" });
@@ -47,11 +118,23 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 		});
 
 		it("should overwrite when setting same tool call again", () => {
-			store.setStreamingArguments("session1", "tool1", {
+			store.createToolCallEntry("session1", {
+				id: "tool1",
+				name: "Edit",
+				arguments: { kind: "edit", edits: [{ filePath: null, oldString: null, newString: null, content: null }] },
+				status: "pending",
+				kind: "edit",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			applyStreamingArguments(store, "session1", "tool1", {
 				kind: "edit",
 				edits: [{ filePath: "/a", oldString: null, newString: "v1", content: null }],
 			});
-			store.setStreamingArguments("session1", "tool1", {
+			applyStreamingArguments(store, "session1", "tool1", {
 				kind: "edit",
 				edits: [{ filePath: "/a", oldString: null, newString: "v2", content: null }],
 			});
@@ -71,7 +154,19 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 
 	describe("clearStreamingArguments", () => {
 		it("should clear streaming arguments", () => {
-			store.setStreamingArguments("session1", "tool1", {
+			store.createToolCallEntry("session1", {
+				id: "tool1",
+				name: "Edit",
+				arguments: { kind: "edit", edits: [{ filePath: null, oldString: null, newString: null, content: null }] },
+				status: "pending",
+				kind: "edit",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			applyStreamingArguments(store, "session1", "tool1", {
 				kind: "edit",
 				edits: [{ filePath: "/x", oldString: null, newString: "content", content: null }],
 			});
@@ -86,9 +181,45 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 
 	describe("clearEntries", () => {
 		it("should clear all streaming arguments for session", () => {
-			store.setStreamingArguments("session1", "tool1", { kind: "execute", command: "a" });
-			store.setStreamingArguments("session1", "tool2", { kind: "execute", command: "b" });
-			store.setStreamingArguments("session2", "tool3", { kind: "execute", command: "c" });
+			store.createToolCallEntry("session1", {
+				id: "tool1",
+				name: "Bash",
+				arguments: { kind: "execute", command: null },
+				status: "pending",
+				kind: "execute",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			store.createToolCallEntry("session1", {
+				id: "tool2",
+				name: "Bash",
+				arguments: { kind: "execute", command: null },
+				status: "pending",
+				kind: "execute",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			store.createToolCallEntry("session2", {
+				id: "tool3",
+				name: "Bash",
+				arguments: { kind: "execute", command: null },
+				status: "pending",
+				kind: "execute",
+				title: null,
+				locations: null,
+				skillMeta: null,
+				result: null,
+				awaitingPlanApproval: false,
+			});
+			applyStreamingArguments(store, "session1", "tool1", { kind: "execute", command: "a" });
+			applyStreamingArguments(store, "session1", "tool2", { kind: "execute", command: "b" });
+			applyStreamingArguments(store, "session2", "tool3", { kind: "execute", command: "c" });
 
 			// Clear session1
 			store.clearEntries("session1");

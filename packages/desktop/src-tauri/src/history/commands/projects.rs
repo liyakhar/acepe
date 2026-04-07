@@ -1,5 +1,24 @@
 use super::*;
 
+fn is_worktree_project_path(project_path: &str) -> bool {
+    let repo = match crate::file_index::git::open_repository(std::path::Path::new(project_path)) {
+        Ok(repo) => repo,
+        Err(_) => return false,
+    };
+    let git_dir = match repo.path().canonicalize() {
+        Ok(path) => path,
+        Err(_) => repo.path().to_path_buf(),
+    };
+
+    if !git_dir.exists() {
+        return false;
+    }
+
+    git_dir
+        .components()
+        .any(|component| component.as_os_str() == "worktrees")
+}
+
 /// Read the `cwd` field from the first JSONL file found in `project_dir`.
 ///
 /// Claude CLI slugs are ambiguous: both '/' and '.' are encoded as '-', so
@@ -373,6 +392,7 @@ pub async fn list_all_project_paths() -> Result<Vec<ProjectInfo>, String> {
     match claude_result {
         Ok(claude_projects) => {
             projects.extend(claude_projects.into_iter().map(|path| ProjectInfo {
+                is_worktree: is_worktree_project_path(&path),
                 path,
                 agent_id: "claude-code".to_string(),
             }));
@@ -384,6 +404,7 @@ pub async fn list_all_project_paths() -> Result<Vec<ProjectInfo>, String> {
     match cursor_result {
         Ok(cursor_projects) => {
             projects.extend(cursor_projects.into_iter().map(|path| ProjectInfo {
+                is_worktree: is_worktree_project_path(&path),
                 path,
                 agent_id: "cursor".to_string(),
             }));
@@ -395,6 +416,7 @@ pub async fn list_all_project_paths() -> Result<Vec<ProjectInfo>, String> {
     match opencode_result {
         Ok(opencode_projects) => {
             projects.extend(opencode_projects.into_iter().map(|path| ProjectInfo {
+                is_worktree: is_worktree_project_path(&path),
                 path,
                 agent_id: "opencode".to_string(),
             }));
@@ -406,6 +428,7 @@ pub async fn list_all_project_paths() -> Result<Vec<ProjectInfo>, String> {
     match codex_result {
         Ok(codex_projects) => {
             projects.extend(codex_projects.into_iter().map(|path| ProjectInfo {
+                is_worktree: is_worktree_project_path(&path),
                 path,
                 agent_id: "codex".to_string(),
             }));
@@ -436,6 +459,7 @@ pub async fn list_all_project_paths() -> Result<Vec<ProjectInfo>, String> {
                     if !seen_paths.contains(&entry.project) {
                         seen_paths.insert(entry.project.clone());
                         fallback_projects.push(ProjectInfo {
+                            is_worktree: is_worktree_project_path(&entry.project),
                             path: entry.project,
                             agent_id: entry.agent_id.to_string(),
                         });
@@ -525,4 +549,56 @@ pub async fn count_sessions_for_project(
         path: project_path,
         counts,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+
+    use tempfile::TempDir;
+
+    use super::is_worktree_project_path;
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn detects_nested_paths_inside_git_worktrees() {
+        let sandbox = TempDir::new().expect("temp dir");
+        let repo_dir = sandbox.path().join("repo");
+        let worktree_dir = sandbox.path().join("repo-worktree");
+
+        fs::create_dir(&repo_dir).expect("create repo dir");
+        run_git(&repo_dir, &["init"]);
+        run_git(&repo_dir, &["config", "user.name", "Test User"]);
+        run_git(&repo_dir, &["config", "user.email", "test@example.com"]);
+
+        fs::write(repo_dir.join("README.md"), "hello\n").expect("write readme");
+        run_git(&repo_dir, &["add", "README.md"]);
+        run_git(&repo_dir, &["commit", "-m", "Initial commit"]);
+
+        let worktree_dir_str = worktree_dir.to_string_lossy().to_string();
+        run_git(&repo_dir, &["worktree", "add", "-b", "feature", &worktree_dir_str]);
+
+        let nested_dir = worktree_dir.join("nested").join("deeper");
+        fs::create_dir_all(&nested_dir).expect("create nested dir");
+
+        assert!(
+            is_worktree_project_path(nested_dir.to_string_lossy().as_ref()),
+            "nested paths inside a git worktree should be classified as worktrees"
+        );
+    }
 }

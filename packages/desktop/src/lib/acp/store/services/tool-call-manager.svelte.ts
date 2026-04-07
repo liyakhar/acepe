@@ -1,16 +1,15 @@
 /**
  * Tool Call Manager - Manages tool call CRUD, child-parent reconciliation,
- * and streaming argument storage.
+ * and canonical progressive tool state.
  *
  * Extracted from SessionEntryStore to isolate tool call concerns.
  * All dependencies are injected via interfaces for testability.
  *
  * Note: This file uses native Map/Set for internal indexes that are NOT reactive.
- * Only streamingArgumentsParsed uses SvelteMap for fine-grained reactivity.
+ * Progressive tool arguments live on the tool entry itself; indexes only help locate it.
  */
 
 import { ok, type Result } from "neverthrow";
-import { SvelteMap } from "svelte/reactivity";
 
 import type {
 	ContentBlock,
@@ -43,83 +42,6 @@ function isTerminalStatus(status: ToolCallStatus | null | undefined): boolean {
 
 function nowMs(): number {
 	return Date.now();
-}
-
-function areToolArgumentsEqual(
-	currentArgs: ToolArguments | undefined,
-	nextArgs: ToolArguments
-): boolean {
-	if (currentArgs === undefined) {
-		return false;
-	}
-	if (currentArgs.kind !== nextArgs.kind) {
-		return false;
-	}
-
-	switch (currentArgs.kind) {
-		case "read":
-			return nextArgs.kind === "read" && currentArgs.file_path === nextArgs.file_path;
-		case "edit":
-			return (
-				nextArgs.kind === "edit" &&
-				JSON.stringify(currentArgs.edits) === JSON.stringify(nextArgs.edits)
-			);
-		case "execute":
-			return nextArgs.kind === "execute" && currentArgs.command === nextArgs.command;
-		case "search":
-			return (
-				nextArgs.kind === "search" &&
-				currentArgs.query === nextArgs.query &&
-				currentArgs.file_path === nextArgs.file_path
-			);
-		case "glob":
-			return (
-				nextArgs.kind === "glob" &&
-				currentArgs.pattern === nextArgs.pattern &&
-				currentArgs.path === nextArgs.path
-			);
-		case "fetch":
-			return nextArgs.kind === "fetch" && currentArgs.url === nextArgs.url;
-		case "webSearch":
-			return nextArgs.kind === "webSearch" && currentArgs.query === nextArgs.query;
-		case "think":
-			return (
-				nextArgs.kind === "think" &&
-				currentArgs.description === nextArgs.description &&
-				currentArgs.prompt === nextArgs.prompt &&
-				currentArgs.subagent_type === nextArgs.subagent_type &&
-				currentArgs.skill === nextArgs.skill &&
-				currentArgs.skill_args === nextArgs.skill_args &&
-				JSON.stringify(currentArgs.raw ?? null) === JSON.stringify(nextArgs.raw ?? null)
-			);
-		case "taskOutput":
-			return (
-				nextArgs.kind === "taskOutput" &&
-				currentArgs.task_id === nextArgs.task_id &&
-				currentArgs.timeout === nextArgs.timeout
-			);
-		case "move":
-			return (
-				nextArgs.kind === "move" &&
-				currentArgs.from === nextArgs.from &&
-				currentArgs.to === nextArgs.to
-			);
-		case "delete":
-			return nextArgs.kind === "delete" && currentArgs.file_path === nextArgs.file_path;
-		case "planMode":
-			return nextArgs.kind === "planMode" && currentArgs.mode === nextArgs.mode;
-		case "toolSearch":
-			return (
-				nextArgs.kind === "toolSearch" &&
-				currentArgs.query === nextArgs.query &&
-				currentArgs.max_results === nextArgs.max_results
-			);
-		case "other":
-			return (
-				nextArgs.kind === "other" &&
-				JSON.stringify(currentArgs.raw) === JSON.stringify(nextArgs.raw)
-			);
-	}
 }
 
 /**
@@ -264,13 +186,33 @@ function mergeToolArguments(currentArgs: ToolArguments, nextArgs: ToolArguments)
 	return nextArgs;
 }
 
+function hasMaterializedToolUpdateFields(update: ToolCallUpdate): boolean {
+	return (
+		update.status != null ||
+		update.result != null ||
+		update.content != null ||
+		update.rawOutput != null ||
+		update.title != null ||
+		update.locations != null ||
+		update.arguments != null ||
+		update.normalizedTodos != null ||
+		update.normalizedQuestions != null ||
+		update.failureReason != null
+	);
+}
+
+function isStreamingOnlyToolUpdate(update: ToolCallUpdate): boolean {
+	const hasStreamingFields =
+		update.streamingArguments != null || update.streamingInputDelta != null;
+	return hasStreamingFields && !hasMaterializedToolUpdateFields(update);
+}
+
 export class ToolCallManager implements IToolCallManager {
 	// Track which tool call IDs belong to which session (for cleanup on clearSession)
 	private sessionToolCallIds = new Map<string, Set<string>>();
 
-	// Parsed streaming arguments from Rust (pre-parsed ToolArguments)
-	// Uses SvelteMap for fine-grained reactivity
-	private streamingArgumentsParsed = new SvelteMap<string, ToolArguments>();
+	// Tool call ID -> session ID index for fast progressive-argument lookup.
+	private toolCallSessionIndex = new Map<string, string>();
 
 	// Child-to-parent index for O(1) lookup when updating children
 	private childToParentIndex = new Map<string, { sessionId: string; parentId: string }>();
@@ -283,6 +225,33 @@ export class ToolCallManager implements IToolCallManager {
 		private readonly entryIndex: IEntryIndex
 	) {}
 
+	private rememberToolCallSession(
+		sessionId: string,
+		toolCallId: string,
+		options?: { enforceSessionLimit?: boolean }
+	): boolean {
+		let toolCallIds = this.sessionToolCallIds.get(sessionId);
+		if (!toolCallIds) {
+			if (
+				options?.enforceSessionLimit === true &&
+				this.sessionToolCallIds.size >= ToolCallManager.MAX_SESSIONS
+			) {
+				logger.warn("Session limit exceeded, dropping streaming arguments", {
+					sessionId,
+					toolCallId,
+					maxSessions: ToolCallManager.MAX_SESSIONS,
+				});
+				return false;
+			}
+			toolCallIds = new Set();
+			this.sessionToolCallIds.set(sessionId, toolCallIds);
+		}
+
+		toolCallIds.add(toolCallId);
+		this.toolCallSessionIndex.set(toolCallId, sessionId);
+		return true;
+	}
+
 	// ============================================
 	// TOOL CALL CRUD
 	// ============================================
@@ -293,6 +262,8 @@ export class ToolCallManager implements IToolCallManager {
 	 * taskChildren are already assembled when we receive the data.
 	 */
 	createEntry(sessionId: string, data: ToolCallData): Result<void, AppError> {
+		this.rememberToolCallSession(sessionId, data.id);
+
 		// NOTE: Do NOT clear streaming arguments here.
 		// Streaming args are cleaned up in updateEntry() on terminal status instead.
 
@@ -319,6 +290,8 @@ export class ToolCallManager implements IToolCallManager {
 			const nextPlanApprovalRequestId = nextAwaitingPlanApproval
 				? (data.planApprovalRequestId ?? existingToolCall.planApprovalRequestId)
 				: null;
+			const nextProgressiveArguments =
+				isTerminalStatus(nextStatus ?? data.status) ? undefined : existingToolCall.progressiveArguments;
 			const updatedToolCall: ToolCall = {
 				...existingToolCall,
 				name: data.name,
@@ -336,6 +309,7 @@ export class ToolCallManager implements IToolCallManager {
 				taskChildren: data.taskChildren ?? existingToolCall.taskChildren,
 				awaitingPlanApproval: nextAwaitingPlanApproval,
 				planApprovalRequestId: nextPlanApprovalRequestId,
+				progressiveArguments: nextProgressiveArguments,
 				startedAtMs,
 				completedAtMs,
 			};
@@ -378,6 +352,7 @@ export class ToolCallManager implements IToolCallManager {
 			awaitingPlanApproval: data.awaitingPlanApproval,
 			planApprovalRequestId: data.planApprovalRequestId,
 			questionAnswer: data.questionAnswer,
+			progressiveArguments: undefined,
 			startedAtMs: createdAtMs,
 			completedAtMs: isTerminalStatus(data.status) ? createdAtMs : undefined,
 		};
@@ -409,6 +384,8 @@ export class ToolCallManager implements IToolCallManager {
 	 * Backend handles child-to-parent updates via TaskReconciler.
 	 */
 	updateEntry(sessionId: string, update: ToolCallUpdate): Result<void, AppError> {
+		this.rememberToolCallSession(sessionId, update.toolCallId);
+
 		// Extract result from update.result, update.rawOutput, or content (as fallback)
 		const extractedResult =
 			update.result ?? update.rawOutput ?? extractResultFromContent(update.content);
@@ -416,6 +393,14 @@ export class ToolCallManager implements IToolCallManager {
 		const entryRef = this.findToolCallEntryRef(sessionId, update.toolCallId);
 
 		if (!entryRef) {
+			if (isStreamingOnlyToolUpdate(update)) {
+				logger.debug("Ignoring streaming-only tool update without canonical entry", {
+					sessionId,
+					toolCallId: update.toolCallId,
+				});
+				return ok(undefined);
+			}
+
 			// Entry doesn't exist yet - create it
 			logger.debug("Creating tool call entry from update", {
 				sessionId,
@@ -434,6 +419,7 @@ export class ToolCallManager implements IToolCallManager {
 				normalizedTodos: update.normalizedTodos,
 				normalizedQuestions: update.normalizedQuestions,
 				awaitingPlanApproval: false,
+				progressiveArguments: update.streamingArguments ?? undefined,
 				startedAtMs: createdAtMs,
 				completedAtMs: isTerminalStatus(update.status) ? createdAtMs : undefined,
 			};
@@ -486,6 +472,11 @@ export class ToolCallManager implements IToolCallManager {
 			update.title == null && isGenericPathTitle(toolCall.title) && resolvedPath != null
 				? synthesizeToolTitle(nextArguments, resolvedPath)
 				: null;
+		const nextProgressiveArguments = isTerminalStatus(newStatus)
+			? undefined
+			: (update.arguments ?? null) != null
+				? undefined
+				: (update.streamingArguments ?? toolCall.progressiveArguments);
 		const nextLocations =
 			update.locations ??
 			toolCall.locations ??
@@ -503,6 +494,7 @@ export class ToolCallManager implements IToolCallManager {
 			// Progressive normalized data from streaming accumulator
 			normalizedTodos: update.normalizedTodos ?? toolCall.normalizedTodos,
 			normalizedQuestions: update.normalizedQuestions ?? toolCall.normalizedQuestions,
+			progressiveArguments: nextProgressiveArguments,
 			startedAtMs,
 			completedAtMs,
 		};
@@ -525,145 +517,94 @@ export class ToolCallManager implements IToolCallManager {
 		return ok(undefined);
 	}
 
-	/**
-	 * Update a child tool call within its parent's taskChildren array.
-	 * Uses O(1) child-to-parent index for fast lookup.
-	 * Falls back to regular updateEntry if child-parent relationship is unknown.
-	 */
-	updateChildInParent(sessionId: string, childUpdate: ToolCallUpdate): Result<void, AppError> {
-		const parentInfo = this.childToParentIndex.get(childUpdate.toolCallId);
-
-		if (!parentInfo) {
-			// Not a known child - treat as regular update
-			logger.debug("Child not indexed, falling back to regular update", {
-				sessionId,
-				toolCallId: childUpdate.toolCallId,
-			});
-			return this.updateEntry(sessionId, childUpdate);
-		}
-
-		// Verify session matches
-		if (parentInfo.sessionId !== sessionId) {
-			logger.warn("Session mismatch for child update", {
-				expectedSession: parentInfo.sessionId,
-				receivedSession: sessionId,
-				toolCallId: childUpdate.toolCallId,
-			});
-			return this.updateEntry(sessionId, childUpdate);
-		}
-
-		const parentRef = this.findToolCallEntryRef(sessionId, parentInfo.parentId);
-		if (!parentRef) {
-			logger.warn("Parent not found for child update", {
-				sessionId,
-				parentId: parentInfo.parentId,
-				childId: childUpdate.toolCallId,
-			});
-			return this.updateEntry(sessionId, childUpdate);
-		}
-
-		if (!isToolCallEntry(parentRef.entry)) {
-			logger.warn("Parent entry is not a tool_call", {
-				sessionId,
-				parentId: parentInfo.parentId,
-			});
-			return ok(undefined);
-		}
-
-		const parent = parentRef.entry.message;
-		if (!parent.taskChildren) {
-			logger.warn("Parent has no taskChildren", {
-				sessionId,
-				parentId: parentInfo.parentId,
-				childId: childUpdate.toolCallId,
-			});
-			return ok(undefined);
-		}
-
-		// Extract result from update
-		const extractedResult =
-			childUpdate.result ?? childUpdate.rawOutput ?? extractResultFromContent(childUpdate.content);
-
-		// Update specific child in parent's taskChildren
-		const updatedChildren = parent.taskChildren.map((child) => {
-			if (child.id !== childUpdate.toolCallId) return child;
-			const incomingStatus = childUpdate.status ?? child.status;
-			const nextStatus = resolveNextStatus(child.status, incomingStatus);
-			const nextArguments =
-				childUpdate.arguments ?? childUpdate.streamingArguments ?? child.arguments;
-			const mergedArguments =
-				nextArguments === child.arguments
-					? child.arguments
-					: mergeToolArguments(child.arguments, nextArguments);
-			return {
-				...child,
-				status: nextStatus ?? child.status,
-				result: extractedResult ?? child.result,
-				title: childUpdate.title ?? child.title,
-				locations: childUpdate.locations ?? child.locations,
-				arguments: mergedArguments,
-			};
-		});
-
-		const updatedParent: ToolCall = { ...parent, taskChildren: updatedChildren };
-		const updatedEntry: SessionEntry = {
-			...parentRef.entry,
-			message: updatedParent,
-		};
-
-		this.updateToolCallEntryRef(sessionId, parentRef, updatedEntry);
-		logger.debug("Updated child in parent taskChildren", {
-			sessionId,
-			parentId: parentInfo.parentId,
-			childId: childUpdate.toolCallId,
-			status: childUpdate.status,
-		});
-		return ok(undefined);
-	}
-
 	// ============================================
-	// STREAMING ARGUMENTS (parsed by Rust, stored here for progressive UI)
+	// STREAMING ARGUMENTS (read/cleanup over canonical entry state)
 	// ============================================
-
-	/**
-	 * Store pre-parsed streaming arguments from Rust.
-	 */
-	setStreamingArguments(sessionId: string, toolCallId: string, args: ToolArguments): void {
-		let toolCallIds = this.sessionToolCallIds.get(sessionId);
-		if (!toolCallIds) {
-			if (this.sessionToolCallIds.size >= ToolCallManager.MAX_SESSIONS) {
-				logger.warn("Session limit exceeded, dropping streaming arguments", {
-					sessionId,
-					toolCallId,
-					maxSessions: ToolCallManager.MAX_SESSIONS,
-				});
-				return;
-			}
-			toolCallIds = new Set();
-			this.sessionToolCallIds.set(sessionId, toolCallIds);
-		}
-		toolCallIds.add(toolCallId);
-
-		const existingArgs = this.streamingArgumentsParsed.get(toolCallId);
-		if (areToolArgumentsEqual(existingArgs, args)) {
-			return;
-		}
-
-		this.streamingArgumentsParsed.set(toolCallId, args);
-	}
 
 	/**
 	 * Get the streaming arguments for a tool call.
 	 */
 	getStreamingArguments(toolCallId: string): ToolArguments | undefined {
-		return this.streamingArgumentsParsed.get(toolCallId);
+		const sessionId = this.toolCallSessionIndex.get(toolCallId);
+		if (!sessionId) {
+			return undefined;
+		}
+
+		const entryRef = this.findToolCallEntryRef(sessionId, toolCallId);
+		if (entryRef && isToolCallEntry(entryRef.entry)) {
+			return entryRef.entry.message.progressiveArguments;
+		}
+
+		const parentInfo = this.childToParentIndex.get(toolCallId);
+		if (!parentInfo || parentInfo.sessionId !== sessionId) {
+			return undefined;
+		}
+
+		const parentRef = this.findToolCallEntryRef(sessionId, parentInfo.parentId);
+		if (!parentRef || !isToolCallEntry(parentRef.entry) || !parentRef.entry.message.taskChildren) {
+			return undefined;
+		}
+
+		return parentRef.entry.message.taskChildren.find((child) => child.id === toolCallId)
+			?.progressiveArguments;
 	}
 
 	/**
 	 * Clear streaming arguments for a tool call.
 	 */
 	clearStreamingArguments(toolCallId: string): void {
-		this.streamingArgumentsParsed.delete(toolCallId);
+		const sessionId = this.toolCallSessionIndex.get(toolCallId);
+		if (!sessionId) {
+			return;
+		}
+
+		const entryRef = this.findToolCallEntryRef(sessionId, toolCallId);
+		if (entryRef && isToolCallEntry(entryRef.entry)) {
+			if (entryRef.entry.message.progressiveArguments === undefined) {
+				return;
+			}
+
+			const updatedEntry: SessionEntry = {
+				...entryRef.entry,
+				message: {
+					...entryRef.entry.message,
+					progressiveArguments: undefined,
+				},
+			};
+
+			this.updateToolCallEntryRef(sessionId, entryRef, updatedEntry);
+			return;
+		}
+
+		const parentInfo = this.childToParentIndex.get(toolCallId);
+		if (!parentInfo || parentInfo.sessionId !== sessionId) {
+			return;
+		}
+
+		const parentRef = this.findToolCallEntryRef(sessionId, parentInfo.parentId);
+		if (!parentRef || !isToolCallEntry(parentRef.entry) || !parentRef.entry.message.taskChildren) {
+			return;
+		}
+
+		const updatedChildren = parentRef.entry.message.taskChildren.map((child) =>
+			child.id === toolCallId && child.progressiveArguments !== undefined
+				? {
+						...child,
+						progressiveArguments: undefined,
+					}
+				: child
+		);
+
+		const updatedParent: ToolCall = {
+			...parentRef.entry.message,
+			taskChildren: updatedChildren,
+		};
+		const updatedEntry: SessionEntry = {
+			...parentRef.entry,
+			message: updatedParent,
+		};
+
+		this.updateToolCallEntryRef(sessionId, parentRef, updatedEntry);
 	}
 
 	/**
@@ -680,7 +621,7 @@ export class ToolCallManager implements IToolCallManager {
 		const toolCallIds = this.sessionToolCallIds.get(sessionId);
 		if (toolCallIds) {
 			for (const toolCallId of toolCallIds) {
-				this.streamingArgumentsParsed.delete(toolCallId);
+				this.toolCallSessionIndex.delete(toolCallId);
 				this.childToParentIndex.delete(toolCallId);
 			}
 			this.sessionToolCallIds.delete(sessionId);
@@ -744,6 +685,7 @@ export class ToolCallManager implements IToolCallManager {
 		if (!taskChildren) return;
 
 		for (const child of taskChildren) {
+			this.rememberToolCallSession(sessionId, child.id);
 			this.childToParentIndex.set(child.id, { sessionId, parentId });
 		}
 	}

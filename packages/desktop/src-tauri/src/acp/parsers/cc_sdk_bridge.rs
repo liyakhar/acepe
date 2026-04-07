@@ -3,11 +3,14 @@
 //! This module provides a single entry point, [`translate_cc_sdk_message`], that converts
 //! a single cc-sdk protocol message into zero or more Acepe session update events.
 
+use std::collections::{HashMap, VecDeque};
+
 use super::{get_parser, AgentType};
 use crate::acp::session_update::{
-    build_tool_call_from_raw, ContentChunk, QuestionData, RawToolCallInput, SessionUpdate,
-    ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference,
-    TurnErrorData, UsageTelemetryData, UsageTelemetryTokens,
+    build_tool_call_from_raw, build_tool_call_update_from_raw, ContentChunk, QuestionData,
+    RawToolCallInput, RawToolCallUpdateInput, SessionUpdate, ToolArguments, ToolCallData,
+    ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData, UsageTelemetryData,
+    UsageTelemetryTokens,
 };
 use crate::acp::types::ContentBlock;
 use cc_sdk::Message;
@@ -18,6 +21,61 @@ pub struct CcSdkTurnStreamState {
     pub saw_thinking_delta: bool,
     /// Model ID extracted from `message_start` stream events or `Assistant` messages.
     pub model_id: Option<String>,
+    /// content_block_start index -> (tool_use_id, tool_name) for streamed tool input deltas.
+    pub stream_tool_blocks: HashMap<u64, (String, String)>,
+    /// Pending non-question tool calls that should be auto-completed when Claude resumes a turn.
+    pub pending_tool_call_ids: VecDeque<String>,
+    /// True after Claude reports stop_reason=tool_use and before the next message_start arrives.
+    pub awaiting_tool_turn_resume: bool,
+}
+
+fn note_pending_tool_call(stream_state: &mut CcSdkTurnStreamState, tool_call: &ToolCallData) {
+    if matches!(tool_call.kind, Some(ToolKind::Question)) {
+        return;
+    }
+    if !matches!(
+        tool_call.status,
+        ToolCallStatus::Pending | ToolCallStatus::InProgress
+    ) {
+        return;
+    }
+    if stream_state
+        .pending_tool_call_ids
+        .iter()
+        .any(|pending_tool_call_id| pending_tool_call_id == &tool_call.id)
+    {
+        return;
+    }
+
+    stream_state
+        .pending_tool_call_ids
+        .push_back(tool_call.id.clone());
+}
+
+pub fn resolve_pending_tool_call(stream_state: &mut CcSdkTurnStreamState, tool_call_id: &str) {
+    stream_state
+        .pending_tool_call_ids
+        .retain(|pending_tool_call_id| pending_tool_call_id != tool_call_id);
+}
+
+fn take_synthetic_tool_completions_for_resumed_tool_turn(
+    stream_state: &mut CcSdkTurnStreamState,
+    session_id: &Option<String>,
+) -> Vec<SessionUpdate> {
+    let mut synthetic_updates = Vec::new();
+
+    while let Some(tool_call_id) = stream_state.pending_tool_call_ids.pop_front() {
+        synthetic_updates.push(SessionUpdate::ToolCallUpdate {
+            update: ToolCallUpdateData {
+                tool_call_id,
+                status: Some(ToolCallStatus::Completed),
+                ..Default::default()
+            },
+            session_id: session_id.clone(),
+        });
+    }
+
+    synthetic_updates
 }
 
 /// Translates a cc-sdk Message into zero or more Acepe SessionUpdate events.
@@ -29,12 +87,8 @@ pub fn translate_cc_sdk_message(
     msg: Message,
     session_id: Option<String>,
 ) -> Vec<SessionUpdate> {
-    translate_cc_sdk_message_with_turn_state(
-        agent,
-        msg,
-        session_id,
-        CcSdkTurnStreamState::default(),
-    )
+    let mut stream_state = CcSdkTurnStreamState::default();
+    translate_cc_sdk_message_with_mut_turn_state(agent, msg, session_id, &mut stream_state)
 }
 
 pub fn translate_cc_sdk_message_with_turn_state(
@@ -42,6 +96,16 @@ pub fn translate_cc_sdk_message_with_turn_state(
     msg: Message,
     session_id: Option<String>,
     stream_state: CcSdkTurnStreamState,
+) -> Vec<SessionUpdate> {
+    let mut stream_state = stream_state;
+    translate_cc_sdk_message_with_mut_turn_state(agent, msg, session_id, &mut stream_state)
+}
+
+pub fn translate_cc_sdk_message_with_mut_turn_state(
+    agent: AgentType,
+    msg: Message,
+    session_id: Option<String>,
+    stream_state: &mut CcSdkTurnStreamState,
 ) -> Vec<SessionUpdate> {
     match msg {
         Message::Assistant { message } => {
@@ -55,7 +119,13 @@ pub fn translate_cc_sdk_message_with_turn_state(
             ..
         } => {
             let effective_sid = session_id.or(Some(sdk_sid));
-            translate_stream_event(agent, event, effective_sid, parent_tool_use_id)
+            translate_stream_event(
+                agent,
+                event,
+                effective_sid,
+                parent_tool_use_id,
+                stream_state,
+            )
         }
 
         Message::Result {
@@ -96,9 +166,12 @@ fn translate_assistant(
     agent: AgentType,
     message: cc_sdk::AssistantMessage,
     session_id: Option<String>,
-    stream_state: CcSdkTurnStreamState,
+    stream_state: &mut CcSdkTurnStreamState,
 ) -> Vec<SessionUpdate> {
     let mut updates: Vec<SessionUpdate> = Vec::new();
+    if stream_state.model_id.is_none() {
+        stream_state.model_id = message.model.clone();
+    }
 
     let parent_tool_use_id = message.parent_tool_use_id.clone();
 
@@ -151,6 +224,7 @@ fn translate_assistant(
                     task_children: None,
                 };
                 let tool_call = build_tool_call_from_raw(parser, raw);
+                note_pending_tool_call(stream_state, &tool_call);
                 updates.push(SessionUpdate::ToolCall {
                     tool_call: tool_call.clone(),
                     session_id: session_id.clone(),
@@ -243,6 +317,7 @@ fn translate_stream_event(
     event: serde_json::Value,
     session_id: Option<String>,
     parent_tool_use_id: Option<String>,
+    stream_state: &mut CcSdkTurnStreamState,
 ) -> Vec<SessionUpdate> {
     let event_type = match event.get("type").and_then(|v| v.as_str()) {
         Some(t) => t,
@@ -281,12 +356,18 @@ fn translate_stream_event(
             } else {
                 None
             };
+            if let Some(index) = event.get("index").and_then(|v| v.as_u64()) {
+                stream_state
+                    .stream_tool_blocks
+                    .insert(index, (id.clone(), name.clone()));
+            }
             let tool_call = ToolCallData {
                 id,
                 name,
                 arguments: ToolArguments::Other {
                     raw: serde_json::Value::Null,
                 },
+                raw_input: block.get("input").cloned(),
                 status: ToolCallStatus::InProgress,
                 result: None,
                 kind,
@@ -301,6 +382,7 @@ fn translate_stream_event(
                 awaiting_plan_approval: false,
                 plan_approval_request_id: None,
             };
+            note_pending_tool_call(stream_state, &tool_call);
 
             vec![SessionUpdate::ToolCall {
                 tool_call,
@@ -320,6 +402,7 @@ fn translate_stream_event(
 
             match delta_type {
                 "text_delta" => {
+                    stream_state.saw_text_delta = true;
                     let text = match delta.get("text").and_then(|v| v.as_str()) {
                         Some(t) => t.to_string(),
                         None => return vec![],
@@ -335,6 +418,7 @@ fn translate_stream_event(
                 }
 
                 "thinking_delta" => {
+                    stream_state.saw_thinking_delta = true;
                     let thinking = match delta.get("thinking").and_then(|v| v.as_str()) {
                         Some(t) => t.to_string(),
                         None => return vec![],
@@ -349,13 +433,77 @@ fn translate_stream_event(
                     }]
                 }
 
-                // input_json_delta: tool argument streaming.
-                // The `tool_use_id` is not on the delta event itself (it's on `content_block_start`).
-                // Tracking index→id state requires a stateful bridge; for now we skip these deltas
-                // and rely on Message::Assistant for the complete tool arguments.
-                // TODO(006): implement stateful index→tool_call_id tracking for streaming tool args.
+                "input_json_delta" => {
+                    let index = match event.get("index").and_then(|v| v.as_u64()) {
+                        Some(index) => index,
+                        None => return vec![],
+                    };
+                    let partial_json = match delta.get("partial_json").and_then(|v| v.as_str()) {
+                        Some(partial_json) => partial_json,
+                        None => return vec![],
+                    };
+                    let (tool_call_id, tool_name) =
+                        match stream_state.stream_tool_blocks.get(&index) {
+                            Some((tool_call_id, tool_name)) => {
+                                (tool_call_id.clone(), tool_name.clone())
+                            }
+                            None => return vec![],
+                        };
+                    let parser = get_parser(agent);
+                    let raw = RawToolCallUpdateInput {
+                        id: tool_call_id,
+                        status: None,
+                        result: None,
+                        content: None,
+                        title: None,
+                        locations: None,
+                        streaming_input_delta: Some(partial_json.to_string()),
+                        tool_name: Some(tool_name),
+                        raw_input: None,
+                        kind: None,
+                    };
+                    let update =
+                        build_tool_call_update_from_raw(parser, raw, session_id.as_deref());
+
+                    vec![SessionUpdate::ToolCallUpdate { update, session_id }]
+                }
                 _ => vec![],
             }
+        }
+
+        "content_block_stop" => {
+            if let Some(index) = event.get("index").and_then(|v| v.as_u64()) {
+                stream_state.stream_tool_blocks.remove(&index);
+            }
+            vec![]
+        }
+
+        "message_start" => {
+            let mut updates = Vec::new();
+            if stream_state.awaiting_tool_turn_resume {
+                updates.extend(take_synthetic_tool_completions_for_resumed_tool_turn(
+                    stream_state,
+                    &session_id,
+                ));
+                stream_state.awaiting_tool_turn_resume = false;
+            }
+            if let Some(model) = event
+                .get("message")
+                .and_then(|m| m.get("model"))
+                .and_then(|v| v.as_str())
+            {
+                stream_state.model_id = Some(model.to_string());
+            }
+            updates
+        }
+
+        "message_delta" => {
+            stream_state.awaiting_tool_turn_resume = event
+                .get("delta")
+                .and_then(|delta| delta.get("stop_reason"))
+                .and_then(|value| value.as_str())
+                == Some("tool_use");
+            vec![]
         }
 
         // All other stream event types are ignored
@@ -630,7 +778,7 @@ mod tests {
     use crate::acp::parsers::AgentType;
     use crate::acp::session_update::{
         build_tool_call_update_from_raw, RawToolCallUpdateInput, SessionUpdate, ToolArguments,
-        ToolKind,
+        ToolCallStatus, ToolKind,
     };
     use crate::acp::types::ContentBlock;
     use cc_sdk::{
@@ -689,6 +837,7 @@ mod tests {
                 saw_text_delta: true,
                 saw_thinking_delta: false,
                 model_id: None,
+                ..Default::default()
             },
         );
 
@@ -847,6 +996,7 @@ mod tests {
                 saw_text_delta: false,
                 saw_thinking_delta: false,
                 model_id: Some("claude-sonnet-4-5-20250929".to_string()),
+                ..Default::default()
             },
         );
 
@@ -926,6 +1076,7 @@ mod tests {
                 saw_text_delta: false,
                 saw_thinking_delta: false,
                 model_id: Some("claude-sonnet-4-5-20250929".to_string()),
+                ..Default::default()
             },
         );
 
@@ -972,6 +1123,7 @@ mod tests {
                 saw_text_delta: false,
                 saw_thinking_delta: false,
                 model_id: Some("claude-sonnet-4-6".to_string()),
+                ..Default::default()
             },
         );
 
@@ -1039,6 +1191,156 @@ mod tests {
                 other => panic!("expected execute streaming args, got {:?}", other),
             }
         });
+    }
+
+    #[test]
+    fn streamed_edit_input_delta_emits_tool_call_update_from_tracked_tool_block() {
+        let mut stream_state = CcSdkTurnStreamState::default();
+
+        let start_updates = super::translate_cc_sdk_message_with_mut_turn_state(
+            AgentType::ClaudeCode,
+            Message::StreamEvent {
+                uuid: "msg-edit-start".to_string(),
+                session_id: "ses-edit-stream".to_string(),
+                event: serde_json::json!({
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": "toolu_edit_stream",
+                        "name": "Edit",
+                        "input": {}
+                    }
+                }),
+                parent_tool_use_id: None,
+            },
+            Some("ses-edit-stream".to_string()),
+            &mut stream_state,
+        );
+        assert_eq!(start_updates.len(), 1);
+
+        let delta_updates = super::translate_cc_sdk_message_with_mut_turn_state(
+            AgentType::ClaudeCode,
+            Message::StreamEvent {
+                uuid: "msg-edit-delta".to_string(),
+                session_id: "ses-edit-stream".to_string(),
+                event: serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": "{\"file_path\":\"/tmp/demo.txt\"}"
+                    }
+                }),
+                parent_tool_use_id: None,
+            },
+            Some("ses-edit-stream".to_string()),
+            &mut stream_state,
+        );
+
+        assert_eq!(delta_updates.len(), 1);
+        match &delta_updates[0] {
+            SessionUpdate::ToolCallUpdate { update, session_id } => {
+                assert_eq!(update.tool_call_id, "toolu_edit_stream");
+                assert_eq!(session_id.as_deref(), Some("ses-edit-stream"));
+                match &update.streaming_arguments {
+                    Some(ToolArguments::Edit { edits }) => {
+                        assert_eq!(edits.len(), 1);
+                        assert_eq!(edits[0].file_path.as_deref(), Some("/tmp/demo.txt"));
+                    }
+                    other => panic!("expected streamed edit arguments, got {:?}", other),
+                }
+            }
+            other => panic!("expected tool call update, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn next_message_start_after_tool_use_emits_synthetic_completion_for_pending_tool() {
+        let mut stream_state = CcSdkTurnStreamState::default();
+
+        let _ = super::translate_cc_sdk_message_with_mut_turn_state(
+            AgentType::ClaudeCode,
+            Message::StreamEvent {
+                uuid: "msg-tool-start".to_string(),
+                session_id: "ses-tool-resume".to_string(),
+                event: serde_json::json!({
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": "toolu_resume_me",
+                        "name": "Bash",
+                        "input": {
+                            "command": "echo hi"
+                        }
+                    }
+                }),
+                parent_tool_use_id: None,
+            },
+            Some("ses-tool-resume".to_string()),
+            &mut stream_state,
+        );
+
+        let _ = super::translate_cc_sdk_message_with_mut_turn_state(
+            AgentType::ClaudeCode,
+            Message::StreamEvent {
+                uuid: "msg-tool-stop".to_string(),
+                session_id: "ses-tool-resume".to_string(),
+                event: serde_json::json!({
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "tool_use"
+                    }
+                }),
+                parent_tool_use_id: None,
+            },
+            Some("ses-tool-resume".to_string()),
+            &mut stream_state,
+        );
+
+        let updates = super::translate_cc_sdk_message_with_mut_turn_state(
+            AgentType::ClaudeCode,
+            Message::StreamEvent {
+                uuid: "msg-next-start".to_string(),
+                session_id: "ses-tool-resume".to_string(),
+                event: serde_json::json!({
+                    "type": "message_start",
+                    "message": {
+                        "content": [],
+                        "model": "claude-sonnet-4-6"
+                    }
+                }),
+                parent_tool_use_id: None,
+            },
+            Some("ses-tool-resume".to_string()),
+            &mut stream_state,
+        );
+
+        assert!(
+            updates.iter().any(|update| matches!(
+                update,
+                SessionUpdate::ToolCallUpdate { update, .. }
+                    if update.tool_call_id == "toolu_resume_me"
+                        && update.status == Some(ToolCallStatus::Completed)
+            )),
+            "bridge should synthesize completion for unresolved tool_use turns when the next message starts"
+        );
+    }
+
+    #[test]
+    fn production_bridge_source_owns_input_json_delta_translation() {
+        let source = include_str!("cc_sdk_bridge.rs");
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(
+            production_source.contains("\"input_json_delta\""),
+            "provider-edge bridge should handle Claude input_json_delta events"
+        );
+        assert!(
+            !production_source.contains("skip these deltas"),
+            "provider-edge bridge should not defer tool input delta translation to outer layers"
+        );
     }
 
     #[test]

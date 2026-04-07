@@ -1,5 +1,5 @@
 <script lang="ts">
-import { PillButton } from "@acepe/ui";
+import { Button } from "@acepe/ui/button";
 import { CheckCircle } from "phosphor-svelte";
 import { DownloadSimple } from "phosphor-svelte";
 import * as m from "$lib/paraglide/messages.js";
@@ -12,17 +12,22 @@ let { isAdded }: Props = $props();
 </script>
 
 {#if isAdded}
-	<PillButton variant="soft" size="sm" class="pointer-events-none gap-1 cursor-default">
-		{#snippet children()}
-			<CheckCircle weight="fill" size={12} class="text-green-500" />
-			{m.open_project_added()}
-		{/snippet}
-	</PillButton>
+	<Button
+		variant="headerAction"
+		size="headerAction"
+		class="pointer-events-none gap-1 cursor-default disabled:opacity-100"
+		disabled={true}
+	>
+		<CheckCircle weight="fill" size={12} class="text-green-500" />
+		{m.open_project_added()}
+	</Button>
 {:else}
-	<PillButton variant="outline" size="sm" class="opacity-0 group-hover:opacity-100 transition-opacity gap-1">
-		{#snippet children()}
-			<DownloadSimple size={12} />
-			{m.open_project_import()}
-		{/snippet}
-	</PillButton>
+	<Button
+		variant="headerAction"
+		size="headerAction"
+		class="gap-1 opacity-0 transition-opacity group-hover:opacity-100"
+	>
+		<DownloadSimple size={12} />
+		{m.open_project_import()}
+	</Button>
 {/if}

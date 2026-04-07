@@ -265,28 +265,6 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 	}
 
 	/**
-	 * Update a child tool call within its parent's taskChildren array.
-	 */
-	updateChildInParent(sessionId: string, childUpdate: ToolCallUpdate): void {
-		this.toolCallManager.updateChildInParent(sessionId, childUpdate).match(
-			() => {},
-			(e) =>
-				logger.warn("Failed to update child in parent", {
-					sessionId,
-					toolCallId: childUpdate.toolCallId,
-					error: e,
-				})
-		);
-	}
-
-	/**
-	 * Store pre-parsed streaming arguments from Rust.
-	 */
-	setStreamingArguments(sessionId: string, toolCallId: string, args: ToolArguments): void {
-		this.toolCallManager.setStreamingArguments(sessionId, toolCallId, args);
-	}
-
-	/**
 	 * Get the streaming arguments for a tool call.
 	 */
 	getStreamingArguments(toolCallId: string): ToolArguments | undefined {

@@ -29,6 +29,7 @@ import type {
 	ProjectWithSessions,
 } from "./open-project-dialog-props.js";
 
+import { shouldShowDiscoveredProject, sortProjectsBySessionCount } from "./project-discovery.js";
 import ProjectTable from "./project-table.svelte";
 
 let {
@@ -100,7 +101,7 @@ async function loadProjects() {
 		(projectInfos) => {
 			// Create projects with loading placeholders, filter out root directory and "global"
 			projects = projectInfos
-				.filter((info) => info.path !== "/" && info.path !== "global") // Filter out root directory and OpenCode global sessions
+				.filter(shouldShowDiscoveredProject)
 				.map((info) => ({
 					path: info.path,
 					name: extractNameFromPath(info.path),
@@ -147,18 +148,7 @@ async function loadSessionCountsProgressively() {
 
 					// Re-sort projects by total sessions (most sessions first)
 					// Projects still loading go to the end
-					projects.sort((a, b) => {
-						// Handle loading and error states (put them at the end)
-						const aIsIncomplete = a.totalSessions === "loading" || a.totalSessions === "error";
-						const bIsIncomplete = b.totalSessions === "loading" || b.totalSessions === "error";
-
-						if (aIsIncomplete && bIsIncomplete) return 0;
-						if (aIsIncomplete) return 1; // a goes after b
-						if (bIsIncomplete) return -1; // a goes before b
-
-						// Both have counts, sort by total sessions descending
-						return (b.totalSessions as number) - (a.totalSessions as number);
-					});
+					projects = sortProjectsBySessionCount(projects);
 				}
 			},
 			(error) => {

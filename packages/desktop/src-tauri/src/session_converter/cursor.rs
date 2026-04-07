@@ -137,6 +137,7 @@ mod tests {
                             content: None,
                         }],
                     },
+                    raw_input: None,
                     status: ToolCallStatus::Pending,
                     result: None,
                     kind: Some(ToolKind::Edit),
@@ -156,6 +157,7 @@ mod tests {
             stats: SessionStats::default(),
             title: "Cursor Session".to_string(),
             created_at: "2026-03-20T07:49:55.000000+00:00".to_string(),
+            current_mode_id: None,
         };
 
         overlay_streaming_tool_updates(session_id, &mut converted);

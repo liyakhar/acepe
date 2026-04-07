@@ -397,6 +397,7 @@ pub(crate) fn build_tool_call_from_raw(
         id: raw.id.clone(),
         name: raw.name.clone(),
         arguments,
+        raw_input: Some(raw.arguments.clone()),
         status,
         result: None,
         kind: Some(kind),
@@ -699,6 +700,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn build_tool_call_from_raw_preserves_canonical_raw_input() {
+        let parser = get_parser(current_agent());
+        let raw = RawToolCallInput {
+            id: "toolu_raw_input".to_string(),
+            name: "Bash".to_string(),
+            arguments: json!({
+                "command": "echo hi",
+                "description": "Say hi"
+            }),
+            status: ToolCallStatus::InProgress,
+            kind: Some(ToolKind::Execute),
+            title: None,
+            parent_tool_use_id: None,
+            task_children: None,
+        };
+
+        let tool_call = build_tool_call_from_raw(parser, raw);
+
+        assert_eq!(
+            tool_call.raw_input,
+            Some(json!({
+                "command": "echo hi",
+                "description": "Say hi"
+            }))
+        );
+    }
+
     // --- extract_backtick_command unit tests ---
 
     #[test]
@@ -739,6 +768,7 @@ mod tests {
                 id: tool_call_id.to_string(),
                 name: tool_name.to_string(),
                 arguments: ToolArguments::Other { raw: json!({}) },
+                raw_input: Some(json!({})),
                 status: ToolCallStatus::Pending,
                 result: None,
                 kind: Some(ToolKind::Other),

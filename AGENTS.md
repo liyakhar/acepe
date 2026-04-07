@@ -30,6 +30,7 @@ cargo clippy       # Rust lint (in src-tauri/)
 ## Critical Rules
 
 - Acepe standardizes on the Compounding Engineering workflow for non-trivial engineering work.
+- Treat non-trivial refactors as planned CE work: if the refactor goal, scope, or invariants are unclear, start with `/ce:brainstorm`; otherwise start with `/ce:plan`, run `/document-review` before `/ce:work`, and use `/ce:review` before shipping the change.
 - ALWAYS fix bugs with TDD: write a focused failing test or characterization first, verify it fails, then implement the minimal fix and rerun the test.
 - Follow the red-green-refactor loop deliberately: first prove the bug or missing behavior with one failing test, then make the smallest change that turns it green, then clean up while keeping tests green.
 - Choose the narrowest valuable test seam. Prefer behavior-focused tests over implementation-detail assertions, and only drop to structural contract tests when the invariant is about wiring or ownership.
@@ -57,10 +58,11 @@ Acepe uses the Compounding Engineering plugin as its default engineering operati
 1. Use `/ce:brainstorm` when problem framing, scope, or success criteria are not already settled. Capture or update a requirements doc in `docs/brainstorms/`.
 2. Use `/ce:plan` once the intended behavior is clear enough to define implementation. Capture or update a plan in `docs/plans/`.
 3. Use `/document-review` immediately after the plan draft is complete. This review gate is mandatory for any plan you create or materially revise.
-4. Use `/ce:work` only after the reviewed plan is ready for execution.
-5. Use `/ce:review` before shipping non-trivial or risky changes.
-6. Use `/ce:compound` after solving a meaningful bug or landing a non-obvious implementation so the learning is preserved.
-7. Use `/ce:compound-refresh` when a new fix makes older learnings stale, contradictory, or incomplete.
+4. Use `test-driven-development` before implementation for bug fixes, behavior changes, and non-trivial refactors so execution starts from a focused failing test or characterization.
+5. Use `/ce:work` only after the reviewed plan is ready for execution.
+6. Use `/ce:review` before shipping non-trivial or risky changes.
+7. Use `/ce:compound` after solving a meaningful bug or landing a non-obvious implementation so the learning is preserved.
+8. Use `/ce:compound-refresh` when a new fix makes older learnings stale, contradictory, or incomplete.
 
 ### Enforcement Rules
 
@@ -69,6 +71,8 @@ Acepe uses the Compounding Engineering plugin as its default engineering operati
 - If a current requirements doc already exists, start at `/ce:plan` instead of re-brainstorming.
 - If a reviewed plan already exists and still matches the request, start at `/ce:work`.
 - If a request is genuinely tiny, behavior is already obvious, and a durable plan would add no value, direct execution is acceptable. Otherwise, use the full workflow.
+- For bug fixes, behavior changes, and non-trivial refactors, do not implement first and retrofit tests later. Invoke `test-driven-development` before `/ce:work` so the change is driven by a failing or characterization test.
+- Refactors are not exempt from the workflow. For any non-trivial refactor, create or update a plan with `/ce:plan`, pass that plan through `/document-review`, and only then move into `/ce:work`, even when the intended behavior is "no product change."
 - When you review a plan non-interactively or as part of a larger orchestration flow, prefer `/document-review mode:headless docs/plans/<plan>.md`.
 - If `/document-review` surfaces unresolved product or scope decisions, loop back to `/ce:brainstorm` or update the source requirements doc. Do not bury product ambiguity in code.
 - Store durable artifacts in the standard locations:
@@ -94,6 +98,7 @@ AI-powered development tools that get smarter with every use. Make each unit of 
 - `/ce:brainstorm` defines WHAT to build. It produces a requirements-quality artifact that planning can trust.
 - `/ce:plan` defines HOW to build it. It should produce a decision-complete implementation plan with concrete files, tests, constraints, and verification.
 - `/document-review` pressure-tests the plan before code exists. This is the quality gate that catches contradictions, scope drift, weak assumptions, and missing verification before implementation starts.
+- `test-driven-development` defines the first executable proof of the change. It should establish the failing or characterization test that `/ce:work` then turns green.
 - `/ce:work` executes the reviewed plan. It is for code and verification, not for inventing missing product behavior.
 - `/ce:review` stress-tests the resulting code changes before shipping.
 - `/ce:compound` and `/ce:compound-refresh` turn execution-time learning into durable team leverage.

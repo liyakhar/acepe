@@ -301,7 +301,7 @@ const highlightCtx = getSessionListHighlightContext();
 				{#if session.sequenceId != null}
 					<ProjectLetterBadge
 						name={session.projectName}
-						color={session.projectColor ?? "#6B7280"}
+						color={session.projectColor}
 						size={11}
 						sequenceId={session.sequenceId}
 						showLetter={false}

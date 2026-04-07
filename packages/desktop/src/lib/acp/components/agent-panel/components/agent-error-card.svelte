@@ -16,7 +16,7 @@ let { title, summary, details, onRetry, onDismiss, onCreateIssue }: Props = $pro
 let isExpanded = $state(false);
 </script>
 
-<div class="w-full px-5">
+<div class="w-full">
 	{#if isExpanded}
 		<div class="rounded-t-lg bg-accent/50 overflow-hidden">
 			<div class="max-h-[220px] overflow-y-auto px-3 py-2">

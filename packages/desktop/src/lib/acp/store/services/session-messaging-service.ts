@@ -406,14 +406,6 @@ export class SessionMessagingService {
 	}
 
 	/**
-	 * Update a child tool call within its parent's taskChildren array.
-	 * Uses O(1) child-to-parent index for fast lookup.
-	 */
-	updateChildInParent(sessionId: string, childUpdate: ToolCallUpdate): void {
-		this.entryManager.updateChildInParent(sessionId, childUpdate);
-	}
-
-	/**
 	 * Update available commands.
 	 */
 	updateAvailableCommands(sessionId: string, commands: AvailableCommand[]): void {
