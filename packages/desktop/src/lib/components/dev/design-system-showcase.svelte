@@ -169,6 +169,7 @@
 			status: "done",
 		},
 		hasUnseenCompletion: true,
+		sequenceId: null,
 	};
 
 	const demoSubagentToolCalls: readonly AgentToolEntry[] = [
@@ -296,6 +297,7 @@
 		taskCard: null,
 		latestTool: null,
 		hasUnseenCompletion: false,
+		sequenceId: null,
 	};
 
 	const demoCardQuestion: KanbanCardData = {
@@ -315,6 +317,7 @@
 		taskCard: null,
 		latestTool: null,
 		hasUnseenCompletion: false,
+		sequenceId: null,
 	};
 
 	const demoPermissionReq: PermissionRequest = {

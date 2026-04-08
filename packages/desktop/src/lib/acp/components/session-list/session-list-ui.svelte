@@ -787,8 +787,6 @@ function openCreateBranchDialog(projectPath: string): void {
 											<ProjectHeaderOverflowMenu
 												projectName={group.projectName}
 												currentColor={group.projectColor}
-												viewMode={viewMode}
-												onViewModeChange={(mode) => setProjectViewMode(group.projectPath, mode)}
 												onColorChange={onProjectColorChange
 													? (color) => onProjectColorChange(group.projectPath, color)
 													: undefined}

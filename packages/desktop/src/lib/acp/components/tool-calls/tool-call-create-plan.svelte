@@ -143,10 +143,13 @@ function handleApprove() {
 		interactionStore.setPlanApprovalStatus(approval.id, "approved");
 	}
 
-	const replyResult =
-		approval !== null
-			? replyToPlanApprovalRequest(approval, true, false)
-			: replyToPlanApprovalRequest(sessionId, requestId, true);
+	let replyResult;
+	if (approval !== null) {
+		replyResult = replyToPlanApprovalRequest(approval, true, false);
+	} else {
+		if (requestId == null || sessionId == null) return;
+		replyResult = replyToPlanApprovalRequest(sessionId, requestId, true);
+	}
 
 	replyResult.match(
 		() => {},
@@ -171,10 +174,13 @@ function handleReject() {
 		interactionStore.setPlanApprovalStatus(approval.id, "rejected");
 	}
 
-	const replyResult =
-		approval !== null
-			? replyToPlanApprovalRequest(approval, false, false)
-			: replyToPlanApprovalRequest(sessionId, requestId, false);
+	let replyResult;
+	if (approval !== null) {
+		replyResult = replyToPlanApprovalRequest(approval, false, false);
+	} else {
+		if (requestId == null || sessionId == null) return;
+		replyResult = replyToPlanApprovalRequest(sessionId, requestId, false);
+	}
 
 	replyResult.match(
 		() => {},

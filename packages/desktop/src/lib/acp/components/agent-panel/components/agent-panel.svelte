@@ -922,12 +922,16 @@ async function handleClose() {
 			worktreeDeleted,
 		})
 	) {
+		const worktreePath = effectiveActiveWorktreePath;
+		if (worktreePath == null) {
+			return;
+		}
 		const confirmationState = createPendingWorktreeCloseConfirmationState();
 		worktreeCloseConfirming = confirmationState.confirming;
 		worktreeHasDirtyChanges = confirmationState.hasDirtyChanges;
 		worktreeDirtyCheckPending = confirmationState.dirtyCheckPending;
 		const hasDirtyChanges = await tauriClient.git
-			.hasUncommittedChanges(effectiveActiveWorktreePath)
+			.hasUncommittedChanges(worktreePath)
 			.match(
 				(dirty) => dirty,
 				() => false // safe default on error — show normal confirmation

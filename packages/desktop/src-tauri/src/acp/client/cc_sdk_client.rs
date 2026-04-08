@@ -4030,8 +4030,16 @@ mod tests {
 
         {
             let captured = sink.lock().expect("sink lock");
-            assert_eq!(captured.len(), 1);
-            assert_eq!(captured[0].event_name, "acp-session-update");
+            assert_eq!(
+                captured
+                    .iter()
+                    .filter(|event| event.event_name == "acp-session-update")
+                    .count(),
+                1
+            );
+            assert!(captured
+                .iter()
+                .any(|event| event.event_name == "acp-session-domain-event"));
         }
 
         let resolved_kind = bridge
@@ -4065,7 +4073,14 @@ mod tests {
             serialized["hookSpecificOutput"]["decision"]["behavior"],
             "allow"
         );
-        assert_eq!(sink.lock().expect("sink lock").len(), 1);
+        let captured = sink.lock().expect("sink lock");
+        assert_eq!(
+            captured
+                .iter()
+                .filter(|event| event.event_name == "acp-session-update")
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -4312,8 +4327,10 @@ mod tests {
         assert!(matches!(result, cc_sdk::PermissionResult::Allow(_)));
 
         let captured = sink.lock().expect("sink lock");
-        assert_eq!(captured.len(), 1);
-        let event = &captured[0];
+        let event = captured
+            .iter()
+            .find(|event| event.event_name == "acp-session-update")
+            .expect("expected session update event");
         assert_eq!(event.event_name, "acp-session-update");
         let update = match &event.payload {
             crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => update,
@@ -4408,8 +4425,10 @@ mod tests {
         assert!(matches!(result, cc_sdk::PermissionResult::Allow(_)));
 
         let captured = sink.lock().expect("sink lock");
-        assert_eq!(captured.len(), 1);
-        let event = &captured[0];
+        let event = captured
+            .iter()
+            .find(|event| event.event_name == "acp-session-update")
+            .expect("expected session update event");
         let update = match &event.payload {
             crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => update,
             other => panic!("expected session update payload, got {:?}", other),
@@ -4564,8 +4583,10 @@ mod tests {
         assert!(matches!(result, cc_sdk::PermissionResult::Deny(_)));
 
         let captured = sink.lock().expect("sink lock");
-        assert_eq!(captured.len(), 1);
-        let event = &captured[0];
+        let event = captured
+            .iter()
+            .find(|event| event.event_name == "acp-session-update")
+            .expect("expected session update event");
         let update = match &event.payload {
             crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => update,
             other => panic!("expected session update payload, got {:?}", other),
@@ -4655,8 +4676,10 @@ mod tests {
 
         assert!(matches!(result, cc_sdk::PermissionResult::Allow(_)));
         let captured = sink.lock().expect("sink lock");
-        assert_eq!(captured.len(), 1);
-        let event = &captured[0];
+        let event = captured
+            .iter()
+            .find(|event| event.event_name == "acp-session-update")
+            .expect("expected session update event");
         let update = match &event.payload {
             crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => update,
             other => panic!("expected session update payload, got {:?}", other),

@@ -220,6 +220,8 @@ const autonomousSupportState = $derived.by(() =>
 	})
 );
 
+let provisionalAutonomousEnabled = $state(false);
+
 const autonomousToggleActive = $derived(
 	sessionHotState ? sessionHotState.autonomousEnabled : provisionalAutonomousEnabled
 );
@@ -444,7 +446,6 @@ let isShiftPressed = $state(false);
 let isApplyingProvisionalToolbarSelections = $state(false);
 let provisionalModeId = $state<string | null>(null);
 let provisionalModelId = $state<string | null>(null);
-let provisionalAutonomousEnabled = $state(false);
 let pendingSessionConfigOperation: Promise<boolean> | null = null;
 let editorRef: HTMLDivElement | null = $state(null);
 let overlayMode: "preview" | "edit" | null = $state(null);

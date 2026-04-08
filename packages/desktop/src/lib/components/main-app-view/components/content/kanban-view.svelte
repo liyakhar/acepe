@@ -18,7 +18,7 @@
 		PlanIcon,
 	} from "@acepe/ui";
 	import * as DropdownMenu from "@acepe/ui/dropdown-menu";
-	import { Colors } from "@acepe/ui/colors";
+	import { COLOR_NAMES, Colors } from "@acepe/ui/colors";
 	import { SvelteMap } from "svelte/reactivity";
 	import { onDestroy, onMount } from "svelte";
 	import type { SessionStatus } from "$lib/acp/application/dto/session-status.js";
