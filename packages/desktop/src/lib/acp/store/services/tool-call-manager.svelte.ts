@@ -64,56 +64,6 @@ function resolveNextStatus(
 	return nextStatus;
 }
 
-function extractPathFromToolArguments(
-	toolArguments: ToolArguments | null | undefined
-): string | null {
-	if (!toolArguments) return null;
-
-	switch (toolArguments.kind) {
-		case "read":
-		case "delete":
-			return toolArguments.file_path ?? null;
-		case "edit":
-			return toolArguments.edits[0]?.filePath ?? null;
-		case "search":
-			return toolArguments.file_path ?? null;
-		case "glob":
-			return toolArguments.path ?? null;
-		default:
-			return null;
-	}
-}
-
-function extractPathFromLocations(
-	locations: ToolCall["locations"] | ToolCallUpdate["locations"] | null | undefined
-): string | null {
-	return locations?.[0]?.path ?? null;
-}
-
-function isGenericPathTitle(title: string | null | undefined): boolean {
-	if (!title) return false;
-	const trimmed = title.trim();
-	return (
-		trimmed === "Read File" ||
-		trimmed === "Edit File" ||
-		trimmed === "Delete File" ||
-		trimmed === "View Image"
-	);
-}
-
-function synthesizeToolTitle(toolArguments: ToolArguments, path: string): string | null {
-	switch (toolArguments.kind) {
-		case "read":
-			return `Read ${path}`;
-		case "edit":
-			return `Edit ${path}`;
-		case "delete":
-			return `Delete ${path}`;
-		default:
-			return null;
-	}
-}
-
 /**
  * Extract result text from content blocks.
  */
@@ -156,6 +106,7 @@ function mergeEditEntries(
 		if (currentEdit && incomingEdit) {
 			merged.push({
 				filePath: incomingEdit.filePath ?? currentEdit.filePath,
+				moveFrom: incomingEdit.moveFrom ?? currentEdit.moveFrom,
 				oldString: incomingEdit.oldString ?? currentEdit.oldString,
 				newString: incomingEdit.newString ?? currentEdit.newString,
 				content: incomingEdit.content ?? currentEdit.content,
@@ -470,22 +421,11 @@ export class ToolCallManager implements IToolCallManager {
 			rawNextArguments === toolCall.arguments
 				? toolCall.arguments
 				: mergeToolArguments(toolCall.arguments, rawNextArguments);
-		const pathFromArguments = extractPathFromToolArguments(nextArguments);
-		const pathFromLocations = extractPathFromLocations(update.locations ?? toolCall.locations);
-		const resolvedPath = pathFromArguments ?? pathFromLocations;
-		const synthesizedTitle =
-			update.title == null && isGenericPathTitle(toolCall.title) && resolvedPath != null
-				? synthesizeToolTitle(nextArguments, resolvedPath)
-				: null;
 		const nextProgressiveArguments = isTerminalStatus(newStatus)
 			? undefined
 			: (update.arguments ?? null) != null
 				? undefined
 				: (update.streamingArguments ?? toolCall.progressiveArguments);
-		const nextLocations =
-			update.locations ??
-			toolCall.locations ??
-			(resolvedPath != null ? [{ path: resolvedPath }] : undefined);
 
 		const updatedToolCall: ToolCall = {
 			...toolCall,
@@ -493,8 +433,8 @@ export class ToolCallManager implements IToolCallManager {
 			result: shouldPreserveStructuredResult
 				? toolCall.result
 				: (extractedResult ?? toolCall.result),
-			title: update.title ?? synthesizedTitle ?? toolCall.title,
-			locations: nextLocations,
+			title: update.title ?? toolCall.title,
+			locations: update.locations ?? toolCall.locations,
 			arguments: nextArguments,
 			// Progressive normalized data from streaming accumulator
 			normalizedTodos: update.normalizedTodos ?? toolCall.normalizedTodos,

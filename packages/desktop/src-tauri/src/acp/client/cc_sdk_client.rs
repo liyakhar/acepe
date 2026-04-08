@@ -23,12 +23,20 @@ use crate::acp::client_session::{
     apply_provider_model_fallback, default_modes, default_session_model_state, AvailableModel,
     SessionModelState,
 };
+use crate::acp::client_transport::{
+    apply_interaction_response_for_request, persist_interaction_transition,
+};
 use crate::acp::client_trait::AgentClient;
 use crate::acp::client_updates::process_through_reconciler;
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::model_display::get_transformer;
 use crate::acp::parsers::{get_parser, AgentType};
 use crate::acp::provider::AgentProvider;
+use crate::acp::projections::{
+    InteractionPayload, InteractionResponse, InteractionState, ProjectionRegistry,
+    SessionProjectionSnapshot,
+};
+use crate::acp::session_journal::load_stored_projection;
 use crate::acp::session_update::{
     parse_normalized_questions, QuestionData, QuestionItem, SessionUpdate, ToolCallStatus,
     ToolCallUpdateData, ToolReference, TurnErrorData, TurnErrorInfo, TurnErrorKind,
@@ -312,6 +320,29 @@ fn tool_name_expects_permission_callback(tool_name: &str) -> bool {
     )
 }
 
+async fn reject_cc_sdk_interaction_request(
+    projection_registry: &ProjectionRegistry,
+    db: Option<&DbConn>,
+    dispatcher: &AcpUiEventDispatcher,
+    session_id: &str,
+    request_id: u64,
+    message: &str,
+) {
+    apply_interaction_response_for_request(
+        projection_registry,
+        db,
+        Some(dispatcher),
+        session_id,
+        request_id,
+        &serde_json::json!({
+            "outcome": { "outcome": "cancelled", "optionId": "reject" },
+            "acepeDenyMessage": message,
+        }),
+        "cc-sdk reject",
+    )
+    .await;
+}
+
 // ---------------------------------------------------------------------------
 // AcepePermissionHandler
 // ---------------------------------------------------------------------------
@@ -322,6 +353,8 @@ struct AcepePermissionHandler {
     agent_type: AgentType,
     bridge: Arc<PermissionBridge>,
     dispatcher: AcpUiEventDispatcher,
+    projection_registry: Arc<ProjectionRegistry>,
+    db: Option<DbConn>,
     tool_call_tracker: Arc<ToolCallIdTracker>,
     approval_callback_tracker: Arc<ApprovalCallbackTracker>,
     pending_questions: Arc<Mutex<HashMap<String, PendingQuestionState>>>,
@@ -423,9 +456,21 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                 Ok(Ok(result)) => result,
                 other => {
                     self.pending_questions.lock().await.remove(&tool_call_id);
-                    self.bridge
+                    let cleared_request_ids = self
+                        .bridge
                         .clear_request(request_id, "Question timed out or was not answered")
                         .await;
+                    for cleared_request_id in cleared_request_ids {
+                        reject_cc_sdk_interaction_request(
+                            &self.projection_registry,
+                            self.db.as_ref(),
+                            &self.dispatcher,
+                            &self.session_id,
+                            cleared_request_id,
+                            "Question timed out or was not answered",
+                        )
+                        .await;
+                    }
                     tracing::warn!(
                         session_id = %self.session_id,
                         request_id = request_id,
@@ -458,6 +503,7 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
         let tool_request = ToolPermissionRequest {
             tool_call_id: tool_call_id.clone(),
             tool_name: tool_name.to_string(),
+            reusable_approval_key: build_reusable_permission_key(tool_name, input),
             permission_suggestions: _ctx.suggestions.clone(),
         };
         let registration = self
@@ -561,9 +607,21 @@ impl cc_sdk::CanUseTool for AcepePermissionHandler {
                     receiver_error = ?error,
                     "cc-sdk permission request receiver closed"
                 );
-                self.bridge
+                let cleared_request_ids = self
+                    .bridge
                     .clear_request(request_id, "Permission request was cancelled")
                     .await;
+                for cleared_request_id in cleared_request_ids {
+                    reject_cc_sdk_interaction_request(
+                        &self.projection_registry,
+                        self.db.as_ref(),
+                        &self.dispatcher,
+                        &self.session_id,
+                        cleared_request_id,
+                        "Permission request was cancelled",
+                    )
+                    .await;
+                }
                 cc_sdk::PermissionResult::Deny(cc_sdk::PermissionResultDeny {
                     message: "Permission request was cancelled".to_string(),
                     interrupt: true,
@@ -578,6 +636,8 @@ struct AcepePermissionRequestHook {
     agent_type: AgentType,
     bridge: Arc<PermissionBridge>,
     dispatcher: AcpUiEventDispatcher,
+    projection_registry: Arc<ProjectionRegistry>,
+    db: Option<DbConn>,
     approval_callback_tracker: Arc<ApprovalCallbackTracker>,
 }
 
@@ -625,6 +685,7 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
         let hook_request = HookPermissionRequest {
             tool_call_id: tool_call_id.clone(),
             tool_name: request.tool_name.clone(),
+            reusable_approval_key: build_reusable_permission_key(&request.tool_name, &request.tool_input),
             original_input: request.tool_input.clone(),
             permission_suggestions: permission_suggestions.clone(),
         };
@@ -733,9 +794,21 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
                     receiver_error = ?error,
                     "cc-sdk PermissionRequest hook receiver closed"
                 );
-                self.bridge
+                let cleared_request_ids = self
+                    .bridge
                     .clear_request(request_id, "Permission request was cancelled")
                     .await;
+                for cleared_request_id in cleared_request_ids {
+                    reject_cc_sdk_interaction_request(
+                        &self.projection_registry,
+                        self.db.as_ref(),
+                        &self.dispatcher,
+                        &self.session_id,
+                        cleared_request_id,
+                        "Permission request was cancelled",
+                    )
+                    .await;
+                }
                 Ok(build_denied_hook_output(
                     &hook_request,
                     "Permission request was cancelled",
@@ -770,6 +843,8 @@ pub struct CcSdkClaudeClient {
     bridge_task: Option<tauri::async_runtime::JoinHandle<()>>,
     /// Dispatcher for UI events.
     dispatcher: AcpUiEventDispatcher,
+    /// Canonical runtime projection owner for session interactions and operations.
+    projection_registry: Arc<ProjectionRegistry>,
     /// Database connection for resolving provider-backed session IDs.
     db: Option<DbConn>,
     /// Deferred options: stored by new_session, consumed by the first send_prompt.
@@ -788,6 +863,10 @@ impl CcSdkClaudeClient {
         let db = app_handle
             .try_state::<DbConn>()
             .map(|state| state.inner().clone());
+        let projection_registry = app_handle
+            .try_state::<Arc<ProjectionRegistry>>()
+            .map(|state| state.inner().clone())
+            .unwrap_or_else(|| Arc::new(ProjectionRegistry::new()));
         let dispatcher = AcpUiEventDispatcher::new(Some(app_handle), DispatchPolicy::default());
         Ok(Self {
             provider,
@@ -800,6 +879,7 @@ impl CcSdkClaudeClient {
             pending_questions: Arc::new(Mutex::new(HashMap::new())),
             bridge_task: None,
             dispatcher,
+            projection_registry,
             db,
             pending_options: None,
             pending_mode_id: None,
@@ -819,6 +899,92 @@ impl CcSdkClaudeClient {
         self.pending_mode_id = Some("default".to_string());
     }
 
+    async fn restore_session_permission_approvals(&self, session_id: &str) {
+        let _ = self.permission_bridge.drain_all_as_denied().await;
+
+        let approvals = match &self.db {
+            Some(db) => match load_stored_projection(db, session_id, None).await {
+                Ok(Some(projection)) => build_reusable_permission_approval_entries(&projection),
+                Ok(None) => Vec::new(),
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        session_id = %session_id,
+                        "Failed to load stored projection for permission rehydration"
+                    );
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
+        };
+
+        self.permission_bridge
+            .replace_reusable_approval_results(approvals)
+            .await;
+    }
+
+    async fn update_interaction_projection(&self, request_id: u64, result: &Value) {
+        let Some(session_id) = self.session_id.as_deref() else {
+            return;
+        };
+        apply_interaction_response_for_request(
+            &self.projection_registry,
+            self.db.as_ref(),
+            Some(&self.dispatcher),
+            session_id,
+            request_id,
+            result,
+            "cc-sdk",
+        )
+        .await;
+    }
+
+    async fn reject_interaction_for_request(&self, request_id: u64, message: &str) {
+        self.update_interaction_projection(
+            request_id,
+            &serde_json::json!({
+                "outcome": { "outcome": "cancelled", "optionId": "reject" },
+                "acepeDenyMessage": message,
+            }),
+        )
+        .await;
+    }
+
+    async fn resolve_stream_only_question_interaction(
+        &self,
+        interaction_id: &str,
+        session_id: &str,
+        questions: &[QuestionItem],
+        answers: &[Vec<String>],
+    ) {
+        let state = if question_answers_are_empty(answers) {
+            InteractionState::Rejected
+        } else {
+            InteractionState::Answered
+        };
+        let domain_event_kind = if question_answers_are_empty(answers) {
+            crate::acp::domain_events::SessionDomainEventKind::InteractionCancelled
+        } else {
+            crate::acp::domain_events::SessionDomainEventKind::InteractionResolved
+        };
+        let response = InteractionResponse::Question {
+            answers: Value::Object(build_question_answer_map(questions, answers)),
+        };
+
+        persist_interaction_transition(
+            &self.projection_registry,
+            self.db.as_ref(),
+            Some(&self.dispatcher),
+            session_id,
+            interaction_id,
+            state,
+            domain_event_kind,
+            response,
+            "cc-sdk stream-only question",
+        )
+        .await;
+    }
+
     /// Build cc-sdk options for the given working directory.
     ///
     /// `session_id` is the Acepe session ID that will own this connection.
@@ -836,6 +1002,8 @@ impl CcSdkClaudeClient {
             agent_type: self.provider.parser_agent_type(),
             bridge: self.permission_bridge.clone(),
             dispatcher: self.dispatcher.clone(),
+            projection_registry: self.projection_registry.clone(),
+            db: self.db.clone(),
             tool_call_tracker: self.tool_call_tracker.clone(),
             approval_callback_tracker: self.approval_callback_tracker.clone(),
             pending_questions: self.pending_questions.clone(),
@@ -845,6 +1013,8 @@ impl CcSdkClaudeClient {
             agent_type: self.provider.parser_agent_type(),
             bridge: self.permission_bridge.clone(),
             dispatcher: self.dispatcher.clone(),
+            projection_registry: self.projection_registry.clone(),
+            db: self.db.clone(),
             approval_callback_tracker: self.approval_callback_tracker.clone(),
         };
 
@@ -926,6 +1096,7 @@ impl CcSdkClaudeClient {
         // Spawn the bridge task that forwards cc-sdk messages to the UI dispatcher.
         let dispatcher = self.dispatcher.clone();
         let bridge = self.permission_bridge.clone();
+        let projection_registry = self.projection_registry.clone();
         let tracker = self.tool_call_tracker.clone();
         let task_reconciler = self.task_reconciler.clone();
         let pending_questions = self.pending_questions.clone();
@@ -936,6 +1107,7 @@ impl CcSdkClaudeClient {
         let context = StreamingBridgeContext {
             dispatcher,
             bridge,
+            projection_registry,
             tool_call_tracker: tracker,
             approval_callback_tracker,
             task_reconciler,
@@ -1195,6 +1367,7 @@ fn claude_permission_mode_name(mode: cc_sdk::PermissionMode) -> &'static str {
 struct StreamingBridgeContext {
     dispatcher: AcpUiEventDispatcher,
     bridge: Arc<PermissionBridge>,
+    projection_registry: Arc<ProjectionRegistry>,
     tool_call_tracker: Arc<ToolCallIdTracker>,
     approval_callback_tracker: Arc<ApprovalCallbackTracker>,
     task_reconciler: Arc<std::sync::Mutex<TaskReconciler>>,
@@ -1225,6 +1398,7 @@ async fn run_streaming_bridge(
     let StreamingBridgeContext {
         dispatcher,
         bridge,
+        projection_registry,
         tool_call_tracker,
         approval_callback_tracker,
         task_reconciler,
@@ -1436,7 +1610,22 @@ async fn run_streaming_bridge(
     );
 
     // Deny any pending permission requests so callers are not left waiting.
-    bridge.drain_all_as_denied().await;
+    let cleared_request_ids = bridge.drain_all_as_denied().await;
+    for cleared_request_id in cleared_request_ids {
+        apply_interaction_response_for_request(
+            &projection_registry,
+            db.as_ref(),
+            Some(&dispatcher),
+            &session_id,
+            cleared_request_id,
+            &serde_json::json!({
+                "outcome": { "outcome": "cancelled", "optionId": "reject" },
+                "acepeDenyMessage": "Permission denied or connection closed",
+            }),
+            "cc-sdk stream drain",
+        )
+        .await;
+    }
 }
 
 fn provider_session_id_from_message(msg: &cc_sdk::Message) -> Option<&str> {
@@ -1521,6 +1710,66 @@ fn build_permission_patterns(raw_input: &Value) -> Vec<String> {
         .into_iter()
         .filter_map(|key| raw_input.get(key).and_then(Value::as_str))
         .map(ToString::to_string)
+        .collect()
+}
+
+fn build_reusable_permission_key_from_patterns(
+    permission_name: &str,
+    patterns: &[String],
+) -> Option<String> {
+    if patterns.is_empty() {
+        return None;
+    }
+
+    let mut patterns = patterns.to_vec();
+    patterns.sort();
+    Some(format!("{permission_name}::{}", patterns.join("||")))
+}
+
+fn build_reusable_permission_key(tool_name: &str, raw_input: &Value) -> Option<String> {
+    build_reusable_permission_key_from_patterns(tool_name, &build_permission_patterns(raw_input))
+}
+
+fn reusable_permission_result_from_response(response: &InteractionResponse) -> Option<Value> {
+    let InteractionResponse::Permission {
+        accepted: true,
+        option_id,
+        ..
+    } = response
+    else {
+        return None;
+    };
+
+    Some(serde_json::json!({
+        "outcome": {
+            "outcome": "selected",
+            "optionId": option_id.clone().unwrap_or_else(|| "allow".to_string())
+        }
+    }))
+}
+
+fn build_reusable_permission_approval_entries(
+    projection: &SessionProjectionSnapshot,
+) -> Vec<(String, Value)> {
+    projection
+        .interactions
+        .iter()
+        .filter_map(|interaction| {
+            if interaction.state != InteractionState::Approved {
+                return None;
+            }
+
+            let InteractionPayload::Permission(permission) = &interaction.payload else {
+                return None;
+            };
+            let response = interaction.response.as_ref()?;
+            let reusable_key = build_reusable_permission_key_from_patterns(
+                &permission.permission,
+                &permission.patterns,
+            )?;
+            let reusable_result = reusable_permission_result_from_response(response)?;
+            Some((reusable_key, reusable_result))
+        })
         .collect()
 }
 
@@ -1843,6 +2092,7 @@ impl AgentClient for CcSdkClaudeClient {
         let session_id = Uuid::new_v4().to_string();
         self.reset_stream_runtime_state();
         self.current_cwd = Some(PathBuf::from(&cwd));
+        self.restore_session_permission_approvals(&session_id).await;
         let options = self.build_options(&cwd, &session_id, None, false);
         // Defer connection until the first send_prompt so the initial user
         // message is passed to connect() and the CLI starts processing it
@@ -1878,6 +2128,7 @@ impl AgentClient for CcSdkClaudeClient {
         self.reset_stream_runtime_state();
         self.current_cwd = Some(PathBuf::from(&cwd));
         self.reset_pending_mode_for_safe_resume();
+        self.restore_session_permission_approvals(&session_id).await;
         let history_session_id = self.history_session_id_for_app_session(&session_id).await;
         if !self.session_has_persisted_history(&session_id, &cwd).await {
             let options = self.build_options(&cwd, &session_id, None, false);
@@ -1935,6 +2186,8 @@ impl AgentClient for CcSdkClaudeClient {
         let new_session_id = Uuid::new_v4().to_string();
         self.reset_stream_runtime_state();
         self.current_cwd = Some(PathBuf::from(&cwd));
+        self.restore_session_permission_approvals(&new_session_id)
+            .await;
         self.pending_options =
             Some(self.build_options(&cwd, &new_session_id, Some(session_id.clone()), true));
         let models = self.hydrated_session_model_state().await;
@@ -2093,6 +2346,7 @@ impl AgentClient for CcSdkClaudeClient {
             if let Some(stream_only_question) =
                 take_stream_only_question_state(&self.pending_questions, &request_id).await
             {
+                let question_items = stream_only_question.questions.clone().unwrap_or_default();
                 if let Some(sdk_client) = &self.sdk_client {
                     let _ = sdk_client.lock().await.interrupt().await;
                 }
@@ -2112,6 +2366,13 @@ impl AgentClient for CcSdkClaudeClient {
                         session_id: Some(stream_only_question.session_id.clone()),
                     },
                 ));
+                self.resolve_stream_only_question_interaction(
+                    &request_id,
+                    &stream_only_question.session_id,
+                    &question_items,
+                    &answers,
+                )
+                .await;
                 self.dispatcher
                     .enqueue(AcpUiEvent::session_update(SessionUpdate::TurnComplete {
                         session_id: Some(stream_only_question.session_id),
@@ -2133,6 +2394,9 @@ impl AgentClient for CcSdkClaudeClient {
         if let Some(stream_only_question) =
             take_stream_only_question_state(&self.pending_questions, &request_id).await
         {
+            let question_items = stream_only_question.questions.clone().unwrap_or_default();
+            let stream_only_session_id = stream_only_question.session_id.clone();
+            let stream_only_tool_call_id = request_id.clone();
             let reply_text = build_question_reply_text(&questions, &answers);
 
             if let Some(sdk_client) = &self.sdk_client {
@@ -2148,12 +2412,19 @@ impl AgentClient for CcSdkClaudeClient {
             self.dispatcher
                 .enqueue(AcpUiEvent::session_update(SessionUpdate::ToolCallUpdate {
                     update: ToolCallUpdateData {
-                        tool_call_id: request_id,
+                        tool_call_id: stream_only_tool_call_id,
                         status: Some(ToolCallStatus::Completed),
                         ..Default::default()
                     },
-                    session_id: Some(stream_only_question.session_id),
+                    session_id: Some(stream_only_session_id.clone()),
                 }));
+            self.resolve_stream_only_question_interaction(
+                &request_id,
+                &stream_only_session_id,
+                &question_items,
+                &answers,
+            )
+            .await;
             return Ok(true);
         }
 
@@ -2213,6 +2484,8 @@ impl AgentClient for CcSdkClaudeClient {
             }
         }
 
+        self.update_interaction_projection(request_id, &result).await;
+
         if let Some((tool_call_id, question_state)) = question_resolution {
             if !response_outcome_allows(&result) {
                 self.dispatcher.enqueue(AcpUiEvent::session_update(
@@ -2250,9 +2523,21 @@ impl AgentClient for CcSdkClaudeClient {
 mod tests {
     use super::permissions::PendingPermissionKind;
     use super::*;
+    use crate::acp::projections::{
+        InteractionKind, InteractionPayload, InteractionSnapshot, SessionProjectionSnapshot,
+    };
     use crate::acp::session_update::ContentChunk;
-    use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
+    use crate::acp::session_update::{
+        PermissionData, ToolArguments, ToolCallData, ToolCallStatus, ToolKind,
+    };
+    use crate::db::migrations::Migrator;
+    use crate::db::repository::{
+        SessionJournalEventRepository, SessionMetadataRepository,
+        SessionProjectionSnapshotRepository,
+    };
     use cc_sdk::{CanUseTool, HookCallback};
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{LazyLock, Mutex as StdMutex};
 
@@ -2428,12 +2713,23 @@ mod tests {
             pending_questions: Arc::new(Mutex::new(HashMap::new())),
             bridge_task: None,
             dispatcher: AcpUiEventDispatcher::new(None, DispatchPolicy::default()),
+            projection_registry: Arc::new(ProjectionRegistry::new()),
             db: None,
             pending_options: None,
             pending_mode_id: None,
             pending_model_id: None,
             current_cwd: Some(PathBuf::from("/tmp")),
         }
+    }
+
+    async fn setup_test_db() -> DbConn {
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("Failed to connect to in-memory SQLite");
+        Migrator::up(&db, None)
+            .await
+            .expect("Failed to run migrations");
+        db
     }
 
     fn make_test_client() -> CcSdkClaudeClient {
@@ -2563,6 +2859,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restore_session_permission_approvals_rehydrates_restart_safe_cache() {
+        let db = setup_test_db().await;
+        let path =
+            "/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte";
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-1".to_string(),
+            "Restart permission session".to_string(),
+            1704067200000,
+            "/Users/alex/Documents/acepe".to_string(),
+            "claude-code".to_string(),
+            "-Users-alex-Documents-acepe/session-1.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .expect("persist session metadata");
+        SessionProjectionSnapshotRepository::set(
+            &db,
+            "session-1",
+            &SessionProjectionSnapshot {
+                session: None,
+                operations: vec![],
+                interactions: vec![InteractionSnapshot {
+                    id: "permission-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    kind: InteractionKind::Permission,
+                    state: InteractionState::Approved,
+                    json_rpc_request_id: Some(7),
+                    tool_reference: None,
+                    responded_at_event_seq: Some(2),
+                    response: Some(InteractionResponse::Permission {
+                        accepted: true,
+                        option_id: Some("allow".to_string()),
+                        reply: None,
+                    }),
+                    payload: InteractionPayload::Permission(PermissionData {
+                        id: "permission-1".to_string(),
+                        session_id: "session-1".to_string(),
+                        json_rpc_request_id: Some(7),
+                        permission: "Read".to_string(),
+                        patterns: vec![path.to_string()],
+                        metadata: serde_json::json!({}),
+                        always: vec![],
+                        tool: None,
+                    }),
+                }],
+            },
+        )
+        .await
+        .expect("persist projection snapshot");
+
+        let mut client = make_test_client();
+        client.db = Some(db.clone());
+        client
+            .restore_session_permission_approvals("session-1")
+            .await;
+
+        let registration = client
+            .permission_bridge
+            .register_tool(
+                client.permission_bridge.next_id(),
+                ToolPermissionRequest {
+                    tool_call_id: "toolu_restart".to_string(),
+                    tool_name: "Read".to_string(),
+                    reusable_approval_key: build_reusable_permission_key(
+                        "Read",
+                        &serde_json::json!({ "file_path": path }),
+                    ),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        assert_eq!(registration.ui_dispatch, PermissionUiDispatch::ResolvedFromCache);
+        assert!(matches!(
+            registration
+                .receiver
+                .await
+                .expect("cached approval should resolve immediately"),
+            cc_sdk::PermissionResult::Allow(_)
+        ));
+    }
+
+    #[tokio::test]
     async fn hydrated_session_model_state_skips_discovery_when_provider_has_default_models() {
         let discovery_calls = Arc::new(AtomicUsize::new(0));
         let client = make_test_client_with_provider(Arc::new(TestModelDiscoveryProvider {
@@ -2638,6 +3019,7 @@ mod tests {
                 super::permissions::ToolPermissionRequest {
                     tool_call_id: "toolu_shared_permission".to_string(),
                     tool_name: "Write".to_string(),
+                    reusable_approval_key: Some("Write::color.txt".to_string()),
                     permission_suggestions: Vec::new(),
                 },
             )
@@ -2654,6 +3036,7 @@ mod tests {
                 super::permissions::HookPermissionRequest {
                     tool_call_id: "toolu_shared_permission".to_string(),
                     tool_name: "Write".to_string(),
+                    reusable_approval_key: Some("Write::color.txt".to_string()),
                     original_input: serde_json::json!({
                         "file_path": "color.txt",
                         "content": "blue"
@@ -2679,6 +3062,7 @@ mod tests {
                 super::permissions::ToolPermissionRequest {
                     tool_call_id: "toolu_shared_permission".to_string(),
                     tool_name: "Write".to_string(),
+                    reusable_approval_key: Some("Write::color.txt".to_string()),
                     permission_suggestions: Vec::new(),
                 },
             )
@@ -2704,6 +3088,7 @@ mod tests {
                 super::permissions::HookPermissionRequest {
                     tool_call_id: "toolu_shared_permission".to_string(),
                     tool_name: "Write".to_string(),
+                    reusable_approval_key: Some("Write::color.txt".to_string()),
                     original_input: serde_json::json!({
                         "file_path": "color.txt",
                         "content": "blue"
@@ -2729,6 +3114,116 @@ mod tests {
         assert_eq!(
             serialized["hookSpecificOutput"]["decision"]["behavior"],
             "allow"
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_bridge_reuses_approved_permissions_across_equivalent_tool_calls() {
+        let bridge = super::permissions::PermissionBridge::new();
+        let initial_request_id = bridge.next_id();
+        let initial = bridge
+            .register_hook(
+                initial_request_id,
+                super::permissions::HookPermissionRequest {
+                    tool_call_id: "toolu_first_permission".to_string(),
+                    tool_name: "Edit".to_string(),
+                    reusable_approval_key: Some("Edit::tooltip-content.svelte".to_string()),
+                    original_input: serde_json::json!({
+                        "file_path": "tooltip-content.svelte",
+                        "new_string": "next value"
+                    }),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        assert_eq!(
+            initial.ui_dispatch,
+            super::permissions::PermissionUiDispatch::Emit
+        );
+
+        bridge
+            .resolve_from_ui_result(
+                initial_request_id,
+                &serde_json::json!({
+                    "outcome": { "outcome": "selected", "optionId": "allow" }
+                }),
+            )
+            .await;
+
+        let repeated = bridge
+            .register_hook(
+                bridge.next_id(),
+                super::permissions::HookPermissionRequest {
+                    tool_call_id: "toolu_second_permission".to_string(),
+                    tool_name: "Edit".to_string(),
+                    reusable_approval_key: Some("Edit::tooltip-content.svelte".to_string()),
+                    original_input: serde_json::json!({
+                        "file_path": "tooltip-content.svelte",
+                        "new_string": "later value"
+                    }),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        assert_eq!(
+            repeated.ui_dispatch,
+            super::permissions::PermissionUiDispatch::ResolvedFromCache
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_bridge_reuses_approved_tool_permissions_across_equivalent_tool_calls() {
+        let bridge = super::permissions::PermissionBridge::new();
+        let initial_request_id = bridge.next_id();
+        let initial = bridge
+            .register_tool(
+                initial_request_id,
+                super::permissions::ToolPermissionRequest {
+                    tool_call_id: "toolu_first_tool_permission".to_string(),
+                    tool_name: "Read".to_string(),
+                    reusable_approval_key: Some(
+                        "Read::/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte"
+                            .to_string(),
+                    ),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        assert_eq!(
+            initial.ui_dispatch,
+            super::permissions::PermissionUiDispatch::Emit
+        );
+
+        bridge
+            .resolve_from_ui_result(
+                initial_request_id,
+                &serde_json::json!({
+                    "outcome": { "outcome": "selected", "optionId": "allow" }
+                }),
+            )
+            .await;
+
+        let repeated = bridge
+            .register_tool(
+                bridge.next_id(),
+                super::permissions::ToolPermissionRequest {
+                    tool_call_id: "toolu_second_tool_permission".to_string(),
+                    tool_name: "Read".to_string(),
+                    reusable_approval_key: Some(
+                        "Read::/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte"
+                            .to_string(),
+                    ),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        assert_eq!(
+            repeated.ui_dispatch,
+            super::permissions::PermissionUiDispatch::ResolvedFromCache
         );
     }
 
@@ -2792,6 +3287,7 @@ mod tests {
                 PendingPermissionKind::Tool {
                     tool_call_id: "toolu_permission".to_string(),
                     tool_name: "Bash".to_string(),
+                    reusable_approval_key: None,
                     permission_suggestions: Vec::new(),
                 },
             )
@@ -2808,6 +3304,242 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn respond_persists_permission_approval_into_projection_and_journal() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-1".to_string(),
+            "Persistent permission session".to_string(),
+            1704067200000,
+            "/Users/alex/Documents/acepe".to_string(),
+            "claude-code".to_string(),
+            "-Users-alex-Documents-acepe/session-1.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .expect("persist session metadata");
+
+        let path =
+            "/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte";
+        let mut client = make_test_client();
+        client.db = Some(db.clone());
+        client.session_id = Some("session-1".to_string());
+        let projection_registry = client.projection_registry.clone();
+        let permission_update = SessionUpdate::PermissionRequest {
+                permission: PermissionData {
+                    id: "permission-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    json_rpc_request_id: Some(7),
+                    permission: "Read".to_string(),
+                    patterns: vec![path.to_string()],
+                    metadata: serde_json::json!({}),
+                    always: vec![],
+                    tool: None,
+                },
+                session_id: Some("session-1".to_string()),
+            };
+        projection_registry.apply_session_update("session-1", &permission_update);
+        SessionJournalEventRepository::append_session_update(&db, "session-1", &permission_update)
+            .await
+            .expect("append permission request update");
+
+        let registration = client
+            .permission_bridge
+            .register(
+                7,
+                PendingPermissionKind::Tool {
+                    tool_call_id: "toolu_permission".to_string(),
+                    tool_name: "Read".to_string(),
+                    reusable_approval_key: build_reusable_permission_key(
+                        "Read",
+                        &serde_json::json!({ "file_path": path }),
+                    ),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        client
+            .respond(
+                7,
+                serde_json::json!({
+                    "outcome": { "outcome": "selected", "optionId": "allow" }
+                }),
+            )
+            .await
+            .expect("respond failed");
+
+        assert!(matches!(
+            registration.receiver.await.expect("channel closed"),
+            cc_sdk::PermissionResult::Allow(_)
+        ));
+
+        let interaction = projection_registry
+            .interaction_for_request_id("session-1", 7)
+            .expect("interaction should remain addressable");
+        assert_eq!(interaction.state, InteractionState::Approved);
+        assert!(matches!(
+            interaction.response,
+            Some(InteractionResponse::Permission { accepted: true, .. })
+        ));
+
+        let stored_projection = load_stored_projection(&db, "session-1", None)
+            .await
+            .expect("load stored projection")
+            .expect("stored projection should exist");
+        let stored_interaction = stored_projection
+            .interactions
+            .into_iter()
+            .find(|interaction| interaction.id == "permission-1")
+            .expect("stored interaction should be persisted");
+        assert_eq!(stored_interaction.state, InteractionState::Approved);
+        assert!(matches!(
+            stored_interaction.response,
+            Some(InteractionResponse::Permission { accepted: true, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn reject_interaction_for_request_persists_rejected_permission() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-1".to_string(),
+            "Rejected permission session".to_string(),
+            1704067200000,
+            "/Users/alex/Documents/acepe".to_string(),
+            "claude-code".to_string(),
+            "-Users-alex-Documents-acepe/session-1.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .expect("persist session metadata");
+
+        let path =
+            "/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte";
+        let mut client = make_test_client();
+        client.db = Some(db.clone());
+        client.session_id = Some("session-1".to_string());
+
+        let permission_update = SessionUpdate::PermissionRequest {
+            permission: PermissionData {
+                id: "permission-1".to_string(),
+                session_id: "session-1".to_string(),
+                json_rpc_request_id: Some(7),
+                permission: "Read".to_string(),
+                patterns: vec![path.to_string()],
+                metadata: serde_json::json!({}),
+                always: vec![],
+                tool: None,
+            },
+            session_id: Some("session-1".to_string()),
+        };
+        client
+            .projection_registry
+            .apply_session_update("session-1", &permission_update);
+        SessionJournalEventRepository::append_session_update(&db, "session-1", &permission_update)
+            .await
+            .expect("append permission request update");
+
+        client
+            .reject_interaction_for_request(7, "Permission request was cancelled")
+            .await;
+
+        let interaction = client
+            .projection_registry
+            .interaction_for_request_id("session-1", 7)
+            .expect("interaction should remain addressable");
+        assert_eq!(interaction.state, InteractionState::Rejected);
+
+        let stored_projection = load_stored_projection(&db, "session-1", None)
+            .await
+            .expect("load stored projection")
+            .expect("stored projection should exist");
+        assert!(stored_projection.interactions.into_iter().any(|interaction| {
+            interaction.id == "permission-1" && interaction.state == InteractionState::Rejected
+        }));
+    }
+
+    #[tokio::test]
+    async fn resolve_stream_only_question_interaction_persists_answered_state() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-stream".to_string(),
+            "Stream only question session".to_string(),
+            1704067200000,
+            "/Users/alex/Documents/acepe".to_string(),
+            "claude-code".to_string(),
+            "-Users-alex-Documents-acepe/session-stream.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .expect("persist session metadata");
+
+        let questions = vec![QuestionItem {
+            question: "Pick one".to_string(),
+            header: "Pick one".to_string(),
+            options: vec![],
+            multi_select: false,
+        }];
+
+        let mut client = make_test_client();
+        client.db = Some(db.clone());
+        client.session_id = Some("session-stream".to_string());
+
+        let question_update = SessionUpdate::QuestionRequest {
+            question: QuestionData {
+                id: "toolu_stream_only".to_string(),
+                session_id: "session-stream".to_string(),
+                json_rpc_request_id: None,
+                questions: questions.clone(),
+                tool: Some(ToolReference {
+                    message_id: String::new(),
+                    call_id: "toolu_stream_only".to_string(),
+                }),
+            },
+            session_id: Some("session-stream".to_string()),
+        };
+        client
+            .projection_registry
+            .apply_session_update("session-stream", &question_update);
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "session-stream",
+            &question_update,
+        )
+        .await
+        .expect("append question request update");
+
+        client
+            .resolve_stream_only_question_interaction(
+                "toolu_stream_only",
+                "session-stream",
+                &questions,
+                &[vec!["Option A".to_string()]],
+            )
+            .await;
+
+        let interaction = client
+            .projection_registry
+            .interaction("toolu_stream_only")
+            .expect("interaction should exist");
+        assert_eq!(interaction.state, InteractionState::Answered);
+
+        let stored_projection = load_stored_projection(&db, "session-stream", None)
+            .await
+            .expect("load stored projection")
+            .expect("stored projection should exist");
+        assert!(stored_projection.interactions.into_iter().any(|interaction| {
+            interaction.id == "toolu_stream_only"
+                && interaction.state == InteractionState::Answered
+        }));
+    }
+
+    #[tokio::test]
     async fn respond_cancelled_resolves_deny_for_regular_permissions() {
         let client = make_test_client();
         let id = client.permission_bridge.next_id();
@@ -2818,6 +3550,7 @@ mod tests {
                 PendingPermissionKind::Tool {
                     tool_call_id: "toolu_permission".to_string(),
                     tool_name: "Bash".to_string(),
+                    reusable_approval_key: None,
                     permission_suggestions: Vec::new(),
                 },
             )
@@ -2891,6 +3624,7 @@ mod tests {
                 PendingPermissionKind::Tool {
                     tool_call_id: "toolu_permission".to_string(),
                     tool_name: "Bash".to_string(),
+                    reusable_approval_key: None,
                     permission_suggestions: vec![cc_sdk::PermissionUpdate {
                         update_type: cc_sdk::PermissionUpdateType::AddRules,
                         rules: Some(vec![cc_sdk::PermissionRuleValue {
@@ -2940,6 +3674,7 @@ mod tests {
                 PendingPermissionKind::Hook {
                     tool_call_id: "toolu_hook".to_string(),
                     tool_name: "Bash".to_string(),
+                    reusable_approval_key: None,
                     original_input: serde_json::json!({ "command": "git status" }),
                     permission_suggestions: Vec::new(),
                 },
@@ -2975,6 +3710,7 @@ mod tests {
                 PendingPermissionKind::Hook {
                     tool_call_id: "toolu_hook".to_string(),
                     tool_name: "Bash".to_string(),
+                    reusable_approval_key: None,
                     original_input: serde_json::json!({ "command": "git status" }),
                     permission_suggestions: vec![cc_sdk::PermissionUpdate {
                         update_type: cc_sdk::PermissionUpdateType::AddRules,
@@ -3019,6 +3755,7 @@ mod tests {
                 PendingPermissionKind::Tool {
                     tool_call_id: "toolu_shared_permission".to_string(),
                     tool_name: "Write".to_string(),
+                    reusable_approval_key: Some("Write::/tmp/color.txt".to_string()),
                     permission_suggestions: Vec::new(),
                 },
             )
@@ -3054,6 +3791,7 @@ mod tests {
                 PendingPermissionKind::Hook {
                     tool_call_id: "toolu_shared_permission".to_string(),
                     tool_name: "Write".to_string(),
+                    reusable_approval_key: Some("Write::/tmp/color.txt".to_string()),
                     original_input: serde_json::json!({
                         "file_path": "/tmp/color.txt",
                         "content": "blue"
@@ -3098,6 +3836,8 @@ mod tests {
             agent_type: provider.parser_agent_type(),
             bridge: bridge.clone(),
             dispatcher,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
         };
 
@@ -3165,6 +3905,8 @@ mod tests {
             agent_type: provider.parser_agent_type(),
             bridge: bridge.clone(),
             dispatcher: dispatcher.clone(),
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
             tool_call_tracker: tracker,
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             pending_questions: Arc::new(Mutex::new(HashMap::new())),
@@ -3175,6 +3917,8 @@ mod tests {
             agent_type: provider.parser_agent_type(),
             bridge: bridge.clone(),
             dispatcher,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
         };
 
@@ -3462,6 +4206,8 @@ mod tests {
             agent_type: provider.parser_agent_type(),
             bridge: bridge.clone(),
             dispatcher,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
             tool_call_tracker: tracker,
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             pending_questions: Arc::new(Mutex::new(HashMap::new())),
@@ -3471,11 +4217,10 @@ mod tests {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(5)).await;
             resolver_bridge
-                .resolve(
+                .resolve_from_ui_result(
                     1,
-                    cc_sdk::PermissionResult::Allow(cc_sdk::PermissionResultAllow {
-                        updated_input: None,
-                        updated_permissions: None,
+                    &serde_json::json!({
+                        "outcome": { "outcome": "selected", "optionId": "allow" }
                     }),
                 )
                 .await;
@@ -3536,6 +4281,8 @@ mod tests {
             agent_type: provider.parser_agent_type(),
             bridge: bridge.clone(),
             dispatcher,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
             tool_call_tracker: tracker,
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             pending_questions: Arc::new(Mutex::new(HashMap::new())),
@@ -3607,6 +4354,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn can_use_tool_reuses_exact_session_permission_without_emitting_again() {
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let bridge = Arc::new(PermissionBridge::new());
+        let tracker = Arc::new(ToolCallIdTracker::new());
+        let provider = crate::acp::providers::claude_code::ClaudeCodeProvider;
+        tracker
+            .record("Read".to_string(), "toolu_read_first".to_string())
+            .await;
+        tracker
+            .record("Read".to_string(), "toolu_read_second".to_string())
+            .await;
+
+        let handler = AcepePermissionHandler {
+            session_id: "session-reuse".to_string(),
+            agent_type: provider.parser_agent_type(),
+            bridge: bridge.clone(),
+            dispatcher,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
+            tool_call_tracker: tracker,
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+        };
+
+        let resolver_bridge = bridge.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            resolver_bridge
+                .resolve_from_ui_result(
+                    1,
+                    &serde_json::json!({
+                        "outcome": { "outcome": "selected", "optionId": "allow" }
+                    }),
+                )
+                .await;
+        });
+
+        let context = cc_sdk::ToolPermissionContext {
+            signal: None,
+            suggestions: Vec::new(),
+        };
+        let input = serde_json::json!({
+            "file_path": "/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte"
+        });
+        let reusable_key = build_reusable_permission_key("Read", &input);
+
+        let first = handler.can_use_tool("Read", &input, &context).await;
+        assert!(matches!(first, cc_sdk::PermissionResult::Allow(_)));
+        assert_eq!(
+            bridge.cached_reusable_approval_keys().await,
+            vec![reusable_key.clone().expect("expected reusable key")]
+        );
+
+        let cache_probe = bridge
+            .register_tool(
+                bridge.next_id(),
+                ToolPermissionRequest {
+                    tool_call_id: "toolu_probe".to_string(),
+                    tool_name: "Read".to_string(),
+                    reusable_approval_key: reusable_key.clone(),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+        assert_eq!(cache_probe.ui_dispatch, PermissionUiDispatch::ResolvedFromCache);
+
+        let second = timeout(
+            Duration::from_millis(50),
+            handler.can_use_tool("Read", &input, &context),
+        )
+        .await
+        .expect("second permission should reuse cached approval immediately");
+        assert!(matches!(second, cc_sdk::PermissionResult::Allow(_)));
+
+        let captured = sink.lock().expect("sink lock");
+        let permission_request_updates = captured
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.payload,
+                    crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(
+                        ref update
+                    ) if matches!(update.as_ref(), SessionUpdate::PermissionRequest { .. })
+                )
+            })
+            .count();
+        assert_eq!(permission_request_updates, 1);
+    }
+
+    #[tokio::test]
     async fn can_use_tool_falls_back_to_synthetic_id_when_tracker_is_empty() {
         let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
         let bridge = Arc::new(PermissionBridge::new());
@@ -3617,6 +4454,8 @@ mod tests {
             agent_type: provider.parser_agent_type(),
             bridge: bridge.clone(),
             dispatcher,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
             tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             pending_questions: Arc::new(Mutex::new(HashMap::new())),
@@ -3686,6 +4525,8 @@ mod tests {
             agent_type: provider.parser_agent_type(),
             bridge: bridge.clone(),
             dispatcher,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
             tool_call_tracker: tracker,
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             pending_questions,
@@ -3837,6 +4678,8 @@ mod tests {
             agent_type: provider.parser_agent_type(),
             bridge: bridge.clone(),
             dispatcher,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            db: None,
             tool_call_tracker: tracker,
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             pending_questions: pending_questions.clone(),
@@ -4533,6 +5376,7 @@ mod tests {
         let context = StreamingBridgeContext {
             dispatcher,
             bridge: Arc::new(PermissionBridge::new()),
+            projection_registry: Arc::new(ProjectionRegistry::new()),
             tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
@@ -4645,6 +5489,7 @@ mod tests {
         let context = StreamingBridgeContext {
             dispatcher,
             bridge: Arc::new(PermissionBridge::new()),
+            projection_registry: Arc::new(ProjectionRegistry::new()),
             tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
@@ -4735,6 +5580,7 @@ mod tests {
                 ToolPermissionRequest {
                     tool_call_id: "toolu_denied".to_string(),
                     tool_name: "Bash".to_string(),
+                    reusable_approval_key: None,
                     permission_suggestions: Vec::new(),
                 },
             )
@@ -4751,6 +5597,7 @@ mod tests {
         let context = StreamingBridgeContext {
             dispatcher,
             bridge,
+            projection_registry: Arc::new(ProjectionRegistry::new()),
             tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
             approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
             task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),

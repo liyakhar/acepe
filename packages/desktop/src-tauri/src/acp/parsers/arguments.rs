@@ -22,6 +22,7 @@ pub(crate) fn extract_parser_string(value: &serde_json::Value, keys: &[&str]) ->
 
 pub(crate) fn parse_generic_edit_arguments(raw_arguments: &serde_json::Value) -> ToolArguments {
     let file_path = extract_parser_string(raw_arguments, &["file_path", "filePath", "path"]);
+    let move_from = extract_parser_string(raw_arguments, &["move_from", "moveFrom"]);
     let old_string = extract_parser_string(raw_arguments, &["old_string", "oldString", "oldText"]);
     let new_string = extract_parser_string(raw_arguments, &["new_string", "newString", "newText"]);
     let content = extract_parser_string(raw_arguments, &["content"]);
@@ -29,7 +30,7 @@ pub(crate) fn parse_generic_edit_arguments(raw_arguments: &serde_json::Value) ->
     ToolArguments::Edit {
         edits: vec![EditEntry {
             file_path,
-            move_from: None,
+            move_from,
             old_string,
             new_string,
             content,

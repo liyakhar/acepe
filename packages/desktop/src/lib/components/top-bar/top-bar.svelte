@@ -189,18 +189,14 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 						</Tooltip.Root>
 					{/snippet}
 				</DropdownMenu.Trigger>
-				<DropdownMenu.Content align="end" class="min-w-[160px] p-0 text-[11px]">
+				<DropdownMenu.Content align="end" class="min-w-0 w-auto p-0 text-[11px]">
 					<DropdownMenu.Group>
-						<DropdownMenu.GroupHeading
-							class="px-2 py-1 text-[11px] font-semibold text-muted-foreground border-b border-border/20"
-							>Interface</DropdownMenu.GroupHeading
-						>
 						<DropdownMenu.Item
 							class="cursor-pointer rounded-none border-b border-border/20 px-2 py-1 text-[11px]"
 							onSelect={preventDropdownItemSelection}
 							onclick={() => viewState.setSidebarOpen(!viewState.sidebarOpen)}
 						>
-							<Sidebar class="size-4" weight="fill" />
+							<Sidebar class="size-3.5" weight="fill" />
 							<span class="flex-1">Sidebar</span>
 							<Switch
 								checked={viewState.sidebarOpen}
@@ -212,7 +208,7 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 							onSelect={preventDropdownItemSelection}
 							onclick={() => viewState.setTopBarVisible(!viewState.topBarVisible)}
 						>
-							<Rows class="size-4" weight="fill" />
+							<Rows class="size-3.5" weight="fill" />
 							<span class="flex-1">Tab Bar</span>
 							<Switch
 								checked={viewState.topBarVisible}
@@ -220,68 +216,65 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 							/>
 						</DropdownMenu.Item>
 					</DropdownMenu.Group>
+					<DropdownMenu.Separator />
 					<DropdownMenu.Group>
-						<DropdownMenu.GroupHeading
-							class="px-2 py-1 text-[11px] font-semibold text-muted-foreground border-b border-border/20"
-							>View</DropdownMenu.GroupHeading
-						>
-						<div class="px-2 pt-1.5 text-[10px] leading-4 text-muted-foreground">
-							Standard keeps sessions in panels. Kanban turns the workspace into a board.
-						</div>
-						<div class="mx-2 mb-1.5 mt-1 flex items-stretch gap-0 rounded-md bg-muted/50">
-							{#each layoutFamilies as family (family.value)}
-								{@const isActive = family.value === (isKanbanView ? "kanban" : "standard")}
-								<button
-									class="flex-1 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors cursor-pointer {isActive ? 'bg-muted text-foreground/80' : 'text-muted-foreground hover:text-foreground'}"
-									onclick={() => switchLayoutFamily(family.value)}
-								>
-									{#if family.value === "standard"}
-										<SquaresFour
-											class="size-3"
-											weight="fill"
-											style="color: {Colors[COLOR_NAMES.PURPLE]}"
-										/>
-									{:else}
-										<Kanban
-											class="size-3"
-											weight="fill"
-											style="color: {Colors[COLOR_NAMES.PINK]}"
-										/>
-									{/if}
-									<span>{family.label}</span>
-								</button>
-							{/each}
-						</div>
-						{#if !isKanbanView}
-							<div class="px-2 pb-1 text-[10px] leading-4 text-muted-foreground">
-								Choose how Standard groups panels.
-							</div>
-							<div class="mx-2 mb-1 flex items-stretch gap-0 rounded-md bg-muted/50">
-								{#each standardViewModes as mode (mode.value)}
-									{@const isActive = activeStandardViewMode === mode.value}
-									<button
-										class="flex-1 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors cursor-pointer {isActive ? 'bg-muted text-foreground/80' : 'text-muted-foreground hover:text-foreground'}"
-										onclick={() => panelStore.setViewMode(mode.value)}
+						<DropdownMenu.Sub>
+							<DropdownMenu.SubTrigger class="rounded-none px-2 py-1 text-[11px]">
+								{#if isKanbanView}
+									<Kanban class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PINK]}" />
+								{:else}
+									<SquaresFour class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PURPLE]}" />
+								{/if}
+								<span class="flex-1">View</span>
+							</DropdownMenu.SubTrigger>
+							<DropdownMenu.SubContent class="min-w-0 w-auto p-0 text-[11px]">
+								{#each layoutFamilies as family (family.value)}
+									{@const isActive = family.value === (isKanbanView ? "kanban" : "standard")}
+									<DropdownMenu.Item
+										class="cursor-pointer px-2 py-1 text-[11px] {isActive ? 'text-foreground' : ''}"
+										onclick={() => switchLayoutFamily(family.value)}
 									>
-										{#if mode.value === "single"}
-											<Square class="size-3" weight="fill" style="color: {mode.color}" />
-										{:else if mode.value === "project"}
-											<Columns class="size-3" weight="fill" style="color: {mode.color}" />
+										{#if family.value === "standard"}
+											<SquaresFour class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PURPLE]}" />
 										{:else}
-											<SquaresFour class="size-3" weight="fill" style="color: {mode.color}" />
+											<Kanban class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PINK]}" />
 										{/if}
-										{mode.label}
-									</button>
+										<span>{family.label}</span>
+									</DropdownMenu.Item>
 								{/each}
-							</div>
-							<div class="px-2 pb-1.5 text-[10px] leading-4 text-muted-foreground">
-								Single focuses one session, Project keeps one repo together, and Multi lets
-								different projects sit side by side.
-							</div>
-						{:else}
-							<div class="px-2 pb-1.5 text-[10px] leading-4 text-muted-foreground">
-								Kanban turns the workspace into a board for agent-style workflows.
-							</div>
+							</DropdownMenu.SubContent>
+						</DropdownMenu.Sub>
+						{#if !isKanbanView}
+							<DropdownMenu.Sub>
+								<DropdownMenu.SubTrigger class="rounded-none px-2 py-1 text-[11px]">
+									{#if activeStandardViewMode === "single"}
+										<Square class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PURPLE]}" />
+									{:else if activeStandardViewMode === "project"}
+										<Columns class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.ORANGE]}" />
+									{:else}
+										<SquaresFour class="size-3.5" weight="fill" style="color: var(--success)" />
+									{/if}
+									<span class="flex-1">Grouping</span>
+								</DropdownMenu.SubTrigger>
+								<DropdownMenu.SubContent class="min-w-0 w-auto p-0 text-[11px]">
+									{#each standardViewModes as mode (mode.value)}
+										{@const isActive = activeStandardViewMode === mode.value}
+										<DropdownMenu.Item
+											class="cursor-pointer px-2 py-1 text-[11px] {isActive ? 'text-foreground' : ''}"
+											onclick={() => panelStore.setViewMode(mode.value)}
+										>
+											{#if mode.value === "single"}
+												<Square class="size-3.5" weight="fill" style="color: {mode.color}" />
+											{:else if mode.value === "project"}
+												<Columns class="size-3.5" weight="fill" style="color: {mode.color}" />
+											{:else}
+												<SquaresFour class="size-3.5" weight="fill" style="color: {mode.color}" />
+											{/if}
+											<span>{mode.label}</span>
+										</DropdownMenu.Item>
+									{/each}
+								</DropdownMenu.SubContent>
+							</DropdownMenu.Sub>
 						{/if}
 					</DropdownMenu.Group>
 				</DropdownMenu.Content>

@@ -109,19 +109,19 @@
 
 .dark {
 	/* Cursor Dark theme colors - using hex values directly for better color accuracy */
-	--background: #1a1a1a; /* editor.background */
+	--background: #121212; /* editor.background */
 	--foreground: #D4D4D4; /* editor.foreground */
-	--card: #232323; /* editorWidget.background */
+	--card: #1A1A1A; /* editorWidget.background */
 	--card-foreground: #ffffff; /* editorSuggestWidget.foreground */
-	--popover: #272727; /* dropdown background */
+	--popover: #1E1E1E; /* dropdown background */
 	--popover-foreground: #ffffff; /* editorSuggestWidget.foreground */
 	--primary: #ffc799; /* button.background */
 	--primary-foreground: #191c22; /* button.foreground */
 	--secondary: #565656; /* button.secondaryBackground */
 	--secondary-foreground: #ececec; /* button.secondaryForeground */
-	--muted: #3a3a3a; /* input.border */
+	--muted: #2A2A2A; /* input.border */
 	--muted-foreground: #cccccc; /* foreground with reduced opacity */
-	--accent: #303030; /* hover/selected item background */
+	--accent: #313131; /* hover/selected item background */
 	--accent-foreground: #ffffff; /* list.hoverForeground */
 	--destructive: #bf616a; /* editorError.foreground */
 	/* Dark: build accent is separate from success-reference surfaces. */
@@ -130,7 +130,7 @@
 	--success-foreground: #ffffff;
 	--build-icon: var(--success);
 	--plan-icon: var(--token-plan-icon-dark);
-	--border: #2a2a2a; /* input.border, dropdown.border */
+	--border: #222222; /* input.border, dropdown.border */
 	--input: #313131; /* input.background */
 	--ring: #30373a; /* focusBorder */
 	--chart-1: #88c0d0; /* badge.background */
@@ -138,11 +138,11 @@
 	--chart-3: #ebcb8b; /* editorWarning.foreground */
 	--chart-4: #bf616a; /* editorError.foreground */
 	--chart-5: #b48ead; /* terminal.ansiMagenta */
-	--sidebar: #141414; /* sideBar.background */
+	--sidebar: #0E0E0E; /* sideBar.background */
 	--sidebar-foreground: #cccccc; /* sideBar.foreground */
 	--sidebar-primary: #ffc799; /* button.background */
 	--sidebar-primary-foreground: #191c22; /* button.foreground */
-	--sidebar-accent: #2a2a2a; /* list.hoverBackground */
+	--sidebar-accent: #1A1A1A; /* list.hoverBackground */
 	--sidebar-accent-foreground: #ffffff; /* list.hoverForeground */
 	--sidebar-border: rgba(255, 255, 255, 0.05); /* editorGroupHeader.tabsBorder */
 	--sidebar-ring: #30373a; /* focusBorder */

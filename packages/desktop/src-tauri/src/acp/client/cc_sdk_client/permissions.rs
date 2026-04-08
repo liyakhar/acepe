@@ -27,6 +27,7 @@ impl PermissionUiDispatch {
 pub(super) struct ToolPermissionRequest {
     pub(super) tool_call_id: String,
     pub(super) tool_name: String,
+    pub(super) reusable_approval_key: Option<String>,
     pub(super) permission_suggestions: Vec<cc_sdk::PermissionUpdate>,
 }
 
@@ -48,6 +49,7 @@ pub(super) struct QuestionPermissionRequest {
 pub(super) struct HookPermissionRequest {
     pub(super) tool_call_id: String,
     pub(super) tool_name: String,
+    pub(super) reusable_approval_key: Option<String>,
     pub(super) original_input: Value,
     pub(super) permission_suggestions: Vec<cc_sdk::PermissionUpdate>,
 }
@@ -65,6 +67,7 @@ pub(super) enum PendingPermissionKind {
     Tool {
         tool_call_id: String,
         tool_name: String,
+        reusable_approval_key: Option<String>,
         permission_suggestions: Vec<cc_sdk::PermissionUpdate>,
     },
     Question {
@@ -74,6 +77,7 @@ pub(super) enum PendingPermissionKind {
     Hook {
         tool_call_id: String,
         tool_name: String,
+        reusable_approval_key: Option<String>,
         original_input: Value,
         permission_suggestions: Vec<cc_sdk::PermissionUpdate>,
     },
@@ -88,11 +92,25 @@ impl PendingPermissionKind {
         }
     }
 
-    fn approval_group_key(&self) -> Option<String> {
+    fn pending_group_key(&self) -> Option<String> {
         match self {
             Self::Tool { tool_call_id, .. } | Self::Hook { tool_call_id, .. } => {
                 Some(tool_call_id.clone())
             }
+            Self::Question { .. } => None,
+        }
+    }
+
+    fn reusable_approval_key(&self) -> Option<String> {
+        match self {
+            Self::Tool {
+                reusable_approval_key,
+                ..
+            }
+            | Self::Hook {
+                reusable_approval_key,
+                ..
+            } => reusable_approval_key.clone(),
             Self::Question { .. } => None,
         }
     }
@@ -115,6 +133,7 @@ impl From<ToolPermissionRequest> for PendingPermissionKind {
         Self::Tool {
             tool_call_id: value.tool_call_id,
             tool_name: value.tool_name,
+            reusable_approval_key: value.reusable_approval_key,
             permission_suggestions: value.permission_suggestions,
         }
     }
@@ -134,6 +153,7 @@ impl From<HookPermissionRequest> for PendingPermissionKind {
         Self::Hook {
             tool_call_id: value.tool_call_id,
             tool_name: value.tool_name,
+            reusable_approval_key: value.reusable_approval_key,
             original_input: value.original_input,
             permission_suggestions: value.permission_suggestions,
         }
@@ -144,7 +164,8 @@ impl From<HookPermissionRequest> for PendingPermissionKind {
 struct PendingPermissionRequest {
     sender: PendingPermissionResponder,
     kind: PendingPermissionKind,
-    approval_group_key: Option<String>,
+    pending_group_key: Option<String>,
+    reusable_approval_key: Option<String>,
 }
 
 #[derive(Debug)]
@@ -156,8 +177,9 @@ enum PendingPermissionResponder {
 #[derive(Debug, Default)]
 struct PermissionBridgeState {
     pending: HashMap<u64, PendingPermissionRequest>,
-    approval_groups: HashMap<String, Vec<u64>>,
-    resolved_approval_results: HashMap<String, Value>,
+    pending_groups: HashMap<String, Vec<u64>>,
+    resolved_group_results: HashMap<String, Value>,
+    resolved_reusable_approval_results: HashMap<String, Value>,
     terminal_deny_message: Option<String>,
 }
 
@@ -195,7 +217,8 @@ impl PermissionBridge {
             id,
             PendingPermissionRequest {
                 sender: PendingPermissionResponder::Tool(tx),
-                approval_group_key: kind.approval_group_key(),
+                pending_group_key: kind.pending_group_key(),
+                reusable_approval_key: kind.reusable_approval_key(),
                 kind,
             },
             rx,
@@ -230,7 +253,8 @@ impl PermissionBridge {
             id,
             PendingPermissionRequest {
                 sender: PendingPermissionResponder::Hook(tx),
-                approval_group_key: kind.approval_group_key(),
+                pending_group_key: kind.pending_group_key(),
+                reusable_approval_key: kind.reusable_approval_key(),
                 kind,
             },
             rx,
@@ -249,12 +273,39 @@ impl PermissionBridge {
         let mut state = self.state.lock().await;
         let ui_dispatch = if let Some(group_key) = pending_request
             .as_ref()
-            .and_then(|request| request.approval_group_key.as_ref())
+            .and_then(|request| request.pending_group_key.as_ref())
         {
-            if let Some(resolved_result) = state.resolved_approval_results.get(group_key) {
+            if let Some(resolved_result) = state.resolved_group_results.get(group_key) {
                 immediate_resolution = Some(resolved_result.clone());
                 PermissionUiDispatch::ResolvedFromCache
-            } else if let Some(existing_request_ids) = state.approval_groups.get_mut(group_key) {
+            } else if let Some(reusable_key) = pending_request
+                .as_ref()
+                .and_then(|request| request.reusable_approval_key.as_ref())
+            {
+                if let Some(resolved_result) = state.resolved_reusable_approval_results.get(reusable_key)
+                {
+                    immediate_resolution = Some(resolved_result.clone());
+                    PermissionUiDispatch::ResolvedFromCache
+                } else if let Some(existing_request_ids) = state.pending_groups.get_mut(group_key) {
+                    existing_request_ids.push(id);
+                    state.pending.insert(
+                        id,
+                        pending_request
+                            .take()
+                            .expect("pending permission request should exist"),
+                    );
+                    PermissionUiDispatch::JoinExisting
+                } else {
+                    state.pending_groups.insert(group_key.clone(), vec![id]);
+                    state.pending.insert(
+                        id,
+                        pending_request
+                            .take()
+                            .expect("pending permission request should exist"),
+                    );
+                    PermissionUiDispatch::Emit
+                }
+            } else if let Some(existing_request_ids) = state.pending_groups.get_mut(group_key) {
                 existing_request_ids.push(id);
                 state.pending.insert(
                     id,
@@ -264,7 +315,23 @@ impl PermissionBridge {
                 );
                 PermissionUiDispatch::JoinExisting
             } else {
-                state.approval_groups.insert(group_key.clone(), vec![id]);
+                state.pending_groups.insert(group_key.clone(), vec![id]);
+                state.pending.insert(
+                    id,
+                    pending_request
+                        .take()
+                        .expect("pending permission request should exist"),
+                );
+                PermissionUiDispatch::Emit
+            }
+        } else if let Some(reusable_key) = pending_request
+            .as_ref()
+            .and_then(|request| request.reusable_approval_key.as_ref())
+        {
+            if let Some(resolved_result) = state.resolved_reusable_approval_results.get(reusable_key) {
+                immediate_resolution = Some(resolved_result.clone());
+                PermissionUiDispatch::ResolvedFromCache
+            } else {
                 state.pending.insert(
                     id,
                     pending_request
@@ -301,18 +368,18 @@ impl PermissionBridge {
     fn take_request_bundle(
         state: &mut PermissionBridgeState,
         id: u64,
-    ) -> Option<Vec<PendingPermissionRequest>> {
+    ) -> Option<Vec<(u64, PendingPermissionRequest)>> {
         let pending_request = state.pending.remove(&id)?;
-        let mut requests = vec![pending_request];
+        let mut requests = vec![(id, pending_request)];
 
-        if let Some(group_key) = requests[0].approval_group_key.clone() {
-            if let Some(group_request_ids) = state.approval_groups.remove(&group_key) {
+        if let Some(group_key) = requests[0].1.pending_group_key.clone() {
+            if let Some(group_request_ids) = state.pending_groups.remove(&group_key) {
                 for request_id in group_request_ids {
                     if request_id == id {
                         continue;
                     }
                     if let Some(sibling_request) = state.pending.remove(&request_id) {
-                        requests.push(sibling_request);
+                        requests.push((request_id, sibling_request));
                     }
                 }
             }
@@ -326,7 +393,7 @@ impl PermissionBridge {
         let pending = {
             let mut state = self.state.lock().await;
             Self::take_request_bundle(&mut state, id)
-                .and_then(|mut requests| requests.drain(..1).next())
+                .and_then(|mut requests| requests.drain(..1).next().map(|(_, pending)| pending))
         };
 
         if let Some(pending) = pending {
@@ -344,21 +411,28 @@ impl PermissionBridge {
         let pending_requests = {
             let mut state = self.state.lock().await;
             let pending_requests = Self::take_request_bundle(&mut state, id)?;
-            if let Some(group_key) = pending_requests[0].approval_group_key.clone() {
+            if let Some(group_key) = pending_requests[0].1.pending_group_key.clone() {
                 state
-                    .resolved_approval_results
+                    .resolved_group_results
                     .insert(group_key, result.clone());
             }
-            if !response_outcome_allows(result) && !pending_requests[0].kind.is_question() {
+            if response_outcome_allows(result) {
+                if let Some(reusable_key) = pending_requests[0].1.reusable_approval_key.clone() {
+                    state
+                        .resolved_reusable_approval_results
+                        .insert(reusable_key, result.clone());
+                }
+            }
+            if !response_outcome_allows(result) && !pending_requests[0].1.kind.is_question() {
                 state.terminal_deny_message = Some(
                     deny_message_from_ui_result(result, "Permission denied by user").to_string(),
                 );
             }
             pending_requests
         };
-        let kind = pending_requests[0].kind.clone();
+        let kind = pending_requests[0].1.kind.clone();
 
-        for pending_request in pending_requests {
+        for (_, pending_request) in pending_requests {
             resolve_pending_request_from_ui_result(pending_request, result);
         }
 
@@ -379,17 +453,17 @@ impl PermissionBridge {
         })
     }
 
-    pub(super) async fn clear_request(&self, id: u64, message: &str) {
+    pub(super) async fn clear_request(&self, id: u64, message: &str) -> Vec<u64> {
         let pending_requests = {
             let mut state = self.state.lock().await;
             let pending_requests = Self::take_request_bundle(&mut state, id);
             if let Some(requests) = pending_requests.as_ref() {
-                if let Some(group_key) = requests[0].approval_group_key.clone() {
+                if let Some(group_key) = requests[0].1.pending_group_key.clone() {
                     state
-                        .resolved_approval_results
+                        .resolved_group_results
                         .insert(group_key, denied_ui_result(message));
                 }
-                if !requests[0].kind.is_question() {
+                if !requests[0].1.kind.is_question() {
                     state.terminal_deny_message = Some(message.to_string());
                 }
             }
@@ -397,10 +471,15 @@ impl PermissionBridge {
         };
 
         let Some(pending_requests) = pending_requests else {
-            return;
+            return Vec::new();
         };
 
-        for pending_request in pending_requests {
+        let cleared_request_ids = pending_requests
+            .iter()
+            .map(|(request_id, _)| *request_id)
+            .collect::<Vec<_>>();
+
+        for (_, pending_request) in pending_requests {
             match pending_request.sender {
                 PendingPermissionResponder::Tool(sender) => {
                     let _ = sender.send(denied_permission_result(&pending_request.kind, message));
@@ -413,17 +492,20 @@ impl PermissionBridge {
                 }
             }
         }
+
+        cleared_request_ids
     }
 
-    pub(super) async fn drain_all_as_denied(&self) {
+    pub(super) async fn drain_all_as_denied(&self) -> Vec<u64> {
         let pending_requests = {
             let mut state = self.state.lock().await;
             let had_terminal_permission = state
                 .pending
                 .values()
                 .any(|pending| !pending.kind.is_question());
-            state.approval_groups.clear();
-            state.resolved_approval_results.clear();
+            state.pending_groups.clear();
+            state.resolved_group_results.clear();
+            state.resolved_reusable_approval_results.clear();
             if had_terminal_permission {
                 state.terminal_deny_message =
                     Some("Permission denied or connection closed".to_string());
@@ -431,11 +513,15 @@ impl PermissionBridge {
             state
                 .pending
                 .drain()
-                .map(|(_, pending)| pending)
                 .collect::<Vec<_>>()
         };
 
-        for pending in pending_requests {
+        let cleared_request_ids = pending_requests
+            .iter()
+            .map(|(request_id, _)| *request_id)
+            .collect::<Vec<_>>();
+
+        for (_, pending) in pending_requests {
             match pending.sender {
                 PendingPermissionResponder::Tool(sender) => {
                     let _ = sender.send(denied_permission_result(
@@ -451,6 +537,8 @@ impl PermissionBridge {
                 }
             }
         }
+
+        cleared_request_ids
     }
 
     pub(super) async fn take_terminal_deny_message(&self) -> Option<String> {
@@ -461,6 +549,27 @@ impl PermissionBridge {
     pub(super) async fn clear_terminal_deny_message(&self) {
         let mut state = self.state.lock().await;
         state.terminal_deny_message = None;
+    }
+
+    pub(super) async fn replace_reusable_approval_results(
+        &self,
+        approvals: impl IntoIterator<Item = (String, Value)>,
+    ) {
+        let mut state = self.state.lock().await;
+        state.resolved_group_results.clear();
+        state.resolved_reusable_approval_results.clear();
+        state.terminal_deny_message = None;
+        state.resolved_reusable_approval_results.extend(approvals);
+    }
+
+    #[cfg(test)]
+    pub(super) async fn cached_reusable_approval_keys(&self) -> Vec<String> {
+        let state = self.state.lock().await;
+        state
+            .resolved_reusable_approval_results
+            .keys()
+            .cloned()
+            .collect()
     }
 }
 
@@ -681,6 +790,7 @@ mod tests {
             &PendingPermissionKind::Tool {
                 tool_call_id: "toolu_1".to_string(),
                 tool_name: "Bash".to_string(),
+                reusable_approval_key: None,
                 permission_suggestions: Vec::new(),
             },
             &serde_json::json!({
@@ -722,6 +832,7 @@ mod tests {
             &PendingPermissionKind::Hook {
                 tool_call_id: "toolu_hook".to_string(),
                 tool_name: "Edit".to_string(),
+                reusable_approval_key: None,
                 original_input: serde_json::json!({}),
                 permission_suggestions: Vec::new(),
             },
@@ -748,6 +859,7 @@ mod tests {
                 ToolPermissionRequest {
                     tool_call_id: "toolu_shared".to_string(),
                     tool_name: "Bash".to_string(),
+                    reusable_approval_key: Some("Bash::command=git status".to_string()),
                     permission_suggestions: Vec::new(),
                 },
             )
@@ -772,6 +884,7 @@ mod tests {
                 HookPermissionRequest {
                     tool_call_id: "toolu_shared".to_string(),
                     tool_name: "Bash".to_string(),
+                    reusable_approval_key: Some("Bash::command=git status".to_string()),
                     original_input: serde_json::json!({}),
                     permission_suggestions: Vec::new(),
                 },

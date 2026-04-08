@@ -1,4 +1,5 @@
 use super::*;
+use crate::acp::projections::ProjectionRegistry;
 use tokio_util::sync::CancellationToken;
 
 /// Shared child handle so the death monitor and stop() can both access it.
@@ -19,6 +20,8 @@ pub struct AcpClient {
     pub(super) request_id: StdArc<std::sync::Mutex<u64>>,
     pub(super) pending_requests: StdArc<Mutex<HashMap<u64, PendingRequestEntry>>>,
     pub(super) app_handle: Option<AppHandle>,
+    pub(super) db: Option<DbConn>,
+    pub(super) projection_registry: StdArc<ProjectionRegistry>,
     /// Stdin writer for sending responses to inbound requests (async)
     pub(super) stdin_writer: StdArc<Mutex<Option<ChildStdin>>>,
     /// Maps request IDs to session IDs for prompt requests.
@@ -64,6 +67,8 @@ impl Clone for AcpClient {
             request_id: StdArc::new(std::sync::Mutex::new(1)),
             pending_requests: StdArc::new(Mutex::new(HashMap::new())),
             app_handle: self.app_handle.clone(),
+            db: self.db.clone(),
+            projection_registry: self.projection_registry.clone(),
             stdin_writer: StdArc::new(Mutex::new(None)),
             prompt_request_sessions: StdArc::new(Mutex::new(HashMap::new())),
             cwd: self.cwd.clone(),
@@ -93,6 +98,15 @@ impl AcpClient {
         app_handle: Option<AppHandle>,
         cwd: PathBuf,
     ) -> AcpResult<Self> {
+        let db = app_handle
+            .as_ref()
+            .and_then(|handle| handle.try_state::<DbConn>())
+            .map(|state| state.inner().clone());
+        let projection_registry = app_handle
+            .as_ref()
+            .and_then(|handle| handle.try_state::<StdArc<ProjectionRegistry>>())
+            .map(|state| state.inner().clone())
+            .unwrap_or_else(|| StdArc::new(ProjectionRegistry::new()));
         Ok(Self {
             provider: Some(provider),
             child: None,
@@ -103,6 +117,8 @@ impl AcpClient {
             request_id: StdArc::new(std::sync::Mutex::new(1)),
             pending_requests: StdArc::new(Mutex::new(HashMap::new())),
             app_handle,
+            db,
+            projection_registry,
             stdin_writer: StdArc::new(Mutex::new(None)),
             prompt_request_sessions: StdArc::new(Mutex::new(HashMap::new())),
             cwd,

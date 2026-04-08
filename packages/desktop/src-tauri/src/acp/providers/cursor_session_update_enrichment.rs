@@ -1,6 +1,9 @@
-use crate::acp::parsers::{get_parser, AgentType};
+use crate::acp::parsers::{AgentType, get_parser};
 use crate::acp::session_update::{
-    SessionUpdate, ToolArguments, ToolCallData, ToolCallLocation, ToolCallUpdateData, ToolKind,
+    SessionUpdate, ToolArguments, ToolCallData, ToolCallUpdateData, ToolKind,
+};
+use crate::acp::tool_call_presentation::{
+    merge_tool_arguments, synthesize_locations, synthesize_title, title_is_placeholder,
 };
 use crate::session_jsonl::types::{ContentBlock, FullSession};
 use dashmap::DashMap;
@@ -80,7 +83,7 @@ pub(crate) async fn enrich_cursor_session_update(update: SessionUpdate) -> Sessi
             tool_call,
             session_id,
         } => {
-            if !tool_call_needs_enrichment(&tool_call.arguments) {
+            if !tool_call_needs_enrichment(tool_call) {
                 return update;
             }
             let Some(session_id) = session_id.as_deref() else {
@@ -114,17 +117,62 @@ pub(crate) async fn enrich_cursor_session_update(update: SessionUpdate) -> Sessi
     }
 }
 
-fn tool_call_needs_enrichment(arguments: &ToolArguments) -> bool {
-    tool_arguments_detail_score(arguments) == 0
+fn tool_call_needs_enrichment(tool_call: &ToolCallData) -> bool {
+    title_is_placeholder(tool_call.title.as_deref())
+        || tool_call.locations.is_none()
+        || tool_arguments_need_enrichment(&tool_call.arguments)
 }
 
 fn tool_update_needs_enrichment(update: &ToolCallUpdateData) -> bool {
-    update
-        .arguments
-        .as_ref()
-        .map(tool_arguments_detail_score)
-        .unwrap_or(0)
-        == 0
+    title_is_placeholder(update.title.as_deref())
+        || update.locations.is_none()
+        || update
+            .arguments
+            .as_ref()
+            .or(update.streaming_arguments.as_ref())
+            .is_none_or(tool_arguments_need_enrichment)
+}
+
+fn tool_arguments_need_enrichment(arguments: &ToolArguments) -> bool {
+    match arguments {
+        ToolArguments::Read { file_path } | ToolArguments::Delete { file_path } => {
+            file_path.is_none()
+        }
+        ToolArguments::Edit { edits } => edits.first().is_none_or(|edit| {
+            edit.file_path.is_none()
+                || edit.move_from.is_none()
+                || edit.old_string.is_none()
+                || edit.new_string.is_none()
+                || edit.content.is_none()
+        }),
+        ToolArguments::Execute { command } => command.is_none(),
+        ToolArguments::Search { query, file_path } => query.is_none() || file_path.is_none(),
+        ToolArguments::Glob { pattern, path } => pattern.is_none() || path.is_none(),
+        ToolArguments::Fetch { url } => url.is_none(),
+        ToolArguments::WebSearch { query } => query.is_none(),
+        ToolArguments::Think {
+            description,
+            prompt,
+            subagent_type,
+            skill,
+            skill_args,
+            raw,
+        } => {
+            description.is_none()
+                || prompt.is_none()
+                || subagent_type.is_none()
+                || skill.is_none()
+                || skill_args.is_none()
+                || raw.is_none()
+        }
+        ToolArguments::TaskOutput { task_id, .. } => task_id.is_none(),
+        ToolArguments::Move { from, to } => from.is_none() || to.is_none(),
+        ToolArguments::PlanMode { mode } => mode.is_none(),
+        ToolArguments::ToolSearch { query, max_results } => {
+            query.is_none() || max_results.is_none()
+        }
+        ToolArguments::Other { .. } => tool_arguments_detail_score(arguments) == 0,
+    }
 }
 
 fn enrich_tool_call_data(
@@ -138,10 +186,13 @@ fn enrich_tool_call_data(
         return tool_call;
     };
 
-    if tool_arguments_detail_score(&candidate_arguments)
+    let merged_arguments =
+        merge_persisted_arguments(candidate_arguments.clone(), &tool_call.arguments);
+
+    if tool_arguments_detail_score(&merged_arguments)
         > tool_arguments_detail_score(&tool_call.arguments)
     {
-        tool_call.arguments = candidate_arguments;
+        tool_call.arguments = merged_arguments;
     }
 
     if tool_call.raw_input.is_none() {
@@ -159,7 +210,7 @@ fn enrich_tool_call_data(
         tool_call.locations = synthesize_locations(&tool_call.arguments);
     }
 
-    if title_needs_enrichment(tool_call.title.as_deref()) {
+    if title_is_placeholder(tool_call.title.as_deref()) {
         tool_call.title = synthesize_title(&tool_call.arguments).or(tool_call.title);
     }
 
@@ -177,29 +228,60 @@ fn enrich_tool_call_update_data(
         return update;
     };
 
-    if tool_arguments_detail_score(&candidate_arguments)
-        > update
-            .arguments
-            .as_ref()
-            .map(tool_arguments_detail_score)
-            .unwrap_or(0)
-    {
-        update.arguments = Some(candidate_arguments);
+    let current_arguments = update
+        .arguments
+        .as_ref()
+        .or(update.streaming_arguments.as_ref());
+    let current_arguments_score = current_arguments
+        .map(tool_arguments_detail_score)
+        .unwrap_or(0);
+    let merged_arguments = current_arguments
+        .map(|arguments| merge_persisted_arguments(candidate_arguments.clone(), arguments))
+        .unwrap_or(candidate_arguments);
+
+    if tool_arguments_detail_score(&merged_arguments) > current_arguments_score {
+        if update.arguments.is_some() {
+            update.arguments = Some(merged_arguments.clone());
+        } else if update.streaming_arguments.is_some() {
+            update.streaming_arguments = Some(merged_arguments.clone());
+        } else {
+            update.arguments = Some(merged_arguments.clone());
+        }
     }
 
+    let presentation_arguments = update
+        .arguments
+        .as_ref()
+        .or(update.streaming_arguments.as_ref());
+
     if update.locations.is_none() {
-        if let Some(arguments) = update.arguments.as_ref() {
+        if let Some(arguments) = presentation_arguments {
             update.locations = synthesize_locations(arguments);
         }
     }
 
-    if title_needs_enrichment(update.title.as_deref()) {
-        if let Some(arguments) = update.arguments.as_ref() {
+    if title_is_placeholder(update.title.as_deref()) {
+        if let Some(arguments) = presentation_arguments {
             update.title = synthesize_title(arguments).or(update.title);
         }
     }
 
     update
+}
+
+fn merge_persisted_arguments(candidate: ToolArguments, current: &ToolArguments) -> ToolArguments {
+    match (&candidate, current) {
+        (ToolArguments::Edit { .. }, ToolArguments::Edit { .. }) => {
+            merge_tool_arguments(candidate, current.clone())
+        }
+        _ => {
+            if tool_arguments_detail_score(&candidate) > tool_arguments_detail_score(current) {
+                candidate
+            } else {
+                current.clone()
+            }
+        }
+    }
 }
 
 fn parse_persisted_tool_arguments(persisted: &PersistedToolUse) -> Option<ToolArguments> {
@@ -229,6 +311,7 @@ fn tool_arguments_detail_score(arguments: &ToolArguments) -> usize {
         ToolArguments::Read { file_path } => usize::from(file_path.is_some()),
         ToolArguments::Edit { edits } => edits.first().map_or(0, |e| {
             usize::from(e.file_path.is_some())
+                + usize::from(e.move_from.is_some())
                 + usize::from(e.old_string.is_some())
                 + usize::from(e.new_string.is_some())
                 + usize::from(e.content.is_some())
@@ -277,50 +360,6 @@ fn tool_arguments_detail_score(arguments: &ToolArguments) -> usize {
             1
         }
     }
-}
-
-fn synthesize_locations(arguments: &ToolArguments) -> Option<Vec<ToolCallLocation>> {
-    extract_path(arguments).map(|path| vec![ToolCallLocation { path }])
-}
-
-fn extract_path(arguments: &ToolArguments) -> Option<String> {
-    match arguments {
-        ToolArguments::Read { file_path }
-        | ToolArguments::Delete { file_path }
-        | ToolArguments::Search { file_path, .. } => file_path.clone(),
-        ToolArguments::Edit { edits, .. } => edits.first().and_then(|e| e.file_path.clone()),
-        ToolArguments::Glob { path, .. } => path.clone(),
-        _ => None,
-    }
-}
-
-fn synthesize_title(arguments: &ToolArguments) -> Option<String> {
-    match arguments {
-        ToolArguments::Read { file_path } => {
-            file_path.as_ref().map(|path| format!("Read {}", path))
-        }
-        ToolArguments::Edit { edits, .. } => edits
-            .first()
-            .and_then(|e| e.file_path.as_ref())
-            .map(|path| format!("Edit {}", path)),
-        ToolArguments::Delete { file_path } => {
-            file_path.as_ref().map(|path| format!("Delete {}", path))
-        }
-        ToolArguments::Execute { command } => command.clone(),
-        _ => None,
-    }
-}
-
-fn title_needs_enrichment(title: Option<&str>) -> bool {
-    matches!(
-        title.map(str::trim),
-        None | Some("")
-            | Some("Read File")
-            | Some("Edit File")
-            | Some("Delete File")
-            | Some("View Image")
-            | Some("Terminal")
-    )
 }
 
 async fn load_tool_use_index_for_session(
@@ -539,6 +578,68 @@ mod tests {
                     other => panic!("Expected read arguments, got {:?}", other),
                 }
                 assert_eq!(update.title.as_deref(), Some("Read /tmp/example.rs"));
+                assert_eq!(update.locations.as_ref().map(Vec::len), Some(1));
+            }
+            other => panic!("Expected ToolCallUpdate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn enriches_streaming_cursor_tool_call_update_with_persisted_rename_metadata() {
+        let mut session = make_session_with_tool_use();
+        session.messages[0].content_blocks = vec![ContentBlock::ToolUse {
+            id: "call-rename".to_string(),
+            name: "Edit".to_string(),
+            input: json!({
+                "file_path": "/tmp/new.rs",
+                "move_from": "/tmp/old.rs"
+            }),
+        }];
+        let index = build_persisted_tool_use_index(&session);
+        let update = SessionUpdate::ToolCallUpdate {
+            update: ToolCallUpdateData {
+                tool_call_id: "call-rename".to_string(),
+                status: Some(ToolCallStatus::InProgress),
+                result: None,
+                content: None,
+                raw_output: None,
+                title: Some("Edit File".to_string()),
+                locations: None,
+                streaming_input_delta: None,
+                normalized_todos: None,
+                normalized_questions: None,
+                streaming_arguments: Some(ToolArguments::Edit {
+                    edits: vec![crate::acp::session_update::EditEntry {
+                        file_path: Some("/tmp/new.rs".to_string()),
+                        move_from: None,
+                        old_string: None,
+                        new_string: None,
+                        content: None,
+                    }],
+                }),
+                streaming_plan: None,
+                arguments: None,
+                failure_reason: None,
+            },
+            session_id: Some("session-123".to_string()),
+        };
+
+        let enriched = enrich_tool_call_from_index(update, &index);
+
+        match enriched {
+            SessionUpdate::ToolCallUpdate { update, .. } => {
+                match update.streaming_arguments {
+                    Some(ToolArguments::Edit { edits }) => {
+                        let edit = edits.first().expect("edit entry");
+                        assert_eq!(edit.file_path.as_deref(), Some("/tmp/new.rs"));
+                        assert_eq!(edit.move_from.as_deref(), Some("/tmp/old.rs"));
+                    }
+                    other => panic!("Expected streaming edit arguments, got {:?}", other),
+                }
+                assert_eq!(
+                    update.title.as_deref(),
+                    Some("Rename /tmp/old.rs -> /tmp/new.rs")
+                );
                 assert_eq!(update.locations.as_ref().map(Vec::len), Some(1));
             }
             other => panic!("Expected ToolCallUpdate, got {:?}", other),

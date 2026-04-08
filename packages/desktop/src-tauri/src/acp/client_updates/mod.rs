@@ -410,6 +410,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn live_cursor_rename_tool_call_update_is_enriched_before_dispatch() {
+        let expected_session_id = "cursor-live-rename-session";
+        let tool_call_id = "tool-rename-1";
+
+        cursor_session_update_enrichment::seed_test_tool_use_cache(
+            expected_session_id,
+            tool_call_id,
+            "Edit",
+            json!({
+                "file_path": "/tmp/new.rs",
+                "move_from": "/tmp/old.rs"
+            }),
+        );
+
+        let (dispatcher, captured_events) = AcpUiEventDispatcher::test_sink();
+        let provider = CursorProvider;
+        let message_id_tracker = StdArc::new(std::sync::Mutex::new(HashMap::new()));
+        let assistant_text_tracker = StdArc::new(std::sync::Mutex::new(HashMap::new()));
+        let task_reconciler = StdArc::new(std::sync::Mutex::new(TaskReconciler::new()));
+        let mut streaming_batcher = BatcherWithGuard::new_for_tests(dispatcher.clone());
+        let mut non_streaming_batcher = NonStreamingEventBatcher::new();
+
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": expected_session_id,
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": tool_call_id,
+                    "status": "completed",
+                    "title": "Edit File",
+                    "rawInput": {},
+                    "rawOutput": { "applied": true }
+                }
+            }
+        });
+
+        handle_session_update_notification(
+            &dispatcher,
+            AgentType::Cursor,
+            Some(&provider),
+            &message_id_tracker,
+            &assistant_text_tracker,
+            &task_reconciler,
+            &mut streaming_batcher,
+            &mut non_streaming_batcher,
+            &notification,
+        )
+        .await;
+
+        let captured = captured_events.lock().expect("captured events lock");
+        assert_eq!(captured.len(), 1);
+
+        match &captured[0].payload {
+            AcpUiEventPayload::SessionUpdate(update) => match update.as_ref() {
+                SessionUpdate::ToolCallUpdate { update, session_id } => {
+                    assert_eq!(session_id.as_deref(), Some(expected_session_id));
+                    assert_eq!(update.tool_call_id, tool_call_id);
+                    assert_eq!(
+                        update.title.as_deref(),
+                        Some("Rename /tmp/old.rs -> /tmp/new.rs")
+                    );
+                    assert_eq!(update.locations.as_ref().map(Vec::len), Some(1));
+
+                    match update.arguments.as_ref() {
+                        Some(ToolArguments::Edit { edits }) => {
+                            let edit = edits.first().expect("edit entry");
+                            assert_eq!(edit.file_path.as_deref(), Some("/tmp/new.rs"));
+                            assert_eq!(edit.move_from.as_deref(), Some("/tmp/old.rs"));
+                        }
+                        other => panic!("Expected edit arguments, got {:?}", other),
+                    }
+                }
+                other => panic!("Expected tool call update, got {:?}", other),
+            },
+            other => panic!("Expected session update payload, got {:?}", other),
+        }
+
+        drop(captured);
+        cursor_session_update_enrichment::clear_test_tool_use_cache(expected_session_id);
+    }
+
+    #[tokio::test]
     async fn live_cursor_tool_call_sequence_is_enriched_before_dispatch() {
         let expected_session_id = "cursor-live-sequence";
         let tool_call_id = "tool-edit-sequence";

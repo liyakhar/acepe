@@ -1,9 +1,16 @@
 use super::*;
+use crate::acp::projections::{InteractionState, ProjectionRegistry};
+use crate::acp::session_journal::load_stored_projection;
 use crate::acp::client_session::default_modes;
 use crate::acp::model_display::ModelsForDisplay;
 use crate::acp::parsers::AgentType;
+use crate::acp::session_update::{PermissionData, SessionUpdate};
 use crate::acp::provider::SpawnConfig;
 use crate::acp::session_update::PlanSource;
+use crate::db::migrations::Migrator;
+use crate::db::repository::{SessionMetadataRepository, SessionJournalEventRepository};
+use sea_orm::{Database, DbConn};
+use sea_orm_migration::MigratorTrait;
 use std::collections::HashMap;
 use std::sync::Arc as StdArc;
 
@@ -218,6 +225,16 @@ fn create_no_launcher_test_client() -> AcpClient {
     let provider: StdArc<dyn AgentProvider> = StdArc::new(NoLauncherProvider);
     let cwd = std::env::current_dir().expect("current dir should be available");
     AcpClient::new_with_provider(provider, None, cwd).expect("client should be created")
+}
+
+async fn setup_test_db() -> DbConn {
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("Failed to connect to in-memory SQLite");
+    Migrator::up(&db, None)
+        .await
+        .expect("Failed to run migrations");
+    db
 }
 
 #[test]
@@ -788,4 +805,71 @@ async fn start_returns_clear_error_when_provider_has_no_launchers() {
     assert!(
         matches!(error, AcpError::InvalidState(message) if message.contains("No launchers available for provider cursor"))
     );
+}
+
+#[tokio::test]
+async fn active_client_interaction_projection_persists_selected_permission_reply() {
+    let db = setup_test_db().await;
+    SessionMetadataRepository::upsert(
+        &db,
+        "session-1".to_string(),
+        "Active client session".to_string(),
+        1704067200000,
+        "/Users/alex/Documents/acepe".to_string(),
+        "codex".to_string(),
+        "-Users-alex-Documents-acepe/session-1.jsonl".to_string(),
+        1704067200,
+        1024,
+    )
+    .await
+    .expect("persist session metadata");
+
+    let path =
+        "/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte";
+    let mut client = create_test_client();
+    client.db = Some(db.clone());
+    client.projection_registry = StdArc::new(ProjectionRegistry::new());
+    client.set_active_session_id(Some("session-1".to_string()));
+
+    let permission_update = SessionUpdate::PermissionRequest {
+        permission: PermissionData {
+            id: "permission-1".to_string(),
+            session_id: "session-1".to_string(),
+            json_rpc_request_id: Some(7),
+            permission: "Read".to_string(),
+            patterns: vec![path.to_string()],
+            metadata: json!({}),
+            always: vec![],
+            tool: None,
+        },
+        session_id: Some("session-1".to_string()),
+    };
+    client
+        .projection_registry
+        .apply_session_update("session-1", &permission_update);
+    SessionJournalEventRepository::append_session_update(&db, "session-1", &permission_update)
+        .await
+        .expect("append permission request update");
+
+    client
+        .update_interaction_projection(
+            7,
+            &json!({ "outcome": { "outcome": "selected", "optionId": "allow" } }),
+        )
+        .await;
+
+    let interaction = client
+        .projection_registry
+        .interaction_for_request_id("session-1", 7)
+        .expect("interaction should exist");
+    assert_eq!(interaction.state, InteractionState::Approved);
+
+    let stored_projection = load_stored_projection(&db, "session-1", None)
+        .await
+        .expect("load stored projection")
+        .expect("stored projection should exist");
+    assert!(stored_projection
+        .interactions
+        .into_iter()
+        .any(|interaction| interaction.id == "permission-1" && interaction.state == InteractionState::Approved));
 }

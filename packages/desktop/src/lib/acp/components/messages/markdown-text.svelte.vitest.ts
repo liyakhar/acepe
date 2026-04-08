@@ -420,6 +420,37 @@ describe("MarkdownText", () => {
 		expect(renderMarkdownSyncMock).not.toHaveBeenCalled();
 	});
 
+	it("fades only the newly appended suffix of the live streaming tail", async () => {
+		renderMarkdownSyncMock.mockImplementation((text) => ({
+			html: `<p>${text}</p>`,
+			fromCache: false,
+			needsAsync: false,
+		}));
+
+		const view = render(MarkdownText, {
+			text: "Hello",
+			isStreaming: true,
+		});
+
+		await waitFor(() => {
+			expect(view.container.querySelector(".streaming-live-text")?.textContent).toBe("Hello");
+			expect(view.container.querySelector(".streaming-live-suffix")?.textContent).toBe("Hello");
+		});
+
+		await view.rerender({
+			text: "Hello world",
+			isStreaming: true,
+		});
+
+		await waitFor(() => {
+			const liveText = view.container.querySelector(".streaming-live-text");
+			const suffix = view.container.querySelector(".streaming-live-suffix");
+
+			expect(liveText?.textContent).toBe("Hello world");
+			expect(suffix?.textContent).toBe(" world");
+		});
+	});
+
 	it("keeps stable streaming sections while append-only markdown grows", async () => {
 		renderMarkdownSyncMock.mockImplementation((text) => {
 			if (text === "# Title") {

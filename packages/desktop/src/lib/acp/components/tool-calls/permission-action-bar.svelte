@@ -38,7 +38,7 @@ function handleAlwaysAllow() {
 const greenColor = "var(--success)";
 const redColor = Colors[COLOR_NAMES.RED];
 const purpleColor = Colors[COLOR_NAMES.PURPLE];
-const buttonClass = $derived(compact || inline ? "justify-center" : "flex-1 justify-center");
+const buttonClass = "justify-center shrink-0";
 </script>
 
 <div class="flex min-w-0 flex-col gap-1" class:w-full={!inline}>
@@ -48,7 +48,7 @@ const buttonClass = $derived(compact || inline ? "justify-center" : "flex-1 just
 			<span class="shrink-0 font-medium text-muted-foreground">{compactDisplay.label}</span>
 			{#if compactDisplay.filePath}
 				<div class="min-w-0 flex-1">
-					<FilePathBadge filePath={compactDisplay.filePath} interactive={false} size="sm" />
+					<FilePathBadge filePath={compactDisplay.filePath} interactive={false} />
 				</div>
 			{:else if compactDisplay.command}
 				<code class="min-w-0 flex-1 truncate font-mono text-foreground/70">$ {compactDisplay.command}</code>
@@ -60,15 +60,10 @@ const buttonClass = $derived(compact || inline ? "justify-center" : "flex-1 just
 		{@render permissionSummary()}
 	{/if}
 
-	<div class="flex items-center gap-1" class:w-full={!inline && !compact} class:justify-end={inline || compact}>
+	<div class="flex items-center justify-end gap-1" class:w-full={!inline && !compact}>
 		<Button variant="toolbar" size="toolbar" class={buttonClass} onclick={handleReject}>
 			<XCircle weight="fill" class="size-3 shrink-0" style="color: {redColor}" />
 			<span>{m.permission_deny()}</span>
-		</Button>
-
-		<Button variant="toolbar" size="toolbar" class={buttonClass} onclick={handleAllowOnce}>
-			<CheckCircle weight="fill" class="size-3 shrink-0" style="color: {greenColor}" />
-			<span>{m.permission_allow()}</span>
 		</Button>
 
 		{#if hasAlwaysOption}
@@ -77,5 +72,10 @@ const buttonClass = $derived(compact || inline ? "justify-center" : "flex-1 just
 				<span>{m.permission_always_allow()}</span>
 			</Button>
 		{/if}
+
+		<Button variant="toolbar" size="toolbar" class={buttonClass} onclick={handleAllowOnce}>
+			<CheckCircle weight="fill" class="size-3 shrink-0" style="color: {greenColor}" />
+			<span>{m.permission_allow()}</span>
+		</Button>
 	</div>
 </div>

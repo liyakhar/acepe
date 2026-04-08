@@ -41,6 +41,26 @@ const STREAMING_SYNC_RESULT = {
 
 const EMPTY_STREAMING_TAIL = { sections: [] };
 
+type StreamingLiveTextRender = {
+	fullText: string;
+	preservedPrefix: string;
+	freshSuffix: string;
+};
+
+function buildStreamingLiveTextRender(
+	previousText: string | undefined,
+	nextText: string
+): StreamingLiveTextRender {
+	const preservedPrefix =
+		previousText && nextText.startsWith(previousText) ? previousText : "";
+
+	return {
+		fullText: nextText,
+		preservedPrefix,
+		freshSuffix: nextText.slice(preservedPrefix.length),
+	};
+}
+
 // Get session context (set by VirtualizedEntryList)
 const sessionContext = useSessionContext();
 const contextProjectPath = $derived(sessionContext?.projectPath);
@@ -240,6 +260,7 @@ const streamingTail = $derived.by(() => {
 const error = $derived(asyncError);
 const isLoading = $derived(syncResult.needsAsync && asyncPending);
 let streamingSettledHtmlByKey = $state<ReadonlyMap<string, string>>(new Map());
+let streamingLiveTextRenderByKey = $state<ReadonlyMap<string, StreamingLiveTextRender>>(new Map());
 
 // Parse content blocks from HTML (extracts mermaid, github badges, etc.)
 // File badge placeholders stay as inline <span>s — mounted as Svelte components below.
@@ -302,6 +323,31 @@ $effect(() => {
 	}
 
 	streamingSettledHtmlByKey = nextSettledHtmlByKey;
+});
+
+$effect(() => {
+	if (!isStreaming) {
+		streamingLiveTextRenderByKey = new Map();
+		return;
+	}
+
+	const previousLiveTextRenderByKey = untrack(() => streamingLiveTextRenderByKey);
+	const nextLiveTextRenderByKey = new Map<string, StreamingLiveTextRender>();
+	for (const section of streamingTail.sections) {
+		if (section.kind !== "live-text") {
+			continue;
+		}
+
+		nextLiveTextRenderByKey.set(
+			section.key,
+			buildStreamingLiveTextRender(
+				previousLiveTextRenderByKey.get(section.key)?.fullText,
+				section.text
+			)
+		);
+	}
+
+	streamingLiveTextRenderByKey = nextLiveTextRenderByKey;
 });
 
 /**
@@ -461,7 +507,10 @@ function handleKeydown(event: KeyboardEvent) {
 				{:else if section.kind === "live-code"}
 					<pre class="streaming-live-code"><code>{section.code}</code></pre>
 				{:else}
-					<div class="streaming-live-text whitespace-pre-wrap">{section.text}</div>
+					{@const liveTextRender =
+						streamingLiveTextRenderByKey.get(section.key) ??
+						buildStreamingLiveTextRender(undefined, section.text)}
+					<div class="streaming-live-text whitespace-pre-wrap">{liveTextRender.preservedPrefix}{#if liveTextRender.freshSuffix.length > 0}<span class="streaming-live-suffix">{liveTextRender.freshSuffix}</span>{/if}</div>
 				{/if}
 			</div>
 		{/each}
@@ -482,5 +531,26 @@ function handleKeydown(event: KeyboardEvent) {
 	.markdown-loading {
 		min-height: 1.5em;
 		opacity: 0.7;
+	}
+
+	.streaming-live-suffix {
+		display: inline;
+		animation: streaming-live-suffix 180ms ease-out;
+	}
+
+	@keyframes streaming-live-suffix {
+		from {
+			opacity: 0;
+		}
+
+		to {
+			opacity: 1;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.streaming-live-suffix {
+			animation: none;
+		}
 	}
 </style>

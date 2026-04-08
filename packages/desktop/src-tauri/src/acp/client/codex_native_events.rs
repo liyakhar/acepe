@@ -3,6 +3,7 @@ use crate::acp::session_update::{
     ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference,
     TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
 };
+use crate::acp::tool_call_presentation::{synthesize_locations, synthesize_title};
 use crate::acp::types::ContentBlock;
 use serde_json::Value;
 
@@ -274,13 +275,13 @@ fn translate_item_started(
         tool_call: ToolCallData {
             id: id.to_string(),
             name: fields.name,
+            locations: synthesize_locations(&fields.arguments),
+            title: synthesize_title(&fields.arguments).or(Some(fields.title)),
             arguments: fields.arguments,
             raw_input: None,
             status,
             result: None,
             kind: Some(fields.kind),
-            title: Some(fields.title),
-            locations: None,
             skill_meta: None,
             normalized_questions: None,
             normalized_todos: None,
@@ -337,7 +338,8 @@ fn translate_item_completed(
             tool_call_id: id.to_string(),
             status: Some(status),
             result,
-            title: Some(fields.title),
+            locations: synthesize_locations(&fields.arguments),
+            title: synthesize_title(&fields.arguments).or(Some(fields.title)),
             arguments: Some(fields.arguments),
             ..ToolCallUpdateData::default()
         },

@@ -145,10 +145,12 @@ const STOP_RED = "#FF5D5A";
 		{/snippet}
 	</Tooltip.Trigger>
 	<Tooltip.Content>
-		<div class="flex items-center gap-2">
-			<span>{hoverTitle}</span>
+		<div class="flex items-center gap-1.5">
 			{#if visualState === "mic"}
+				<span>Hold</span>
 				<KbdGroup><Kbd>Right ⌥</Kbd></KbdGroup>
+			{:else}
+				<span>{hoverTitle}</span>
 			{/if}
 		</div>
 	</Tooltip.Content>

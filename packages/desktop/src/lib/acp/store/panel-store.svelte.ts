@@ -77,6 +77,7 @@ export class PanelStore {
 	private suppressedAutoSessionSignals = new SvelteMap<string, string>();
 	private latestLiveSessionSignals = new SvelteMap<string, string>();
 	private activeFilePanelIdByOwnerPanelId = new SvelteMap<string, string>();
+	private activeTopLevelFilePanelIdByProject = new SvelteMap<string, string>();
 	private nextTerminalTabCreatedAt = 1;
 
 	private isTopLevelFullscreenTarget(panelId: string | null): boolean {
@@ -1180,6 +1181,7 @@ export class PanelStore {
 				this.ensureOwnerPanelWidth(ownerPanelId, existing.width);
 				this.activeFilePanelIdByOwnerPanelId.set(ownerPanelId, existing.id);
 			} else {
+				this.activeTopLevelFilePanelIdByProject.set(projectPath, existing.id);
 				this.focusOpenedTopLevelPanel(existing.id);
 			}
 			logger.debug("File already open, focusing existing panel", { filePath, projectPath });
@@ -1202,6 +1204,7 @@ export class PanelStore {
 			this.ensureOwnerPanelWidth(ownerPanelId, panel.width);
 			this.activeFilePanelIdByOwnerPanelId.set(ownerPanelId, panel.id);
 		} else {
+			this.activeTopLevelFilePanelIdByProject.set(projectPath, panel.id);
 			this.focusOpenedTopLevelPanel(panel.id);
 		}
 		this.onPersist();
@@ -1235,6 +1238,20 @@ export class PanelStore {
 				}
 			}
 			this.resetOwnerPanelWidthIfNoAttached(ownerPanelId);
+		} else if (panelToClose && panelToClose.ownerPanelId === null) {
+			// Handle top-level file panel active tracking
+			const projectPath = panelToClose.projectPath;
+			const activeId = this.activeTopLevelFilePanelIdByProject.get(projectPath);
+			if (activeId === panelId) {
+				const remaining = this.filePanels.find(
+					(p) => p.ownerPanelId === null && p.projectPath === projectPath
+				);
+				if (remaining) {
+					this.activeTopLevelFilePanelIdByProject.set(projectPath, remaining.id);
+				} else {
+					this.activeTopLevelFilePanelIdByProject.delete(projectPath);
+				}
+			}
 		}
 		if (closeState) {
 			this.applyTopLevelPanelCloseState(closeState);
@@ -1313,6 +1330,23 @@ export class PanelStore {
 		if (!target) return;
 		this.activeFilePanelIdByOwnerPanelId.set(ownerPanelId, filePanelId);
 		this.onPersist();
+	}
+
+	getActiveTopLevelFilePanelId(projectPath: string): string | null {
+		return this.activeTopLevelFilePanelIdByProject.get(projectPath) ?? null;
+	}
+
+	setActiveTopLevelFilePanel(projectPath: string, filePanelId: string): void {
+		const target = this.filePanels.find(
+			(panel) => panel.id === filePanelId && panel.ownerPanelId === null && panel.projectPath === projectPath
+		);
+		if (!target) return;
+		this.activeTopLevelFilePanelIdByProject.set(projectPath, filePanelId);
+		this.onPersist();
+	}
+
+	getTopLevelFilePanelsForProject(projectPath: string): FilePanel[] {
+		return this.filePanels.filter((panel) => panel.ownerPanelId === null && panel.projectPath === projectPath);
 	}
 
 	getActiveFilePanelIdByOwnerPanelIdRecord(): Record<string, string> {

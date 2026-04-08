@@ -77,44 +77,43 @@
 	{@const purpleColor = Colors[COLOR_NAMES.PURPLE]}
 	<div class="w-full">
 		<div
-			class="w-full flex items-center justify-between px-3 py-1 rounded-md border border-border bg-muted/30 permission-card-enter {command ? 'rounded-b-none border-b-0' : ''}"
+			class="w-full flex flex-col gap-1.5 px-3 py-1 rounded-md border border-border bg-muted/30 permission-card-enter {command ? 'rounded-b-none border-b-0' : ''}"
 		>
-			<div class="flex min-w-0 items-center gap-1.5 w-full text-[0.6875rem]">
-				<span
-					class="inline-flex shrink-0 items-center justify-center"
-					aria-label={verb}
-					title={verb}
-				>
-					{#if kind === "edit"}
-						<PencilSimple weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "read"}
-						<File weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "execute"}
-						<Terminal weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "search"}
-						<MagnifyingGlass weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "fetch" || kind === "web_search"}
-						<GlobeHemisphereWest weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "delete"}
-						<Trash weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else if kind === "move"}
-						<ArrowsLeftRight weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
-					{:else}
-						<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
+			<div class="flex w-full items-start justify-between gap-1.5">
+				<div class="flex min-w-0 w-full items-center gap-1.5 text-[0.6875rem]">
+					<span
+						class="inline-flex shrink-0 items-center justify-center"
+						aria-label={verb}
+						title={verb}
+					>
+						{#if kind === "edit"}
+							<PencilSimple weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+						{:else if kind === "read"}
+							<File weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+						{:else if kind === "execute"}
+							<Terminal weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+						{:else if kind === "search"}
+							<MagnifyingGlass weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+						{:else if kind === "fetch" || kind === "web_search"}
+							<GlobeHemisphereWest weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+						{:else if kind === "delete"}
+							<Trash weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+						{:else if kind === "move"}
+							<ArrowsLeftRight weight="fill" size={11} class="shrink-0" style="color: {purpleColor}" />
+						{:else}
+							<ShieldWarning weight="fill" size={10} class="shrink-0" style="color: {purpleColor}" />
+						{/if}
+					</span>
+					<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
+					{#if filePath}
+						<div class="min-w-0 flex-1 cursor-pointer">
+							<FilePathBadge {filePath} interactive={false} />
+						</div>
 					{/if}
-				</span>
-				<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
-				{#if filePath}
-					<div class="min-w-0 flex-1 cursor-pointer">
-						<FilePathBadge {filePath} interactive={false} size="sm" />
-					</div>
-				{/if}
-			</div>
+				</div>
 
-			<div class="ml-2 flex shrink-0 items-center gap-1">
-				<PermissionActionBar permission={currentPermission} inline hideHeader />
 				{#if sessionProgress}
-					<div class="flex items-center">
+					<div class="permission-tally-bar flex shrink-0 items-center self-center">
 						<VoiceDownloadProgress
 							ariaLabel={progressLabel}
 							compact={true}
@@ -125,6 +124,10 @@
 						/>
 					</div>
 				{/if}
+			</div>
+
+			<div class="flex w-full items-center">
+				<PermissionActionBar permission={currentPermission} hideHeader />
 			</div>
 		</div>
 
@@ -143,6 +146,30 @@
 <style>
 	.permission-card-enter {
 		animation: slideUp 0.2s ease-out;
+	}
+
+	.permission-tally-bar {
+		min-height: 1rem;
+	}
+
+	.permission-tally-bar :global(.voice-download-progress.compact) {
+		gap: 2px;
+	}
+
+	.permission-tally-bar :global(.voice-download-segments) {
+		grid-auto-columns: 3px;
+		gap: 2px;
+		height: 9px;
+	}
+
+	.permission-tally-bar :global(.voice-download-segment) {
+		width: 3px;
+		height: 9px;
+		border-radius: 1.5px;
+	}
+
+	.permission-tally-bar :global(.voice-download-segment-vertical:not(.filled)) {
+		height: 6px;
 	}
 
 	@keyframes slideUp {

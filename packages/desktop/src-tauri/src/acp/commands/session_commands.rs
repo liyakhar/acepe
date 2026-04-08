@@ -1,12 +1,10 @@
 use super::*;
 use crate::acp::client::ExecutionProfileRequest;
 use crate::acp::projections::{ProjectionRegistry, SessionProjectionSnapshot};
-use crate::acp::session_journal::rebuild_session_projection;
+use crate::acp::session_journal::load_stored_projection;
 use crate::acp::session_registry::redact_session_id;
 use crate::acp::types::CanonicalAgentId;
-use crate::db::repository::{
-    SessionJournalEventRepository, SessionMetadataRepository, SessionProjectionSnapshotRepository,
-};
+use crate::db::repository::{SessionMetadataRepository, SessionProjectionSnapshotRepository};
 use sea_orm::DbConn;
 
 pub(crate) fn resume_path_needs_post_connect_execution_profile_reset(
@@ -625,37 +623,9 @@ fn projection_has_runtime_state(snapshot: &SessionProjectionSnapshot) -> bool {
         || !snapshot.interactions.is_empty()
 }
 
-async fn load_projection_from_journal(
-    db: &DbConn,
-    session_id: &str,
-    agent_id: Option<CanonicalAgentId>,
-) -> Result<Option<SessionProjectionSnapshot>, anyhow::Error> {
-    let events = SessionJournalEventRepository::list(db, session_id).await?;
-    if events.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(rebuild_session_projection(
-        session_id, agent_id, &events,
-    )))
-}
-
-async fn load_stored_projection(
-    db: &DbConn,
-    session_id: &str,
-    agent_id: Option<CanonicalAgentId>,
-) -> Result<Option<SessionProjectionSnapshot>, anyhow::Error> {
-    if let Some(journal_projection) = load_projection_from_journal(db, session_id, agent_id).await?
-    {
-        return Ok(Some(journal_projection));
-    }
-
-    SessionProjectionSnapshotRepository::get(db, session_id).await
-}
-
 #[cfg(test)]
 mod tests {
-    use super::load_stored_projection;
+    use crate::acp::session_journal::load_stored_projection;
     use crate::acp::projections::{
         InteractionResponse, InteractionSnapshot, InteractionState, SessionProjectionSnapshot,
         SessionSnapshot, SessionTurnState,

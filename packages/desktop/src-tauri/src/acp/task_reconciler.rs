@@ -14,6 +14,7 @@ use super::parsers::AgentType;
 use super::session_update::{
     ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind,
 };
+use super::tool_call_presentation::merge_tool_arguments as merge_canonical_tool_arguments;
 
 /// A task being assembled with its children.
 #[derive(Debug, Clone)]
@@ -405,49 +406,7 @@ impl TaskReconciler {
 }
 
 fn merge_tool_arguments(current: ToolArguments, incoming: ToolArguments) -> ToolArguments {
-    match (current, incoming) {
-        (
-            ToolArguments::Edit {
-                edits: current_edits,
-            },
-            ToolArguments::Edit {
-                edits: incoming_edits,
-            },
-        ) => ToolArguments::Edit {
-            edits: merge_edit_entries(current_edits, incoming_edits),
-        },
-        (_, incoming_arguments) => incoming_arguments,
-    }
-}
-
-fn merge_edit_entries(
-    current: Vec<crate::acp::session_update::EditEntry>,
-    incoming: Vec<crate::acp::session_update::EditEntry>,
-) -> Vec<crate::acp::session_update::EditEntry> {
-    let max_len = current.len().max(incoming.len());
-    let mut merged = Vec::with_capacity(max_len);
-
-    for index in 0..max_len {
-        let current_entry = current.get(index).cloned();
-        let incoming_entry = incoming.get(index).cloned();
-
-        let next_entry = match (current_entry, incoming_entry) {
-            (Some(current_value), Some(incoming_value)) => crate::acp::session_update::EditEntry {
-                file_path: incoming_value.file_path.or(current_value.file_path),
-                move_from: incoming_value.move_from.or(current_value.move_from),
-                old_string: incoming_value.old_string.or(current_value.old_string),
-                new_string: incoming_value.new_string.or(current_value.new_string),
-                content: incoming_value.content.or(current_value.content),
-            },
-            (Some(current_value), None) => current_value,
-            (None, Some(incoming_value)) => incoming_value,
-            (None, None) => continue,
-        };
-
-        merged.push(next_entry);
-    }
-
-    merged
+    merge_canonical_tool_arguments(current, incoming)
 }
 
 /// Apply a tool call update to an existing tool call.

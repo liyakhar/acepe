@@ -200,62 +200,20 @@ impl InboundRequestResponder {
     }
 
     async fn update_interaction_projection(&self, request_id: u64, adapted_result: &Value) {
-        let Some(interaction) = self
-            .projection_registry
-            .interaction_for_request_id(&self.session_id, request_id)
-        else {
-            return;
-        };
-
-        let Some((state, domain_event_kind, response)) =
-            interaction_transition_from_result(&interaction.kind, adapted_result)
-        else {
-            tracing::warn!(
-                session_id = %self.session_id,
-                request_id,
-                interaction_id = %interaction.id,
-                interaction_kind = ?interaction.kind,
-                "Unable to derive interaction transition from inbound response"
-            );
-            return;
-        };
-
-        if self
-            .projection_registry
-            .resolve_interaction(
-                &self.session_id,
-                &interaction.id,
-                state.clone(),
-                response.clone(),
-            )
-            .is_some()
-        {
-            if let Some(db) = &self.db {
-                if let Err(error) = SessionJournalEventRepository::append_interaction_transition(
-                    db,
-                    &self.session_id,
-                    &interaction.id,
-                    state,
-                    response,
-                )
-                .await
-                {
-                    tracing::error!(
-                        error = %error,
-                        session_id = %self.session_id,
-                        request_id,
-                        interaction_id = %interaction.id,
-                        "Failed to persist interaction transition into session journal"
-                    );
-                }
-            }
-            self.dispatcher
-                .enqueue_session_domain_event(&self.session_id, domain_event_kind);
-        }
+        apply_interaction_response_for_request(
+            &self.projection_registry,
+            self.db.as_ref(),
+            Some(&self.dispatcher),
+            &self.session_id,
+            request_id,
+            adapted_result,
+            "inbound responder",
+        )
+        .await;
     }
 }
 
-fn interaction_transition_from_result(
+pub(crate) fn interaction_transition_from_result(
     interaction_kind: &InteractionKind,
     adapted_result: &Value,
 ) -> Option<(
@@ -341,4 +299,94 @@ fn interaction_transition_from_result(
             ))
         }
     }
+}
+
+pub(crate) async fn persist_interaction_transition(
+    projection_registry: &ProjectionRegistry,
+    db: Option<&DbConn>,
+    dispatcher: Option<&AcpUiEventDispatcher>,
+    session_id: &str,
+    interaction_id: &str,
+    state: InteractionState,
+    domain_event_kind: SessionDomainEventKind,
+    response: InteractionResponse,
+    source: &str,
+) {
+    if projection_registry
+        .resolve_interaction(session_id, interaction_id, state.clone(), response.clone())
+        .is_none()
+    {
+        tracing::debug!(
+            session_id = %session_id,
+            interaction_id = %interaction_id,
+            source = %source,
+            "Interaction projection missing during transition persistence"
+        );
+        return;
+    }
+
+    if let Some(db) = db {
+        if let Err(error) = SessionJournalEventRepository::append_interaction_transition(
+            db,
+            session_id,
+            interaction_id,
+            state,
+            response,
+        )
+        .await
+        {
+            tracing::error!(
+                error = %error,
+                session_id = %session_id,
+                interaction_id = %interaction_id,
+                source = %source,
+                "Failed to persist interaction transition into session journal"
+            );
+        }
+    }
+
+    if let Some(dispatcher) = dispatcher {
+        dispatcher.enqueue_session_domain_event(session_id, domain_event_kind);
+    }
+}
+
+pub(crate) async fn apply_interaction_response_for_request(
+    projection_registry: &ProjectionRegistry,
+    db: Option<&DbConn>,
+    dispatcher: Option<&AcpUiEventDispatcher>,
+    session_id: &str,
+    request_id: u64,
+    adapted_result: &Value,
+    source: &str,
+) {
+    let Some(interaction) = projection_registry.interaction_for_request_id(session_id, request_id) else {
+        return;
+    };
+
+    let Some((state, domain_event_kind, response)) =
+        interaction_transition_from_result(&interaction.kind, adapted_result)
+    else {
+        tracing::warn!(
+            session_id = %session_id,
+            request_id,
+            interaction_id = %interaction.id,
+            interaction_kind = ?interaction.kind,
+            source = %source,
+            "Unable to derive interaction transition from response"
+        );
+        return;
+    };
+
+    persist_interaction_transition(
+        projection_registry,
+        db,
+        dispatcher,
+        session_id,
+        &interaction.id,
+        state,
+        domain_event_kind,
+        response,
+        source,
+    )
+    .await;
 }

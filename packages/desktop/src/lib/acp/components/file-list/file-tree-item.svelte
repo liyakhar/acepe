@@ -183,7 +183,7 @@ function handleDeleteClick(event: Event & { preventDefault?: () => void }) {
 >
 	<ContextMenu.Trigger>
 		<div
-			class="file-tree-item group flex w-full items-center gap-1 rounded px-2 py-1 text-left text-sm hover:bg-muted/30 focus-within:bg-muted/30 transition-colors"
+			class="file-tree-item group flex w-full items-center gap-1 rounded px-2 py-1 text-left text-xs hover:bg-muted/30 focus-within:bg-muted/30 transition-colors"
 			style="padding-left: {indentPx + 8}px"
 		>
 			{#if isRenaming && onRename}

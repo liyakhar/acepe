@@ -6,7 +6,9 @@ use crate::acp::session_update::{
     TurnErrorData,
 };
 use crate::acp::types::CanonicalAgentId;
+use crate::db::repository::{SessionJournalEventRepository, SessionProjectionSnapshotRepository};
 use chrono::Utc;
+use sea_orm::DbConn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -262,4 +264,32 @@ pub fn rebuild_session_projection(
     }
 
     registry.session_projection(session_id)
+}
+
+pub async fn load_projection_from_journal(
+    db: &DbConn,
+    session_id: &str,
+    agent_id: Option<CanonicalAgentId>,
+) -> Result<Option<SessionProjectionSnapshot>, anyhow::Error> {
+    let events = SessionJournalEventRepository::list(db, session_id).await?;
+    if events.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(rebuild_session_projection(
+        session_id, agent_id, &events,
+    )))
+}
+
+pub async fn load_stored_projection(
+    db: &DbConn,
+    session_id: &str,
+    agent_id: Option<CanonicalAgentId>,
+) -> Result<Option<SessionProjectionSnapshot>, anyhow::Error> {
+    if let Some(journal_projection) = load_projection_from_journal(db, session_id, agent_id).await?
+    {
+        return Ok(Some(journal_projection));
+    }
+
+    SessionProjectionSnapshotRepository::get(db, session_id).await
 }

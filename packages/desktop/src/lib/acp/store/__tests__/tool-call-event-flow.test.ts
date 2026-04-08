@@ -640,7 +640,7 @@ describe("Tool Call Event Flow", () => {
 			expect(args.edits[0]?.newString).toBe("new");
 		});
 
-		it("backfills generic read title when update carries path arguments", () => {
+		it("preserves generic read title when backend omits a canonical title", () => {
 			const sessionId = "sess-cursor-backfill-read";
 			const toolCallId = "tool_cursor_read_1";
 			const filePath = "/Users/example/Documents/acepe/README.md";
@@ -693,11 +693,11 @@ describe("Tool Call Event Flow", () => {
 			expect(args.kind).toBe("read");
 			if (args.kind !== "read") return;
 			expect(args.file_path).toBe(filePath);
-			expect(entries[0].message.title).toBe(`Read ${filePath}`);
+			expect(entries[0].message.title).toBe("Read File");
 			expect(entries[0].message.locations?.[0]?.path).toBe(filePath);
 		});
 
-		it("preserves explicit update title over synthesized backfill title", () => {
+		it("preserves explicit update title from backend", () => {
 			const sessionId = "sess-cursor-backfill-read-explicit-title";
 			const toolCallId = "tool_cursor_read_2";
 			const filePath = "/Users/example/Documents/acepe/README.md";

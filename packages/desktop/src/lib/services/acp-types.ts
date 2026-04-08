@@ -90,6 +90,10 @@ export type EditEntry = {
  */
 filePath?: string | null; 
 /**
+ * Original path when the edit entry represents a rename/move inside a multi-file edit patch.
+ */
+moveFrom?: string | null; 
+/**
  * Text being replaced (None = new file or full-file write).
  */
 oldString?: string | null; 

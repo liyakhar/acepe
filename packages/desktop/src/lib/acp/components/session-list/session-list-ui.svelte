@@ -14,8 +14,10 @@ import { Check } from "phosphor-svelte";
 import { GitBranch } from "phosphor-svelte";
 import { MagnifyingGlass } from "phosphor-svelte";
 import { Recycle } from "phosphor-svelte";
+import { Rows } from "phosphor-svelte";
 import { Sparkle } from "phosphor-svelte";
 import { TestTube } from "phosphor-svelte";
+import { TreeView } from "phosphor-svelte";
 import { Wrench } from "phosphor-svelte";
 import type { Component } from "svelte";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
@@ -929,8 +931,6 @@ function openCreateBranchDialog(projectPath: string): void {
 									<ProjectHeaderOverflowMenu
 										projectName={group.projectName}
 										currentColor={group.projectColor}
-										viewMode={viewMode}
-										onViewModeChange={(mode) => setProjectViewMode(group.projectPath, mode)}
 										onColorChange={onProjectColorChange
 											? (color) => onProjectColorChange(group.projectPath, color)
 											: undefined}
@@ -977,6 +977,14 @@ function openCreateBranchDialog(projectPath: string): void {
 						</ProjectHeader>
 					{/if}
 				</div>
+
+					<!-- View mode toggle -->
+					{#if isExpanded}
+						<div class="flex justify-end border-b border-border/50">
+							<button type="button" class="flex items-center justify-center size-6 cursor-pointer transition-colors {viewMode === 'sessions' ? 'text-foreground/80' : 'text-muted-foreground/40 hover:text-muted-foreground'}" onclick={() => setProjectViewMode(group.projectPath, "sessions")}><Rows class="size-3" weight="fill" /></button>
+							<button type="button" class="flex items-center justify-center size-6 cursor-pointer transition-colors {viewMode === 'files' ? 'text-foreground/80' : 'text-muted-foreground/40 hover:text-muted-foreground'}" onclick={() => setProjectViewMode(group.projectPath, "files")}><TreeView class="size-3" weight="fill" /></button>
+						</div>
+					{/if}
 
 					<!-- Content area: Sessions OR Files (switched, not both) -->
 					{#if isExpanded}

@@ -233,27 +233,27 @@ const showTaskWidget = $derived(taskWidgetSummary !== null);
 			{:else}
 				<div class="flex items-start gap-1.5">
 					{#if fileToolDisplayText}
-						<div class="flex items-center gap-1 text-[10px] text-muted-foreground truncate max-w-[60%]">
+						<div class="flex items-center gap-1 text-[10px] text-muted-foreground min-w-0 max-w-[60%]">
 							{#if isStreaming}
-								<TextShimmer class="truncate">{fileToolDisplayText}</TextShimmer>
+								<TextShimmer class="block truncate">{fileToolDisplayText}</TextShimmer>
 							{:else}
-								<span class="truncate">{fileToolDisplayText}</span>
+								<span class="block truncate">{fileToolDisplayText}</span>
 							{/if}
 						</div>
 					{:else if toolContent}
-						<div class="flex items-center gap-1 text-[10px] text-muted-foreground truncate max-w-[60%]">
+						<div class="flex items-center gap-1 text-[10px] text-muted-foreground min-w-0 max-w-[60%]">
 							{#if showToolShimmer}
-								<TextShimmer class="truncate">{toolContent}</TextShimmer>
+								<TextShimmer class="block truncate">{toolContent}</TextShimmer>
 							{:else}
-								<span class="truncate">{toolContent}</span>
+								<span class="block truncate">{toolContent}</span>
 							{/if}
 						</div>
 					{:else if statusText}
-						<div class="flex items-center gap-1 text-[10px] text-muted-foreground truncate max-w-[60%]">
+						<div class="flex items-center gap-1 text-[10px] text-muted-foreground min-w-0 max-w-[60%]">
 							{#if showStatusShimmer}
-								<TextShimmer class="truncate">{statusText}</TextShimmer>
+								<TextShimmer class="block truncate">{statusText}</TextShimmer>
 							{:else}
-								<span class="truncate">{statusText}</span>
+								<span class="block truncate">{statusText}</span>
 							{/if}
 						</div>
 					{/if}

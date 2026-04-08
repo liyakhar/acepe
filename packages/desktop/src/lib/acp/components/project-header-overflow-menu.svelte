@@ -3,9 +3,7 @@ import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { mergeProps } from "bits-ui";
 import { DotsThreeVertical } from "phosphor-svelte";
 import { Palette } from "phosphor-svelte";
-import { Rows } from "phosphor-svelte";
 import { Trash } from "phosphor-svelte";
-import { TreeView } from "phosphor-svelte";
 import * as Popover from "$lib/components/ui/popover/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";
@@ -13,13 +11,9 @@ import * as m from "$lib/paraglide/messages.js";
 import { COLOR_NAMES, Colors } from "../utils/colors.js";
 import { PROJECT_COLOR_OPTIONS } from "../utils/project-color-options.js";
 
-type ProjectViewMode = "sessions" | "files";
-
 interface Props {
 	projectName: string;
 	currentColor?: string;
-	viewMode: ProjectViewMode;
-	onViewModeChange: (mode: ProjectViewMode) => void;
 	onColorChange?: (color: string) => void;
 	onRemoveProject?: () => void;
 }
@@ -27,8 +21,6 @@ interface Props {
 let {
 	projectName,
 	currentColor,
-	viewMode,
-	onViewModeChange,
 	onColorChange,
 	onRemoveProject,
 }: Props = $props();
@@ -80,40 +72,6 @@ function handleRemoveClick() {
 		<Tooltip.Content side="bottom">Project menu</Tooltip.Content>
 	</Tooltip.Root>
 	<DropdownMenu.Content align="end" side="bottom" class="min-w-[200px] p-0 text-[11px]">
-		<DropdownMenu.Group>
-			<div
-				class="flex items-center gap-2 border-b border-border/20 px-2 py-1.5"
-				role="group"
-				aria-label="View"
-			>
-				<span class="shrink-0 text-[11px] font-semibold text-muted-foreground">View</span>
-				<div class="flex min-w-0 flex-1 items-stretch gap-0 rounded-md bg-muted/50">
-					<button
-						type="button"
-						class="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors cursor-pointer {viewMode ===
-						'sessions'
-							? 'bg-muted text-foreground/80'
-							: 'text-muted-foreground hover:text-foreground'}"
-						onclick={() => onViewModeChange("sessions")}
-					>
-						<Rows class="size-3 shrink-0" weight="fill" style="color: #9858FF" />
-						<span class="truncate">{m.sidebar_view_sessions()}</span>
-					</button>
-					<button
-						type="button"
-						class="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors cursor-pointer {viewMode ===
-						'files'
-							? 'bg-muted text-foreground/80'
-							: 'text-muted-foreground hover:text-foreground'}"
-						onclick={() => onViewModeChange("files")}
-					>
-						<TreeView class="size-3 shrink-0" weight="fill" style="color: #FF8D20" />
-						<span class="truncate">{m.sidebar_view_files()}</span>
-					</button>
-				</div>
-			</div>
-		</DropdownMenu.Group>
-
 		{#if showSettingsSection}
 			<DropdownMenu.Group>
 				<DropdownMenu.GroupHeading

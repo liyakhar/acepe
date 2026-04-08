@@ -298,6 +298,7 @@ describe("ToolCallManager", () => {
 						edits: [
 							{
 								filePath: "/tmp/example.rs",
+								moveFrom: undefined,
 								oldString: "before",
 								newString: "after",
 								content: null,
@@ -338,6 +339,7 @@ describe("ToolCallManager", () => {
 					edits: [
 						{
 							filePath: "/tmp/example.rs",
+							moveFrom: undefined,
 							oldString: "before",
 							newString: "after",
 							content: null,
@@ -782,6 +784,7 @@ describe("ToolCallManager", () => {
 						edits: [
 							{
 								filePath: "/tmp/example.rs",
+								moveFrom: undefined,
 								oldString: "before",
 								newString: "after",
 								content: null,
@@ -819,8 +822,140 @@ describe("ToolCallManager", () => {
 					edits: [
 						{
 							filePath: "/tmp/example.rs",
+							moveFrom: undefined,
 							oldString: "before",
 							newString: "after",
+							content: null,
+						},
+					],
+				});
+			}
+		});
+
+		it("preserves generic titles when backend omits canonical rename presentation", () => {
+			const existingEntry: SessionEntry = {
+				id: "tc-rename",
+				type: "tool_call",
+				message: {
+					id: "tc-rename",
+					name: "Edit",
+					status: "in_progress",
+					kind: "edit",
+					title: "Edit File",
+					arguments: {
+						kind: "edit",
+						edits: [
+							{
+								filePath: null,
+								moveFrom: null,
+								oldString: null,
+								newString: null,
+								content: null,
+							},
+						],
+					},
+					awaitingPlanApproval: false,
+				},
+				timestamp: new Date(),
+				isStreaming: true,
+			};
+			const entryStore = createMockEntryStore({
+				getEntries: vi.fn(() => [existingEntry]),
+			});
+			const entryIndex = createMockEntryIndex({
+				getToolCallIdIndex: vi.fn(() => 0),
+			});
+			const manager = new ToolCallManager(entryStore, entryIndex);
+
+			const update = createToolCallUpdate("tc-rename", {
+				status: "completed",
+				arguments: {
+					kind: "edit",
+					edits: [
+						{
+							filePath: "/tmp/new.rs",
+							moveFrom: "/tmp/old.rs",
+							oldString: null,
+							newString: null,
+							content: null,
+						},
+					],
+				},
+			});
+			const result = manager.updateEntry("s1", update);
+
+			expect(result.isOk()).toBe(true);
+			const updatedEntry = (entryStore.updateEntry as ReturnType<typeof vi.fn>).mock
+				.calls[0][2] as SessionEntry;
+			if (updatedEntry.type === "tool_call") {
+				expect(updatedEntry.message.title).toBe("Edit File");
+				expect(updatedEntry.message.locations).toBeUndefined();
+			}
+		});
+
+		it("preserves moveFrom metadata when update payload is sparse", () => {
+			const existingEntry: SessionEntry = {
+				id: "tc-rename",
+				type: "tool_call",
+				message: {
+					id: "tc-rename",
+					name: "Edit",
+					status: "in_progress",
+					kind: "edit",
+					arguments: {
+						kind: "edit",
+						edits: [
+							{
+								filePath: "/tmp/new.rs",
+								moveFrom: "/tmp/old.rs",
+								oldString: null,
+								newString: null,
+								content: null,
+							},
+						],
+					},
+					awaitingPlanApproval: false,
+				},
+				timestamp: new Date(),
+				isStreaming: true,
+			};
+			const entryStore = createMockEntryStore({
+				getEntries: vi.fn(() => [existingEntry]),
+			});
+			const entryIndex = createMockEntryIndex({
+				getToolCallIdIndex: vi.fn(() => 0),
+			});
+			const manager = new ToolCallManager(entryStore, entryIndex);
+
+			const update = createToolCallUpdate("tc-rename", {
+				status: "completed",
+				arguments: {
+					kind: "edit",
+					edits: [
+						{
+							filePath: null,
+							moveFrom: null,
+							oldString: null,
+							newString: null,
+							content: null,
+						},
+					],
+				},
+			});
+			const result = manager.updateEntry("s1", update);
+
+			expect(result.isOk()).toBe(true);
+			const updatedEntry = (entryStore.updateEntry as ReturnType<typeof vi.fn>).mock
+				.calls[0][2] as SessionEntry;
+			if (updatedEntry.type === "tool_call") {
+				expect(updatedEntry.message.arguments).toEqual({
+					kind: "edit",
+					edits: [
+						{
+							filePath: "/tmp/new.rs",
+							moveFrom: "/tmp/old.rs",
+							oldString: null,
+							newString: null,
 							content: null,
 						},
 					],

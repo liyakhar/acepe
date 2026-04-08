@@ -3,6 +3,7 @@ import { ProjectCard } from "@acepe/ui";
 import { onMount } from "svelte";
 import { BrowserPanel } from "$lib/acp/components/browser-panel/index.js";
 import { FilePanel } from "$lib/acp/components/file-panel/index.js";
+import FilePanelTabs from "$lib/acp/components/file-panel/file-panel-tabs.svelte";
 import { AgentPanel } from "$lib/acp/components/index.js";
 import { ReviewPanel } from "$lib/acp/components/review-panel/index.js";
 import { TerminalPanel, TerminalTabs } from "$lib/acp/components/terminal-panel/index.js";
@@ -373,21 +374,19 @@ const terminalTabsPanelStore = $derived.by(() => ({
 			{@const hasAgentPanels = group.agentPanels.length > 0}
 			{@const isSingleProject = allGroups.length === 1}
 			{#snippet groupPanels()}
-					<!-- File panels -->
-					{#each group.filePanels as filePanel (filePanel.id)}
-						{@const project = projectManager.projects.find((p) => p.path === filePanel.projectPath)}
-						<FilePanel
-							panelId={filePanel.id}
-							filePath={filePanel.filePath}
-							projectPath={filePanel.projectPath}
+					<!-- File panels (tabbed per project) -->
+					{#if group.filePanels.length > 0}
+						{@const project = projectManager.projects.find((p) => p.path === group.projectPath)}
+						<FilePanelTabs
+							filePanels={group.filePanels}
+							activeFilePanelId={panelStore.getActiveTopLevelFilePanelId(group.projectPath)}
 							projectName={project ? project.name : m.project_unknown()}
 							projectColor={project?.color}
-							width={filePanel.width}
-							hideProjectBadge={true}
-							onClose={() => panelStore.closeFilePanel(filePanel.id)}
-							onResize={(panelId, delta) => panelStore.resizeFilePanel(panelId, delta)}
+							onSelectFilePanel={(panelId) => panelStore.setActiveTopLevelFilePanel(group.projectPath, panelId)}
+							onCloseFilePanel={(panelId) => panelStore.closeFilePanel(panelId)}
+							onResizeFilePanel={(panelId, delta) => panelStore.resizeFilePanel(panelId, delta)}
 						/>
-					{/each}
+					{/if}
 
 					<!-- Review panels -->
 					{#each group.reviewPanels as reviewPanel (reviewPanel.id)}

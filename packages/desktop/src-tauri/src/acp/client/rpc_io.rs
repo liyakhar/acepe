@@ -1,4 +1,5 @@
 use super::*;
+use crate::acp::client_transport::apply_interaction_response_for_request;
 
 impl AcpClient {
     /// Send a JSON-RPC request and wait for response
@@ -48,6 +49,7 @@ impl AcpClient {
         };
 
         self.respond(id, adapted_result.clone()).await?;
+        self.update_interaction_projection(id, &adapted_result).await;
 
         // Check if this request was tracked as a permission
         let ctx = match self.permission_tracker.lock() {
@@ -66,7 +68,7 @@ impl AcpClient {
             let is_denied = outcome_str.is_some_and(|o| o == "cancelled");
 
             if let Some(o) = outcome_str {
-                if o != "cancelled" && o != "allowed" {
+                if o != "cancelled" && o != "allowed" && o != "selected" {
                     tracing::warn!(outcome = o, tool_call_id = %ctx.tool_call_id, "Unrecognized permission outcome");
                 }
             }
@@ -87,5 +89,29 @@ impl AcpClient {
         }
 
         Ok(())
+    }
+
+    pub(super) async fn update_interaction_projection(&self, request_id: u64, adapted_result: &Value) {
+        let session_id = match self.active_session_id.lock() {
+            Ok(active_session_id) => active_session_id.clone(),
+            Err(error) => {
+                tracing::error!("Active session mutex poisoned in resolve: {error}");
+                None
+            }
+        };
+        let Some(session_id) = session_id else {
+            return;
+        };
+
+        apply_interaction_response_for_request(
+            &self.projection_registry,
+            self.db.as_ref(),
+            self.dispatcher.as_ref(),
+            &session_id,
+            request_id,
+            adapted_result,
+            "acp client",
+        )
+        .await;
     }
 }
