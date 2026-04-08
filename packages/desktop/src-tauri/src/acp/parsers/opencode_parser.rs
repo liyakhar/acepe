@@ -3,6 +3,7 @@
 use crate::acp::parsers::adapters::OpenCodeAdapter;
 use crate::acp::parsers::arguments::parse_tool_kind_arguments;
 use crate::acp::parsers::edit_normalizers::opencode::parse_edit_arguments;
+use crate::acp::parsers::provider_capabilities::{provider_capabilities, ProviderCapabilities};
 use crate::acp::parsers::types::{
     parse_common_update_type_name, parse_standard_usage_telemetry, AgentParser, AgentType,
     ParseError, ParsedQuestion, ParsedQuestionOption, ParsedTodo, ParsedTodoStatus,
@@ -18,6 +19,10 @@ pub struct OpenCodeParser;
 impl AgentParser for OpenCodeParser {
     fn agent_type(&self) -> AgentType {
         AgentType::OpenCode
+    }
+
+    fn capabilities(&self) -> &'static ProviderCapabilities {
+        provider_capabilities(AgentType::OpenCode)
     }
 
     fn parse_update_type_name(&self, update_type: &str) -> Option<UpdateType> {

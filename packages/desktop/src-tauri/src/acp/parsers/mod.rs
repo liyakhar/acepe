@@ -15,6 +15,7 @@
 
 pub mod acp_fields;
 pub mod adapters;
+pub(crate) mod argument_enrichment;
 pub(crate) mod arguments;
 pub mod cc_sdk_bridge;
 pub(crate) mod claude_code_parser;
@@ -24,6 +25,7 @@ pub(crate) mod cursor_parser;
 pub(crate) mod edit_normalizers;
 pub mod kind;
 pub(crate) mod opencode_parser;
+pub mod provider_capabilities;
 pub(crate) mod shared_chat;
 pub mod status;
 mod types;

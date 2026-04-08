@@ -363,6 +363,7 @@ fn merge_replay_edit_entries(
         let next_entry = match (current_entry, incoming_entry) {
             (Some(current_value), Some(incoming_value)) => crate::acp::session_update::EditEntry {
                 file_path: incoming_value.file_path.or(current_value.file_path),
+                move_from: incoming_value.move_from.or(current_value.move_from),
                 old_string: incoming_value.old_string.or(current_value.old_string),
                 new_string: incoming_value.new_string.or(current_value.new_string),
                 content: incoming_value.content.or(current_value.content),

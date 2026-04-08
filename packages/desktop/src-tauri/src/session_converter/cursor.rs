@@ -111,6 +111,7 @@ mod tests {
                 arguments: Some(ToolArguments::Edit {
                     edits: vec![crate::acp::session_update::EditEntry {
                         file_path: Some("/tmp/CLAUDE.md".to_string()),
+                        move_from: None,
                         old_string: Some("Look at AGENTS.md".to_string()),
                         new_string: Some("Look at AGENTS.md.".to_string()),
                         content: None,
@@ -132,6 +133,7 @@ mod tests {
                     arguments: ToolArguments::Edit {
                         edits: vec![crate::acp::session_update::EditEntry {
                             file_path: None,
+                            move_from: None,
                             old_string: None,
                             new_string: None,
                             content: None,

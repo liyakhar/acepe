@@ -4,6 +4,7 @@ use crate::acp::parsers::adapters::ClaudeCodeAdapter;
 use crate::acp::parsers::arguments::parse_tool_kind_arguments;
 use crate::acp::parsers::edit_normalizers::claude_code::parse_edit_arguments;
 use crate::acp::parsers::kind::{canonical_name_for_kind, infer_kind_from_payload};
+use crate::acp::parsers::provider_capabilities::{provider_capabilities, ProviderCapabilities};
 use crate::acp::parsers::shared_chat::{
     detect_update_type, infer_tool_kind_from_raw_arguments, parse_tool_call_update,
     parse_update_type_name, parse_usage_telemetry,
@@ -21,6 +22,10 @@ pub struct ClaudeCodeParser;
 impl AgentParser for ClaudeCodeParser {
     fn agent_type(&self) -> AgentType {
         AgentType::ClaudeCode
+    }
+
+    fn capabilities(&self) -> &'static ProviderCapabilities {
+        provider_capabilities(AgentType::ClaudeCode)
     }
 
     fn parse_update_type_name(&self, update_type: &str) -> Option<UpdateType> {

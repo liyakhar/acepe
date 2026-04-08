@@ -434,6 +434,7 @@ fn merge_edit_entries(
         let next_entry = match (current_entry, incoming_entry) {
             (Some(current_value), Some(incoming_value)) => crate::acp::session_update::EditEntry {
                 file_path: incoming_value.file_path.or(current_value.file_path),
+                move_from: incoming_value.move_from.or(current_value.move_from),
                 old_string: incoming_value.old_string.or(current_value.old_string),
                 new_string: incoming_value.new_string.or(current_value.new_string),
                 content: incoming_value.content.or(current_value.content),
@@ -1030,6 +1031,7 @@ mod tests {
             arguments: ToolArguments::Edit {
                 edits: vec![crate::acp::session_update::EditEntry {
                     file_path: Some("/tmp/example.rs".to_string()),
+                    move_from: None,
                     old_string: Some("before".to_string()),
                     new_string: Some("after".to_string()),
                     content: None,
@@ -1056,6 +1058,7 @@ mod tests {
             arguments: ToolArguments::Edit {
                 edits: vec![crate::acp::session_update::EditEntry {
                     file_path: None,
+                    move_from: None,
                     old_string: None,
                     new_string: None,
                     content: None,
@@ -1367,6 +1370,7 @@ mod tests {
             arguments: ToolArguments::Edit {
                 edits: vec![crate::acp::session_update::EditEntry {
                     file_path: Some("/tmp/example.rs".to_string()),
+                    move_from: None,
                     old_string: Some("before".to_string()),
                     new_string: Some("after".to_string()),
                     content: None,
@@ -1404,6 +1408,7 @@ mod tests {
             arguments: Some(ToolArguments::Edit {
                 edits: vec![crate::acp::session_update::EditEntry {
                     file_path: None,
+                    move_from: None,
                     old_string: None,
                     new_string: None,
                     content: None,

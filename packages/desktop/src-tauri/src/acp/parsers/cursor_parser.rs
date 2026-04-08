@@ -1,8 +1,10 @@
 //! Parser for Cursor agent.
 
 use crate::acp::parsers::adapters::CursorAdapter;
+use crate::acp::parsers::argument_enrichment::inject_path_hint;
 use crate::acp::parsers::arguments::parse_tool_kind_arguments;
 use crate::acp::parsers::edit_normalizers::cursor::parse_edit_arguments;
+use crate::acp::parsers::provider_capabilities::{provider_capabilities, ProviderCapabilities};
 use crate::acp::parsers::types::{
     extract_plan_from_raw_input_impl, parse_common_update_type_name,
     parse_standard_usage_telemetry, AgentParser, AgentType, ParseError, ParsedQuestion, ParsedTodo,
@@ -19,6 +21,10 @@ pub struct CursorParser;
 impl AgentParser for CursorParser {
     fn agent_type(&self) -> AgentType {
         AgentType::Cursor
+    }
+
+    fn capabilities(&self) -> &'static ProviderCapabilities {
+        provider_capabilities(AgentType::Cursor)
     }
 
     fn parse_update_type_name(&self, update_type: &str) -> Option<UpdateType> {
@@ -168,44 +174,6 @@ impl CursorParser {
             .map(str::to_string)
     }
 
-    fn raw_arguments_have_path(raw_arguments: &serde_json::Value) -> bool {
-        acp_fields::FILE_PATH_KEYS.iter().any(|key| {
-            raw_arguments
-                .get(key)
-                .and_then(|value| value.as_str())
-                .is_some_and(|value| !value.trim().is_empty())
-        })
-    }
-
-    fn inject_location_path(
-        raw_arguments: &mut serde_json::Value,
-        kind: ToolKind,
-        location_path: &str,
-    ) {
-        if Self::raw_arguments_have_path(raw_arguments) {
-            return;
-        }
-        let Some(arguments) = raw_arguments.as_object_mut() else {
-            return;
-        };
-
-        match kind {
-            ToolKind::Read | ToolKind::Edit | ToolKind::Delete | ToolKind::Search => {
-                arguments.insert(
-                    "file_path".to_string(),
-                    serde_json::Value::String(location_path.to_string()),
-                );
-            }
-            ToolKind::Glob => {
-                arguments.insert(
-                    "path".to_string(),
-                    serde_json::Value::String(location_path.to_string()),
-                );
-            }
-            _ => {}
-        }
-    }
-
     pub fn parse_update_type_name_impl(&self, update_type: &str) -> Option<UpdateType> {
         parse_common_update_type_name(update_type).or(match update_type {
             "text" => Some(UpdateType::AgentMessageChunk),
@@ -310,7 +278,7 @@ impl CursorParser {
         };
 
         if let Some(location_path) = Self::extract_first_location_path(data) {
-            Self::inject_location_path(&mut raw_arguments, kind, &location_path);
+            inject_path_hint(&mut raw_arguments, kind, &location_path);
         }
 
         let name = kind_utils::display_name_for_tool(kind, &effective_name);
@@ -440,7 +408,7 @@ impl CursorParser {
 
         if let Some(location_path) = Self::extract_first_location_path(data) {
             if let Some(raw_arguments) = raw_input.as_mut() {
-                Self::inject_location_path(raw_arguments, kind, &location_path);
+                inject_path_hint(raw_arguments, kind, &location_path);
             }
         }
 

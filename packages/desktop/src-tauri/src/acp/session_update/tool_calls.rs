@@ -381,7 +381,11 @@ pub(crate) fn build_tool_call_from_raw(
         });
     let argument_kind = arguments.tool_kind();
     let detected_kind = resolve_kind(&raw.kind);
-    let kind = if argument_kind == ToolKind::WebSearch && detected_kind == ToolKind::Fetch {
+    let kind = if (argument_kind == ToolKind::WebSearch && detected_kind == ToolKind::Fetch)
+        || (detected_kind == ToolKind::Edit
+            && argument_kind != ToolKind::Edit
+            && argument_kind != ToolKind::Other)
+    {
         argument_kind
     } else if detected_kind != ToolKind::Other {
         detected_kind

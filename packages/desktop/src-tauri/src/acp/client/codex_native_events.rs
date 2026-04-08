@@ -417,6 +417,7 @@ fn extract_tool_fields(item_type: &str, item: &serde_json::Map<String, Value>) -
                 arguments: ToolArguments::Edit {
                     edits: vec![crate::acp::session_update::EditEntry {
                         file_path: Some(path),
+                        move_from: None,
                         old_string: None,
                         new_string: None,
                         content: None,

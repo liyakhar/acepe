@@ -36,6 +36,7 @@ pub(crate) fn parse_changes_map_edit(raw_arguments: &serde_json::Value) -> Optio
             );
             EditEntry {
                 file_path: Some(path.clone()),
+                move_from: None,
                 old_string,
                 new_string: new_string.or_else(|| content.clone()),
                 content,

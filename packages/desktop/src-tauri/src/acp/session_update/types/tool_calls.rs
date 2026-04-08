@@ -104,6 +104,9 @@ pub struct EditEntry {
     /// Path of the file being edited.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    /// Original path when the edit entry represents a rename/move inside a multi-file edit patch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub move_from: Option<String>,
     /// Text being replaced (None = new file or full-file write).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_string: Option<String>,

@@ -7,189 +7,187 @@ fn normalize_import_line(line: &str) -> String {
         .collect()
 }
 
-#[test]
-fn tranche_one_parser_modules_do_not_cross_provider_boundaries() {
-    struct BoundaryCase {
-        relative_path: &'static str,
-        forbidden_paths: &'static [&'static str],
-    }
+struct ProviderFamily {
+    adapter_module: &'static str,
+    edit_module: &'static str,
+    parser_module: &'static str,
+    type_prefix: &'static str,
+}
 
+struct BoundaryCase {
+    relative_path: String,
+    forbidden_paths: Vec<String>,
+}
+
+fn collect_violations(
+    source: &str,
+    relative_path: &str,
+    forbidden_paths: &[String],
+) -> Vec<String> {
+    let normalized_imports: Vec<String> = source
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("use ") || line.starts_with("pub use "))
+        .map(normalize_import_line)
+        .collect();
+
+    forbidden_paths
+        .iter()
+        .filter_map(|forbidden_path| {
+            let normalized_forbidden_path = normalize_import_line(forbidden_path);
+            if source.contains(forbidden_path)
+                || normalized_imports
+                    .iter()
+                    .any(|line| line.contains(&normalized_forbidden_path))
+            {
+                Some(format!("{relative_path} references {forbidden_path}"))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn adapter_case(current: &ProviderFamily, all: &[ProviderFamily]) -> BoundaryCase {
+    let forbidden_paths = all
+        .iter()
+        .filter(|family| family.adapter_module != current.adapter_module)
+        .flat_map(|family| {
+            [
+                format!("super::{}", family.adapter_module),
+                format!("super::{}Adapter", family.type_prefix),
+                format!("crate::acp::parsers::adapters::{}", family.adapter_module),
+                format!(
+                    "crate::acp::parsers::adapters::{}Adapter",
+                    family.type_prefix
+                ),
+                format!(
+                    "crate::acp::parsers::adapters::{}::{}Adapter",
+                    family.adapter_module, family.type_prefix
+                ),
+                format!("crate::acp::parsers::{}Adapter", family.type_prefix),
+            ]
+        })
+        .collect();
+
+    BoundaryCase {
+        relative_path: format!("adapters/{}.rs", current.adapter_module),
+        forbidden_paths,
+    }
+}
+
+fn edit_case(current: &ProviderFamily, all: &[ProviderFamily]) -> BoundaryCase {
+    let forbidden_paths = all
+        .iter()
+        .filter(|family| family.edit_module != current.edit_module)
+        .flat_map(|family| {
+            [
+                format!("super::{}", family.edit_module),
+                format!("edit_normalizers::{}", family.edit_module),
+                format!(
+                    "crate::acp::parsers::edit_normalizers::{}",
+                    family.edit_module
+                ),
+            ]
+        })
+        .collect();
+
+    BoundaryCase {
+        relative_path: format!("edit_normalizers/{}.rs", current.edit_module),
+        forbidden_paths,
+    }
+}
+
+fn parser_case(current: &ProviderFamily, all: &[ProviderFamily]) -> BoundaryCase {
+    let forbidden_paths = all
+        .iter()
+        .filter(|family| family.parser_module != current.parser_module)
+        .flat_map(|family| {
+            [
+                format!("super::{}", family.parser_module),
+                format!("super::{}Parser", family.type_prefix),
+                format!("crate::acp::parsers::{}", family.parser_module),
+                format!("crate::acp::parsers::{}Parser", family.type_prefix),
+                format!(
+                    "crate::acp::parsers::{}::{}Parser",
+                    family.parser_module, family.type_prefix
+                ),
+            ]
+        })
+        .collect();
+
+    BoundaryCase {
+        relative_path: format!("{}.rs", current.parser_module),
+        forbidden_paths,
+    }
+}
+
+#[test]
+fn provider_modules_do_not_cross_provider_boundaries() {
     let parser_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/acp/parsers");
-    let cases = [
-        BoundaryCase {
-            relative_path: "edit_normalizers/shared_chat.rs",
-            forbidden_paths: &[
-                "super::opencode",
-                "edit_normalizers::opencode",
-                "crate::acp::parsers::edit_normalizers::opencode",
-            ],
+
+    // OpenCode remains provider-owned today. We intentionally apply the same no-sibling-import
+    // rule to its parser, adapter, and edit normalizer instead of treating it as a hidden
+    // exception while future shared capability work is still pending.
+    let provider_families = [
+        ProviderFamily {
+            adapter_module: "claude_code",
+            edit_module: "claude_code",
+            parser_module: "claude_code_parser",
+            type_prefix: "ClaudeCode",
         },
-        BoundaryCase {
-            relative_path: "edit_normalizers/claude_code.rs",
-            forbidden_paths: &[
-                "super::copilot",
-                "super::cursor",
-                "super::codex",
-                "super::opencode",
-                "crate::acp::parsers::edit_normalizers::copilot",
-                "crate::acp::parsers::edit_normalizers::cursor",
-                "crate::acp::parsers::edit_normalizers::codex",
-                "crate::acp::parsers::edit_normalizers::opencode",
-            ],
+        ProviderFamily {
+            adapter_module: "copilot",
+            edit_module: "copilot",
+            parser_module: "copilot_parser",
+            type_prefix: "Copilot",
         },
-        BoundaryCase {
-            relative_path: "edit_normalizers/copilot.rs",
-            forbidden_paths: &[
-                "super::claude_code",
-                "super::cursor",
-                "super::codex",
-                "super::opencode",
-                "crate::acp::parsers::edit_normalizers::claude_code",
-                "crate::acp::parsers::edit_normalizers::cursor",
-                "crate::acp::parsers::edit_normalizers::codex",
-                "crate::acp::parsers::edit_normalizers::opencode",
-            ],
+        ProviderFamily {
+            adapter_module: "cursor",
+            edit_module: "cursor",
+            parser_module: "cursor_parser",
+            type_prefix: "Cursor",
         },
-        BoundaryCase {
-            relative_path: "adapters/claude_code.rs",
-            forbidden_paths: &[
-                "super::copilot",
-                "super::cursor",
-                "super::codex",
-                "super::open_code",
-                "super::CopilotAdapter",
-                "super::CursorAdapter",
-                "super::CodexAdapter",
-                "super::OpenCodeAdapter",
-                "crate::acp::parsers::adapters::copilot",
-                "crate::acp::parsers::adapters::cursor",
-                "crate::acp::parsers::adapters::codex",
-                "crate::acp::parsers::adapters::open_code",
-                "crate::acp::parsers::adapters::CopilotAdapter",
-                "crate::acp::parsers::adapters::CursorAdapter",
-                "crate::acp::parsers::adapters::CodexAdapter",
-                "crate::acp::parsers::adapters::OpenCodeAdapter",
-                "crate::acp::parsers::CopilotAdapter",
-                "crate::acp::parsers::CursorAdapter",
-                "crate::acp::parsers::CodexAdapter",
-                "crate::acp::parsers::OpenCodeAdapter",
-            ],
+        ProviderFamily {
+            adapter_module: "codex",
+            edit_module: "codex",
+            parser_module: "codex_parser",
+            type_prefix: "Codex",
         },
-        BoundaryCase {
-            relative_path: "adapters/copilot.rs",
-            forbidden_paths: &[
-                "super::claude_code",
-                "super::cursor",
-                "super::codex",
-                "super::open_code",
-                "super::ClaudeCodeAdapter",
-                "super::CursorAdapter",
-                "super::CodexAdapter",
-                "super::OpenCodeAdapter",
-                "crate::acp::parsers::adapters::claude_code",
-                "crate::acp::parsers::adapters::cursor",
-                "crate::acp::parsers::adapters::codex",
-                "crate::acp::parsers::adapters::open_code",
-                "crate::acp::parsers::adapters::ClaudeCodeAdapter",
-                "crate::acp::parsers::adapters::CursorAdapter",
-                "crate::acp::parsers::adapters::CodexAdapter",
-                "crate::acp::parsers::adapters::OpenCodeAdapter",
-                "crate::acp::parsers::ClaudeCodeAdapter",
-                "crate::acp::parsers::CursorAdapter",
-                "crate::acp::parsers::CodexAdapter",
-                "crate::acp::parsers::OpenCodeAdapter",
-            ],
-        },
-        BoundaryCase {
-            relative_path: "adapters/cursor.rs",
-            forbidden_paths: &[
-                "super::claude_code",
-                "super::copilot",
-                "super::codex",
-                "super::open_code",
-                "super::ClaudeCodeAdapter",
-                "super::CopilotAdapter",
-                "super::CodexAdapter",
-                "super::OpenCodeAdapter",
-                "crate::acp::parsers::adapters::claude_code",
-                "crate::acp::parsers::adapters::copilot",
-                "crate::acp::parsers::adapters::codex",
-                "crate::acp::parsers::adapters::open_code",
-                "crate::acp::parsers::adapters::ClaudeCodeAdapter",
-                "crate::acp::parsers::adapters::CopilotAdapter",
-                "crate::acp::parsers::adapters::CodexAdapter",
-                "crate::acp::parsers::adapters::OpenCodeAdapter",
-                "crate::acp::parsers::ClaudeCodeAdapter",
-                "crate::acp::parsers::CopilotAdapter",
-                "crate::acp::parsers::CodexAdapter",
-                "crate::acp::parsers::OpenCodeAdapter",
-            ],
-        },
-        BoundaryCase {
-            relative_path: "adapters/codex.rs",
-            forbidden_paths: &[
-                "super::claude_code",
-                "super::copilot",
-                "super::cursor",
-                "super::open_code",
-                "super::ClaudeCodeAdapter",
-                "super::CopilotAdapter",
-                "super::CursorAdapter",
-                "super::OpenCodeAdapter",
-                "crate::acp::parsers::adapters::claude_code",
-                "crate::acp::parsers::adapters::copilot",
-                "crate::acp::parsers::adapters::cursor",
-                "crate::acp::parsers::adapters::open_code",
-                "crate::acp::parsers::adapters::ClaudeCodeAdapter",
-                "crate::acp::parsers::adapters::CopilotAdapter",
-                "crate::acp::parsers::adapters::CursorAdapter",
-                "crate::acp::parsers::adapters::OpenCodeAdapter",
-                "crate::acp::parsers::ClaudeCodeAdapter",
-                "crate::acp::parsers::CopilotAdapter",
-                "crate::acp::parsers::CursorAdapter",
-                "crate::acp::parsers::OpenCodeAdapter",
-            ],
+        ProviderFamily {
+            adapter_module: "open_code",
+            edit_module: "opencode",
+            parser_module: "opencode_parser",
+            type_prefix: "OpenCode",
         },
     ];
+
+    let cases: Vec<BoundaryCase> = provider_families
+        .iter()
+        .flat_map(|family| {
+            [
+                adapter_case(family, &provider_families),
+                edit_case(family, &provider_families),
+                parser_case(family, &provider_families),
+            ]
+        })
+        .collect();
 
     let violations: Vec<String> = cases
         .iter()
         .flat_map(|case| {
-            let source_path = parser_root.join(case.relative_path);
+            let source_path = parser_root.join(&case.relative_path);
             let source = fs::read_to_string(&source_path).unwrap_or_else(|error| {
                 panic!("failed to read {}: {error}", source_path.display())
             });
-            let normalized_imports: Vec<String> = source
-                .lines()
-                .map(str::trim_start)
-                .filter(|line| line.starts_with("use ") || line.starts_with("pub use "))
-                .map(normalize_import_line)
-                .collect();
 
-            case.forbidden_paths
-                .iter()
-                .filter_map(move |forbidden_path| {
-                    let normalized_forbidden_path = normalize_import_line(forbidden_path);
-                    if source.contains(*forbidden_path)
-                        || normalized_imports
-                            .iter()
-                            .any(|line| line.contains(&normalized_forbidden_path))
-                    {
-                        Some(format!(
-                            "{} references {forbidden_path}",
-                            case.relative_path
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<String>>()
+            collect_violations(&source, &case.relative_path, &case.forbidden_paths)
         })
         .collect();
 
     assert!(
         violations.is_empty(),
-        "Tranche-1 parser ownership boundary violated:\n{}",
+        "Provider ownership boundary violated:\n{}",
         violations.join("\n")
     );
 }

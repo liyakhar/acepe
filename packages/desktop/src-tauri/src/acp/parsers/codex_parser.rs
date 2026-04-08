@@ -4,6 +4,7 @@ use crate::acp::parsers::adapters::CodexAdapter;
 use crate::acp::parsers::arguments::parse_tool_kind_arguments;
 use crate::acp::parsers::edit_normalizers::codex::parse_edit_arguments;
 use crate::acp::parsers::kind as kind_utils;
+use crate::acp::parsers::provider_capabilities::{provider_capabilities, ProviderCapabilities};
 use crate::acp::parsers::status as status_utils;
 use crate::acp::parsers::types::{
     parse_ask_user_question, parse_common_update_type_name, parse_standard_usage_telemetry,
@@ -31,6 +32,10 @@ pub struct CodexParser;
 impl AgentParser for CodexParser {
     fn agent_type(&self) -> AgentType {
         AgentType::Codex
+    }
+
+    fn capabilities(&self) -> &'static ProviderCapabilities {
+        provider_capabilities(AgentType::Codex)
     }
 
     fn parse_update_type_name(&self, update_type: &str) -> Option<UpdateType> {

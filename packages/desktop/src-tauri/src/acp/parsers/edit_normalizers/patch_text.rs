@@ -23,7 +23,23 @@ pub(crate) fn parse_patch_text(raw_arguments: &serde_json::Value) -> Option<Tool
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())?;
 
-    let edits = parse_patch_text_str(patch_text);
+    parse_patch_text_value(patch_text)
+}
+
+pub(crate) fn parse_patch_text_value(patch_text: &str) -> Option<ToolArguments> {
+    let sections = parse_patch_sections(patch_text);
+
+    if sections.is_empty() {
+        return None;
+    }
+
+    if sections.len() == 1 {
+        if let Some(move_arguments) = parse_move_section(&sections[0]) {
+            return Some(move_arguments);
+        }
+    }
+
+    let edits = parse_patch_text_sections_to_edits(sections);
 
     if edits.is_empty() {
         return None;
@@ -32,7 +48,7 @@ pub(crate) fn parse_patch_text(raw_arguments: &serde_json::Value) -> Option<Tool
     Some(ToolArguments::Edit { edits })
 }
 
-pub(crate) fn parse_patch_text_str(patch_text: &str) -> Vec<EditEntry> {
+fn parse_patch_sections(patch_text: &str) -> Vec<PatchSection> {
     let mut sections: Vec<PatchSection> = Vec::new();
     let mut current_section: Option<PatchSection> = None;
 
@@ -79,6 +95,54 @@ pub(crate) fn parse_patch_text_str(patch_text: &str) -> Vec<EditEntry> {
         sections.push(section);
     }
 
+    sections
+}
+
+fn parse_move_section(section: &PatchSection) -> Option<ToolArguments> {
+    if !is_pure_move_section(section) {
+        return None;
+    }
+
+    let destination_path = section.move_to.as_ref()?;
+
+    Some(ToolArguments::Move {
+        from: Some(section.file_path.clone()),
+        to: Some(destination_path.clone()),
+    })
+}
+
+fn parse_move_edit_entry(section: &PatchSection) -> Option<EditEntry> {
+    if !is_pure_move_section(section) {
+        return None;
+    }
+
+    let destination_path = section.move_to.as_ref()?;
+    Some(EditEntry {
+        file_path: Some(destination_path.clone()),
+        move_from: Some(section.file_path.clone()),
+        old_string: None,
+        new_string: None,
+        content: None,
+    })
+}
+
+fn is_pure_move_section(section: &PatchSection) -> bool {
+    section.kind == PatchSectionKind::Update
+        && section.move_to.is_some()
+        && !section_has_diff_content(section)
+}
+
+fn section_has_diff_content(section: &PatchSection) -> bool {
+    section.diff_lines.iter().any(|line| {
+        line.starts_with('+')
+            || line.starts_with('-')
+            || line.starts_with(' ')
+            || parse_inline_hunk_context(line).is_some()
+            || (!line.is_empty() && !line.starts_with("@@"))
+    })
+}
+
+fn parse_patch_text_sections_to_edits(sections: Vec<PatchSection>) -> Vec<EditEntry> {
     sections.into_iter().map(parse_patch_section).collect()
 }
 
@@ -104,6 +168,10 @@ fn section_header_prefix(section_kind: PatchSectionKind) -> &'static str {
 }
 
 fn parse_patch_section(section: PatchSection) -> EditEntry {
+    if let Some(move_entry) = parse_move_edit_entry(&section) {
+        return move_entry;
+    }
+
     let rendered_path = section.move_to.as_deref().unwrap_or(&section.file_path);
     let diff_lines = section.diff_lines.join("\n");
 
@@ -122,10 +190,15 @@ fn parse_file_diff_section(file_path: &str, diff_lines: &str) -> EditEntry {
     let mut new_lines: Vec<&str> = Vec::new();
 
     for line in diff_lines.lines() {
-        if let Some(context) = line.strip_prefix("@@ ") {
+        if let Some(context) = parse_inline_hunk_context(line) {
             old_lines.push(context);
             new_lines.push(context);
-        } else if let Some(stripped) = line.strip_prefix('-') {
+            continue;
+        }
+        if line.starts_with("@@") {
+            continue;
+        }
+        if let Some(stripped) = line.strip_prefix('-') {
             old_lines.push(stripped);
         } else if let Some(stripped) = line.strip_prefix('+') {
             new_lines.push(stripped);
@@ -148,10 +221,19 @@ fn parse_file_diff_section(file_path: &str, diff_lines: &str) -> EditEntry {
 
     EditEntry {
         file_path: Some(file_path.to_string()),
+        move_from: None,
         old_string,
         new_string: new_string.clone(),
         content: new_string,
     }
+}
+
+fn parse_inline_hunk_context(line: &str) -> Option<&str> {
+    let context = line.strip_prefix("@@ ")?;
+    if context.trim().is_empty() || context.trim_end().ends_with("@@") {
+        return None;
+    }
+    Some(context)
 }
 
 #[cfg(test)]
@@ -174,10 +256,14 @@ mod tests {
             ToolArguments::Edit { edits } => {
                 assert_eq!(edits.len(), 1);
                 assert_eq!(edits[0].file_path.as_deref(), Some("src/foo.ts"));
-                let old = edits[0].old_string.as_deref().unwrap_or("");
-                let new = edits[0].new_string.as_deref().unwrap_or("");
-                assert!(old.contains("const value = 1;"), "old: {old}");
-                assert!(new.contains("const value = 2;"), "new: {new}");
+                assert_eq!(
+                    edits[0].old_string.as_deref(),
+                    Some("const value = 1;\nconst value = 1;")
+                );
+                assert_eq!(
+                    edits[0].new_string.as_deref(),
+                    Some("const value = 1;\nconst value = 2;")
+                );
             }
             other => panic!("Expected Edit, got {other:?}"),
         }
@@ -304,6 +390,82 @@ mod tests {
                 assert_eq!(edits[0].file_path.as_deref(), Some("src/new.ts"));
                 assert_eq!(edits[0].old_string.as_deref(), Some("old"));
                 assert_eq!(edits[0].new_string.as_deref(), Some("new"));
+            }
+            other => panic!("Expected Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_patch_text_emits_move_arguments_for_pure_rename_sections() {
+        let patch = r#"*** Begin Patch
+*** Update File: src/old.ts
+*** Move to: src/new.ts
+*** End Patch"#;
+
+        let raw = serde_json::json!({ "patch_text": patch });
+        let result = parse_patch_text(&raw).expect("should parse rename patch_text");
+
+        match result {
+            ToolArguments::Move { from, to } => {
+                assert_eq!(from.as_deref(), Some("src/old.ts"));
+                assert_eq!(to.as_deref(), Some("src/new.ts"));
+            }
+            other => panic!("Expected Move, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_patch_text_preserves_inline_hunk_context_as_shared_context() {
+        let patch = r#"*** Begin Patch
+*** Update File: src/context.ts
+@@ export const value = 1;
+-export const value = 1;
++export const value = 2;
+*** End Patch"#;
+
+        let raw = serde_json::json!({ "patch_text": patch });
+        let result = parse_patch_text(&raw).expect("should parse inline hunk context");
+
+        match result {
+            ToolArguments::Edit { edits } => {
+                assert_eq!(edits.len(), 1);
+                assert_eq!(
+                    edits[0].old_string.as_deref(),
+                    Some("export const value = 1;\nexport const value = 1;")
+                );
+                assert_eq!(
+                    edits[0].new_string.as_deref(),
+                    Some("export const value = 1;\nexport const value = 2;")
+                );
+            }
+            other => panic!("Expected Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_patch_text_preserves_pure_rename_sections_inside_multi_file_patches() {
+        let patch = r#"*** Begin Patch
+*** Update File: src/old.ts
+*** Move to: src/new.ts
+*** Update File: src/other.ts
+@@
+-old
++new
+*** End Patch"#;
+
+        let raw = serde_json::json!({ "patch_text": patch });
+        let result = parse_patch_text(&raw).expect("should parse mixed rename patch_text");
+
+        match result {
+            ToolArguments::Edit { edits } => {
+                assert_eq!(edits.len(), 2);
+                assert_eq!(edits[0].file_path.as_deref(), Some("src/new.ts"));
+                assert_eq!(edits[0].move_from.as_deref(), Some("src/old.ts"));
+                assert_eq!(edits[0].old_string, None);
+                assert_eq!(edits[0].new_string, None);
+                assert_eq!(edits[1].file_path.as_deref(), Some("src/other.ts"));
+                assert_eq!(edits[1].old_string.as_deref(), Some("old"));
+                assert_eq!(edits[1].new_string.as_deref(), Some("new"));
             }
             other => panic!("Expected Edit, got {other:?}"),
         }

@@ -4,6 +4,9 @@
 //! agents (Claude Code, Cursor, Codex, OpenCode) into a unified
 //! `ToolArguments` enum used by the frontend.
 
+use crate::acp::parsers::argument_enrichment::{
+    parse_parsed_cmd_move, parse_parsed_cmd_path, parse_parsed_cmd_query,
+};
 use crate::acp::session_update::{EditEntry, ToolArguments, ToolKind};
 
 pub(crate) fn extract_parser_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
@@ -26,6 +29,7 @@ pub(crate) fn parse_generic_edit_arguments(raw_arguments: &serde_json::Value) ->
     ToolArguments::Edit {
         edits: vec![EditEntry {
             file_path,
+            move_from: None,
             old_string,
             new_string,
             content,
@@ -176,99 +180,6 @@ pub(crate) fn parse_parser_search_query_from_url_value(
     parse_parser_search_query_from_url(&url)
 }
 
-pub(crate) fn parse_parser_parsed_cmd_path(
-    value: &serde_json::Value,
-    allowed_types: &[&str],
-) -> Option<String> {
-    let entries = value.get("parsed_cmd")?.as_array()?;
-    for entry in entries {
-        let entry_type = entry
-            .get("type")
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_lowercase());
-        let type_allowed = entry_type
-            .as_deref()
-            .map(|t| allowed_types.iter().any(|allowed| allowed == &t))
-            .unwrap_or(false);
-        if !type_allowed {
-            continue;
-        }
-        let path = entry
-            .get("path")
-            .or_else(|| entry.get("file_path"))
-            .or_else(|| entry.get("filePath"))
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty());
-        if let Some(path) = path {
-            return Some(path.to_string());
-        }
-    }
-    None
-}
-
-pub(crate) fn parse_parser_parsed_cmd_query(
-    value: &serde_json::Value,
-    allowed_types: &[&str],
-) -> Option<String> {
-    let entries = value.get("parsed_cmd")?.as_array()?;
-    for entry in entries {
-        let entry_type = entry
-            .get("type")
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_lowercase());
-        let type_allowed = entry_type
-            .as_deref()
-            .map(|t| allowed_types.iter().any(|allowed| allowed == &t))
-            .unwrap_or(false);
-        if !type_allowed {
-            continue;
-        }
-        let query = entry
-            .get("query")
-            .or_else(|| entry.get("pattern"))
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty());
-        if let Some(query) = query {
-            return Some(query.to_string());
-        }
-    }
-    None
-}
-
-pub(crate) fn parse_parser_parsed_cmd_move(
-    value: &serde_json::Value,
-) -> Option<(Option<String>, Option<String>)> {
-    let entries = value.get("parsed_cmd")?.as_array()?;
-    for entry in entries {
-        let entry_type = entry
-            .get("type")
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_lowercase());
-        let is_move = matches!(entry_type.as_deref(), Some("move" | "mv" | "rename"));
-        if !is_move {
-            continue;
-        }
-        let from = entry
-            .get("from")
-            .or_else(|| entry.get("source"))
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-            .map(ToString::to_string);
-        let to = entry
-            .get("to")
-            .or_else(|| entry.get("destination"))
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-            .map(ToString::to_string);
-        return Some((from, to));
-    }
-    None
-}
-
 pub(crate) fn parse_parser_skill_shape(
     raw: &serde_json::Value,
 ) -> (Option<String>, Option<String>) {
@@ -286,7 +197,7 @@ pub(crate) fn parse_tool_kind_arguments(
         ToolKind::Read => ToolArguments::Read {
             file_path: extract_parser_string(raw_arguments, &["file_path", "filePath", "path"])
                 .or_else(|| parse_parser_file_uri_path(raw_arguments))
-                .or_else(|| parse_parser_parsed_cmd_path(raw_arguments, &["read"])),
+                .or_else(|| parse_parsed_cmd_path(raw_arguments, &["read"])),
         },
         ToolKind::Edit => parse_generic_edit_arguments(raw_arguments),
         ToolKind::Execute => ToolArguments::Execute {
@@ -301,9 +212,9 @@ pub(crate) fn parse_tool_kind_arguments(
                         &["pattern", "query", "q"],
                     )
                 })
-                .or_else(|| parse_parser_parsed_cmd_query(raw_arguments, &["search", "grep"])),
+                .or_else(|| parse_parsed_cmd_query(raw_arguments, &["search", "grep"])),
             file_path: extract_parser_string(raw_arguments, &["file_path", "filePath", "path"])
-                .or_else(|| parse_parser_parsed_cmd_path(raw_arguments, &["search", "grep"])),
+                .or_else(|| parse_parsed_cmd_path(raw_arguments, &["search", "grep"])),
         },
         ToolKind::Glob => ToolArguments::Glob {
             pattern: extract_parser_string(
@@ -380,7 +291,7 @@ pub(crate) fn parse_tool_kind_arguments(
             }
         }
         ToolKind::Move => {
-            let parsed_cmd_move = parse_parser_parsed_cmd_move(raw_arguments);
+            let parsed_cmd_move = parse_parsed_cmd_move(raw_arguments);
             ToolArguments::Move {
                 from: extract_parser_string(raw_arguments, &["from", "source"])
                     .or_else(|| parsed_cmd_move.as_ref().and_then(|(from, _)| from.clone())),
@@ -390,9 +301,7 @@ pub(crate) fn parse_tool_kind_arguments(
         }
         ToolKind::Delete => ToolArguments::Delete {
             file_path: extract_parser_string(raw_arguments, &["file_path", "filePath", "path"])
-                .or_else(|| {
-                    parse_parser_parsed_cmd_path(raw_arguments, &["delete", "remove", "rm"])
-                }),
+                .or_else(|| parse_parsed_cmd_path(raw_arguments, &["delete", "remove", "rm"])),
         },
         ToolKind::EnterPlanMode | ToolKind::ExitPlanMode | ToolKind::CreatePlan => {
             ToolArguments::PlanMode {

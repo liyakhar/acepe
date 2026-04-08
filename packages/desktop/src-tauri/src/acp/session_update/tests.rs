@@ -708,6 +708,32 @@ mod parse_tool_call_from_acp {
     }
 
     #[test]
+    fn copilot_emits_move_arguments_for_pure_rename_apply_patch_string_raw_input() {
+        with_agent(AgentType::Copilot, || {
+            let data = json!({
+                "toolCallId": "tool-copilot-rename-patch",
+                "kind": "edit",
+                "rawInput": "*** Begin Patch\n*** Update File: /tmp/old.txt\n*** Move to: /tmp/new.txt\n*** End Patch\n",
+                "status": "pending",
+                "title": "apply_patch"
+            });
+
+            let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let tool_call = result.unwrap();
+            assert_eq!(tool_call.kind, Some(ToolKind::Move));
+            match tool_call.arguments {
+                ToolArguments::Move { from, to } => {
+                    assert_eq!(from.as_deref(), Some("/tmp/old.txt"));
+                    assert_eq!(to.as_deref(), Some("/tmp/new.txt"));
+                }
+                other => panic!("Expected Move arguments, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
     fn fails_when_toolcallid_missing() {
         let data = json!({
             "_meta": {
@@ -1078,6 +1104,75 @@ mod parse_tool_call_from_acp {
     }
 
     #[test]
+    fn codex_prefers_explicit_edit_path_over_parsed_cmd_path() {
+        with_agent(AgentType::Codex, || {
+            let data = json!({
+                "type": "tool_use",
+                "id": "tool-5b",
+                "name": "Apply patch",
+                "input": {
+                    "file_path": "/tmp/explicit.ts",
+                    "old_string": "foo",
+                    "new_string": "bar",
+                    "parsed_cmd": [
+                        {
+                            "type": "edit",
+                            "path": "/tmp/from-parsed-cmd.ts"
+                        }
+                    ]
+                }
+            });
+
+            let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let tool_call = result.unwrap();
+            assert_eq!(tool_call.kind, Some(ToolKind::Edit));
+            match tool_call.arguments {
+                ToolArguments::Edit { edits } => {
+                    let edit = edits.first().expect("edit entry");
+                    assert_eq!(edit.file_path.as_deref(), Some("/tmp/explicit.ts"));
+                }
+                other => panic!("Expected edit tool arguments, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn codex_ignores_empty_parsed_cmd_edit_path() {
+        with_agent(AgentType::Codex, || {
+            let data = json!({
+                "type": "tool_use",
+                "id": "tool-5c",
+                "name": "Apply patch",
+                "input": {
+                    "old_string": "foo",
+                    "new_string": "bar",
+                    "parsed_cmd": [
+                        {
+                            "type": "edit",
+                            "path": "   "
+                        }
+                    ]
+                }
+            });
+
+            let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let tool_call = result.unwrap();
+            assert_eq!(tool_call.kind, Some(ToolKind::Edit));
+            match tool_call.arguments {
+                ToolArguments::Edit { edits } => {
+                    let edit = edits.first().expect("edit entry");
+                    assert_eq!(edit.file_path, None);
+                }
+                other => panic!("Expected edit tool arguments, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
     fn codex_infers_move_from_parsed_cmd_metadata() {
         with_agent(AgentType::Codex, || {
             let data = json!({
@@ -1357,6 +1452,74 @@ mod parse_tool_call_from_acp {
                         file_path.as_deref(),
                         Some("/Users/example/Downloads/sample-go-project/README.md")
                     );
+                }
+                other => panic!("Expected read tool arguments, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn cursor_prefers_explicit_read_path_over_locations_hint() {
+        with_agent(AgentType::Cursor, || {
+            let data = json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tool-read-explicit",
+                "kind": "read",
+                "status": "pending",
+                "title": "Read README.md",
+                "rawInput": {
+                    "file_path": "/Users/example/explicit/README.md",
+                    "offset": 0,
+                    "limit": 200
+                },
+                "locations": [
+                    { "path": "/Users/example/from-location/README.md" }
+                ]
+            });
+
+            let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let tool_call = result.unwrap();
+            assert_eq!(tool_call.kind, Some(ToolKind::Read));
+            match tool_call.arguments {
+                ToolArguments::Read { file_path } => {
+                    assert_eq!(
+                        file_path.as_deref(),
+                        Some("/Users/example/explicit/README.md")
+                    );
+                }
+                other => panic!("Expected read tool arguments, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn cursor_ignores_empty_locations_path_hint() {
+        with_agent(AgentType::Cursor, || {
+            let data = json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tool-read-empty-location",
+                "kind": "read",
+                "status": "pending",
+                "title": "Read README.md",
+                "rawInput": {
+                    "offset": 0,
+                    "limit": 200
+                },
+                "locations": [
+                    { "path": "   " }
+                ]
+            });
+
+            let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let tool_call = result.unwrap();
+            assert_eq!(tool_call.kind, Some(ToolKind::Read));
+            match tool_call.arguments {
+                ToolArguments::Read { file_path } => {
+                    assert_eq!(file_path, None);
                 }
                 other => panic!("Expected read tool arguments, got {:?}", other),
             }

@@ -9,17 +9,14 @@
 use std::fmt;
 
 use crate::acp::parsers::kind as kind_utils;
+use crate::acp::parsers::provider_capabilities::{provider_capabilities, ProviderCapabilities};
 use crate::acp::session_update::{
     PlanConfidence, PlanData, PlanSource, ToolArguments, ToolCallData, ToolCallUpdateData,
     ToolKind, UsageTelemetryData, UsageTelemetryTokens,
 };
 
-// Re-import parser structs for get_parser factory
-use crate::acp::parsers::claude_code_parser::ClaudeCodeParser;
-use crate::acp::parsers::codex_parser::CodexParser;
-use crate::acp::parsers::copilot_parser::CopilotParser;
-use crate::acp::parsers::cursor_parser::CursorParser;
-use crate::acp::parsers::opencode_parser::OpenCodeParser;
+#[cfg(test)]
+use crate::acp::parsers::{ClaudeCodeParser, CodexParser, CursorParser, OpenCodeParser};
 
 /// Identifies which agent we're parsing for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +249,7 @@ pub(crate) fn extract_plan_from_raw_input_impl(
 /// Trait that all agent parsers must implement.
 pub trait AgentParser: Send + Sync {
     fn agent_type(&self) -> AgentType;
+    fn capabilities(&self) -> &'static ProviderCapabilities;
     fn parse_update_type_name(&self, update_type: &str) -> Option<UpdateType>;
     fn detect_update_type(&self, data: &serde_json::Value) -> Result<UpdateType, ParseError>;
     fn parse_tool_call(&self, data: &serde_json::Value) -> Result<ToolCallData, ParseError>;
@@ -515,13 +513,7 @@ pub(crate) fn parse_todo_write(
 
 /// Factory function to get a parser for a specific agent.
 pub fn get_parser(agent: AgentType) -> &'static dyn AgentParser {
-    match agent {
-        AgentType::ClaudeCode => &ClaudeCodeParser,
-        AgentType::Copilot => &CopilotParser,
-        AgentType::OpenCode => &OpenCodeParser,
-        AgentType::Cursor => &CursorParser,
-        AgentType::Codex => &CodexParser,
-    }
+    provider_capabilities(agent).parser
 }
 
 // ---------------------------------------------------------------------------
