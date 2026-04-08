@@ -6,11 +6,14 @@
 
 mod claude_code;
 mod codex;
+mod copilot;
 mod cursor;
 mod open_code;
+mod shared_chat;
 
 pub use claude_code::ClaudeCodeAdapter;
 pub use codex::CodexAdapter;
+pub use copilot::CopilotAdapter;
 pub use cursor::CursorAdapter;
 pub use open_code::OpenCodeAdapter;
 

@@ -16,6 +16,7 @@ import { useAdvancedCommandPalette } from "$lib/acp/hooks/use-advanced-command-p
 import { InboundRequestHandler } from "$lib/acp/logic/inbound-request-handler.js";
 import { ProjectClient } from "$lib/acp/logic/project-client.js";
 import { ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
+import { SessionDomainEventSubscriber } from "$lib/acp/logic/index.js";
 import { setSelectorRegistryContext } from "$lib/acp/logic/selector-registry.svelte.js";
 import {
 	agentModelPreferencesStore,
@@ -23,6 +24,7 @@ import {
 	createAgentStore,
 	createChatPreferencesStore,
 	createConnectionStore,
+	createInteractionStore,
 	createMessageQueueStore,
 	createPanelStore,
 	createPermissionStore,
@@ -32,6 +34,8 @@ import {
 	createQueueStore,
 	createReviewPreferenceStore,
 	createSessionStore,
+	LiveInteractionProjectionSync,
+	SessionProjectionHydrator,
 	createTabBarStore,
 	createUnseenStore,
 	createUrgencyTabsStore,
@@ -41,6 +45,7 @@ import {
 } from "$lib/acp/store/index.js";
 import { createQuestionSelectionStore } from "$lib/acp/store/question-selection-store.svelte.js";
 import { DEFAULT_PANEL_WIDTH } from "$lib/acp/store/types.js";
+import { buildPlanApprovalInteractionId } from "$lib/acp/types/interaction.js";
 import type { QuestionRequest } from "$lib/acp/types/question.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
 import { ThemeProvider } from "$lib/components/theme/index.js";
@@ -93,7 +98,6 @@ import {
 	installDownloadedUpdate,
 	predownloadUpdate,
 } from "./main-app-view/logic/updater-workflow.js";
-import { getQuestionToolCallBackfill } from "./main-app-view/question-tool-sync.js";
 import { ReviewFullscreenPage } from "./review-fullscreen/index.js";
 import { SettingsPage } from "./settings-page/index.js";
 import SqlStudioPage from "./sql-studio/sql-studio-page.svelte";
@@ -121,8 +125,15 @@ agentModelPreferencesStore.loadPersistedState();
 const agentStore = createAgentStore();
 const agentPreferencesStore = createAgentPreferencesStore();
 const sessionStore = createSessionStore();
-const permissionStore = createPermissionStore();
-const questionStore = createQuestionStore();
+const interactionStore = createInteractionStore();
+const sessionProjectionHydrator = new SessionProjectionHydrator(interactionStore);
+const sessionDomainEventSubscriber = new SessionDomainEventSubscriber();
+const liveInteractionProjectionSync = new LiveInteractionProjectionSync(
+	sessionDomainEventSubscriber,
+	sessionProjectionHydrator
+);
+const permissionStore = createPermissionStore(interactionStore);
+const questionStore = createQuestionStore(interactionStore);
 // QuestionSelectionStore is accessed via getQuestionSelectionStore() context, no direct reference needed
 createQuestionSelectionStore();
 // QueueStore is accessed via getQueueStore() context, no direct reference needed
@@ -133,6 +144,7 @@ const planStore = createPlanStore();
 sessionStore.onSessionRemoved((id) => {
 	planStore.clear(id);
 	messageQueueStore.removeForSession(id);
+	sessionProjectionHydrator.clearSession(id);
 });
 // UnseenStore tracks panels with unseen agent completions (yellow dot indicator)
 const unseenStore = createUnseenStore();
@@ -157,14 +169,13 @@ const panelStore = createPanelStore(sessionStore, agentStore, () => {
 workspaceStore = createWorkspaceStore(panelStore, sessionStore);
 
 // Create urgency tabs store for sorted tab display
-const urgencyTabsStore = createUrgencyTabsStore(panelStore, sessionStore, questionStore);
+const urgencyTabsStore = createUrgencyTabsStore(panelStore, sessionStore, interactionStore);
 
 // Create tab bar store for flat, panel-ordered tabs with mode/state/tool indicators
 const tabBarStore = createTabBarStore(
 	panelStore,
 	sessionStore,
-	questionStore,
-	permissionStore,
+	interactionStore,
 	unseenStore
 );
 
@@ -193,24 +204,87 @@ function focusOrOpenSessionPanel(sessionId: string): void {
 	}
 }
 
-function registerQuestion(question: QuestionRequest): void {
-	const backfill = getQuestionToolCallBackfill(
-		question,
-		sessionStore.getEntries(question.sessionId)
+function hydrateInteractionProjection(
+	sessionId: string,
+	source: string,
+	onHydrated?: () => void
+): void {
+	void sessionProjectionHydrator.hydrateSession(sessionId).match(
+		() => {
+			onHydrated?.();
+		},
+		(error) => {
+			logger.error("Failed to hydrate interaction projection", {
+				sessionId,
+				source,
+				error,
+			});
+		}
 	);
-	if (backfill) {
-		sessionStore.createToolCallEntry(question.sessionId, backfill);
+}
+
+function buildPlanApprovalIdFromQuestion(
+	question: QuestionRequest & {
+		jsonRpcRequestId: number;
+		tool: NonNullable<QuestionRequest["tool"]>;
 	}
-	questionStore.add(question);
+): string {
+	return buildPlanApprovalInteractionId(
+		question.sessionId,
+		question.tool.callID,
+		question.jsonRpcRequestId
+	);
+}
+
+function isPlanApprovalQuestion(
+	question: QuestionRequest
+): question is QuestionRequest & {
+	jsonRpcRequestId: number;
+	tool: NonNullable<QuestionRequest["tool"]>;
+} {
+	if (question.jsonRpcRequestId === undefined || question.tool === undefined) {
+		return false;
+	}
+
+	if (question.questions.length !== 1) {
+		return false;
+	}
+
+	const options = question.questions[0]?.options;
+	if (!options || options.length !== 2) {
+		return false;
+	}
+
+	return options[0]?.label === "Approve" && options[1]?.label === "Reject";
+}
+
+function getQuestionNotificationId(question: QuestionRequest): string {
+	if (!isPlanApprovalQuestion(question)) {
+		return question.id;
+	}
+
+	return buildPlanApprovalIdFromQuestion(question);
+}
+
+function hasPendingQuestionNotificationTarget(question: QuestionRequest): boolean {
+	if (!isPlanApprovalQuestion(question)) {
+		return interactionStore.questionsPending.has(question.id);
+	}
+
+	const approval = interactionStore.planApprovalsPending.get(buildPlanApprovalIdFromQuestion(question));
+	return approval?.status === "pending";
 }
 
 function collectPendingTurnInputNotificationIds(sessionId: string): Set<string> {
 	const staleIds = new Set<string>();
-	for (const [id, permission] of permissionStore.pending) {
+	for (const [id, permission] of interactionStore.permissionsPending) {
 		if (permission.sessionId === sessionId) staleIds.add(id);
 	}
-	for (const [id, question] of questionStore.pending) {
+	for (const [id, question] of interactionStore.questionsPending) {
 		if (question.sessionId === sessionId) staleIds.add(id);
+	}
+	for (const [id, approval] of interactionStore.planApprovalsPending) {
+		if (approval.sessionId === sessionId && approval.status === "pending") staleIds.add(id);
 	}
 	return staleIds;
 }
@@ -225,10 +299,12 @@ function clearPendingTurnInputs(sessionId: string): void {
 	dismissPendingTurnInputNotifications(sessionId);
 	questionStore.removeForSession(sessionId);
 	permissionStore.removeForSession(sessionId);
+	removePlanApprovalsForSession(sessionId);
 }
 
 function cancelPendingTurnInputs(sessionId: string): void {
 	dismissPendingTurnInputNotifications(sessionId);
+	removePlanApprovalsForSession(sessionId);
 	void questionStore.cancelForSession(sessionId).match(
 		() => {},
 		(error) => {
@@ -249,67 +325,78 @@ function cancelPendingTurnInputs(sessionId: string): void {
 	);
 }
 
+function removePlanApprovalsForSession(sessionId: string): void {
+	for (const [id, approval] of interactionStore.planApprovalsPending) {
+		if (
+			approval.sessionId === sessionId &&
+			approval.source === "create_plan" &&
+			approval.status === "pending"
+		) {
+			interactionStore.planApprovalsPending.delete(id);
+		}
+	}
+}
+
 // Set up SessionStore callbacks for permission/question/plan routing
 sessionStore.setCallbacks({
 	onPermissionRequest: (permission) => {
-		permissionStore.add(permission);
-
-		// Show popup notification when app is unfocused
-		showNotification(
-			{
-				id: permission.id,
-				type: "permission",
-				title: permission.permission,
-				body: permission.patterns.join(", "),
-				actions: PERMISSION_ACTIONS,
-				sessionId: permission.sessionId,
-				sourceId: permission.id,
-			},
-			(actionId) => {
-				if (!permissionStore.pending.has(permission.id)) return; // stale
-				if (actionId === "allow") {
-					permissionStore.reply(permission.id, "once");
-				} else if (actionId === "allow-always") {
-					permissionStore.reply(permission.id, "always");
-				} else if (actionId === "deny") {
-					permissionStore.reply(permission.id, "reject");
-				} else if (actionId === "view") {
-					focusOrOpenSessionPanel(permission.sessionId);
+		hydrateInteractionProjection(permission.sessionId, "session-update-permission", () => {
+			showNotification(
+				{
+					id: permission.id,
+					type: "permission",
+					title: permission.permission,
+					body: permission.patterns.join(", "),
+					actions: PERMISSION_ACTIONS,
+					sessionId: permission.sessionId,
+					sourceId: permission.id,
+				},
+				(actionId) => {
+					if (!interactionStore.permissionsPending.has(permission.id)) return;
+					if (actionId === "allow") {
+						permissionStore.reply(permission.id, "once");
+					} else if (actionId === "allow-always") {
+						permissionStore.reply(permission.id, "always");
+					} else if (actionId === "deny") {
+						permissionStore.reply(permission.id, "reject");
+					} else if (actionId === "view") {
+						focusOrOpenSessionPanel(permission.sessionId);
+					}
+				},
+				{
+					windowFocused: windowFocusStore.isFocused,
+					categoryEnabled: notificationPrefsStore.questionsEnabled,
 				}
-			},
-			{
-				windowFocused: windowFocusStore.isFocused,
-				categoryEnabled: notificationPrefsStore.questionsEnabled,
-			}
-		);
+			);
+		});
 	},
 	onQuestionRequest: (question) => {
-		registerQuestion(question);
-
-		// Show popup notification when app is unfocused
-		const questionText =
-			question.questions[0]?.question ?? question.questions[0]?.header ?? "Agent question";
-		showNotification(
-			{
-				id: question.id,
-				type: "question",
-				title: "Agent Question",
-				body: questionText,
-				actions: QUESTION_ACTIONS,
-				sessionId: question.sessionId,
-				sourceId: question.id,
-			},
-			(actionId) => {
-				if (!questionStore.pending.has(question.id)) return; // stale
-				if (actionId === "view") {
-					focusOrOpenSessionPanel(question.sessionId);
+		hydrateInteractionProjection(question.sessionId, "session-update-question", () => {
+			const notificationId = getQuestionNotificationId(question);
+			const questionText =
+				question.questions[0]?.question ?? question.questions[0]?.header ?? "Agent question";
+			showNotification(
+				{
+					id: notificationId,
+					type: "question",
+					title: "Agent Question",
+					body: questionText,
+					actions: QUESTION_ACTIONS,
+					sessionId: question.sessionId,
+					sourceId: notificationId,
+				},
+				(actionId) => {
+					if (!hasPendingQuestionNotificationTarget(question)) return;
+					if (actionId === "view") {
+						focusOrOpenSessionPanel(question.sessionId);
+					}
+				},
+				{
+					windowFocused: windowFocusStore.isFocused,
+					categoryEnabled: notificationPrefsStore.questionsEnabled,
 				}
-			},
-			{
-				windowFocused: windowFocusStore.isFocused,
-				categoryEnabled: notificationPrefsStore.questionsEnabled,
-			}
-		);
+			);
+		});
 	},
 	onPlanUpdate: (sessionId: string, planData: PlanData) => {
 		// Update plan store with streaming content
@@ -458,7 +545,8 @@ const viewState = new MainAppViewState(
 	kb,
 	selectorRegistry,
 	worktreeDefaultStore,
-	preconnectionAgentSkillsStore
+	preconnectionAgentSkillsStore,
+	sessionProjectionHydrator
 );
 
 // Add repository dialog (unified import/clone/browse modal)
@@ -772,15 +860,22 @@ onMount(async () => {
 	}
 
 	logger.info("main-app-view onMount: Starting InboundRequestHandler");
+	const liveSyncResult = await liveInteractionProjectionSync.start();
+	if (liveSyncResult.isErr()) {
+		logger.error("Failed to start live interaction projection sync", {
+			error: liveSyncResult.error,
+		});
+	}
+
 	// Initialize inbound request handler for ACP permission and question requests
 	const handlerResult = await inboundRequestHandler.start(
 		(permission) => {
 			logger.debug("Permission callback invoked", { permissionId: permission.id });
-			permissionStore.add(permission);
+			hydrateInteractionProjection(permission.sessionId, "inbound-permission");
 		},
 		(question) => {
 			logger.debug("Question callback invoked", { questionId: question.id });
-			registerQuestion(question);
+			hydrateInteractionProjection(question.sessionId, "inbound-question");
 		}
 	);
 	if (handlerResult.isErr()) {
@@ -928,6 +1023,7 @@ const hasAnyPanel = $derived(
 		panelStore.terminalPanels.length > 0 ||
 		panelStore.browserPanels.length > 0
 );
+const showPanelsContainer = $derived(hasAnyPanel || panelStore.viewMode === "kanban");
 
 // Derived: keep the sidebar mounted whenever projects exist.
 // The open state now controls width/content density instead of removing it entirely.
@@ -952,6 +1048,7 @@ onDestroy(() => {
 	viewState.cleanup();
 	// Cleanup inbound request handler
 	inboundRequestHandler.stop();
+	liveInteractionProjectionSync.stop();
 	// Cleanup session update subscription (removes Tauri event listener)
 	sessionStore.cleanupSessionUpdates();
 	// Unregister global keyboard handler
@@ -1011,7 +1108,7 @@ onDestroy(() => {
 					</div>
 				{/if}
 				<main
-					class="flex-1 flex min-h-0 flex-col gap-0.5 overflow-hidden transition-[background-color] duration-200 ease-out {hasAnyPanel
+					class="flex-1 flex min-h-0 flex-col gap-0.5 overflow-hidden transition-[background-color] duration-200 ease-out {showPanelsContainer
 						? ''
 						: 'justify-center items-center overflow-x-auto'}"
 				>
@@ -1027,7 +1124,7 @@ onDestroy(() => {
 							/>
 						</div>
 					{/if}
-					{#if hasAnyPanel}
+					{#if showPanelsContainer}
 						<div class="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<PanelsContainer {projectManager} state={viewState} />
 						</div>

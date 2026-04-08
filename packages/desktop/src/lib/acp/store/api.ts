@@ -6,9 +6,11 @@
  */
 
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import type { SessionProjectionSnapshot } from "../../services/acp-types.js";
 import type { HistoryEntry, StartupSessionsResponse } from "../../services/claude-history-types";
 import type { ConfigOptionData, ConvertedSession } from "../../services/converted-session-types.js";
 import { tauriClient } from "../../utils/tauri-client";
+import type { ExecutionProfileRequest } from "../../utils/tauri-client/acp.js";
 
 import { AgentError, type AppError } from "../errors/app-error";
 import type { AgentAvailabilityKind, PersistedWorkspaceState, ResumeSessionResult } from "./types";
@@ -30,9 +32,10 @@ export function initialize(): ResultAsync<void, AppError> {
 export function resumeSession(
 	sessionId: string,
 	cwd: string,
-	agentId?: string
+	agentId?: string,
+	executionProfile?: ExecutionProfileRequest
 ): ResultAsync<ResumeSessionResult, AppError> {
-	return tauriClient.acp.resumeSession(sessionId, cwd, agentId);
+	return tauriClient.acp.resumeSession(sessionId, cwd, agentId, executionProfile);
 }
 
 /**
@@ -150,6 +153,12 @@ export function respondInboundRequest(
  */
 export function closeSession(sessionId: string): ResultAsync<void, AppError> {
 	return tauriClient.acp.closeSession(sessionId);
+}
+
+export function getSessionProjection(
+	sessionId: string
+): ResultAsync<SessionProjectionSnapshot, AppError> {
+	return tauriClient.acp.getSessionProjection(sessionId);
 }
 
 // ============================================
@@ -294,6 +303,7 @@ export const api = {
 	setConfigOption,
 	stopStreaming,
 	closeSession,
+	getSessionProjection,
 	replyPermission,
 	replyQuestion,
 	respondInboundRequest,

@@ -1,10 +1,16 @@
 import type { ResultAsync } from "neverthrow";
 import type { AppError } from "../../acp/errors/app-error.js";
+import type { SessionProjectionSnapshot } from "../../services/acp-types.js";
 import type { AgentInfo } from "../../acp/store/api.js";
 import type { ResumeSessionResult } from "../../acp/store/types.js";
 import { ACP_PREFIX, CMD } from "./commands.js";
 import { invokeAsync } from "./invoke.js";
 import type { CustomAgentConfig } from "./types.js";
+
+export interface ExecutionProfileRequest {
+	modeId: string;
+	autonomousEnabled: boolean;
+}
 
 export const acp = {
 	initialize: (): ResultAsync<unknown, AppError> => {
@@ -28,9 +34,10 @@ export const acp = {
 	resumeSession: (
 		sessionId: string,
 		cwd: string,
-		agentId?: string
+		agentId?: string,
+		executionProfile?: ExecutionProfileRequest
 	): ResultAsync<ResumeSessionResult, AppError> => {
-		return invokeAsync(CMD.acp.resume_session, { sessionId, cwd, agentId });
+		return invokeAsync(CMD.acp.resume_session, { sessionId, cwd, agentId, executionProfile });
 	},
 
 	forkSession: (
@@ -129,6 +136,12 @@ export const acp = {
 		AppError
 	> => {
 		return invokeAsync(CMD.acp.get_event_bridge_info);
+	},
+
+	getSessionProjection: (
+		sessionId: string
+	): ResultAsync<SessionProjectionSnapshot, AppError> => {
+		return invokeAsync(CMD.acp.get_session_projection, { sessionId });
 	},
 
 	rpcCall(method: string, params: Record<string, unknown>): ResultAsync<unknown, AppError> {
