@@ -56,6 +56,13 @@ export function shouldShowBlockingUpdaterOverlay(state: UpdaterBannerState): boo
 	);
 }
 
+export function canMaximizeFromStartupGate(
+	showSplash: boolean | null,
+	state: UpdaterBannerState
+): boolean {
+	return showSplash === false && !shouldShowBlockingUpdaterOverlay(state);
+}
+
 export function applyUpdaterDownloadEvent(
 	state: UpdaterBannerState,
 	event: DownloadEvent

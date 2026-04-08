@@ -79,15 +79,39 @@ const updateActionText = $derived(
 	updaterState?.kind === "installing" ? m.update_installing() : "Updating"
 );
 
-const viewModes: { value: ViewMode; label: string; color: string }[] = [
+type LayoutFamily = "standard" | "kanban";
+
+const layoutFamilies: { value: LayoutFamily; label: string }[] = [
+	{ value: "standard", label: "Standard" },
+	{ value: "kanban", label: "Kanban" },
+];
+
+const standardViewModes: { value: Exclude<ViewMode, "kanban">; label: string; color: string }[] = [
 	{ value: "single", label: "Single", color: Colors[COLOR_NAMES.PURPLE] },
 	{ value: "project", label: "Project", color: Colors[COLOR_NAMES.ORANGE] },
 	{ value: "multi", label: "Multi", color: "var(--success)" },
-	{ value: "kanban", label: "Kanban", color: Colors[COLOR_NAMES.PINK] },
 ];
+
+const isKanbanView = $derived(panelStore.viewMode === "kanban");
+
+const activeStandardViewMode = $derived.by((): Exclude<ViewMode, "kanban"> => {
+	if (panelStore.viewMode === "kanban") {
+		return "multi";
+	}
+	return panelStore.viewMode;
+});
 
 function preventDropdownItemSelection(event: Event): void {
 	event.preventDefault();
+}
+
+function switchLayoutFamily(nextFamily: LayoutFamily): void {
+	if (nextFamily === "kanban") {
+		panelStore.setViewMode("kanban");
+		return;
+	}
+
+	panelStore.setViewMode(activeStandardViewMode);
 }
 </script>
 
@@ -201,26 +225,64 @@ function preventDropdownItemSelection(event: Event): void {
 							class="px-2 py-1 text-[11px] font-semibold text-muted-foreground border-b border-border/20"
 							>View</DropdownMenu.GroupHeading
 						>
-						<div class="flex items-stretch gap-0 rounded-md bg-muted/50 mx-2 my-1.5">
-							{#each viewModes as mode (mode.value)}
-								{@const isActive = panelStore.viewMode === mode.value}
+						<div class="px-2 pt-1.5 text-[10px] leading-4 text-muted-foreground">
+							Standard keeps sessions in panels. Kanban turns the workspace into a board.
+						</div>
+						<div class="mx-2 mb-1.5 mt-1 flex items-stretch gap-0 rounded-md bg-muted/50">
+							{#each layoutFamilies as family (family.value)}
+								{@const isActive = family.value === (isKanbanView ? "kanban" : "standard")}
 								<button
 									class="flex-1 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors cursor-pointer {isActive ? 'bg-muted text-foreground/80' : 'text-muted-foreground hover:text-foreground'}"
-									onclick={() => panelStore.setViewMode(mode.value)}
+									onclick={() => switchLayoutFamily(family.value)}
 								>
-									{#if mode.value === "single"}
-										<Square class="size-3" weight="fill" style="color: {mode.color}" />
-									{:else if mode.value === "project"}
-										<Columns class="size-3" weight="fill" style="color: {mode.color}" />
-									{:else if mode.value === "multi"}
-										<SquaresFour class="size-3" weight="fill" style="color: {mode.color}" />
+									{#if family.value === "standard"}
+										<SquaresFour
+											class="size-3"
+											weight="fill"
+											style="color: {Colors[COLOR_NAMES.PURPLE]}"
+										/>
 									{:else}
-										<Kanban class="size-3" weight="fill" style="color: {mode.color}" />
+										<Kanban
+											class="size-3"
+											weight="fill"
+											style="color: {Colors[COLOR_NAMES.PINK]}"
+										/>
 									{/if}
-									{mode.label}
+									<span>{family.label}</span>
 								</button>
 							{/each}
 						</div>
+						{#if !isKanbanView}
+							<div class="px-2 pb-1 text-[10px] leading-4 text-muted-foreground">
+								Choose how Standard groups panels.
+							</div>
+							<div class="mx-2 mb-1 flex items-stretch gap-0 rounded-md bg-muted/50">
+								{#each standardViewModes as mode (mode.value)}
+									{@const isActive = activeStandardViewMode === mode.value}
+									<button
+										class="flex-1 flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors cursor-pointer {isActive ? 'bg-muted text-foreground/80' : 'text-muted-foreground hover:text-foreground'}"
+										onclick={() => panelStore.setViewMode(mode.value)}
+									>
+										{#if mode.value === "single"}
+											<Square class="size-3" weight="fill" style="color: {mode.color}" />
+										{:else if mode.value === "project"}
+											<Columns class="size-3" weight="fill" style="color: {mode.color}" />
+										{:else}
+											<SquaresFour class="size-3" weight="fill" style="color: {mode.color}" />
+										{/if}
+										{mode.label}
+									</button>
+								{/each}
+							</div>
+							<div class="px-2 pb-1.5 text-[10px] leading-4 text-muted-foreground">
+								Single focuses one session, Project keeps one repo together, and Multi lets
+								different projects sit side by side.
+							</div>
+						{:else}
+							<div class="px-2 pb-1.5 text-[10px] leading-4 text-muted-foreground">
+								Kanban turns the workspace into a board for agent-style workflows.
+							</div>
+						{/if}
 					</DropdownMenu.Group>
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>

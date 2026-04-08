@@ -31,14 +31,37 @@ describe("kanban layout wiring contract", () => {
 		expect(appSidebarSource).toContain("<AppQueueRow");
 	});
 
-	it("adds kanban to the top-bar layout selector", () => {
+	it("splits layout settings into a Standard versus Kanban choice", () => {
 		expect(existsSync(topBarPath)).toBe(true);
 		if (!existsSync(topBarPath)) return;
 
 		const topBarSource = readFileSync(topBarPath, "utf8");
 
-		expect(topBarSource).toContain('value: "kanban"');
-		expect(topBarSource).toContain('phosphor-svelte/lib/Kanban');
+		expect(topBarSource).toContain("type LayoutFamily = \"standard\" | \"kanban\";");
+		expect(topBarSource).toContain("const isKanbanView = $derived(panelStore.viewMode === \"kanban\")");
+		expect(topBarSource).toContain("function switchLayoutFamily(nextFamily: LayoutFamily): void {");
+		expect(topBarSource).toContain('{ value: "standard", label: "Standard" }');
+		expect(topBarSource).toContain('{ value: "kanban", label: "Kanban" }');
+		expect(topBarSource).toContain("Standard keeps sessions in panels.");
+		expect(topBarSource).toContain("Kanban turns the workspace into a board.");
+		expect(topBarSource).not.toContain("{#each viewModes as mode (mode.value)}");
+		expect(topBarSource).toContain('import { Kanban } from "phosphor-svelte"');
+	});
+
+	it("reveals single, project, and multi choices only inside Standard", () => {
+		expect(existsSync(topBarPath)).toBe(true);
+		if (!existsSync(topBarPath)) return;
+
+		const topBarSource = readFileSync(topBarPath, "utf8");
+
+		expect(topBarSource).toContain(
+			'const standardViewModes: { value: Exclude<ViewMode, "kanban">; label: string; color: string }[] = ['
+		);
+		expect(topBarSource).toContain('{#if !isKanbanView}');
+		expect(topBarSource).toContain("Choose how Standard groups panels.");
+		expect(topBarSource).toContain('label: "Single"');
+		expect(topBarSource).toContain('label: "Project"');
+		expect(topBarSource).toContain('label: "Multi"');
 	});
 
 	it("renders a kanban-only New Agent action in the top bar", () => {
@@ -49,6 +72,9 @@ describe("kanban layout wiring contract", () => {
 		const kanbanActionsSource = topBarSource
 			.split('{#if panelStore.viewMode === "kanban"}')[1]
 			?.split("{:else}")[0];
+		const nonKanbanActionsSource = topBarSource
+			.split("{:else}")[1]
+			?.split("{/if}")[0];
 
 		expect(topBarSource).toContain('panelStore.viewMode === "kanban"');
 		expect(topBarSource).toContain('showRightSectionLeadingBorder={panelStore.viewMode !== "kanban"}');
@@ -59,7 +85,9 @@ describe("kanban layout wiring contract", () => {
 		expect(topBarSource).toContain('class="gap-2 border-transparent hover:border-transparent"');
 		expect(kanbanActionsSource).toBeDefined();
 		expect(kanbanActionsSource).toContain('<span>New Agent</span>');
-		expect(topBarSource).toContain('ariaLabel="Layout Settings"');
+		expect(nonKanbanActionsSource).toBeDefined();
+		expect(nonKanbanActionsSource).not.toContain('<span>New Agent</span>');
+		expect(topBarSource).toContain('aria-label="Layout Settings"');
 		expect(kanbanActionsSource).toContain("{@render layoutControl()}");
 		expect(kanbanActionsSource.indexOf('<span>New Agent</span>')).toBeLessThan(
 			kanbanActionsSource.indexOf("{@render layoutControl()}")

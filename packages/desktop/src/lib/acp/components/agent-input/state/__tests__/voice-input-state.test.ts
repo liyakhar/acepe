@@ -385,7 +385,7 @@ describe("VoiceInputState", () => {
 		expect(startRecordingMock).not.toHaveBeenCalled();
 	});
 
-	it("primes the waveform before the first live amplitude event arrives", async () => {
+	it("keeps the waveform quiet before the first live amplitude event arrives", async () => {
 		const pendingModelStatus = createPendingResult<{ is_downloaded: boolean; is_loaded: boolean }>();
 		getModelStatusMock.mockReturnValue(
 			ResultAsync.fromPromise(pendingModelStatus.promise, (error) => error as Error),
@@ -397,7 +397,7 @@ describe("VoiceInputState", () => {
 		await flushAsync();
 
 		expect(state.phase).toBe("checking_permission");
-		expect(state.waveform.meterLevels.some((level) => level > 0)).toBe(true);
+		expect(state.waveform.meterLevels.every((level) => level === 0)).toBe(true);
 
 		pendingModelStatus.resolve({ is_downloaded: true, is_loaded: true });
 		await flushAsync();

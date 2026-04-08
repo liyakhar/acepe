@@ -27,7 +27,6 @@ export interface KanbanCardData {
 	readonly agentLabel: string;
 	readonly projectName: string;
 	readonly projectColor: string;
-	readonly timeAgo: string;
 	readonly activityText: string | null;
 	readonly isStreaming: boolean;
 	readonly modeId: string | null;

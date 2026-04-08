@@ -77,6 +77,8 @@ type TauriWindow = Window & {
  * Handles app initialization.
  */
 export class InitializationManager {
+	private splashResolutionPromise: Promise<void> | null = null;
+
 	/**
 	 * Creates a new initialization manager.
 	 *
@@ -121,7 +123,7 @@ export class InitializationManager {
 
 		// Phase 0.5: Check if splash screen should be shown (async but fast)
 		// This runs BEFORE anything else so splash shows immediately if needed
-		this.checkSplashScreen();
+		void this.resolveSplashScreen();
 
 		// Phase 0.6: Check if changelog should be shown (async but fast)
 		this.checkChangelog();
@@ -156,15 +158,22 @@ export class InitializationManager {
 	}
 
 	/**
-	 * Checks if splash screen should be shown and updates state.
-	 * This is fire-and-forget to not block initialization.
+	 * Resolves splash screen visibility before startup gating decisions.
 	 */
-	private checkSplashScreen(): void {
-		if (!this.hasTauriInvoke()) {
-			return;
+	resolveSplashScreen(): Promise<void> {
+		if (this.splashResolutionPromise) {
+			return this.splashResolutionPromise;
 		}
 
-		invoke<string | null>("get_user_setting", { key: HAS_SEEN_SPLASH_KEY })
+		if (!this.hasTauriInvoke()) {
+			this.state.showSplash = false;
+			this.splashResolutionPromise = Promise.resolve();
+			return this.splashResolutionPromise;
+		}
+
+		this.splashResolutionPromise = invoke<string | null>("get_user_setting", {
+			key: HAS_SEEN_SPLASH_KEY,
+		})
 			.then((value) => {
 				// Show splash if value is not "true"
 				this.state.showSplash = value !== "true";
@@ -174,6 +183,8 @@ export class InitializationManager {
 				// On error, show splash to be safe
 				this.state.showSplash = true;
 			});
+
+		return this.splashResolutionPromise;
 	}
 
 	/**
@@ -621,6 +632,7 @@ export class InitializationManager {
 		this.keybindingsService.uninstall();
 		this.state.initializationInProgress = false;
 		this.state.initializationComplete = false;
+		this.splashResolutionPromise = null;
 	}
 
 	private hasTauriInvoke(): boolean {

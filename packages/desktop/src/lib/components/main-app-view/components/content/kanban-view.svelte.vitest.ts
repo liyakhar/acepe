@@ -92,7 +92,9 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain(
 			"{@const hotState = item ? sessionStore.getHotState(item.sessionId) : null}"
 		);
-		expect(source).toContain("{@const showFooter = permission !== null || questionUiState !== null}");
+		expect(source).toContain(
+			"{@const showFooter =\n\t\t\t\t\tpermission !== null ||\n\t\t\t\t\tquestionUiState !== null ||\n\t\t\t\t\titem.state.pendingInput.kind === \"plan_approval\"}"
+		);
 		expect(source).toContain('{#if item}');
 		expect(source).toContain('<KanbanCard {card} onclick={() => handleCardClick(card.id)}');
 		expect(source).toContain('showFooter={showFooter}');
@@ -137,7 +139,7 @@ describe("kanban empty-column contract", () => {
 			'import { getOpenInFinderTarget } from "$lib/acp/components/agent-panel/logic/open-in-finder-target.js"'
 		);
 		expect(source).toContain('import { openFileInEditor, revealInFinder, tauriClient } from "$lib/utils/tauri-client.js"');
-		expect(source).toContain('import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical"');
+		expect(source).toContain('import { IconDotsVertical } from "@tabler/icons-svelte"');
 		expect(source).toContain("function handleCloseSession(item: ThreadBoardItem)");
 		expect(source).toContain('let activeDialogMode = $state<KanbanThreadDialogMode>("inspect");');
 		expect(source).toContain('activeDialogMode = "inspect";');

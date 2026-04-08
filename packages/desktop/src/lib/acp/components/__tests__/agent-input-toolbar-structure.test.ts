@@ -45,6 +45,11 @@ describe("agent input toolbar structure", () => {
 		expect(voiceRecordingOverlaySource).toContain(".voice-meter {");
 	});
 
+	it("renders fewer, chunkier live voice bars from the overlay component", () => {
+		expect(voiceRecordingOverlaySource).toContain('class="voice-meter flex items-center gap-[1.5px]"');
+		expect(voiceRecordingOverlaySource).toContain('style:width="2.5px"');
+	});
+
 	it("keeps the startup voice control actionable while recording startup can still be cancelled", () => {
 		expect(agentInputSource).toContain("canCancelVoiceInteraction");
 		expect(agentInputSource).not.toContain(

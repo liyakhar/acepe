@@ -67,7 +67,6 @@
 	import type { ThreadBoardStatus } from "$lib/acp/store/thread-board/thread-board-status.js";
 	import type { PermissionRequest } from "$lib/acp/types/permission.js";
 	import type { QuestionRequest } from "$lib/acp/types/question.js";
-	import { formatTimeAgo } from "$lib/acp/utils/time-utils.js";
 	import { sessionEntriesToMarkdown } from "$lib/acp/utils/session-to-markdown.js";
 	import { useTheme } from "$lib/components/theme/context.svelte.js";
 	import { openFileInEditor, revealInFinder, tauriClient } from "$lib/utils/tauri-client.js";
@@ -368,7 +367,6 @@
 		})();
 
 		const isStreaming = isWorking;
-		const timeAgo = formatTimeAgo(item.lastActivityAt);
 		const taskDisplay = getQueueItemTaskDisplay(
 			toolDisplay ? toolDisplay.toolCall : null,
 			toolDisplay ? toolDisplay.toolKind : null,
@@ -412,7 +410,6 @@
 			agentLabel: item.agentId,
 			projectName: item.projectName,
 			projectColor: item.projectColor,
-			timeAgo: timeAgo ? timeAgo : "",
 			activityText,
 			isStreaming,
 			modeId: item.currentModeId,
@@ -496,7 +493,6 @@
 					agentLabel: panel.selectedAgentId,
 					projectName: project ? project.name : m.project_unknown(),
 					projectColor: project ? project.color : Colors[COLOR_NAMES.PINK],
-					timeAgo: "Now",
 					activityText,
 					isStreaming: true,
 					modeId: null,

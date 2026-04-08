@@ -8,7 +8,7 @@ const source = readFileSync(sessionItemPath, "utf8");
 describe("session item sequence badge", () => {
 	it("renders the session sequence badge at 12px for better legibility", () => {
 		expect(source).toMatch(
-			/<ProjectLetterBadge[\s\S]*color=\{session\.projectColor\}[\s\S]*size=\{12\}[\s\S]*sequenceId=\{session\.sequenceId\}[\s\S]*showLetter=\{false\}/
+			/<ProjectLetterBadge[\s\S]*color=\{session\.projectColor\}[\s\S]*size=\{12\}[\s\S]*sequenceId=\{session\.sequenceId\}[\s\S]*showLetter=\{false\}[\s\S]*class="font-mono"/
 		);
 	});
 });

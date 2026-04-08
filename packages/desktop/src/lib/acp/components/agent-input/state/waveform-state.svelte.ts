@@ -21,7 +21,7 @@ export class WaveformState {
 	static readonly METER_BAR_COUNT = DEFAULT_METER_BAR_COUNT;
 	static readonly MIN_LEVEL = MIN_LEVEL;
 	static readonly MAX_LEVEL = MAX_LEVEL;
-	static readonly STARTUP_PLACEHOLDER_LEVEL = 0.08;
+	static readonly STARTUP_PLACEHOLDER_LEVEL = 0;
 
 	readonly barCount: number;
 

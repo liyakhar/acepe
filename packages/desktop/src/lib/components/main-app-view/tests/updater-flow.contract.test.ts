@@ -17,4 +17,20 @@ describe("updater flow contract", () => {
 		expect(source).toContain("let blockAppForUpdate = $state(false);");
 		expect(source).toContain("shouldShowBlockingUpdaterOverlay(updaterState)");
 	});
+
+	it("resolves splash visibility before full initialization and startup maximize wiring", () => {
+		expect(existsSync(mainAppViewPath)).toBe(true);
+		if (!existsSync(mainAppViewPath)) return;
+
+		const source = readFileSync(mainAppViewPath, "utf8");
+		const splashResolutionIndex = source.indexOf("const splashResolution = viewState.resolveSplashScreen();");
+		const initializeIndex = source.indexOf("const initResult = await viewState.initialize();");
+		const attemptIndex = source.indexOf("attemptStartupMaximize();");
+
+		expect(splashResolutionIndex).toBeGreaterThan(-1);
+		expect(initializeIndex).toBeGreaterThan(-1);
+		expect(attemptIndex).toBeGreaterThan(-1);
+		expect(splashResolutionIndex).toBeLessThan(initializeIndex);
+		expect(source).toContain("canMaximizeFromStartupGate(viewState.showSplash, updaterState)");
+	});
 });

@@ -460,6 +460,10 @@ export class MainAppViewState {
 		return this.initializationManager.initialize();
 	}
 
+	resolveSplashScreen(): Promise<void> {
+		return this.initializationManager.resolveSplashScreen();
+	}
+
 	/**
 	 * Cleans up resources.
 	 */

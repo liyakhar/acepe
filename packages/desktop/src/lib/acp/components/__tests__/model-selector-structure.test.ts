@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 
 const modelSelectorPath = resolve(__dirname, "../model-selector.svelte");
 const modelSelectorSource = readFileSync(modelSelectorPath, "utf8");
+const modelSelectorContentPath = resolve(__dirname, "../model-selector.content.svelte");
+const modelSelectorContentSource = readFileSync(modelSelectorContentPath, "utf8");
 const modelSelectorTriggerPath = resolve(__dirname, "../model-selector.trigger.svelte");
 const modelSelectorTriggerSource = readFileSync(modelSelectorTriggerPath, "utf8");
 
@@ -26,5 +28,14 @@ describe("model selector structure", () => {
 	it("renders model selector triggers without the legacy CPU icon", () => {
 		expect(modelSelectorSource).not.toContain("<Cpu");
 		expect(modelSelectorTriggerSource).not.toContain("<Cpu");
+	});
+
+	it("only renders the sticky search header when search is visible", () => {
+		expect(modelSelectorContentSource).toMatch(
+			/\{#if showSearch\}\s*<div class="sticky top-0 z-10 bg-popover px-3 py-1\.5">/
+		);
+		expect(modelSelectorContentSource).not.toMatch(
+			/<div class="sticky top-0 z-10 bg-popover px-3 py-1\.5">\s*\{#if showSearch\}/
+		);
 	});
 });

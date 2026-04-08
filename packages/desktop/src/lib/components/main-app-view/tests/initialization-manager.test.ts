@@ -178,6 +178,14 @@ describe("InitializationManager", () => {
 		);
 	});
 
+	describe("resolveSplashScreen", () => {
+		it("treats non-tauri environments as splash already resolved", async () => {
+			await manager.resolveSplashScreen();
+
+			expect(mockState.showSplash).toBe(false);
+		});
+	});
+
 	describe("initialize", () => {
 		it("should set initializationInProgress to true at start", async () => {
 			const result = manager.initialize();

@@ -67,7 +67,6 @@
 		agentLabel: "claude",
 		projectName: "acepe",
 		projectColor: "#9858FF",
-		timeAgo: "2m",
 		activityText: null,
 		isStreaming: false,
 		modeId: "build",
@@ -88,7 +87,6 @@
 		agentLabel: "claude",
 		projectName: "web",
 		projectColor: "#3B82F6",
-		timeAgo: "now",
 		activityText: "Thinking…",
 		isStreaming: true,
 		modeId: "plan",
@@ -109,7 +107,6 @@
 		agentLabel: "claude",
 		projectName: "acepe",
 		projectColor: "#9858FF",
-		timeAgo: "5m",
 		activityText: null,
 		isStreaming: true,
 		modeId: "build",
@@ -136,7 +133,6 @@
 		agentLabel: "claude",
 		projectName: "infra",
 		projectColor: "#EF4444",
-		timeAgo: "12m",
 		activityText: null,
 		isStreaming: false,
 		modeId: "build",
@@ -157,7 +153,6 @@
 		agentLabel: "claude",
 		projectName: "desktop",
 		projectColor: "#4AD0FF",
-		timeAgo: "8m",
 		activityText: null,
 		isStreaming: false,
 		modeId: "build",
@@ -202,7 +197,6 @@
 		agentLabel: "claude",
 		projectName: "desktop",
 		projectColor: "#22C55E",
-		timeAgo: "1m",
 		activityText: null,
 		isStreaming: true,
 		modeId: "build",
@@ -261,7 +255,6 @@
 		agentLabel: "claude",
 		projectName: "desktop",
 		projectColor: "#F59E0B",
-		timeAgo: "now",
 		activityText: null,
 		isStreaming: true,
 		modeId: "build",
@@ -293,7 +286,6 @@
 		agentLabel: "claude",
 		projectName: "acepe",
 		projectColor: "#9858FF",
-		timeAgo: "now",
 		activityText: "Thinking…",
 		isStreaming: true,
 		modeId: "build",
@@ -313,7 +305,6 @@
 		agentLabel: "claude",
 		projectName: "desktop",
 		projectColor: "#22C55E",
-		timeAgo: "3m",
 		activityText: null,
 		isStreaming: false,
 		modeId: "plan",
@@ -736,11 +727,6 @@
 													<HeaderCell>
 														<img src={demoCardBase.agentIconSrc} alt={demoCardBase.agentLabel} width="14" height="14" class="shrink-0 rounded-sm" />
 													</HeaderCell>
-													<HeaderTitleCell compactPadding>
-														<div class="flex min-w-0 flex-1 items-center justify-end gap-1.5">
-															<span class="shrink-0 font-mono text-[10px] text-muted-foreground/70">{demoCardBase.timeAgo}</span>
-														</div>
-													</HeaderTitleCell>
 													<HeaderActionCell withDivider={true}>
 														<div class="flex h-7 items-center justify-center px-1">
 															<DiffPill insertions={demoCardBase.diffInsertions} deletions={demoCardBase.diffDeletions} variant="plain" class="text-[10px]" />
@@ -779,7 +765,6 @@
 												<div class="flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
 													<ProjectLetterBadge name={demoCardBase.projectName} color={demoCardBase.projectColor} size={14} class="shrink-0" />
 													<span class="font-mono">{demoCardBase.agentLabel}</span>
-													<span class="ml-auto font-mono">{demoCardBase.timeAgo}</span>
 												</div>
 												<div class="mt-1 text-xs font-medium leading-tight text-foreground">
 													{demoCardBase.title}

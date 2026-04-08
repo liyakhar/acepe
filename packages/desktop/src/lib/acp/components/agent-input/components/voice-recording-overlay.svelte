@@ -18,15 +18,15 @@ const isLiveCapture = $derived(
 
 <div class="voice-overlay flex flex-col items-center justify-center gap-3 min-h-[72px] py-4">
 	{#if isLiveCapture}
-		<div class="flex items-center justify-center h-6 motion-reduce:hidden" aria-hidden="true">
-			<div class="voice-meter flex items-center gap-px">
+		<div class="flex items-center justify-center h-8 motion-reduce:hidden" aria-hidden="true">
+			<div class="voice-meter flex items-center gap-[1.5px]">
 				{#each voiceState.waveform.meterLevels as level, index (index)}
 					{@const dist = Math.abs(index - Math.floor(voiceState.waveform.barCount / 2))}
-					{@const maxH = 27 - dist * 1.05}
+					{@const maxH = 30 - dist * 2.1}
 					<div
 						class="voice-bar rounded-full"
-						style:width="1.5px"
-						style:height="{level > 0.005 ? 1.5 + level * (maxH - 1.5) : 0}px"
+						style:width="2.5px"
+						style:height="{1.25 + level * (maxH - 1.25)}px"
 						style:background-color="#F9C396"
 					></div>
 				{/each}
@@ -55,7 +55,7 @@ const isLiveCapture = $derived(
 	}
 
 	.voice-meter {
-		min-height: 28px;
+		min-height: 30px;
 		align-items: center;
 	}
 

@@ -305,6 +305,7 @@ const highlightCtx = getSessionListHighlightContext();
 						size={12}
 						sequenceId={session.sequenceId}
 						showLetter={false}
+						class="font-mono"
 					/>
 				{/if}
 					{#if session.worktreePath}

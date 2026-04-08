@@ -83,6 +83,7 @@ import { MainAppViewState } from "./main-app-view/logic/main-app-view-state.svel
 import { applyDownloadEventToProgress } from "./main-app-view/logic/update-download-progress.js";
 import {
 	applyUpdaterDownloadEvent,
+	canMaximizeFromStartupGate,
 	createAvailableUpdaterState,
 	createCheckingUpdaterState,
 	createErrorUpdaterState,
@@ -552,6 +553,7 @@ const viewState = new MainAppViewState(
 // Add repository dialog (unified import/clone/browse modal)
 const projectClient = new ProjectClient();
 let addProjectDialogOpen = $state(false);
+let startupMaximizeTriggered = false;
 
 function handleAddProjectOpen(path: string, name: string) {
 	const project = {
@@ -592,7 +594,27 @@ async function handleOpenFolder() {
 }
 
 function maximizeWindow(): void {
-	getCurrentWindow().maximize();
+	if (startupMaximizeTriggered) {
+		return;
+	}
+
+	startupMaximizeTriggered = true;
+	void getCurrentWindow()
+		.maximize()
+		.catch((error) => {
+			startupMaximizeTriggered = false;
+			logger.error("Failed to maximize startup window", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
+}
+
+function attemptStartupMaximize(): void {
+	if (!canMaximizeFromStartupGate(viewState.showSplash, updaterState)) {
+		return;
+	}
+
+	maximizeWindow();
 }
 
 // Update state (for forced auto-updates) - now safe to use $state since we renamed 'state' to 'viewState'
@@ -747,6 +769,7 @@ async function checkForAppUpdate(trigger: UpdateCheckTrigger): Promise<void> {
 		if (updaterState.kind === "idle") {
 			blockAppForUpdate = false;
 		}
+		attemptStartupMaximize();
 		return;
 	}
 
@@ -833,6 +856,7 @@ onMount(async () => {
 	preloadSound(SoundEffect.DictationStart);
 	preloadSound(SoundEffect.DictationStop);
 	preloadSound(SoundEffect.Notification);
+	const splashResolution = viewState.resolveSplashScreen();
 	void import("@tauri-apps/api/app")
 		.then((mod) => mod.getVersion())
 		.then((version) => {
@@ -858,6 +882,9 @@ onMount(async () => {
 			10 * 60 * 1000
 		);
 	}
+
+	await splashResolution;
+	attemptStartupMaximize();
 
 	logger.info("main-app-view onMount: Starting InboundRequestHandler");
 	const liveSyncResult = await liveInteractionProjectionSync.start();
@@ -903,11 +930,6 @@ onMount(async () => {
 	if (initResult.isErr()) {
 		logger.error("[Startup] Initialization failed:", initResult.error);
 		viewState.initializationError = initResult.error;
-	}
-
-	// Maximize window if neither onboarding nor blocking update is active
-	if (viewState.showSplash !== true && !blockAppForUpdate) {
-		maximizeWindow();
 	}
 
 	// Register global keyboard handler for CMD+F
@@ -966,7 +988,7 @@ function handleOnboardingDismiss() {
 		}
 	});
 	viewState.dismissSplash();
-	maximizeWindow();
+	attemptStartupMaximize();
 }
 
 // CMD+F fullscreen toggle handler
@@ -1304,6 +1326,7 @@ onDestroy(() => {
 					clearDevUpdateSimulation();
 					blockAppForUpdate = false;
 					updaterState = createAvailableUpdaterState(DEV_UPDATE_VERSION);
+					attemptStartupMaximize();
 				} : undefined}
 			/>
 		</div>

@@ -79,7 +79,7 @@
 	tabindex={onclick ? 0 : undefined}
 	data-testid="kanban-card"
 >
-	<!-- Header: project badge, agent icon, status dot, time, diff, actions -->
+	<!-- Header: project badge, agent icon, status dot, diff, actions -->
 	<div data-testid="kanban-card-header">
 		<EmbeddedPanelHeader class="bg-card/50">
 			<HeaderCell withDivider={false}>
@@ -88,21 +88,18 @@
 			<HeaderCell>
 				<img src={card.agentIconSrc} alt={card.agentLabel} width="14" height="14" class="shrink-0 rounded-sm" />
 			</HeaderCell>
-			<HeaderTitleCell compactPadding>
-				<div class="flex min-w-0 flex-1 items-center justify-end gap-1.5">
-					{#if card.hasUnseenCompletion}
+			{#if card.hasUnseenCompletion}
+				<HeaderTitleCell compactPadding>
+					<div class="flex min-w-0 flex-1 items-center justify-end gap-1.5">
 						<span
 							class="size-1.5 shrink-0 rounded-full"
 							style="background-color: var(--success-reference)"
 							title="Finished — not yet reviewed"
 							data-testid="unseen-completion-dot"
 						></span>
-					{/if}
-					{#if card.timeAgo}
-						<span class="shrink-0 font-mono text-[10px] text-muted-foreground/70">{card.timeAgo}</span>
-					{/if}
-				</div>
-			</HeaderTitleCell>
+					</div>
+				</HeaderTitleCell>
+			{/if}
 			{#if hasDiff}
 				<HeaderActionCell withDivider={headerDiffDivider} class="px-1">
 					<div class="flex h-7 items-center justify-center">

@@ -30,7 +30,7 @@ describe("design system showcase contract", () => {
 		expect(source).toContain("const demoCardPermission: KanbanCardData = {");
 		expect(source).toContain("function handleShowcaseCardAction(): void {}");
 		expect(source).toContain('import * as DropdownMenu from "@acepe/ui/dropdown-menu";');
-		expect(source).toContain('import IconDotsVertical from "@tabler/icons-svelte/icons/dots-vertical";');
+		expect(source).toContain('import { IconDotsVertical } from "@tabler/icons-svelte";');
 		expect(source).toContain('const kanbanMenuTriggerClass =');
 		expect(source).toContain('class={kanbanMenuTriggerClass}');
 		expect(source).toContain('<IconDotsVertical class="h-2.5 w-2.5" aria-hidden="true" />');

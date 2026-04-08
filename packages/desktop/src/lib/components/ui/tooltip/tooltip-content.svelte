@@ -27,7 +27,7 @@ let {
 		{sideOffset}
 		{side}
 		class={cn(
-			"bg-popover border border-border text-foreground z-[var(--overlay-z)] w-fit rounded-md px-3 py-1.5 text-xs text-balance shadow-md",
+			"bg-popover border border-border text-foreground z-[var(--overlay-z)] w-fit max-w-xs rounded-md px-3 py-1.5 text-xs text-balance shadow-md",
 			className
 		)}
 		{...restProps}

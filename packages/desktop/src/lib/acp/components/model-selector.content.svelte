@@ -245,15 +245,15 @@ function handleCodexEffortSelect(modelId: string): void {
 {#if availableModels.length === 0}
 	<div class="px-2 py-1 text-xs">No models available</div>
 {:else}
-	<div class="sticky top-0 z-10 bg-popover px-3 py-1.5">
-		{#if showSearch}
+	{#if showSearch}
+		<div class="sticky top-0 z-10 bg-popover px-3 py-1.5">
 			<Input
 				bind:value={searchQuery}
 				placeholder={m.model_selector_search_placeholder()}
 				class="h-8 text-xs"
 			/>
-		{/if}
-	</div>
+		</div>
+	{/if}
 
 	{#if isCodexAgent}
 		<div

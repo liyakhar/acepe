@@ -62,13 +62,16 @@ describe("waveform-math helpers", () => {
 	});
 
 	it("boosts quiet mic values into visible meter levels", () => {
-		// sqrt(0.12 * 10) ≈ 1.095, clamped to 1.0 — but even 0.05 peak should
-		// produce visible output: sqrt(0.05 * 10) ≈ 0.707
-		expect(toMeterLevel([0.05, 0.12, 0.08])).toBeGreaterThan(0.5);
+		expect(toMeterLevel([0.01, 0.03, 0.02])).toBeLessThan(0.05);
+		expect(toMeterLevel([0.12, 0.18, 0.15])).toBeGreaterThan(0.6);
 	});
 
 	it("builds the default number of meter levels", () => {
 		expect(buildMeterLevels(0.5)).toHaveLength(DEFAULT_METER_BAR_COUNT);
+	});
+
+	it("uses fewer bars by default so each bar can be visually larger", () => {
+		expect(DEFAULT_METER_BAR_COUNT).toBe(13);
 	});
 
 	it("supports configurable bar counts", () => {
