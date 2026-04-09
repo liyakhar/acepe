@@ -10,24 +10,22 @@ describe("dismissable-tooltip contract", () => {
 		expect(source).toContain("{@render children()}");
 	});
 
-	it("wraps children in a tooltip when not dismissed", () => {
-		expect(source).toContain("<TooltipPrimitive.Provider");
-		expect(source).toContain("<TooltipPrimitive.Root");
-		expect(source).toContain("<TooltipPrimitive.Trigger");
-		expect(source).toContain("<TooltipPrimitive.Content");
+	it("renders a local positioned tooltip shell when not dismissed", () => {
+		expect(source).toContain('class={`relative ${triggerClass}`}');
+		expect(source).toContain("{#if open}");
+		expect(source).toContain("absolute z-[var(--overlay-z)]");
 	});
 
-	it("opens only from hover on the explicit trigger wrapper", () => {
+	it("opens only from pointer movement on the explicit trigger wrapper", () => {
 		expect(source).toContain("onpointermove={requestOpen}");
 		expect(source).toContain("onpointerleave={requestClose}");
-		expect(source).not.toContain("onpointerenter={requestOpen}");
-		expect(source).not.toContain("onclick={requestOpen}");
+		expect(source).not.toContain("TooltipPrimitive");
 	});
 
 	it("keeps the tooltip enterable and dismissable", () => {
-		expect(source).toContain("disableHoverableContent={false}");
 		expect(source).toContain("onpointerenter={cancelClose}");
 		expect(source).toContain("onpointerleave={requestClose}");
+		expect(source).toContain("function getContentOffsetStyle");
 		expect(source).toContain('aria-label="Dismiss this tip"');
 		expect(source).toContain("onclick={handleDismiss}");
 	});
