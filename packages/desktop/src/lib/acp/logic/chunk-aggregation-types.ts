@@ -26,6 +26,7 @@ export interface ChunkInput {
 	readonly messageId: string | undefined;
 	readonly content: ContentBlock;
 	readonly isThought: boolean;
+	readonly aggregationHint?: "boundaryCarryover" | null;
 }
 
 /**

@@ -107,6 +107,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: "Thinking".to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: None,
@@ -120,6 +121,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: "Hello".to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: None,
@@ -133,6 +135,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: text.to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: None,
@@ -250,6 +253,7 @@ mod tests {
                     content: ContentBlock::Text {
                         text: "new prompt".to_string(),
                     },
+                    aggregation_hint: None,
                 },
                 session_id: Some("session-1".to_string()),
             },
@@ -325,6 +329,7 @@ mod tests {
                     content: ContentBlock::Text {
                         text: "new prompt".to_string(),
                     },
+                    aggregation_hint: None,
                 },
                 session_id: Some(session.to_string()),
             },

@@ -11,7 +11,7 @@ import type { ThreadEntry } from "../types/thread-entry.js";
 import type { ToolCall } from "../types/tool-call.js";
 import type { UserMessage } from "../types/user-message.js";
 
-import { hasThoughtPrefix, stripThoughtPrefix } from "../utils/thought-prefix-stripper.js";
+import { stripThoughtPrefix } from "../utils/thought-prefix-stripper.js";
 import { matchSessionUpdate } from "./session-update-matcher.js";
 
 /**
@@ -73,30 +73,17 @@ export class MessageProcessor {
 
 	/**
 	 * Process an agent message/thought chunk into a thread entry.
-	 *
-	 * Handles two cases:
-	 * 1. Explicit thought chunks (isThought=true) - strips redundant prefix
-	 * 2. Message chunks with [Thinking] prefix (Cursor agent) - detects prefix,
-	 *    strips it, and converts to thought type
 	 */
 	private processAgentChunk(
 		contentChunk: ContentChunk,
 		_messageId: string | null | undefined,
 		isThought: boolean
 	): Result<ThreadEntry, AcpError> {
-		// Detect if this is a thought disguised as a message (Cursor agent pattern)
 		const content = contentChunk.content;
-		const hasImplicitThoughtPrefix =
-			!isThought && content.type === "text" && hasThoughtPrefix(content.text);
-
-		// Determine actual chunk type
-		const actualIsThought = isThought || hasImplicitThoughtPrefix;
-
-		// Normalize content by stripping redundant prefixes for thoughts
-		const normalizedContent = actualIsThought ? this.normalizeThoughtContent(content) : content;
+		const normalizedContent = isThought ? this.normalizeThoughtContent(content) : content;
 
 		const messageChunk: AssistantMessageChunk = {
-			type: actualIsThought ? "thought" : "message",
+			type: isThought ? "thought" : "message",
 			block: normalizedContent,
 		};
 		const message: AssistantMessage = {
@@ -135,11 +122,6 @@ export class MessageProcessor {
 
 	/**
 	 * Merge an assistant message chunk into an existing assistant message.
-	 *
-	 * Handles two cases:
-	 * 1. Explicit thought chunks (isThought=true) - strips redundant prefix
-	 * 2. Message chunks with [Thinking] prefix (Cursor agent) - detects prefix,
-	 *    strips it, and converts to thought type
 	 */
 	mergeAssistantMessageChunk(
 		existing: AssistantMessage,
@@ -147,19 +129,10 @@ export class MessageProcessor {
 		isThought: boolean
 	): AssistantMessage {
 		const content = chunk.content as ContentBlock;
-
-		// Detect if this is a thought disguised as a message (Cursor agent pattern)
-		const hasImplicitThoughtPrefix =
-			!isThought && content.type === "text" && hasThoughtPrefix(content.text);
-
-		// Determine actual chunk type
-		const actualIsThought = isThought || hasImplicitThoughtPrefix;
-
-		// Normalize content by stripping redundant prefixes for thoughts
-		const normalizedContent = actualIsThought ? this.normalizeThoughtContent(content) : content;
+		const normalizedContent = isThought ? this.normalizeThoughtContent(content) : content;
 
 		const newChunk: AssistantMessageChunk = {
-			type: actualIsThought ? "thought" : "message",
+			type: isThought ? "thought" : "message",
 			block: normalizedContent,
 		};
 		return {

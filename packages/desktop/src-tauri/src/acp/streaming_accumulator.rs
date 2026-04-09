@@ -15,7 +15,6 @@ use super::session_update::{
     parse_normalized_questions, parse_normalized_todos, PlanConfidence, PlanData, PlanSource,
     QuestionItem, TodoItem, ToolArguments, ToolKind,
 };
-use crate::acp::agent_context::current_agent;
 use crate::acp::parsers::{get_parser, AgentType};
 
 /// Maximum accumulated size per tool call (1MB) to prevent DoS.
@@ -335,11 +334,12 @@ fn floor_char_boundary(s: &str, idx: usize) -> usize {
     boundary
 }
 
-/// Check if a file path is a plan file.
-///
-/// This delegates to agent-specific rules using the current agent context.
+#[cfg(test)]
 pub fn is_plan_file_path(path: &str) -> bool {
-    is_plan_file_path_for_agent(path, current_agent())
+    is_plan_file_path_for_agent(
+        path,
+        crate::acp::agent_context::current_agent().unwrap_or(AgentType::ClaudeCode),
+    )
 }
 
 /// Check if a file path is a plan file for a specific agent.

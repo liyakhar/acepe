@@ -264,6 +264,7 @@ export interface AgentInfo {
 	icon?: string;
 	availability_kind?: AgentAvailabilityKind;
 	autonomous_supported_mode_ids?: ReadonlyArray<string>;
+	default_selection_rank?: number;
 }
 
 /**

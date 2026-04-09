@@ -5,9 +5,10 @@ use crate::acp::permission_tracker::PermissionTracker;
 use crate::acp::projections::{
     InteractionKind, InteractionResponse, InteractionState, ProjectionRegistry,
 };
+use crate::acp::provider::AgentProvider;
+use crate::acp::provider_extensions::InboundResponseAdapter;
 use crate::acp::session_update::{SessionUpdate, ToolCallStatus, ToolCallUpdateData};
 use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher};
-use crate::acp::{cursor_extensions::CursorResponseAdapter, provider::AgentProvider};
 use crate::db::repository::SessionJournalEventRepository;
 use sea_orm::DbConn;
 use serde_json::{json, Value};
@@ -136,7 +137,7 @@ pub(crate) struct InboundRequestResponder {
     pub permission_tracker: StdArc<std::sync::Mutex<PermissionTracker>>,
     pub projection_registry: StdArc<ProjectionRegistry>,
     pub dispatcher: AcpUiEventDispatcher,
-    pub inbound_response_adapters: StdArc<std::sync::Mutex<HashMap<u64, CursorResponseAdapter>>>,
+    pub inbound_response_adapters: StdArc<std::sync::Mutex<HashMap<u64, InboundResponseAdapter>>>,
 }
 
 impl InboundRequestResponder {

@@ -15,6 +15,7 @@ export interface AgentInfo {
 	icon: string;
 	/** Current setup state for this agent (optional for compatibility with store Agent). */
 	availability_kind?: AgentAvailabilityKind;
+	default_selection_rank?: number;
 }
 
 /**
@@ -80,6 +81,7 @@ export class AgentManager {
 						kind: "installable" as const,
 						installed: true,
 					},
+					default_selection_rank: a.default_selection_rank,
 				}))
 			)
 			.mapErr((error) => {

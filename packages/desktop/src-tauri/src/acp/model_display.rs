@@ -5,7 +5,6 @@
 //! and renders without parsing model IDs.
 
 use crate::acp::client::AvailableModel;
-use crate::acp::parsers::AgentType;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -29,16 +28,41 @@ pub struct DisplayModelGroup {
     pub models: Vec<DisplayableModel>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelDisplayFamily {
+    ClaudeLike,
+    CodexReasoningEffort,
+    #[default]
+    ProviderGrouped,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageMetricsPresentation {
+    ContextWindowOnly,
+    #[default]
+    SpendAndContext,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPresentationMetadata {
+    pub display_family: ModelDisplayFamily,
+    pub usage_metrics: UsageMetricsPresentation,
+}
+
 /// Display-ready model structure. Single representation—flat = one group.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelsForDisplay {
     pub groups: Vec<DisplayModelGroup>,
+    #[serde(default)]
+    pub presentation: ModelPresentationMetadata,
 }
 
 /// Transforms raw models into display-ready structure per agent.
 pub trait ModelsDisplayTransformer: Send + Sync {
-    fn agent_type(&self) -> AgentType;
     fn transform(&self, models: &[AvailableModel]) -> ModelsForDisplay;
 }
 
@@ -46,14 +70,13 @@ pub trait ModelsDisplayTransformer: Send + Sync {
 struct DefaultTransformer;
 
 impl ModelsDisplayTransformer for DefaultTransformer {
-    fn agent_type(&self) -> AgentType {
-        AgentType::OpenCode // Used for OpenCode and Cursor
-    }
-
     fn transform(&self, models: &[AvailableModel]) -> ModelsForDisplay {
         let valid: Vec<_> = models.iter().filter(|m| !m.model_id.is_empty()).collect();
         if valid.is_empty() {
-            return ModelsForDisplay { groups: vec![] };
+            return ModelsForDisplay {
+                groups: vec![],
+                ..Default::default()
+            };
         }
 
         // Single group when model count < 5
@@ -67,6 +90,7 @@ impl ModelsDisplayTransformer for DefaultTransformer {
                     label: String::new(),
                     models,
                 }],
+                ..Default::default()
             };
         }
 
@@ -84,7 +108,10 @@ impl ModelsDisplayTransformer for DefaultTransformer {
             .map(|(label, models)| DisplayModelGroup { label, models })
             .collect();
 
-        ModelsForDisplay { groups }
+        ModelsForDisplay {
+            groups,
+            ..Default::default()
+        }
     }
 }
 
@@ -92,14 +119,13 @@ impl ModelsDisplayTransformer for DefaultTransformer {
 struct ClaudeCodeTransformer;
 
 impl ModelsDisplayTransformer for ClaudeCodeTransformer {
-    fn agent_type(&self) -> AgentType {
-        AgentType::ClaudeCode
-    }
-
     fn transform(&self, models: &[AvailableModel]) -> ModelsForDisplay {
         let valid: Vec<_> = models.iter().filter(|m| !m.model_id.is_empty()).collect();
         if valid.is_empty() {
-            return ModelsForDisplay { groups: vec![] };
+            return ModelsForDisplay {
+                groups: vec![],
+                ..Default::default()
+            };
         }
 
         let models: Vec<DisplayableModel> =
@@ -110,6 +136,7 @@ impl ModelsDisplayTransformer for ClaudeCodeTransformer {
                 label: String::new(),
                 models,
             }],
+            ..Default::default()
         }
     }
 }
@@ -118,10 +145,6 @@ impl ModelsDisplayTransformer for ClaudeCodeTransformer {
 struct CodexTransformer;
 
 impl ModelsDisplayTransformer for CodexTransformer {
-    fn agent_type(&self) -> AgentType {
-        AgentType::Codex
-    }
-
     fn transform(&self, models: &[AvailableModel]) -> ModelsForDisplay {
         let mut by_base: std::collections::BTreeMap<String, Vec<DisplayableModel>> =
             std::collections::BTreeMap::new();
@@ -155,16 +178,28 @@ impl ModelsDisplayTransformer for CodexTransformer {
             })
             .collect();
 
-        ModelsForDisplay { groups }
+        ModelsForDisplay {
+            groups,
+            ..Default::default()
+        }
     }
 }
 
-pub fn get_transformer(agent: AgentType) -> Box<dyn ModelsDisplayTransformer> {
-    match agent {
-        AgentType::ClaudeCode | AgentType::Copilot => Box::new(ClaudeCodeTransformer),
-        AgentType::OpenCode | AgentType::Cursor => Box::new(DefaultTransformer),
-        AgentType::Codex => Box::new(CodexTransformer),
+fn get_transformer(family: ModelDisplayFamily) -> Box<dyn ModelsDisplayTransformer> {
+    match family {
+        ModelDisplayFamily::ClaudeLike => Box::new(ClaudeCodeTransformer),
+        ModelDisplayFamily::CodexReasoningEffort => Box::new(CodexTransformer),
+        ModelDisplayFamily::ProviderGrouped => Box::new(DefaultTransformer),
     }
+}
+
+pub fn build_models_for_display(
+    models: &[AvailableModel],
+    presentation: ModelPresentationMetadata,
+) -> ModelsForDisplay {
+    let mut display = get_transformer(presentation.display_family).transform(models);
+    display.presentation = presentation;
+    display
 }
 
 fn to_displayable_provider(m: &AvailableModel, _provider: Option<&str>) -> DisplayableModel {
@@ -302,13 +337,13 @@ pub fn passthrough_transform(models: &[AvailableModel]) -> ModelsForDisplay {
             label: String::new(),
             models,
         }],
+        ..Default::default()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp::parsers::AgentType;
 
     fn am(id: &str, name: &str, desc: Option<&str>) -> AvailableModel {
         AvailableModel {
@@ -449,288 +484,61 @@ mod tests {
     }
 
     #[test]
-    fn default_transformer_agent_type() {
-        let t = DefaultTransformer;
-        assert_eq!(t.agent_type(), AgentType::OpenCode);
-    }
-
-    // ---- ClaudeCodeTransformer ----
-
-    #[test]
-    fn claude_transformer_empty_returns_no_groups() {
-        let t = ClaudeCodeTransformer;
-        let out = t.transform(&[]);
-        assert_eq!(out.groups.len(), 0);
-    }
-
-    #[test]
-    fn claude_transformer_empty_model_id_filtered() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am("", "Empty", None), am("opus", "Opus", None)];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models.len(), 1);
-        assert_eq!(out.groups[0].models[0].model_id, "opus");
-    }
-
-    #[test]
-    fn claude_transformer_default_extracts_currently_from_description() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am(
-            "default",
-            "Default",
-            Some(
-                "Use the default model (currently claude-sonnet-4) · Uses your configured default",
-            ),
-        )];
-        let out = t.transform(&models);
+    fn build_models_for_display_provider_grouped_uses_provider_transformer() {
+        let out = build_models_for_display(
+            &[am("anthropic/claude-4", "Claude 4", None)],
+            ModelPresentationMetadata {
+                display_family: ModelDisplayFamily::ProviderGrouped,
+                usage_metrics: UsageMetricsPresentation::SpendAndContext,
+            },
+        );
         assert_eq!(out.groups.len(), 1);
         assert_eq!(
-            out.groups[0].models[0].display_name,
-            "claude-sonnet-4 (default)"
+            out.presentation,
+            ModelPresentationMetadata {
+                display_family: ModelDisplayFamily::ProviderGrouped,
+                usage_metrics: UsageMetricsPresentation::SpendAndContext,
+            }
         );
     }
 
     #[test]
-    fn claude_transformer_default_description_x_dot_y_uses_first_part() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am(
-            "default",
-            "Default",
-            Some("Claude Opus · Best for complex tasks"),
-        )];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models[0].display_name, "Claude Opus");
+    fn build_models_for_display_claude_like_uses_claude_transformer() {
+        let out = build_models_for_display(
+            &[am(
+                "default",
+                "Default",
+                Some("Use the default model (currently claude-sonnet-4) · Uses config"),
+            )],
+            ModelPresentationMetadata {
+                display_family: ModelDisplayFamily::ClaudeLike,
+                usage_metrics: UsageMetricsPresentation::ContextWindowOnly,
+            },
+        );
+        assert_eq!(out.groups[0].models[0].display_name, "claude-sonnet-4 (default)");
+        assert_eq!(out.presentation.usage_metrics, UsageMetricsPresentation::ContextWindowOnly);
     }
 
     #[test]
-    fn claude_transformer_default_single_part_description_uses_name() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am("default", "Default", Some("Single part only"))];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models[0].display_name, "Default");
-    }
-
-    #[test]
-    fn claude_transformer_opus_no_description_uses_name() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am("opus", "Claude Opus 4.5", None)];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models[0].display_name, "Claude Opus 4.5");
-    }
-
-    #[test]
-    fn claude_transformer_description_x_dot_y_uses_a() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am(
-            "sonnet",
-            "Claude Sonnet",
-            Some("Claude Sonnet 4 · Fast and capable"),
-        )];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models[0].display_name, "Claude Sonnet 4");
-    }
-
-    #[test]
-    fn claude_transformer_description_empty_first_part_uses_name() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am("sonnet", "Claude Sonnet", Some(" · Second part only"))];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models[0].display_name, "Claude Sonnet");
-    }
-
-    #[test]
-    fn claude_transformer_no_description_fallback_to_name() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am("custom", "My Custom Model", None)];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models[0].display_name, "My Custom Model");
-    }
-
-    #[test]
-    fn claude_transformer_single_group() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am("opus", "Opus", None), am("sonnet", "Sonnet", None)];
-        let out = t.transform(&models);
-        assert_eq!(out.groups.len(), 1);
-        assert!(out.groups[0].label.is_empty());
-        assert_eq!(out.groups[0].models.len(), 2);
-    }
-
-    #[test]
-    fn claude_transformer_agent_type() {
-        let t = ClaudeCodeTransformer;
-        assert_eq!(t.agent_type(), AgentType::ClaudeCode);
-    }
-
-    #[test]
-    fn claude_transformer_capitalize_name() {
-        let t = ClaudeCodeTransformer;
-        let models = vec![am("m", "lowercase name", None)];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models[0].display_name, "Lowercase Name");
-    }
-
-    // ---- CodexTransformer ----
-
-    #[test]
-    fn codex_transformer_empty_returns_no_groups() {
-        let t = CodexTransformer;
-        let out = t.transform(&[]);
-        assert_eq!(out.groups.len(), 0);
-    }
-
-    #[test]
-    fn codex_transformer_empty_model_id_filtered() {
-        let t = CodexTransformer;
-        let models = vec![am("", "Empty", None), am("claude-sonnet/low", "Low", None)];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models.len(), 1);
-    }
-
-    #[test]
-    fn codex_transformer_valid_variants() {
-        let t = CodexTransformer;
-        let models = vec![
-            am("claude-sonnet/low", "Low", None),
-            am("claude-sonnet/medium", "Medium", None),
-            am("claude-sonnet/high", "High", None),
-            am("claude-sonnet/xhigh", "XHigh", None),
-        ];
-        let out = t.transform(&models);
-        assert_eq!(out.groups.len(), 1);
-        assert_eq!(out.groups[0].label, "Claude-sonnet");
-        assert_eq!(out.groups[0].models.len(), 4);
-        let names: Vec<&str> = out.groups[0]
-            .models
-            .iter()
-            .map(|m| m.display_name.as_str())
-            .collect();
-        assert_eq!(names, ["Low", "Medium", "High", "XHigh"]);
-    }
-
-    #[test]
-    fn codex_transformer_malformed_filtered() {
-        let t = CodexTransformer;
-        let models = vec![
-            am("claude-sonnet/low", "Low", None),
-            am("invalid", "Invalid", None),
-            am("claude-sonnet/", "Missing effort", None),
-            am("/low", "Missing base", None),
-            am("claude-sonnet/unknown", "Unknown effort", None),
-        ];
-        let out = t.transform(&models);
-        assert_eq!(out.groups.len(), 1);
-        assert_eq!(out.groups[0].models.len(), 1);
-        assert_eq!(out.groups[0].models[0].model_id, "claude-sonnet/low");
-    }
-
-    #[test]
-    fn codex_transformer_effort_order() {
-        let t = CodexTransformer;
-        let models = vec![
-            am("claude-sonnet/xhigh", "XHigh", None),
-            am("claude-sonnet/low", "Low", None),
-            am("claude-sonnet/high", "High", None),
-            am("claude-sonnet/medium", "Medium", None),
-        ];
-        let out = t.transform(&models);
-        let order: Vec<&str> = out.groups[0]
-            .models
-            .iter()
-            .map(|m| m.display_name.as_str())
-            .collect();
-        assert_eq!(order, ["Low", "Medium", "High", "XHigh"]);
-    }
-
-    #[test]
-    fn codex_transformer_multiple_bases() {
-        let t = CodexTransformer;
-        let models = vec![
-            am("claude-sonnet/medium", "Medium", None),
-            am("claude-sonnet/low", "Low", None),
-            am("claude-opus/high", "High", None),
-            am("claude-haiku/low", "Low", None),
-        ];
-        let out = t.transform(&models);
-        assert_eq!(out.groups.len(), 3);
-        let sonnet = out
-            .groups
-            .iter()
-            .find(|g| g.label == "Claude-sonnet")
-            .unwrap();
-        let opus = out
-            .groups
-            .iter()
-            .find(|g| g.label == "Claude-opus")
-            .unwrap();
-        let haiku = out
-            .groups
-            .iter()
-            .find(|g| g.label == "Claude-haiku")
-            .unwrap();
-        assert_eq!(sonnet.models.len(), 2);
-        assert_eq!(opus.models.len(), 1);
-        assert_eq!(haiku.models.len(), 1);
-    }
-
-    #[test]
-    fn codex_transformer_unknown_effort_filtered() {
-        let t = CodexTransformer;
-        let models = vec![
-            am("claude-sonnet/low", "Low", None),
-            am("claude-sonnet/ultra", "Ultra", None),
-        ];
-        let out = t.transform(&models);
-        assert_eq!(out.groups[0].models.len(), 1);
-        assert_eq!(out.groups[0].models[0].model_id, "claude-sonnet/low");
-    }
-
-    #[test]
-    fn codex_transformer_agent_type() {
-        let t = CodexTransformer;
-        assert_eq!(t.agent_type(), AgentType::Codex);
-    }
-
-    #[test]
-    fn codex_transformer_base_with_slashes_uses_last_part() {
-        let t = CodexTransformer;
-        let models = vec![am("org/claude-sonnet/low", "Low", None)];
-        let out = t.transform(&models);
+    fn build_models_for_display_codex_reasoning_effort_groups_variants() {
+        let out = build_models_for_display(
+            &[
+                am("claude-sonnet/low", "Low", None),
+                am("claude-sonnet/high", "High", None),
+            ],
+            ModelPresentationMetadata {
+                display_family: ModelDisplayFamily::CodexReasoningEffort,
+                usage_metrics: UsageMetricsPresentation::SpendAndContext,
+            },
+        );
         assert_eq!(out.groups.len(), 1);
         assert_eq!(out.groups[0].label, "Claude-sonnet");
     }
 
-    // ---- get_transformer ----
-
     #[test]
-    fn get_transformer_claude_code() {
-        let t = get_transformer(AgentType::ClaudeCode);
-        assert_eq!(t.agent_type(), AgentType::ClaudeCode);
-        let out = t.transform(&[am("default", "Default", None)]);
-        assert_eq!(out.groups.len(), 1);
-    }
-
-    #[test]
-    fn get_transformer_open_code() {
-        let t = get_transformer(AgentType::OpenCode);
-        assert_eq!(t.agent_type(), AgentType::OpenCode);
+    fn default_transformer_builds_single_group_for_small_lists() {
+        let t = DefaultTransformer;
         let out = t.transform(&[am("anthropic/claude-4", "Claude 4", None)]);
-        assert_eq!(out.groups.len(), 1);
-    }
-
-    #[test]
-    fn get_transformer_cursor() {
-        let t = get_transformer(AgentType::Cursor);
-        assert_eq!(t.agent_type(), AgentType::OpenCode);
-        let out = t.transform(&[am("anthropic/claude-4", "Claude 4", None)]);
-        assert_eq!(out.groups.len(), 1);
-    }
-
-    #[test]
-    fn get_transformer_codex() {
-        let t = get_transformer(AgentType::Codex);
-        assert_eq!(t.agent_type(), AgentType::Codex);
-        let out = t.transform(&[am("claude-sonnet/low", "Low", None)]);
         assert_eq!(out.groups.len(), 1);
     }
 

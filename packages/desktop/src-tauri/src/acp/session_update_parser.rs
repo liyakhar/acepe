@@ -7,6 +7,7 @@
 
 use serde_json::Value;
 
+#[cfg(test)]
 use crate::acp::agent_context::current_agent;
 use crate::acp::parsers::AgentType;
 use crate::acp::session_update::{parse_session_update_with_agent, SessionUpdate};
@@ -75,11 +76,12 @@ fn is_session_update_method(method: &str) -> bool {
     method == "session/update"
 }
 
-/// Parse a JSON-RPC notification into a session update.
-///
-/// This is the main entry point that combines normalization, parsing, and error handling.
+#[cfg(test)]
 pub fn parse_session_update_notification(json: &Value) -> ParseResult {
-    parse_session_update_notification_for_agent(current_agent(), json)
+    parse_session_update_notification_for_agent(
+        current_agent().unwrap_or(AgentType::ClaudeCode),
+        json,
+    )
 }
 
 fn parse_session_update_notification_for_agent(agent: AgentType, json: &Value) -> ParseResult {
@@ -462,13 +464,13 @@ mod tests {
                 }
             });
 
-            assert_eq!(current_agent(), AgentType::ClaudeCode);
+            assert_eq!(current_agent(), None);
             let result = parse_session_update_notification_with_agent(agent, &json);
             assert!(matches!(
                 result,
                 ParseResult::Typed(update) if matches!(*update, SessionUpdate::ToolCall { .. })
             ));
-            assert_eq!(current_agent(), AgentType::ClaudeCode);
+            assert_eq!(current_agent(), None);
         }
 
         #[test]

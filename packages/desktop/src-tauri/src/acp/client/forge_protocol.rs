@@ -69,6 +69,7 @@ fn translate_text_delta(
         content: ContentBlock::Text {
             text: text.to_string(),
         },
+        aggregation_hint: None,
     };
 
     let update = if is_thought {

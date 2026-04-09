@@ -1,11 +1,15 @@
 use super::*;
+use crate::acp::providers::CustomAgentConfig;
+use crate::acp::registry::AgentRegistry;
+use crate::acp::model_display::{ModelDisplayFamily, UsageMetricsPresentation};
 use crate::acp::parsers::provider_capabilities::{
     find_provider_capabilities_by_id, EditNormalization, InvocationEnrichment,
     ProviderCapabilities, ToolVocabulary, TransportFamily, UsageTelemetryFamily,
 };
 use crate::acp::parsers::types::ParsedUsageTelemetry;
-use crate::acp::session_update::{ToolCallStatus, ToolKind};
+use crate::acp::session_update::{PlanSource, ToolCallStatus, ToolKind};
 use serde_json::json;
+use std::collections::HashMap;
 
 struct FutureSharedChatParser;
 
@@ -23,6 +27,9 @@ static FUTURE_PROVIDER_CAPABILITIES: [ProviderCapabilities; 1] = [ProviderCapabi
     },
     edit_normalization: EditNormalization::ClaudeCode,
     usage_telemetry: UsageTelemetryFamily::SharedChat,
+    default_plan_source: PlanSource::Deterministic,
+    model_display_family: ModelDisplayFamily::ClaudeLike,
+    usage_metrics_presentation: UsageMetricsPresentation::ContextWindowOnly,
 }];
 
 impl AgentParser for FutureSharedChatParser {
@@ -113,4 +120,26 @@ fn future_provider_can_compose_through_descriptor_seam() {
 
     assert_eq!(parsed.kind, Some(ToolKind::Read));
     assert_eq!(parsed.status, ToolCallStatus::Pending);
+}
+
+#[test]
+fn future_custom_provider_can_register_without_central_default_policy_edits() {
+    let registry = AgentRegistry::new();
+    registry
+        .register_custom(CustomAgentConfig {
+            id: "future-shared-chat".to_string(),
+            name: "Future Shared Chat".to_string(),
+            command: "sh".to_string(),
+            args: vec![],
+            env: HashMap::new(),
+        })
+        .expect("future provider should register");
+
+    let future = registry
+        .list_all_for_ui()
+        .into_iter()
+        .find(|agent| agent.id == "future-shared-chat")
+        .expect("future provider should be listed");
+
+    assert_eq!(future.default_selection_rank, None);
 }

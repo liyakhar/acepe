@@ -3,6 +3,7 @@ use specta::Type;
 
 use super::{QuestionItem, TodoItem};
 use crate::acp::agent_context::current_agent;
+use crate::acp::parsers::AgentType;
 use crate::acp::parsers::get_parser;
 use crate::acp::parsers::kind::canonical_name_for_kind;
 use crate::acp::session_update::normalize::derive_normalized_questions_and_todos;
@@ -387,9 +388,10 @@ fn resolve_serialized_tool_kind(
     raw_kind: Option<ToolKind>,
     title: Option<&str>,
     locations: Option<&[ToolCallLocation]>,
+    agent: AgentType,
     arguments: &serde_json::Value,
 ) -> ToolKind {
-    let parser = get_parser(current_agent());
+    let parser = get_parser(agent);
 
     if let Some(kind) = raw_kind.filter(|kind| *kind != ToolKind::Other) {
         return kind;
@@ -453,11 +455,13 @@ impl<'de> serde::Deserialize<'de> for ToolCallData {
 
         let raw = Raw::deserialize(deserializer)?;
         let normalized_arguments = unwrap_serialized_other_arguments(&raw.arguments);
+        let agent = deserialize_agent_context::<D::Error>()?;
         let kind = resolve_serialized_tool_kind(
             &raw.name,
             raw.kind,
             raw.title.as_deref(),
             raw.locations.as_deref(),
+            agent,
             &normalized_arguments,
         );
         let name = if is_unknown_tool_name(&raw.name) && kind != ToolKind::Other {
@@ -465,7 +469,7 @@ impl<'de> serde::Deserialize<'de> for ToolCallData {
         } else {
             raw.name.clone()
         };
-        let parser = get_parser(current_agent());
+        let parser = get_parser(agent);
         let arguments = parser
             .parse_typed_tool_arguments(
                 if is_unknown_tool_name(&name) {
@@ -491,7 +495,7 @@ impl<'de> serde::Deserialize<'de> for ToolCallData {
             });
 
         let (derived_questions, derived_todos) =
-            derive_normalized_questions_and_todos(&name, &normalized_arguments, current_agent());
+            derive_normalized_questions_and_todos(&name, &normalized_arguments, agent);
         let normalized_questions = raw.normalized_questions.or(derived_questions);
         let normalized_todos = raw.normalized_todos.or(derived_todos);
 
@@ -515,6 +519,15 @@ impl<'de> serde::Deserialize<'de> for ToolCallData {
             plan_approval_request_id: raw.plan_approval_request_id,
         })
     }
+}
+
+fn deserialize_agent_context<E>() -> Result<AgentType, E>
+where
+    E: serde::de::Error,
+{
+    current_agent().ok_or_else(|| {
+        serde::de::Error::custom("Missing agent context for ToolCallData deserialization")
+    })
 }
 
 /// Tool call update data.

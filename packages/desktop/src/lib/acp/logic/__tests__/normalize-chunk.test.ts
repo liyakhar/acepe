@@ -55,51 +55,6 @@ describe("normalizeChunk", () => {
 	});
 
 	// ==========================================
-	// Implicit thoughts (Cursor agent pattern)
-	// ==========================================
-
-	describe("implicit thoughts (message with [Thinking] prefix)", () => {
-		it("detects [Thinking] prefix and converts to thought", () => {
-			const input: ChunkInput = {
-				messageId: "msg-1",
-				content: { type: "text", text: "[Thinking] I need to check the database." },
-				isThought: false,
-			};
-
-			const result = normalizeChunk(input);
-
-			expect(result.type).toBe("thought");
-			expect(result.block).toEqual({ type: "text", text: "I need to check the database." });
-		});
-
-		it("detects [thinking] prefix (lowercase)", () => {
-			const input: ChunkInput = {
-				messageId: "msg-1",
-				content: { type: "text", text: "[thinking] lowercase variant" },
-				isThought: false,
-			};
-
-			const result = normalizeChunk(input);
-
-			expect(result.type).toBe("thought");
-			expect(result.block).toEqual({ type: "text", text: "lowercase variant" });
-		});
-
-		it("detects [Thought] prefix variant", () => {
-			const input: ChunkInput = {
-				messageId: "msg-1",
-				content: { type: "text", text: "[Thought] another variant" },
-				isThought: false,
-			};
-
-			const result = normalizeChunk(input);
-
-			expect(result.type).toBe("thought");
-			expect(result.block).toEqual({ type: "text", text: "another variant" });
-		});
-	});
-
-	// ==========================================
 	// Regular messages
 	// ==========================================
 
@@ -117,17 +72,20 @@ describe("normalizeChunk", () => {
 			expect(result.block).toEqual({ type: "text", text: "Hello, how can I help?" });
 		});
 
-		it("does not strip [Thinking] in the middle of text", () => {
+		it("does not reinterpret [Thinking] message text as a thought", () => {
 			const input: ChunkInput = {
 				messageId: "msg-1",
-				content: { type: "text", text: "I was [Thinking] about this." },
+				content: { type: "text", text: "[Thinking] backend should classify this first." },
 				isThought: false,
 			};
 
 			const result = normalizeChunk(input);
 
 			expect(result.type).toBe("message");
-			expect(result.block).toEqual({ type: "text", text: "I was [Thinking] about this." });
+			expect(result.block).toEqual({
+				type: "text",
+				text: "[Thinking] backend should classify this first.",
+			});
 		});
 
 		it("handles non-text content blocks", () => {

@@ -13,7 +13,6 @@ mod types;
 pub(crate) use forwarded_permission_request::{
     remap_forwarded_web_search_tool_call_id, ForwardedPermissionRequest,
 };
-pub(crate) use helpers::extract_query_from_synthetic_permission;
 
 /// Pre-built tool call data for a permission request that has no preceding tool_call event.
 /// The client emits this as a synthetic ToolCall so the UI has a tool row to anchor the permission.
@@ -66,7 +65,7 @@ mod tests {
     use crate::acp::inbound_request_router::helpers::build_permission_request_log_payload;
     use crate::acp::parsers::AgentType;
     use crate::acp::session_update::ToolKind;
-    use serde_json::{json, Value};
+    use serde_json::json;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -512,99 +511,6 @@ mod tests {
         assert!(payload.get("autoRejectOptionId").is_none());
     }
 
-    // --- extract_query_from_permission_title tests ---
-
-    use crate::acp::inbound_request_router::extract_query_from_synthetic_permission;
-    use crate::acp::inbound_request_router::helpers::extract_query_from_permission_title;
-
-    #[test]
-    fn extracts_query_from_standard_title() {
-        assert_eq!(
-            extract_query_from_permission_title("Web search: rust language"),
-            Some("rust language".to_string()),
-        );
-    }
-
-    #[test]
-    fn extracts_query_preserving_original_casing() {
-        assert_eq!(
-            extract_query_from_permission_title("Web search: Rust Language Guide"),
-            Some("Rust Language Guide".to_string()),
-        );
-    }
-
-    #[test]
-    fn extracts_query_case_insensitive_prefix() {
-        assert_eq!(
-            extract_query_from_permission_title("web search: lowercase prefix"),
-            Some("lowercase prefix".to_string()),
-        );
-        assert_eq!(
-            extract_query_from_permission_title("WEB SEARCH: UPPER PREFIX"),
-            Some("UPPER PREFIX".to_string()),
-        );
-    }
-
-    #[test]
-    fn returns_none_for_empty_query() {
-        assert_eq!(extract_query_from_permission_title("Web search:   "), None);
-    }
-
-    #[test]
-    fn returns_none_for_non_web_search_title() {
-        assert_eq!(
-            extract_query_from_permission_title("Edit file: main.rs"),
-            None
-        );
-    }
-
-    #[test]
-    fn returns_none_for_short_title() {
-        assert_eq!(extract_query_from_permission_title("Web"), None);
-    }
-
-    #[test]
-    fn extract_query_from_synthetic_uses_parsed_arguments_primary() {
-        let parsed = Some(json!({"WebSearch": {"query": "tokio async runtime"}}));
-        let forwarded = json!({
-            "params": {
-                "toolCall": {
-                    "title": "Web search: ignored fallback"
-                }
-            }
-        });
-        assert_eq!(
-            extract_query_from_synthetic_permission(&parsed, &forwarded),
-            Some("tokio async runtime".to_string()),
-        );
-    }
-
-    #[test]
-    fn extract_query_from_synthetic_falls_back_to_title() {
-        let parsed: Option<Value> = None;
-        let forwarded = json!({
-            "params": {
-                "toolCall": {
-                    "title": "Web search: serde json"
-                }
-            }
-        });
-        assert_eq!(
-            extract_query_from_synthetic_permission(&parsed, &forwarded),
-            Some("serde json".to_string()),
-        );
-    }
-
-    #[test]
-    fn extract_query_from_synthetic_returns_none_when_both_missing() {
-        let parsed: Option<Value> = None;
-        let forwarded = json!({"params": {"toolCall": {}}});
-        assert_eq!(
-            extract_query_from_synthetic_permission(&parsed, &forwarded),
-            None,
-        );
-    }
-
     #[test]
     fn forwarded_permission_request_injects_parsed_arguments() {
         let mut forwarded = super::ForwardedPermissionRequest::new(json!({
@@ -706,6 +612,7 @@ mod tests {
 
         let remapped = super::remap_forwarded_web_search_tool_call_id(
             &mut forwarded,
+            Some(&crate::acp::providers::cursor::CursorProvider),
             &parsed,
             &mut synthetic_tool_call,
             &mut dedup,

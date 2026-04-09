@@ -229,7 +229,10 @@ async fn collect_replay_updates(
                     continue;
                 }
 
-                match serde_json::from_value::<SessionUpdate>(envelope.payload) {
+                match crate::acp::agent_context::with_agent(
+                    crate::acp::parsers::AgentType::Copilot,
+                    || serde_json::from_value::<SessionUpdate>(envelope.payload),
+                ) {
                     Ok(update) => updates.push((envelope.emitted_at_ms, update)),
                     Err(error) => {
                         tracing::warn!(
@@ -639,6 +642,7 @@ mod tests {
                             content: ContentBlock::Text {
                                 text: "Summarize the repo".to_string(),
                             },
+                            aggregation_hint: None,
                         },
                         session_id: Some(session_id.to_string()),
                     },
@@ -650,6 +654,7 @@ mod tests {
                             content: ContentBlock::Text {
                                 text: "Scanning the workspace".to_string(),
                             },
+                            aggregation_hint: None,
                         },
                         part_id: None,
                         message_id: Some("assistant-1".to_string()),

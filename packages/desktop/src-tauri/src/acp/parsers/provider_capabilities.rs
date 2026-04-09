@@ -1,9 +1,11 @@
 //! Authoritative provider -> capability composition registry.
 
+use crate::acp::model_display::{ModelDisplayFamily, UsageMetricsPresentation};
 use crate::acp::parsers::types::{AgentParser, AgentType};
 use crate::acp::parsers::{
     ClaudeCodeParser, CodexParser, CopilotParser, CursorParser, OpenCodeParser,
 };
+use crate::acp::session_update::PlanSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportFamily {
@@ -54,6 +56,9 @@ pub struct ProviderCapabilities {
     pub invocation_enrichment: InvocationEnrichment,
     pub edit_normalization: EditNormalization,
     pub usage_telemetry: UsageTelemetryFamily,
+    pub default_plan_source: PlanSource,
+    pub model_display_family: ModelDisplayFamily,
+    pub usage_metrics_presentation: UsageMetricsPresentation,
 }
 
 const NO_ENRICHMENT: InvocationEnrichment = InvocationEnrichment {
@@ -87,6 +92,9 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
         invocation_enrichment: NO_ENRICHMENT,
         edit_normalization: EditNormalization::ClaudeCode,
         usage_telemetry: UsageTelemetryFamily::SharedChat,
+        default_plan_source: PlanSource::Deterministic,
+        model_display_family: ModelDisplayFamily::ClaudeLike,
+        usage_metrics_presentation: UsageMetricsPresentation::ContextWindowOnly,
     },
     ProviderCapabilities {
         provider_id: "copilot",
@@ -97,6 +105,9 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
         invocation_enrichment: NO_ENRICHMENT,
         edit_normalization: EditNormalization::Copilot,
         usage_telemetry: UsageTelemetryFamily::SharedChat,
+        default_plan_source: PlanSource::Deterministic,
+        model_display_family: ModelDisplayFamily::ClaudeLike,
+        usage_metrics_presentation: UsageMetricsPresentation::SpendAndContext,
     },
     ProviderCapabilities {
         provider_id: "opencode",
@@ -107,6 +118,9 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
         invocation_enrichment: NO_ENRICHMENT,
         edit_normalization: EditNormalization::OpenCode,
         usage_telemetry: UsageTelemetryFamily::Standard,
+        default_plan_source: PlanSource::Heuristic,
+        model_display_family: ModelDisplayFamily::ProviderGrouped,
+        usage_metrics_presentation: UsageMetricsPresentation::SpendAndContext,
     },
     ProviderCapabilities {
         provider_id: "cursor",
@@ -117,6 +131,9 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
         invocation_enrichment: CURSOR_ENRICHMENT,
         edit_normalization: EditNormalization::Cursor,
         usage_telemetry: UsageTelemetryFamily::Standard,
+        default_plan_source: PlanSource::Deterministic,
+        model_display_family: ModelDisplayFamily::ProviderGrouped,
+        usage_metrics_presentation: UsageMetricsPresentation::SpendAndContext,
     },
     ProviderCapabilities {
         provider_id: "codex",
@@ -127,6 +144,9 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
         invocation_enrichment: CODEX_ENRICHMENT,
         edit_normalization: EditNormalization::Codex,
         usage_telemetry: UsageTelemetryFamily::Standard,
+        default_plan_source: PlanSource::Heuristic,
+        model_display_family: ModelDisplayFamily::CodexReasoningEffort,
+        usage_metrics_presentation: UsageMetricsPresentation::SpendAndContext,
     },
 ];
 
@@ -187,5 +207,23 @@ mod tests {
         assert!(codex.invocation_enrichment.non_destructive_path_hints);
         assert!(codex.invocation_enrichment.nested_argument_merge);
         assert!(!codex.invocation_enrichment.location_path_hint);
+    }
+
+    #[test]
+    fn provider_capabilities_capture_plan_and_presentation_defaults() {
+        let claude = provider_capabilities(AgentType::ClaudeCode);
+        assert_eq!(claude.default_plan_source, PlanSource::Deterministic);
+        assert_eq!(claude.model_display_family, ModelDisplayFamily::ClaudeLike);
+        assert_eq!(
+            claude.usage_metrics_presentation,
+            UsageMetricsPresentation::ContextWindowOnly
+        );
+
+        let codex = provider_capabilities(AgentType::Codex);
+        assert_eq!(codex.default_plan_source, PlanSource::Heuristic);
+        assert_eq!(
+            codex.model_display_family,
+            ModelDisplayFamily::CodexReasoningEffort
+        );
     }
 }

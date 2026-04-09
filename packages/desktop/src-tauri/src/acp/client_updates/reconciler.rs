@@ -1,4 +1,5 @@
 use super::*;
+use crate::acp::task_reconciler::TaskReconciliationPolicy;
 
 pub(crate) fn process_through_reconciler(
     update: &SessionUpdate,
@@ -29,8 +30,10 @@ pub(crate) fn process_through_reconciler(
                     agent_type,
                 );
             }
-            let outputs =
-                reconciler_guard.handle_tool_call_for_agent(tool_call.clone(), agent_type);
+            let policy = provider
+                .map(|provider| provider.task_reconciliation_policy())
+                .unwrap_or(TaskReconciliationPolicy::Disabled);
+            let outputs = reconciler_guard.handle_tool_call_with_policy(tool_call.clone(), policy);
             outputs
                 .into_iter()
                 .filter_map(|output| match output {
@@ -100,7 +103,7 @@ mod tests {
     use crate::acp::session_update::{
         SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus, ToolKind,
     };
-    use crate::acp::task_reconciler::TaskReconciler;
+    use crate::acp::task_reconciler::{TaskReconciler, TaskReconciliationPolicy};
     use std::collections::HashMap;
     use std::sync::{Arc as StdArc, Mutex};
 
@@ -123,8 +126,8 @@ mod tests {
             }
         }
 
-        fn uses_task_reconciler(&self) -> bool {
-            true
+        fn task_reconciliation_policy(&self) -> TaskReconciliationPolicy {
+            TaskReconciliationPolicy::ImplicitSingleActiveParent
         }
     }
 

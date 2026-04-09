@@ -86,8 +86,8 @@ fn take_synthetic_tool_completions_for_resumed_tool_turn(
         } else {
             ToolCallStatus::Completed
         };
-        let failure_reason =
-            tool_name_expects_permission_callback(&pending_tool_call.tool_name).then_some(
+        let failure_reason = tool_name_expects_permission_callback(&pending_tool_call.tool_name)
+            .then_some(
                 "Permission callback was never received, so the command did not produce output."
                     .to_string(),
             );
@@ -214,6 +214,7 @@ fn translate_assistant(
                 updates.push(SessionUpdate::AgentMessageChunk {
                     chunk: ContentChunk {
                         content: ContentBlock::Text { text: text.text },
+                        aggregation_hint: None,
                     },
                     part_id: None,
                     message_id: None,
@@ -231,6 +232,7 @@ fn translate_assistant(
                         content: ContentBlock::Text {
                             text: thinking.thinking,
                         },
+                        aggregation_hint: None,
                     },
                     part_id: None,
                     message_id: None,
@@ -440,6 +442,7 @@ fn translate_stream_event(
                     vec![SessionUpdate::AgentMessageChunk {
                         chunk: ContentChunk {
                             content: ContentBlock::Text { text },
+                            aggregation_hint: None,
                         },
                         part_id: None,
                         message_id: None,
@@ -456,6 +459,7 @@ fn translate_stream_event(
                     vec![SessionUpdate::AgentThoughtChunk {
                         chunk: ContentChunk {
                             content: ContentBlock::Text { text: thinking },
+                            aggregation_hint: None,
                         },
                         part_id: None,
                         message_id: None,

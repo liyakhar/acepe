@@ -43,7 +43,7 @@ pub struct AcpClient {
     pub(super) active_session_id: StdArc<std::sync::Mutex<Option<String>>>,
     /// Provider-specific response adapters for inbound requests, keyed by JSON-RPC request ID.
     pub(super) inbound_response_adapters:
-        StdArc<std::sync::Mutex<HashMap<u64, CursorResponseAdapter>>>,
+        StdArc<std::sync::Mutex<HashMap<u64, InboundResponseAdapter>>>,
     /// Whether session/load replay is currently in progress.
     /// Set by ReplayGuard in resume_session(); auto-cancels all inbound requests during replay.
     pub(super) is_replay_active: StdArc<std::sync::atomic::AtomicBool>,

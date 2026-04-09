@@ -5,7 +5,6 @@ use crate::acp::client_transport::{
     InboundRequestResponder,
 };
 use crate::acp::client_updates::handle_session_update_notification;
-use crate::acp::cursor_extensions::CursorResponseAdapter;
 use crate::acp::inbound_request_router::{
     remap_forwarded_web_search_tool_call_id, route_backend_inbound_request,
     ForwardedPermissionRequest, InboundRoutingDecision,
@@ -17,6 +16,7 @@ use crate::acp::parsers::AgentType;
 use crate::acp::permission_tracker::{PermissionContext, PermissionTracker, WebSearchDedup};
 use crate::acp::projections::ProjectionRegistry;
 use crate::acp::provider::AgentProvider;
+use crate::acp::provider_extensions::InboundResponseAdapter;
 use crate::acp::session_registry::SessionRegistry;
 use crate::acp::session_update::{
     SessionUpdate, ToolArguments, ToolKind, TurnErrorData, TurnErrorInfo, TurnErrorKind,
@@ -223,7 +223,7 @@ pub(crate) struct StdoutLoopContext {
     pub permission_tracker: StdArc<std::sync::Mutex<PermissionTracker>>,
     pub web_search_dedup: StdArc<std::sync::Mutex<WebSearchDedup>>,
     pub active_session_id: StdArc<std::sync::Mutex<Option<String>>>,
-    pub inbound_response_adapters: StdArc<std::sync::Mutex<HashMap<u64, CursorResponseAdapter>>>,
+    pub inbound_response_adapters: StdArc<std::sync::Mutex<HashMap<u64, InboundResponseAdapter>>>,
     pub is_replay_active: StdArc<std::sync::atomic::AtomicBool>,
     pub provider: Option<StdArc<dyn AgentProvider>>,
     pub agent_type: AgentType,
@@ -415,6 +415,7 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                         if let Ok(mut dedup) = ctx.web_search_dedup.lock() {
                                             if let Some(canonical_id) = remap_forwarded_web_search_tool_call_id(
                                                 &mut forwarded,
+                                                ctx.provider.as_deref(),
                                                 &parsed_arguments,
                                                 &mut synthetic_tool_call,
                                                 &mut dedup,

@@ -122,6 +122,9 @@ const effectiveAgentId = $derived(prPrefs.agentId ? prPrefs.agentId : currentAge
 const reactiveModels = $derived(
 	effectiveAgentId ? agentModelPrefs.getCachedModels(effectiveAgentId) : []
 );
+const reactiveModelsDisplay = $derived(
+	effectiveAgentId ? agentModelPrefs.getCachedModelsDisplay(effectiveAgentId) : null
+);
 const selectedModelId = $derived(getValidPrGenerationModelId(prPrefs.modelId, reactiveModels));
 const effectiveModelId = $derived(selectedModelId ? selectedModelId : currentModelId);
 
@@ -138,7 +141,7 @@ const effectiveModel = $derived.by((): Model | null => {
 
 const effectiveModelDisplayName = $derived.by(() => {
 	if (!effectiveModel) return "Choose model";
-	return getModelDisplayName(effectiveModel, effectiveAgentId);
+	return getModelDisplayName(effectiveModel, effectiveAgentId, reactiveModelsDisplay);
 });
 
 const effectiveAgentDisplayName = $derived.by(() => {
@@ -506,7 +509,7 @@ function handlePromptResetClick(): void {
 											</DropdownMenu.Trigger>
 											<DropdownMenu.Content align="start" class="w-[210px] p-0" sideOffset={6}>
 												{#each reactiveModels as model (model.id)}
-													{@const displayName = getModelDisplayName(model, effectiveAgentId)}
+													{@const displayName = getModelDisplayName(model, effectiveAgentId, reactiveModelsDisplay)}
 													{@const isSelected = model.id === effectiveModelId}
 													<DropdownMenu.Item
 														onSelect={() => handleModelPickerChange(model.id)}

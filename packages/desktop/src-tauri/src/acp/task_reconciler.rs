@@ -10,11 +10,28 @@
 use indexmap::{IndexMap, IndexSet};
 use std::collections::HashMap;
 
-use super::parsers::AgentType;
 use super::session_update::{
     ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind,
 };
 use super::tool_call_presentation::merge_tool_arguments as merge_canonical_tool_arguments;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskReconciliationPolicy {
+    #[default]
+    Disabled,
+    ExplicitParentIds,
+    ImplicitSingleActiveParent,
+}
+
+impl TaskReconciliationPolicy {
+    pub fn uses_task_reconciler(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    fn infers_implicit_child_parent(self) -> bool {
+        matches!(self, Self::ImplicitSingleActiveParent)
+    }
+}
 
 /// A task being assembled with its children.
 #[derive(Debug, Clone)]
@@ -78,16 +95,16 @@ impl TaskReconciler {
     ///
     /// Returns outputs to emit to the frontend.
     pub fn handle_tool_call(&mut self, tool_call: ToolCallData) -> Vec<ReconcilerOutput> {
-        self.handle_tool_call_with_options(tool_call, false)
+        self.handle_tool_call_with_policy(tool_call, TaskReconciliationPolicy::Disabled)
     }
 
-    /// Process an incoming tool call with agent-specific behavior enabled.
-    pub fn handle_tool_call_for_agent(
+    /// Process an incoming tool call with provider-owned reconciliation policy.
+    pub fn handle_tool_call_with_policy(
         &mut self,
         tool_call: ToolCallData,
-        agent_type: AgentType,
+        policy: TaskReconciliationPolicy,
     ) -> Vec<ReconcilerOutput> {
-        self.handle_tool_call_with_options(tool_call, agent_type == AgentType::Copilot)
+        self.handle_tool_call_with_options(tool_call, policy.infers_implicit_child_parent())
     }
 
     fn handle_tool_call_with_options(
@@ -821,6 +838,31 @@ mod tests {
 
         // Should be tracked as active task
         assert!(reconciler.active_tasks.contains_key("task-1"));
+    }
+
+    #[test]
+    fn implicit_single_active_parent_policy_attaches_unparented_child() {
+        let mut reconciler = TaskReconciler::new();
+
+        let task = make_task_tool_call_empty_input("task-1");
+        reconciler.handle_tool_call(task);
+
+        let child = make_regular_tool_call("child-1");
+        let outputs = reconciler.handle_tool_call_with_options(child, true);
+
+        assert_eq!(outputs.len(), 1);
+        match &outputs[0] {
+            ReconcilerOutput::EmitToolCall(tc) => {
+                assert_eq!(tc.id, "task-1");
+                let children = tc
+                    .task_children
+                    .as_ref()
+                    .expect("implicit policy should attach child");
+                assert_eq!(children.len(), 1);
+                assert_eq!(children[0].id, "child-1");
+            }
+            _ => panic!("Expected EmitToolCall"),
+        }
     }
 
     #[test]

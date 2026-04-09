@@ -210,7 +210,7 @@ describe("resolveChunkAction", () => {
 			expect(decision).toEqual({ action: "merge", entryId: "uuid-new" });
 		});
 
-		it("keeps punctuation-only carryover merged into pre-boundary entry", () => {
+		it("keeps explicitly tagged carryover merged into pre-boundary entry", () => {
 			const state: AggregationState = {
 				lastKnownMessageId: null,
 				pendingBoundaries: new Set(["msg-1"]),
@@ -219,6 +219,7 @@ describe("resolveChunkAction", () => {
 			const input = makeInput({
 				messageId: "msg-1",
 				content: { type: "text", text: "." },
+				aggregationHint: "boundaryCarryover",
 			});
 
 			const { decision, nextState } = resolveChunkAction(
@@ -234,7 +235,7 @@ describe("resolveChunkAction", () => {
 			expect(nextState.lastKnownMessageId).toBe("msg-1");
 		});
 
-		it("keeps punctuation-only carryover on pre-boundary entry when messageId is missing", () => {
+		it("keeps explicitly tagged carryover on pre-boundary entry when messageId is missing", () => {
 			const state: AggregationState = {
 				lastKnownMessageId: null,
 				pendingBoundaries: new Set(["msg-1"]),
@@ -243,6 +244,7 @@ describe("resolveChunkAction", () => {
 			const input = makeInput({
 				messageId: undefined,
 				content: { type: "text", text: "." },
+				aggregationHint: "boundaryCarryover",
 			});
 
 			const { decision, nextState } = resolveChunkAction(
@@ -256,6 +258,26 @@ describe("resolveChunkAction", () => {
 			expect(nextState.pendingBoundaries.has("msg-1")).toBe(true);
 			expect(nextState.postBoundaryMap.has("msg-1")).toBe(false);
 			expect(nextState.lastKnownMessageId).toBe("msg-1");
+		});
+
+		it("consumes the boundary when punctuation is not explicitly tagged", () => {
+			const state: AggregationState = {
+				lastKnownMessageId: null,
+				pendingBoundaries: new Set(["msg-1"]),
+				postBoundaryMap: new Map(),
+			};
+			const input = makeInput({
+				messageId: "msg-1",
+				content: { type: "text", text: "." },
+			});
+
+			const { decision } = resolveChunkAction(state, input, entriesExist("msg-1"), idGen("uuid-new"));
+
+			expect(decision).toEqual({
+				action: "create",
+				entryId: "uuid-new",
+				boundaryConsumed: true,
+			});
 		});
 	});
 

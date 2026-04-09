@@ -1,11 +1,14 @@
 use crate::acp::session_update::{
-    ContentChunk, PermissionData, QuestionData, QuestionItem, QuestionOption, SessionUpdate,
-    ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference,
-    TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
+    ChunkAggregationHint, ContentChunk, PermissionData, QuestionData, QuestionItem,
+    QuestionOption, SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus,
+    ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData, TurnErrorInfo, TurnErrorKind,
+    TurnErrorSource,
 };
 use crate::acp::tool_call_presentation::{synthesize_locations, synthesize_title};
 use crate::acp::types::ContentBlock;
 use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 const COMMAND_APPROVAL_METHOD: &str = "item/commandExecution/requestApproval";
 const FILE_READ_APPROVAL_METHOD: &str = "item/fileRead/requestApproval";
@@ -88,6 +91,24 @@ fn translate_text_delta(
     };
 
     vec![update]
+}
+
+fn classify_chunk_aggregation_hint(text: &str) -> Option<ChunkAggregationHint> {
+    if text.trim().is_empty() {
+        return None;
+    }
+
+    if text.chars().all(|ch| {
+        ch.is_ascii_whitespace()
+            || matches!(
+                ch,
+                '.' | ',' | '!' | '?' | ';' | ':' | ')' | ']' | '}' | '>' | '"' | '\'' | '`' | '-'
+            )
+    }) {
+        return Some(ChunkAggregationHint::BoundaryCarryover);
+    }
+
+    None
 }
 
 fn translate_permission_request(
@@ -567,6 +588,7 @@ fn text_chunk(text: &str) -> ContentChunk {
         content: ContentBlock::Text {
             text: text.to_string(),
         },
+        aggregation_hint: classify_chunk_aggregation_hint(text),
     }
 }
 
@@ -583,7 +605,7 @@ mod tests {
     fn translates_agent_message_delta_into_stream_chunk() {
         let updates = translate_codex_native_server_message(
             "session-1",
-            &json!({
+            &serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "item/agentMessage/delta",
                 "params": {
@@ -619,7 +641,7 @@ mod tests {
     fn translates_reasoning_delta_into_thought_chunk() {
         let updates = translate_codex_native_server_message(
             "session-1",
-            &json!({
+            &serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "item/reasoning/textDelta",
                 "params": {
@@ -1250,6 +1272,31 @@ mod tests {
                 updates.is_empty(),
                 "item/started with type={item_type} should be ignored"
             );
+            }
         }
     }
-}
+
+    #[test]
+    fn tags_punctuation_only_text_deltas_as_boundary_carryover() {
+        let updates = translate_codex_native_server_message(
+            "session-1",
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-1",
+                    "delta": "."
+                }
+            }),
+        );
+
+        match &updates[0] {
+            SessionUpdate::AgentMessageChunk { chunk, .. } => {
+                assert_eq!(
+                    chunk.aggregation_hint,
+                    Some(crate::acp::session_update::ChunkAggregationHint::BoundaryCarryover)
+                );
+            }
+            other => panic!("unexpected update: {other:?}"),
+        }
+    }

@@ -28,7 +28,7 @@ impl<'de> serde::Deserialize<'de> for SessionUpdate {
         D: serde::Deserializer<'de>,
     {
         let raw: RawSessionUpdate = serde::Deserialize::deserialize(deserializer)?;
-        parse_raw_session_update::<D::Error>(raw, current_agent())
+        parse_raw_session_update::<D::Error>(raw, deserialize_agent_context::<D::Error>()?)
     }
 }
 
@@ -296,6 +296,23 @@ where
     }
 }
 
+fn deserialize_agent_context<E>() -> Result<AgentType, E>
+where
+    E: serde::de::Error,
+{
+    #[cfg(test)]
+    {
+        return Ok(current_agent().unwrap_or(AgentType::ClaudeCode));
+    }
+
+    #[cfg(not(test))]
+    {
+        current_agent().ok_or_else(|| {
+            serde::de::Error::custom("Missing agent context for SessionUpdate deserialization")
+        })
+    }
+}
+
 fn deserialize_serialized_tool_call_with_agent<E>(
     value: serde_json::Value,
     agent: AgentType,
@@ -314,6 +331,7 @@ where
 /// Uses the parser architecture (`crate::acp::parsers`) for agent-agnostic parsing.
 /// First checks explicit type fields as a fast-path, then delegates to the
 /// appropriate parser (ClaudeCodeParser, OpenCodeParser, etc.) for the provided agent.
+#[cfg(test)]
 pub(crate) fn extract_update_type<E>(
     data: &serde_json::Value,
     type_field: &Option<String>,
@@ -322,7 +340,12 @@ pub(crate) fn extract_update_type<E>(
 where
     E: serde::de::Error,
 {
-    extract_update_type_with_agent(data, type_field, session_update_field, current_agent())
+    extract_update_type_with_agent(
+        data,
+        type_field,
+        session_update_field,
+        current_agent().unwrap_or(AgentType::ClaudeCode),
+    )
 }
 
 fn extract_update_type_with_agent<E>(

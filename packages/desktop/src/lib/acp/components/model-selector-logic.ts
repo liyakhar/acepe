@@ -6,6 +6,12 @@
  */
 
 import type { Model } from "../application/dto/model.js";
+import type {
+	DisplayableModel,
+	ModelDisplayFamily,
+	ModelsForDisplay,
+	UsageMetricsPresentation,
+} from "../../services/acp-types.js";
 
 import { AGENT_IDS } from "../types/agent-id.js";
 
@@ -29,7 +35,34 @@ function capitalizeName(name: string): string {
  * @param agentId - The agent ID, used to determine extraction behavior
  * @returns The display name for the model
  */
-export function getModelDisplayName(model: Model, agentId: string | null): string {
+function findDisplayModel(
+	modelId: string,
+	modelsDisplay: ModelsForDisplay | null | undefined
+): DisplayableModel | null {
+	if (!modelsDisplay?.groups) {
+		return null;
+	}
+
+	for (const group of modelsDisplay.groups) {
+		const match = group.models.find((candidate) => candidate.modelId === modelId);
+		if (match) {
+			return match;
+		}
+	}
+
+	return null;
+}
+
+export function getModelDisplayName(
+	model: Model,
+	agentId: string | null,
+	modelsDisplay?: ModelsForDisplay | null
+): string {
+	const displayModel = findDisplayModel(model.id, modelsDisplay);
+	if (displayModel) {
+		return displayModel.displayName;
+	}
+
 	// For Claude Code, try to extract model name from description (format: "Model Name · Description")
 	if (agentId === AGENT_IDS.CLAUDE_CODE && model.description) {
 		const parts = model.description.split(" · ");
@@ -232,7 +265,26 @@ export function getCodexCurrentVariant(
 	return baseGroups[0]?.variants[0] ?? null;
 }
 
-export function supportsReasoningEffortPicker(models: readonly Model[]): boolean {
+export function getModelDisplayFamily(
+	modelsDisplay: ModelsForDisplay | null | undefined
+): ModelDisplayFamily | null {
+	return modelsDisplay?.presentation?.displayFamily ?? null;
+}
+
+export function getUsageMetricsPresentation(
+	modelsDisplay: ModelsForDisplay | null | undefined
+): UsageMetricsPresentation | null {
+	return modelsDisplay?.presentation?.usageMetrics ?? null;
+}
+
+export function supportsReasoningEffortPicker(
+	models: readonly Model[],
+	modelsDisplay?: ModelsForDisplay | null
+): boolean {
+	if (getModelDisplayFamily(modelsDisplay) === "codexReasoningEffort") {
+		return true;
+	}
+
 	const validModels = models.filter((model) => model.id);
 	if (validModels.length === 0) {
 		return false;
@@ -245,4 +297,10 @@ export function supportsReasoningEffortPicker(models: readonly Model[]): boolean
 
 	const groups = groupCodexModelsByBase(validModels);
 	return groups.some((group) => group.variants.length > 1);
+}
+
+export function isContextWindowOnlyMetrics(
+	modelsDisplay: ModelsForDisplay | null | undefined
+): boolean {
+	return getUsageMetricsPresentation(modelsDisplay) === "contextWindowOnly";
 }

@@ -29,6 +29,7 @@ pub mod partial_json;
 pub mod permission_tracker;
 pub mod projections;
 pub mod provider;
+pub mod provider_extensions;
 pub mod providers;
 pub mod registry;
 pub mod session_journal;

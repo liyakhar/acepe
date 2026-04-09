@@ -72,13 +72,13 @@ export function createContextUsageSegments(
 
 export function hasVisibleModelSelectorMetrics(
 	usageTelemetry: SessionUsageTelemetry | null,
-	isClaudeCode: boolean
+	contextWindowOnlyMetrics: boolean
 ): boolean {
 	if (usageTelemetry === null) {
 		return false;
 	}
 
-	if (isClaudeCode) {
+	if (contextWindowOnlyMetrics) {
 		return true;
 	}
 

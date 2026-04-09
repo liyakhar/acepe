@@ -900,6 +900,7 @@ mod tests {
                     content: ContentBlock::Text {
                         text: "hello".to_string(),
                     },
+                    aggregation_hint: None,
                 },
                 part_id: None,
                 message_id: Some("msg-1".to_string()),

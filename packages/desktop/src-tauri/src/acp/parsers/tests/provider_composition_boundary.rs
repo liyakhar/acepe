@@ -207,3 +207,16 @@ fn provider_modules_do_not_cross_provider_boundaries() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn agent_context_does_not_silently_default_to_a_built_in_provider() {
+    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/acp/agent_context.rs");
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()));
+
+    assert!(
+        !source.contains("unwrap_or(AgentType::ClaudeCode)")
+            && !source.contains("unwrap_or(AgentType::Copilot)"),
+        "agent_context.rs must not silently default missing context to a built-in agent"
+    );
+}

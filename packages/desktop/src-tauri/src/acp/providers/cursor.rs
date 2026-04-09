@@ -6,10 +6,12 @@ use super::super::provider::{command_exists, AgentProvider, ModelFallbackCandida
 use super::cursor_session_update_enrichment::enrich_cursor_session_update;
 use crate::acp::cursor_extensions::{
     adapt_cursor_response, cursor_extension_kind, is_cursor_extension_pre_tool,
-    normalize_cursor_extension, CursorExtensionEvent, CursorResponseAdapter,
+    normalize_cursor_extension,
 };
 use crate::acp::error::{AcpError, AcpResult};
-use crate::acp::session_update::{PlanSource, SessionUpdate};
+use crate::acp::provider_extensions::{InboundResponseAdapter, ProviderExtensionEvent};
+use crate::acp::session_update::SessionUpdate;
+use crate::acp::task_reconciler::TaskReconciliationPolicy;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::future::Future;
@@ -143,10 +145,6 @@ impl AgentProvider for CursorProvider {
         })
     }
 
-    fn default_plan_source(&self) -> PlanSource {
-        PlanSource::Deterministic
-    }
-
     fn enrich_session_update<'a>(
         &'a self,
         update: SessionUpdate,
@@ -155,7 +153,11 @@ impl AgentProvider for CursorProvider {
     }
 
     fn uses_task_reconciler(&self) -> bool {
-        true
+        self.task_reconciliation_policy().uses_task_reconciler()
+    }
+
+    fn task_reconciliation_policy(&self) -> TaskReconciliationPolicy {
+        TaskReconciliationPolicy::ExplicitParentIds
     }
 
     fn normalize_extension_method(
@@ -164,7 +166,7 @@ impl AgentProvider for CursorProvider {
         params: &Value,
         request_id: Option<u64>,
         current_session_id: Option<&str>,
-    ) -> Result<Option<CursorExtensionEvent>, String> {
+    ) -> Result<Option<ProviderExtensionEvent>, String> {
         if cursor_extension_kind(method).is_none() {
             return Ok(None);
         }
@@ -172,8 +174,16 @@ impl AgentProvider for CursorProvider {
         normalize_cursor_extension(method, params, request_id, current_session_id).map(Some)
     }
 
-    fn adapt_inbound_response(&self, adapter: &CursorResponseAdapter, result: &Value) -> Value {
+    fn adapt_inbound_response(&self, adapter: &InboundResponseAdapter, result: &Value) -> Value {
         adapt_cursor_response(adapter, result)
+    }
+
+    fn extract_synthetic_permission_query(
+        &self,
+        parsed_arguments: &Option<Value>,
+        forwarded: &Value,
+    ) -> Option<String> {
+        extract_cursor_query_from_synthetic_permission(parsed_arguments, forwarded)
     }
 
     fn should_suppress_notification(&self, json: &Value) -> bool {
@@ -199,6 +209,42 @@ const ALLOWED_ENV_KEYS: &[&str] = &[
 
 fn filtered_env() -> HashMap<String, String> {
     crate::shell_env::build_env(crate::shell_env::EnvStrategy::Allowlist(ALLOWED_ENV_KEYS))
+}
+
+fn extract_cursor_query_from_synthetic_permission(
+    parsed_arguments: &Option<Value>,
+    forwarded: &Value,
+) -> Option<String> {
+    if let Some(query) = parsed_arguments
+        .as_ref()
+        .and_then(|args| args.pointer("/WebSearch/query"))
+        .and_then(Value::as_str)
+        .filter(|query| !query.is_empty())
+    {
+        return Some(query.to_string());
+    }
+
+    let title = forwarded
+        .pointer("/params/toolCall/title")
+        .and_then(Value::as_str)?;
+
+    extract_query_from_cursor_permission_title(title)
+}
+
+fn extract_query_from_cursor_permission_title(title: &str) -> Option<String> {
+    const PREFIX: &str = "web search: ";
+    if title.len() < PREFIX.len() {
+        return None;
+    }
+    if !title[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
+        return None;
+    }
+    let query = title[PREFIX.len()..].trim();
+    if query.is_empty() {
+        tracing::warn!(title = %title, "Web search permission title has empty query after prefix strip");
+        return None;
+    }
+    Some(query.to_string())
 }
 
 fn resolve_cursor_spawn_configs(
@@ -349,6 +395,73 @@ mod tests {
     fn uses_task_reconciler_for_repeated_tool_call_normalization() {
         let provider = CursorProvider;
         assert!(provider.uses_task_reconciler());
+    }
+
+    #[test]
+    fn extracts_query_from_synthetic_permission_arguments_before_title_fallback() {
+        let parsed = Some(json!({"WebSearch": {"query": "tokio async runtime"}}));
+        let forwarded = json!({
+            "params": {
+                "toolCall": {
+                    "title": "Web search: ignored fallback"
+                }
+            }
+        });
+
+        assert_eq!(
+            extract_cursor_query_from_synthetic_permission(&parsed, &forwarded),
+            Some("tokio async runtime".to_string())
+        );
+    }
+
+    #[test]
+    fn extracts_query_from_synthetic_permission_title_fallback() {
+        let parsed: Option<Value> = None;
+        let forwarded = json!({
+            "params": {
+                "toolCall": {
+                    "title": "Web search: serde json"
+                }
+            }
+        });
+
+        assert_eq!(
+            extract_cursor_query_from_synthetic_permission(&parsed, &forwarded),
+            Some("serde json".to_string())
+        );
+    }
+
+    #[test]
+    fn query_extraction_preserves_title_casing() {
+        assert_eq!(
+            extract_query_from_cursor_permission_title("Web search: Rust Language Guide"),
+            Some("Rust Language Guide".to_string())
+        );
+    }
+
+    #[test]
+    fn query_extraction_is_case_insensitive_on_prefix() {
+        assert_eq!(
+            extract_query_from_cursor_permission_title("web search: lowercase prefix"),
+            Some("lowercase prefix".to_string())
+        );
+        assert_eq!(
+            extract_query_from_cursor_permission_title("WEB SEARCH: UPPER PREFIX"),
+            Some("UPPER PREFIX".to_string())
+        );
+    }
+
+    #[test]
+    fn query_extraction_rejects_empty_or_non_search_titles() {
+        assert_eq!(
+            extract_query_from_cursor_permission_title("Web search:   "),
+            None
+        );
+        assert_eq!(
+            extract_query_from_cursor_permission_title("Edit file: main.rs"),
+            None
+        );
+        assert_eq!(extract_query_from_cursor_permission_title("Web"), None);
     }
 
     #[test]

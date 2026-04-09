@@ -6,7 +6,10 @@ use crate::acp::client::{
     ResumeSessionResponse, SessionModelState, SessionModes,
 };
 use crate::acp::domain_events::{SessionDomainEvent, SessionDomainEventKind};
-use crate::acp::model_display::{DisplayModelGroup, DisplayableModel, ModelsForDisplay};
+use crate::acp::model_display::{
+    DisplayModelGroup, DisplayableModel, ModelDisplayFamily, ModelPresentationMetadata,
+    ModelsForDisplay, UsageMetricsPresentation,
+};
 use crate::acp::projections::{
     InteractionKind, InteractionPayload, InteractionResponse, InteractionSnapshot,
     InteractionState, OperationSnapshot, PlanApprovalSource, SessionProjectionSnapshot,
@@ -17,9 +20,9 @@ use crate::acp::session_update::{
     ConfigOptionUpdateData, ConfigOptionValue, ContentChunk, CurrentModeData, EditEntry,
     InteractionReplyHandler, InteractionReplyHandlerKind, PermissionData, PlanConfidence, PlanData,
     PlanSource, PlanStep, PlanStepStatus, QuestionData, QuestionItem, QuestionOption,
-    SessionUpdate, SkillMeta, TodoItem, TodoStatus, ToolArguments, ToolCallData,
-    ToolCallLocation, ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData,
-    TurnErrorInfo, TurnErrorKind, TurnErrorSource, UsageTelemetryData, UsageTelemetryTokens,
+    SessionUpdate, SkillMeta, TodoItem, TodoStatus, ToolArguments, ToolCallData, ToolCallLocation,
+    ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData, TurnErrorInfo,
+    TurnErrorKind, TurnErrorSource, UsageTelemetryData, UsageTelemetryTokens,
 };
 use crate::acp::types::{CanonicalAgentId, ContentBlock, EmbeddedResource};
 use crate::checkpoint::types::FileDiffContent;
@@ -184,6 +187,9 @@ pub fn export_all_types() {
     export_acp_type!(AvailableCommand);
     export_acp_type!(DisplayableModel);
     export_acp_type!(DisplayModelGroup);
+    export_acp_type!(ModelDisplayFamily);
+    export_acp_type!(UsageMetricsPresentation);
+    export_acp_type!(ModelPresentationMetadata);
     export_acp_type!(ModelsForDisplay);
     export_acp_type!(SessionModelState);
     export_acp_type!(SessionModes);

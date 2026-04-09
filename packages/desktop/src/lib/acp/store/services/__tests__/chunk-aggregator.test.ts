@@ -157,7 +157,7 @@ describe("ChunkAggregator", () => {
 			expect(result.isErr()).toBe(true);
 		});
 
-		it("normalizes thought chunks by stripping prefix", async () => {
+		it("normalizes explicit thought chunks by stripping prefix", async () => {
 			await aggregator.aggregateAssistantChunk(
 				"session1",
 				{ content: { type: "text", text: "[Thinking] Let me check." } },
@@ -200,7 +200,7 @@ describe("ChunkAggregator", () => {
 			expect(mockIndex.addMessageId).toHaveBeenCalledWith("session1", "msg-1", 1);
 		});
 
-		it("detects implicit thought from [Thinking] prefix in message", async () => {
+		it("does not reinterpret message chunks from [Thinking] prefixes", async () => {
 			await aggregator.aggregateAssistantChunk(
 				"session1",
 				{ content: { type: "text", text: "[Thinking] Implicit thought." } },
@@ -211,10 +211,10 @@ describe("ChunkAggregator", () => {
 			const addedEntry = (mockStore.addEntry as ReturnType<typeof vi.fn>).mock
 				.calls[0][1] as SessionEntry;
 			if (addedEntry.type === "assistant") {
-				expect(addedEntry.message.chunks[0].type).toBe("thought");
+				expect(addedEntry.message.chunks[0].type).toBe("message");
 				expect(addedEntry.message.chunks[0].block).toEqual({
 					type: "text",
-					text: "Implicit thought.",
+					text: "[Thinking] Implicit thought.",
 				});
 			}
 		});

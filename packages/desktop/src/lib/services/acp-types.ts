@@ -31,10 +31,16 @@ export type DisplayableModel = { modelId: string; displayName: string; descripti
  */
 export type DisplayModelGroup = { label: string; models: DisplayableModel[] }
 
+export type ModelDisplayFamily = "claudeLike" | "codexReasoningEffort" | "providerGrouped"
+
+export type UsageMetricsPresentation = "contextWindowOnly" | "spendAndContext"
+
+export type ModelPresentationMetadata = { displayFamily: ModelDisplayFamily; usageMetrics: UsageMetricsPresentation }
+
 /**
  * Display-ready model structure. Single representation—flat = one group.
  */
-export type ModelsForDisplay = { groups: DisplayModelGroup[] }
+export type ModelsForDisplay = { groups: DisplayModelGroup[]; presentation?: ModelPresentationMetadata }
 
 export type SessionModelState = { availableModels?: AvailableModel[]; currentModelId?: string; modelsDisplay?: ModelsForDisplay }
 

@@ -104,9 +104,9 @@ mod session_metadata_tests {
                 kind: crate::acp::projections::InteractionKind::Question,
                 state: crate::acp::projections::InteractionState::Answered,
                 json_rpc_request_id: Some(7),
-                reply_handler: Some(crate::acp::session_update::InteractionReplyHandler::json_rpc(
-                    7,
-                )),
+                reply_handler: Some(
+                    crate::acp::session_update::InteractionReplyHandler::json_rpc(7),
+                ),
                 tool_reference: None,
                 responded_at_event_seq: Some(3),
                 response: Some(crate::acp::projections::InteractionResponse::Question {
@@ -162,9 +162,9 @@ mod session_metadata_tests {
                 id: "permission-1".to_string(),
                 session_id: "session-journal".to_string(),
                 json_rpc_request_id: Some(7),
-                reply_handler: Some(crate::acp::session_update::InteractionReplyHandler::json_rpc(
-                    7,
-                )),
+                reply_handler: Some(
+                    crate::acp::session_update::InteractionReplyHandler::json_rpc(7),
+                ),
                 permission: "Execute".to_string(),
                 patterns: vec![],
                 metadata: json!({ "command": "bun test" }),
@@ -178,9 +178,9 @@ mod session_metadata_tests {
                 id: "question-1".to_string(),
                 session_id: "session-journal".to_string(),
                 json_rpc_request_id: Some(8),
-                reply_handler: Some(crate::acp::session_update::InteractionReplyHandler::json_rpc(
-                    8,
-                )),
+                reply_handler: Some(
+                    crate::acp::session_update::InteractionReplyHandler::json_rpc(8),
+                ),
                 questions: vec![],
                 tool: None,
             },

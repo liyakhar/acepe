@@ -1,6 +1,5 @@
 <script lang="ts">
 import { getSessionStore } from "$lib/acp/store/index.js";
-import { AGENT_IDS } from "$lib/acp/types/agent-id.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import { Colors } from "@acepe/ui/colors";
 
@@ -11,6 +10,7 @@ import {
 	getContextUsagePercent,
 	hasVisibleModelSelectorMetrics,
 } from "./model-selector.metrics-chip.logic.js";
+import { isContextWindowOnlyMetrics } from "./model-selector-logic.js";
 
 interface Props {
 	sessionId: string | null;
@@ -19,7 +19,7 @@ interface Props {
 	hideLabel?: boolean;
 }
 
-let { sessionId, agentId = null, compact = false, hideLabel = false }: Props = $props();
+let { sessionId, agentId: _agentId = null, compact = false, hideLabel = false }: Props = $props();
 
 const sessionStore = getSessionStore();
 
@@ -28,10 +28,15 @@ const usageTelemetry = $derived.by(() => {
 	return sessionStore.getHotState(sessionId).usageTelemetry ?? null;
 });
 
-const contextWindow = $derived(usageTelemetry?.contextBudget?.maxTokens ?? null);
-const isClaudeCode = $derived(agentId === AGENT_IDS.CLAUDE_CODE);
+const modelsDisplay = $derived.by(() => {
+	if (!sessionId) return null;
+	return sessionStore.getCapabilities(sessionId).modelsDisplay ?? null;
+});
 
-const showChip = $derived(hasVisibleModelSelectorMetrics(usageTelemetry, isClaudeCode));
+const contextWindow = $derived(usageTelemetry?.contextBudget?.maxTokens ?? null);
+const contextOnlyMetrics = $derived(isContextWindowOnlyMetrics(modelsDisplay));
+
+const showChip = $derived(hasVisibleModelSelectorMetrics(usageTelemetry, contextOnlyMetrics));
 const showSpend = $derived(usageTelemetry != null && usageTelemetry.sessionSpendUsd > 0);
 const spendText = $derived(
 	usageTelemetry != null ? `$${usageTelemetry.sessionSpendUsd.toFixed(2)}` : ""
@@ -51,13 +56,13 @@ const claudeUsageText = $derived.by(() => {
 });
 const usageSegments = $derived(createContextUsageSegments(percent, compact ? 8 : 10));
 const statusLabel = $derived(
-	isClaudeCode ? "Context window usage" : "Session spend and context usage"
+	contextOnlyMetrics ? "Context window usage" : "Session spend and context usage"
 );
 
 const tooltipLines = $derived.by(() => {
 	if (!usageTelemetry) return [];
 	const lines: string[] = [];
-	if (!isClaudeCode) {
+	if (!contextOnlyMetrics) {
 		lines.push(`Session spend: $${usageTelemetry.sessionSpendUsd.toFixed(4)}`);
 	}
 	if (usageTelemetry.latestStepCostUsd != null) {
@@ -85,7 +90,7 @@ const tooltipLines = $derived.by(() => {
 		aria-label={statusLabel}
 	>
 		{#if !hideLabel}
-			{#if isClaudeCode}
+			{#if contextOnlyMetrics}
 				<span class="font-mono font-medium tabular-nums">{claudeUsageText}</span>
 			{:else if showSpend}
 				<span class="font-mono font-medium tabular-nums">{spendText}</span>

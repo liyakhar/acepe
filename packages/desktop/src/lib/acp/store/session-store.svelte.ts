@@ -14,6 +14,7 @@ import { SvelteSet } from "svelte/reactivity";
 import type { HistoryEntry } from "../../services/claude-history-types.js";
 import type {
 	ContentBlock,
+	ContentChunk,
 	PlanData,
 	ToolCallData,
 } from "../../services/converted-session-types.js";
@@ -969,7 +970,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	 */
 	aggregateAssistantChunk(
 		sessionId: string,
-		chunk: { content: ContentBlock },
+		chunk: ContentChunk,
 		messageId: string | undefined,
 		isThought: boolean
 	): ResultAsync<void, AppError> {

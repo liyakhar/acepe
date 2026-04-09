@@ -49,41 +49,7 @@ fn resolve_indexed_session_title(
         .unwrap_or_else(|| session_id[..8.min(session_id.len())].to_string())
 }
 
-async fn derive_indexed_session_title(
-    app: &AppHandle,
-    session_id: &str,
-    project_path: &str,
-    agent_id: &str,
-    file_path: &str,
-    worktree_path: Option<&str>,
-    display: &str,
-    title_overridden: bool,
-) -> String {
-    let source_path = SessionMetadataRepository::normalized_source_path(file_path);
-
-    if title_overridden {
-        return display.to_string();
-    }
-
-    if worktree_path.is_some() {
-        if let Ok(Some(session)) = crate::history::commands::session_loading::get_unified_session(
-            app.clone(),
-            session_id.to_string(),
-            project_path.to_string(),
-            agent_id.to_string(),
-            source_path,
-        )
-        .await
-        {
-            return resolve_indexed_session_title(
-                session_id,
-                display,
-                title_overridden,
-                Some(&session),
-            );
-        }
-    }
-
+fn derive_indexed_session_title(session_id: &str, display: &str, title_overridden: bool) -> String {
     resolve_indexed_session_title(session_id, display, title_overridden, None)
 }
 
@@ -100,7 +66,7 @@ pub async fn scan_project_sessions(
 
     SCAN_CACHE
         .get_or_fetch(key, || async {
-            scan_project_sessions_inner(app, project_paths, db).await
+            scan_project_sessions_inner(project_paths, db).await
         })
         .await
 }
@@ -192,7 +158,6 @@ pub async fn get_startup_sessions(
 }
 
 async fn scan_project_sessions_inner(
-    app: AppHandle,
     project_paths: Vec<String>,
     db: Option<DbConn>,
 ) -> Result<Vec<HistoryEntry>, String> {
@@ -230,17 +195,7 @@ async fn scan_project_sessions_inner(
         let mut entries: Vec<HistoryEntry> = Vec::with_capacity(count);
         for s in indexed {
             let session_lifecycle_state = s.lifecycle_state();
-            let display = derive_indexed_session_title(
-                &app,
-                &s.id,
-                &s.project_path,
-                &s.agent_id,
-                &s.file_path,
-                s.worktree_path.as_deref(),
-                &s.display,
-                s.title_overridden,
-            )
-            .await;
+            let display = derive_indexed_session_title(&s.id, &s.display, s.title_overridden);
             let worktree_deleted = s
                 .worktree_path
                 .as_ref()
@@ -356,7 +311,8 @@ async fn scan_project_sessions_inner(
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_title_from_converted_session, indexed_source_path, resolve_indexed_session_title,
+        derive_indexed_session_title, derive_title_from_converted_session, indexed_source_path,
+        resolve_indexed_session_title,
     };
     use crate::db::repository::SessionMetadataRow;
     use crate::session_jsonl::types::{
@@ -433,6 +389,14 @@ mod tests {
                 Some(&converted)
             ),
             "Design changes"
+        );
+    }
+
+    #[test]
+    fn indexed_derivation_prefers_cached_display_without_loading_history() {
+        assert_eq!(
+            derive_indexed_session_title("session-1", "Ship sidebar instantly", false),
+            "Ship sidebar instantly"
         );
     }
 }

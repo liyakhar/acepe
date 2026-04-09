@@ -9,7 +9,7 @@
  */
 
 import { err, errAsync, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
-import type { ContentBlock } from "../../../services/converted-session-types.js";
+import type { ContentBlock, ContentChunk } from "../../../services/converted-session-types.js";
 import type { AppError } from "../../errors/app-error.js";
 import {
 	createInitialState,
@@ -61,7 +61,7 @@ export class ChunkAggregator implements IChunkAggregator {
 	 */
 	aggregateAssistantChunk(
 		sessionId: string,
-		chunk: { content: ContentBlock },
+		chunk: ContentChunk,
 		messageId: string | undefined,
 		isThought: boolean
 	): ResultAsync<void, AppError> {
@@ -178,6 +178,7 @@ export class ChunkAggregator implements IChunkAggregator {
 				messageId: input.messageId,
 				content: input.content as ContentBlock,
 				isThought: input.isThought,
+				aggregationHint: input.aggregationHint ?? null,
 			},
 			(id) => this.assistantEntryExists(sessionId, id)
 		);
@@ -299,7 +300,7 @@ export class ChunkAggregator implements IChunkAggregator {
 
 	private validateChunkInput(
 		sessionId: string,
-		chunk: { content: ContentBlock },
+		chunk: ContentChunk,
 		messageId: string | undefined,
 		isThought: boolean
 	): Result<AssistantChunkInput, AppError> {
@@ -308,6 +309,7 @@ export class ChunkAggregator implements IChunkAggregator {
 			messageId,
 			content: chunk.content,
 			isThought,
+			aggregationHint: chunk.aggregationHint ?? null,
 		});
 
 		if (!parseResult.success) {

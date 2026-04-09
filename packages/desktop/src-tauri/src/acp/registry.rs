@@ -29,6 +29,9 @@ pub struct AgentInfo {
     pub availability_kind: AgentAvailabilityKind,
     /// Visible UI modes that support wrapper-managed Autonomous execution.
     pub autonomous_supported_mode_ids: Vec<String>,
+    /// Registry-owned default selection precedence for UI surfaces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_selection_rank: Option<u16>,
 }
 
 /// Registry for managing all available agents (built-in and custom)
@@ -117,7 +120,7 @@ impl AgentRegistry {
         let mut agents = Vec::new();
 
         // Add built-in agents in consistent order.
-        for agent_id in &Self::AGENT_ORDER {
+        for (index, agent_id) in Self::AGENT_ORDER.iter().enumerate() {
             if let Some(provider) = self.built_in.get(agent_id) {
                 if provider.ui_visibility() == AgentUiVisibility::Hidden {
                     continue;
@@ -137,6 +140,7 @@ impl AgentRegistry {
                         .iter()
                         .map(|mode_id| (*mode_id).to_string())
                         .collect(),
+                    default_selection_rank: Some(index as u16),
                 });
             }
         }
@@ -170,6 +174,7 @@ impl AgentRegistry {
                     .iter()
                     .map(|mode_id| (*mode_id).to_string())
                     .collect(),
+                default_selection_rank: None,
             });
         }
 
@@ -208,17 +213,9 @@ impl AgentRegistry {
     }
 
     /// Get the first available agent in priority order
-    /// Priority: claude-code > cursor > opencode > codex
+    /// Priority is registry-owned: ranked built-ins first, then stable custom ordering.
     pub fn get_first_available(&self) -> Option<CanonicalAgentId> {
-        const PRIORITY_ORDER: &[CanonicalAgentId] = &[
-            CanonicalAgentId::ClaudeCode,
-            CanonicalAgentId::Cursor,
-            CanonicalAgentId::Copilot,
-            CanonicalAgentId::OpenCode,
-            CanonicalAgentId::Codex,
-        ];
-
-        for agent_id in PRIORITY_ORDER {
+        for agent_id in &Self::AGENT_ORDER {
             if let Some(provider) = self.built_in.get(agent_id) {
                 if provider.ui_visibility() == AgentUiVisibility::Hidden {
                     continue;
@@ -233,7 +230,13 @@ impl AgentRegistry {
         // Check custom agents as fallback
         match self.custom.lock() {
             Ok(custom) => {
-                for (id, provider) in custom.iter() {
+                let mut custom_ids = custom.keys().cloned().collect::<Vec<_>>();
+                custom_ids.sort_by_key(|agent_id| agent_id.to_string());
+
+                for id in custom_ids {
+                    let Some(provider) = custom.get(&id) else {
+                        continue;
+                    };
                     if provider.ui_visibility() == AgentUiVisibility::Hidden {
                         continue;
                     }
@@ -335,6 +338,33 @@ mod tests {
             codex.autonomous_supported_mode_ids,
             vec!["build".to_string()]
         );
+    }
+
+    #[test]
+    fn list_all_for_ui_exposes_default_selection_rank_for_built_ins_only() {
+        let registry = AgentRegistry::new();
+        registry
+            .register_custom(CustomAgentConfig {
+                id: "custom-agent".to_string(),
+                name: "Custom Agent".to_string(),
+                command: "custom-agent".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            })
+            .expect("register custom agent");
+
+        let agents = registry.list_all_for_ui();
+        let claude = agents
+            .iter()
+            .find(|agent| agent.id == "claude-code")
+            .expect("Claude agent should exist");
+        let custom = agents
+            .iter()
+            .find(|agent| agent.id == "custom-agent")
+            .expect("custom agent should exist");
+
+        assert_eq!(claude.default_selection_rank, Some(0));
+        assert_eq!(custom.default_selection_rank, None);
     }
 
     #[test]
@@ -470,6 +500,37 @@ mod tests {
             agent.availability_kind,
             AgentAvailabilityKind::Installable { installed: true }
         ));
+    }
+
+    #[test]
+    fn get_first_available_uses_stable_custom_fallback_order() {
+        let registry = AgentRegistry {
+            built_in: HashMap::new(),
+            custom: Mutex::new(HashMap::new()),
+        };
+        registry
+            .register_custom(CustomAgentConfig {
+                id: "zebra-agent".to_string(),
+                name: "Zebra Agent".to_string(),
+                command: "sh".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            })
+            .expect("register zebra agent");
+        registry
+            .register_custom(CustomAgentConfig {
+                id: "alpha-agent".to_string(),
+                name: "Alpha Agent".to_string(),
+                command: "sh".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            })
+            .expect("register alpha agent");
+
+        assert_eq!(
+            registry.get_first_available(),
+            Some(CanonicalAgentId::parse("alpha-agent"))
+        );
     }
 
     #[test]

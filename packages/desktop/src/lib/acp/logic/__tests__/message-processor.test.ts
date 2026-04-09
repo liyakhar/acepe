@@ -192,7 +192,7 @@ describe("MessageProcessor", () => {
 				}
 			});
 
-			it("detects [Thinking] prefix in message chunks and converts to thought", () => {
+			it("does not reinterpret message chunks with [Thinking] prefixes", () => {
 				const messageUpdate: SessionUpdate = {
 					type: "agentMessageChunk",
 					chunk: {
@@ -209,8 +209,8 @@ describe("MessageProcessor", () => {
 					expect(result.value.message).toEqual({
 						chunks: [
 							{
-								type: "thought",
-								block: { type: "text", text: "This should become a thought" },
+								type: "message",
+								block: { type: "text", text: "[Thinking] This should become a thought" },
 							},
 						],
 					});
@@ -513,7 +513,7 @@ describe("MessageProcessor", () => {
 			});
 		});
 
-		it("detects [Thinking] prefix in message chunk and converts to thought", () => {
+		it("does not reinterpret [Thinking] message chunks during merge", () => {
 			const existing: Parameters<MessageProcessor["mergeAssistantMessageChunk"]>[0] = {
 				chunks: [],
 			};
@@ -527,8 +527,8 @@ describe("MessageProcessor", () => {
 			expect(result).toEqual({
 				chunks: [
 					{
-						type: "thought",
-						block: { type: "text", text: "This should become a thought" },
+						type: "message",
+						block: { type: "text", text: "[Thinking] This should become a thought" },
 					},
 				],
 			});

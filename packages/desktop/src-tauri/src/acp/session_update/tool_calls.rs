@@ -37,11 +37,12 @@ pub(crate) struct RawToolCallInput {
 }
 use crate::acp::types::ContentBlock;
 
+#[cfg(test)]
 pub(crate) fn parse_tool_call_from_acp<E>(data: &serde_json::Value) -> Result<ToolCallData, E>
 where
     E: serde::de::Error,
 {
-    parse_tool_call_from_acp_with_agent(data, current_agent())
+    parse_tool_call_from_acp_with_agent(data, current_agent().unwrap_or(AgentType::ClaudeCode))
 }
 
 pub(crate) fn parse_tool_call_from_acp_with_agent<E>(
@@ -78,6 +79,7 @@ where
 /// All agents go through their parser; streaming extraction is agent-specific.
 /// ACP sends: { toolCallId, status, content: [{"type": "content", "content": {...}}], ... }
 /// We need: ToolCallUpdateData { tool_call_id, status, content: Vec<ContentBlock>, ... }
+#[cfg(test)]
 pub(crate) fn parse_tool_call_update_from_acp<E>(
     data: &serde_json::Value,
     session_id: Option<&str>,
@@ -85,7 +87,11 @@ pub(crate) fn parse_tool_call_update_from_acp<E>(
 where
     E: serde::de::Error,
 {
-    parse_tool_call_update_from_acp_with_agent(data, session_id, current_agent())
+    parse_tool_call_update_from_acp_with_agent(
+        data,
+        session_id,
+        current_agent().unwrap_or(AgentType::ClaudeCode),
+    )
 }
 
 pub(crate) fn parse_tool_call_update_from_acp_with_agent<E>(
@@ -395,7 +401,7 @@ pub(crate) fn build_tool_call_from_raw(
     let status = raw.status;
 
     let (normalized_questions, normalized_todos) =
-        derive_normalized_questions_and_todos(&raw.name, &raw.arguments, current_agent());
+        derive_normalized_questions_and_todos(&raw.name, &raw.arguments, parser.agent_type());
 
     ToolCallData {
         id: raw.id.clone(),
@@ -520,7 +526,7 @@ mod tests {
     use super::*;
     use crate::acp::agent_context::with_agent;
     use crate::acp::client_updates::process_through_reconciler;
-    use crate::acp::parsers::{CodexParser, CursorParser};
+    use crate::acp::parsers::{AgentType, CodexParser, CursorParser};
     use crate::acp::session_update::SessionUpdate;
     use crate::acp::streaming_accumulator::cleanup_session_streaming;
     use crate::acp::task_reconciler::TaskReconciler;
@@ -529,7 +535,7 @@ mod tests {
 
     /// Helper: build a tool call from raw input with the given kind hint and title.
     fn build_with_kind_and_title(kind: &str, title: Option<&str>) -> ToolCallData {
-        let parser = get_parser(current_agent());
+        let parser = get_parser(current_agent().unwrap_or(AgentType::ClaudeCode));
         let raw = RawToolCallInput {
             id: "test-id".to_string(),
             name: String::new(),
@@ -706,7 +712,7 @@ mod tests {
 
     #[test]
     fn build_tool_call_from_raw_preserves_canonical_raw_input() {
-        let parser = get_parser(current_agent());
+        let parser = get_parser(current_agent().unwrap_or(AgentType::ClaudeCode));
         let raw = RawToolCallInput {
             id: "toolu_raw_input".to_string(),
             name: "Bash".to_string(),

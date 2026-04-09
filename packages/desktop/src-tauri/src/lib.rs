@@ -573,7 +573,7 @@ pub fn run() {
     // #[cfg(debug_assertions)]
     // let devtools = tauri_plugin_devtools::init();
 
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_locale::init())
@@ -583,9 +583,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init());
 
     #[cfg(debug_assertions)]
-    {
-        builder = builder.plugin(tauri_plugin_mcp_bridge::init());
-    }
+    let builder = builder.plugin(tauri_plugin_mcp_bridge::init());
 
     builder
         .setup(|app| {

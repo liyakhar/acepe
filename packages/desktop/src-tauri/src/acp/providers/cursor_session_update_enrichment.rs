@@ -113,8 +113,64 @@ pub(crate) async fn enrich_cursor_session_update(update: SessionUpdate) -> Sessi
             };
             enrich_tool_call_from_index(update, &index)
         }
-        _ => update,
+        _ => normalize_cursor_thought_chunk(update),
     }
+}
+
+fn normalize_cursor_thought_chunk(update: SessionUpdate) -> SessionUpdate {
+    match update {
+        SessionUpdate::AgentMessageChunk {
+            chunk,
+            part_id,
+            message_id,
+            session_id,
+        } => match &chunk.content {
+            crate::acp::types::ContentBlock::Text { text } if has_thought_prefix(text) => {
+                SessionUpdate::AgentThoughtChunk {
+                    chunk: crate::acp::session_update::ContentChunk {
+                        content: crate::acp::types::ContentBlock::Text {
+                            text: strip_thought_prefix(text),
+                        },
+                        aggregation_hint: chunk.aggregation_hint,
+                    },
+                    part_id,
+                    message_id,
+                    session_id,
+                }
+            }
+            _ => SessionUpdate::AgentMessageChunk {
+                chunk,
+                part_id,
+                message_id,
+                session_id,
+            },
+        },
+        other => other,
+    }
+}
+
+fn has_thought_prefix(text: &str) -> bool {
+    strip_thought_prefix(text) != text
+}
+
+fn strip_thought_prefix(text: &str) -> String {
+    const PREFIXES: [&str; 6] = [
+        "[Thinking]",
+        "[thinking]",
+        "[THINKING]",
+        "[Thought]",
+        "[thought]",
+        "[THOUGHT]",
+    ];
+
+    let trimmed = text.trim_start();
+    for prefix in PREFIXES {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            return rest.trim_start().to_string();
+        }
+    }
+
+    text.to_string()
 }
 
 fn tool_call_needs_enrichment(tool_call: &ToolCallData) -> bool {
@@ -451,7 +507,8 @@ pub(crate) fn clear_test_tool_use_cache(session_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp::session_update::{ToolCallStatus, ToolKind};
+    use crate::acp::session_update::{ContentChunk, ToolCallStatus, ToolKind};
+    use crate::acp::types::ContentBlock as AcpContentBlock;
     use crate::session_jsonl::types::{OrderedMessage, SessionStats};
     use serde_json::json;
 
@@ -643,6 +700,43 @@ mod tests {
                 assert_eq!(update.locations.as_ref().map(Vec::len), Some(1));
             }
             other => panic!("Expected ToolCallUpdate, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn upgrades_thinking_prefixed_cursor_message_chunks_to_thought_chunks() {
+        let update = SessionUpdate::AgentMessageChunk {
+            chunk: ContentChunk {
+                content: AcpContentBlock::Text {
+                    text: "[Thinking] Check the file".to_string(),
+                },
+                aggregation_hint: None,
+            },
+            part_id: Some("part-1".to_string()),
+            message_id: Some("msg-1".to_string()),
+            session_id: Some("session-1".to_string()),
+        };
+
+        let enriched = enrich_cursor_session_update(update).await;
+
+        match enriched {
+            SessionUpdate::AgentThoughtChunk {
+                chunk,
+                part_id,
+                message_id,
+                session_id,
+            } => {
+                match chunk.content {
+                    AcpContentBlock::Text { text } => {
+                        assert_eq!(text, "Check the file".to_string());
+                    }
+                    other => panic!("expected text content, got {other:?}"),
+                }
+                assert_eq!(part_id.as_deref(), Some("part-1"));
+                assert_eq!(message_id.as_deref(), Some("msg-1"));
+                assert_eq!(session_id.as_deref(), Some("session-1"));
+            }
+            other => panic!("expected AgentThoughtChunk, got {other:?}"),
         }
     }
 }

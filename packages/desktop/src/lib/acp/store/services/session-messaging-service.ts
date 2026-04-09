@@ -12,7 +12,11 @@
  */
 
 import { errAsync, type ResultAsync } from "neverthrow";
-import type { ContentBlock, ToolCallData } from "../../../services/converted-session-types.js";
+import type {
+	ContentBlock,
+	ContentChunk,
+	ToolCallData,
+} from "../../../services/converted-session-types.js";
 import { isInlineImageAttachment } from "../../components/agent-input/logic/image-attachment.js";
 import type { Attachment } from "../../components/agent-input/types/attachment.js";
 import type { AppError } from "../../errors/app-error.js";
@@ -449,7 +453,7 @@ export class SessionMessagingService {
 	 */
 	aggregateAssistantChunk(
 		sessionId: string,
-		chunk: { content: ContentBlock },
+		chunk: ContentChunk,
 		messageId: string | undefined,
 		isThought: boolean
 	): ResultAsync<void, AppError> {

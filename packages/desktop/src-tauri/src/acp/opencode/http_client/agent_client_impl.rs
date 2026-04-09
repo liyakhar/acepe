@@ -1,4 +1,6 @@
 use super::*;
+use crate::acp::model_display::{build_models_for_display, ModelPresentationMetadata};
+use crate::acp::parsers::provider_capabilities::provider_capabilities;
 use std::path::Path;
 
 #[async_trait]
@@ -105,8 +107,14 @@ impl AgentClient for OpenCodeHttpClient {
             &mut response.models,
             &mut response.modes,
         )?;
-        response.models.models_display =
-            get_transformer(AgentType::OpenCode).transform(&response.models.available_models);
+        let capabilities = provider_capabilities(AgentType::OpenCode);
+        response.models.models_display = build_models_for_display(
+            &response.models.available_models,
+            ModelPresentationMetadata {
+                display_family: capabilities.model_display_family,
+                usage_metrics: capabilities.usage_metrics_presentation,
+            },
+        );
         self.current_mode = Some(response.modes.current_mode_id.clone());
         self.seed_current_model(&response.models.current_model_id)?;
 
@@ -158,8 +166,14 @@ impl AgentClient for OpenCodeHttpClient {
             &mut response.models,
             &mut response.modes,
         )?;
-        response.models.models_display =
-            get_transformer(AgentType::OpenCode).transform(&response.models.available_models);
+        let capabilities = provider_capabilities(AgentType::OpenCode);
+        response.models.models_display = build_models_for_display(
+            &response.models.available_models,
+            ModelPresentationMetadata {
+                display_family: capabilities.model_display_family,
+                usage_metrics: capabilities.usage_metrics_presentation,
+            },
+        );
         self.current_mode = Some(response.modes.current_mode_id.clone());
         self.seed_current_model(&response.models.current_model_id)?;
 

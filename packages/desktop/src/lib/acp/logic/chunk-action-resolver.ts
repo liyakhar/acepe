@@ -51,21 +51,6 @@ function resolveEntryId(state: AggregationState, sourceMessageId: string | null)
 	return mapped ?? sourceMessageId;
 }
 
-function isPunctuationCarryoverChunk(input: ChunkInput): boolean {
-	if (input.content.type !== "text") {
-		return false;
-	}
-
-	const text = input.content.text;
-	if (text.trim().length === 0) {
-		return false;
-	}
-
-	// Boundary carryover chunks can arrive as punctuation-only deltas (e.g., ".")
-	// immediately before/after tool events. Keep them attached to the pre-tool sentence.
-	return /^[\s.,!?;:)\]}>"'`-]+$/.test(text);
-}
-
 function resolveSinglePendingBoundaryTarget(
 	state: AggregationState,
 	entryExists: (id: string) => boolean
@@ -117,35 +102,36 @@ export function resolveChunkAction(
 		return {
 			decision: { action: "merge", entryId: effectiveEntryId },
 			nextState: {
-				...state,
 				lastKnownMessageId: sourceMessageId,
+				pendingBoundaries: state.pendingBoundaries,
+				postBoundaryMap: state.postBoundaryMap,
 			},
 		};
 	}
 
-	// Special case: keep punctuation-only carryover chunks on the pre-boundary entry.
+	// Special case: keep explicit carryover chunks on the pre-boundary entry.
 	// Do not consume the boundary so the next semantic chunk still starts a new entry.
 	if (
 		hasPendingBoundary &&
 		sourceMessageId !== null &&
 		entryExists(sourceMessageId) &&
-		isPunctuationCarryoverChunk(input)
+		input.aggregationHint === "boundaryCarryover"
 	) {
 		return {
 			decision: { action: "merge", entryId: sourceMessageId },
 			nextState: {
-				...state,
 				lastKnownMessageId: sourceMessageId,
+				pendingBoundaries: state.pendingBoundaries,
+				postBoundaryMap: state.postBoundaryMap,
 			},
 		};
 	}
 
-	// Codex often omits message IDs on token chunks. If a punctuation-only
-	// carryover chunk arrives while exactly one boundary is pending, keep it on
-	// the pre-tool entry rather than starting a post-tool message with ".".
+	// If a carryover chunk arrives while exactly one boundary is pending, keep it
+	// on the pre-tool entry rather than starting a new post-tool punctuation entry.
 	if (
 		sourceMessageId === null &&
-		isPunctuationCarryoverChunk(input) &&
+		input.aggregationHint === "boundaryCarryover" &&
 		state.pendingBoundaries.size > 0
 	) {
 		const boundaryTarget = resolveSinglePendingBoundaryTarget(state, entryExists);
@@ -153,8 +139,9 @@ export function resolveChunkAction(
 			return {
 				decision: { action: "merge", entryId: boundaryTarget },
 				nextState: {
-					...state,
 					lastKnownMessageId: boundaryTarget,
+					pendingBoundaries: state.pendingBoundaries,
+					postBoundaryMap: state.postBoundaryMap,
 				},
 			};
 		}

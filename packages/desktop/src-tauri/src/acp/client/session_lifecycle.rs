@@ -107,14 +107,22 @@ impl AcpClient {
         apply_provider_model_fallback(provider.as_ref(), &mut response.models);
         provider.apply_session_defaults(&self.cwd, &mut response.models, &mut response.modes)?;
 
-        // Populate models_display using agent-specific transformer
         let agent_type = self
             .provider
             .as_ref()
             .map(|p| p.parser_agent_type())
             .unwrap_or(AgentType::ClaudeCode);
+        let capabilities =
+            crate::acp::parsers::provider_capabilities::provider_capabilities(agent_type);
+        let presentation = crate::acp::model_display::ModelPresentationMetadata {
+            display_family: capabilities.model_display_family,
+            usage_metrics: capabilities.usage_metrics_presentation,
+        };
         response.models.models_display =
-            get_transformer(agent_type).transform(&response.models.available_models);
+            crate::acp::model_display::build_models_for_display(
+                &response.models.available_models,
+                presentation,
+            );
         self.set_active_session_id(Some(response.session_id.clone()));
 
         tracing::info!(
@@ -218,14 +226,22 @@ impl AcpClient {
             &mut response.modes,
         )?;
 
-        // Populate models_display using agent-specific transformer
         let agent_type = self
             .provider
             .as_ref()
             .map(|p| p.parser_agent_type())
             .unwrap_or(AgentType::ClaudeCode);
+        let capabilities =
+            crate::acp::parsers::provider_capabilities::provider_capabilities(agent_type);
+        let presentation = crate::acp::model_display::ModelPresentationMetadata {
+            display_family: capabilities.model_display_family,
+            usage_metrics: capabilities.usage_metrics_presentation,
+        };
         response.models.models_display =
-            get_transformer(agent_type).transform(&response.models.available_models);
+            crate::acp::model_display::build_models_for_display(
+                &response.models.available_models,
+                presentation,
+            );
         self.set_active_session_id(Some(session_id.clone()));
 
         tracing::info!(
@@ -273,14 +289,22 @@ impl AcpClient {
         apply_provider_model_fallback(provider.as_ref(), &mut response.models);
         provider.apply_session_defaults(&self.cwd, &mut response.models, &mut response.modes)?;
 
-        // Populate models_display using agent-specific transformer
         let agent_type = self
             .provider
             .as_ref()
             .map(|p| p.parser_agent_type())
             .unwrap_or(AgentType::ClaudeCode);
+        let capabilities =
+            crate::acp::parsers::provider_capabilities::provider_capabilities(agent_type);
+        let presentation = crate::acp::model_display::ModelPresentationMetadata {
+            display_family: capabilities.model_display_family,
+            usage_metrics: capabilities.usage_metrics_presentation,
+        };
         response.models.models_display =
-            get_transformer(agent_type).transform(&response.models.available_models);
+            crate::acp::model_display::build_models_for_display(
+                &response.models.available_models,
+                presentation,
+            );
         self.set_active_session_id(Some(response.session_id.clone()));
 
         tracing::info!(

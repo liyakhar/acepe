@@ -3,6 +3,7 @@ use super::copilot_settings::apply_copilot_session_defaults;
 use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::parsers::AgentType;
+use crate::acp::task_reconciler::TaskReconciliationPolicy;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -77,7 +78,11 @@ impl AgentProvider for CopilotProvider {
     }
 
     fn uses_task_reconciler(&self) -> bool {
-        true
+        self.task_reconciliation_policy().uses_task_reconciler()
+    }
+
+    fn task_reconciliation_policy(&self) -> TaskReconciliationPolicy {
+        TaskReconciliationPolicy::ImplicitSingleActiveParent
     }
 
     fn authenticate_request_params(&self, auth_methods: &[Value]) -> AcpResult<Option<Value>> {

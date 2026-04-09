@@ -623,6 +623,7 @@ pub(super) fn convert_message_part_to_session_update(properties: &Value) -> Part
             PartConversionResult::Converted(Box::new(SessionUpdate::AgentMessageChunk {
                 chunk: ContentChunk {
                     content: ContentBlock::Text { text },
+                    aggregation_hint: None,
                 },
                 part_id: None,
                 message_id: Some(part.message_id),
@@ -644,6 +645,7 @@ pub(super) fn convert_message_part_to_session_update(properties: &Value) -> Part
             PartConversionResult::Converted(Box::new(SessionUpdate::AgentThoughtChunk {
                 chunk: ContentChunk {
                     content: ContentBlock::Text { text },
+                    aggregation_hint: None,
                 },
                 part_id: None,
                 message_id: Some(part.message_id),
@@ -853,6 +855,7 @@ pub(super) fn convert_message_part_to_session_update(properties: &Value) -> Part
                         SessionUpdate::AgentMessageChunk {
                             chunk: ContentChunk {
                                 content: ContentBlock::Text { text: text_content },
+                                aggregation_hint: None,
                             },
                             part_id: Some(part.id),
                             message_id: Some(part.message_id),
@@ -911,6 +914,7 @@ pub(super) fn convert_message_part_delta_to_session_update(
             PartConversionResult::Converted(Box::new(SessionUpdate::AgentThoughtChunk {
                 chunk: ContentChunk {
                     content: ContentBlock::Text { text },
+                    aggregation_hint: None,
                 },
                 part_id: None,
                 message_id: Some(event.message_id),
@@ -920,6 +924,7 @@ pub(super) fn convert_message_part_delta_to_session_update(
         _ => PartConversionResult::Converted(Box::new(SessionUpdate::AgentMessageChunk {
             chunk: ContentChunk {
                 content: ContentBlock::Text { text },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: Some(event.message_id),

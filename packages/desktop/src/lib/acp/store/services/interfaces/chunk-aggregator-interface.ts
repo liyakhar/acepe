@@ -7,14 +7,14 @@
 
 import type { ResultAsync } from "neverthrow";
 
-import type { ContentBlock } from "../../../../services/converted-session-types.js";
+import type { ContentBlock, ContentChunk } from "../../../../services/converted-session-types.js";
 import type { AppError } from "../../../errors/app-error.js";
 import type { IBoundaryManager } from "./boundary-manager.js";
 
 export interface IChunkAggregator extends IBoundaryManager {
 	aggregateAssistantChunk(
 		sessionId: string,
-		chunk: { content: ContentBlock },
+		chunk: ContentChunk,
 		messageId: string | undefined,
 		isThought: boolean
 	): ResultAsync<void, AppError>;

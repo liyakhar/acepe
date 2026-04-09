@@ -1,7 +1,7 @@
 use super::super::provider::{command_exists, AgentProvider, ModelFallbackCandidate, SpawnConfig};
 use super::claude_code_settings::resolve_claude_runtime_mode_id;
 use crate::acp::client_trait::CommunicationMode;
-use crate::acp::session_update::PlanSource;
+use crate::acp::task_reconciler::TaskReconciliationPolicy;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
 use std::path::Path;
 
@@ -126,16 +126,16 @@ impl AgentProvider for ClaudeCodeProvider {
         }
     }
 
-    fn default_plan_source(&self) -> PlanSource {
-        PlanSource::Deterministic
-    }
-
     fn resolve_runtime_mode_id(&self, requested_mode_id: Option<&str>, cwd: &Path) -> String {
         resolve_claude_runtime_mode_id(requested_mode_id, cwd)
     }
 
     fn uses_task_reconciler(&self) -> bool {
-        true
+        self.task_reconciliation_policy().uses_task_reconciler()
+    }
+
+    fn task_reconciliation_policy(&self) -> TaskReconciliationPolicy {
+        TaskReconciliationPolicy::ExplicitParentIds
     }
 }
 

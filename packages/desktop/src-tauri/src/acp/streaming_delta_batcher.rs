@@ -362,6 +362,7 @@ impl StreamingDeltaBatcher {
                     content: ContentBlock::Text {
                         text: buffer.accumulated_text,
                     },
+                    aggregation_hint: None,
                 };
 
                 if buffer.is_thought {
@@ -523,6 +524,7 @@ impl StreamingDeltaBatcher {
                     content: ContentBlock::Text {
                         text: buffer.accumulated_text,
                     },
+                    aggregation_hint: None,
                 };
 
                 if buffer.is_thought {
@@ -630,6 +632,7 @@ impl StreamingDeltaBatcher {
                     content: ContentBlock::Text {
                         text: buffer.accumulated_text,
                     },
+                    aggregation_hint: None,
                 };
 
                 if buffer.is_thought {
@@ -678,6 +681,7 @@ impl StreamingDeltaBatcher {
                     content: ContentBlock::Text {
                         text: buffer.accumulated_text,
                     },
+                    aggregation_hint: None,
                 };
 
                 if buffer.is_thought {
@@ -772,6 +776,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: text.to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: Some("msg-1".to_string()),
@@ -789,6 +794,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: text.to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: part_id.map(std::string::ToString::to_string),
             message_id: Some(message_id.to_string()),
@@ -802,6 +808,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: text.to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: Some("msg-1".to_string()),
@@ -1023,6 +1030,7 @@ mod tests {
                     content: ContentBlock::Text {
                         text: (*text).to_string(),
                     },
+                    aggregation_hint: None,
                 },
                 part_id: Some((*part_id).to_string()),
                 message_id: Some(message_id.to_string()),
@@ -1495,6 +1503,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: "Session 1 text".to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: Some("msg-1".to_string()),
@@ -1506,6 +1515,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: "Session 2 text".to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: Some("msg-2".to_string()),

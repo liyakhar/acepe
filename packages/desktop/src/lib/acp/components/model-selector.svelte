@@ -68,7 +68,9 @@ const agentId = $derived.by(() => {
 	return null;
 });
 
-const usesReasoningEffortPicker = $derived(supportsReasoningEffortPicker(availableModels));
+const usesReasoningEffortPicker = $derived(
+	supportsReasoningEffortPicker(availableModels, modelsDisplay)
+);
 
 const logger = createLogger({
 	id: LOGGER_IDS.MODEL_SELECTOR,
@@ -174,7 +176,7 @@ const displayName = $derived.by(() => {
 	}
 
 	if (!selectedModel) return "Model";
-	return getModelDisplayName(selectedModel, agentId ?? null);
+	return getModelDisplayName(selectedModel, agentId ?? null, modelsDisplay);
 });
 
 const codexBaseGroups = $derived.by(() =>

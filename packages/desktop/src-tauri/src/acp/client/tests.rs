@@ -14,6 +14,20 @@ use sea_orm_migration::MigratorTrait;
 use std::collections::HashMap;
 use std::sync::Arc as StdArc;
 
+const CLIENT_MOD_SOURCE: &str = include_str!("mod.rs");
+const CLIENT_STATE_SOURCE: &str = include_str!("state.rs");
+const CLIENT_LOOP_SOURCE: &str = include_str!("../client_loop.rs");
+const CLIENT_TRANSPORT_SOURCE: &str = include_str!("../client_transport.rs");
+const PROVIDER_SOURCE: &str = include_str!("../provider.rs");
+const TASK_RECONCILER_SOURCE: &str = include_str!("../task_reconciler.rs");
+const INBOUND_ROUTER_HELPERS_SOURCE: &str = include_str!("../inbound_request_router/helpers.rs");
+const CLIENT_UPDATES_PLAN_SOURCE: &str = include_str!("../client_updates/plan.rs");
+const MODEL_DISPLAY_SOURCE: &str = include_str!("../model_display.rs");
+
+fn production_source(source: &str) -> &str {
+    source.split("#[cfg(test)]").next().unwrap_or(source)
+}
+
 struct TestProvider {
     id: &'static str,
 }
@@ -296,6 +310,86 @@ fn provider_id_maps_to_agent_type() {
     let provider = TestProvider { id: "codex" };
     let agent = provider.parser_agent_type();
     assert_eq!(agent, AgentType::Codex);
+}
+
+#[test]
+fn shared_runtime_uses_generic_inbound_response_contract_names() {
+    let shared_sources = [
+        production_source(CLIENT_MOD_SOURCE),
+        production_source(CLIENT_STATE_SOURCE),
+        production_source(CLIENT_LOOP_SOURCE),
+        production_source(CLIENT_TRANSPORT_SOURCE),
+        production_source(PROVIDER_SOURCE),
+    ];
+
+    for source in shared_sources {
+        assert!(
+            !source.contains("CursorResponseAdapter"),
+            "shared runtime should not depend on CursorResponseAdapter"
+        );
+    }
+
+    let provider_source = production_source(PROVIDER_SOURCE);
+    assert!(
+        !provider_source.contains("CursorExtensionEvent"),
+        "provider boundary should not expose CursorExtensionEvent"
+    );
+}
+
+#[test]
+fn task_reconciler_policy_is_not_hardcoded_to_copilot_agent_type() {
+    let source = production_source(TASK_RECONCILER_SOURCE);
+
+    assert!(
+        !source.contains("AgentType::Copilot"),
+        "task reconciler should not hardcode Copilot-specific branching"
+    );
+}
+
+#[test]
+fn inbound_router_helpers_do_not_parse_cursor_web_search_titles() {
+    let source = production_source(INBOUND_ROUTER_HELPERS_SOURCE);
+
+    assert!(
+        !source.contains("extract_query_from_permission_title"),
+        "shared inbound router helpers should not own Cursor title parsing"
+    );
+    assert!(
+        !source.contains("Web search: "),
+        "shared inbound router helpers should not depend on Cursor title prefixes"
+    );
+}
+
+#[test]
+fn plan_enrichment_uses_registry_and_provider_defaults_instead_of_agent_matches() {
+    let source = production_source(CLIENT_UPDATES_PLAN_SOURCE);
+
+    assert!(
+        !source.contains("match agent_type"),
+        "plan enrichment should not hardcode built-in agent matches"
+    );
+    assert!(
+        !source.contains("agent_id_for_agent"),
+        "plan enrichment should not maintain a built-in agent id table"
+    );
+    assert!(
+        source.contains("provider_capabilities(agent_type).default_plan_source"),
+        "plan enrichment should use provider capabilities for built-in defaults"
+    );
+}
+
+#[test]
+fn model_display_uses_presentation_metadata_not_agent_type_branching() {
+    let source = production_source(MODEL_DISPLAY_SOURCE);
+
+    assert!(
+        !source.contains("AgentType::"),
+        "model display should not branch on built-in agent types"
+    );
+    assert!(
+        source.contains("ModelPresentationMetadata"),
+        "model display should expose presentation metadata for frontend consumers"
+    );
 }
 
 #[test]

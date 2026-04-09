@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { Model } from "../../application/dto/model.js";
+import type { ModelsForDisplay } from "../../../services/acp-types.js";
 import { AGENT_IDS } from "../../types/agent-id.js";
 import {
 	CODEX_REASONING_EFFORTS,
 	getCodexCurrentVariant,
+	getModelDisplayFamily,
 	getModelDisplayName,
 	getProviderFromModelId,
+	getUsageMetricsPresentation,
+	isContextWindowOnlyMetrics,
 	groupCodexModelsByBase,
 	groupModelsByProvider,
 	isDefaultModel,
@@ -145,6 +149,34 @@ describe("model-selector-logic", () => {
 
 				expect(result).toBe("Opus");
 			});
+		});
+
+		it("prefers backend-computed display names when modelsDisplay is present", () => {
+			const model: Model = {
+				id: "default",
+				name: "Default",
+				description: "Use the default model (currently Sonnet 4.5) · Uses config",
+			};
+			const modelsDisplay: ModelsForDisplay = {
+				groups: [
+					{
+						label: "",
+						models: [
+							{
+								modelId: "default",
+								displayName: "claude-sonnet-4 (default)",
+								description: "Uses config",
+							},
+						],
+					},
+				],
+				presentation: {
+					displayFamily: "claudeLike",
+					usageMetrics: "contextWindowOnly",
+				},
+			};
+
+			expect(getModelDisplayName(model, null, modelsDisplay)).toBe("claude-sonnet-4 (default)");
 		});
 	});
 
@@ -433,6 +465,37 @@ describe("model-selector-logic", () => {
 			];
 
 			expect(supportsReasoningEffortPicker(models)).toBe(true);
+		});
+
+		it("trusts backend presentation metadata when available", () => {
+			const modelsDisplay: ModelsForDisplay = {
+				groups: [],
+				presentation: {
+					displayFamily: "codexReasoningEffort",
+					usageMetrics: "spendAndContext",
+				},
+			};
+
+			expect(supportsReasoningEffortPicker([], modelsDisplay)).toBe(true);
+		});
+	});
+
+	describe("presentation metadata helpers", () => {
+		const modelsDisplay: ModelsForDisplay = {
+			groups: [],
+			presentation: {
+				displayFamily: "claudeLike",
+				usageMetrics: "contextWindowOnly",
+			},
+		};
+
+		it("reads display family from backend metadata", () => {
+			expect(getModelDisplayFamily(modelsDisplay)).toBe("claudeLike");
+		});
+
+		it("reads usage metrics presentation from backend metadata", () => {
+			expect(getUsageMetricsPresentation(modelsDisplay)).toBe("contextWindowOnly");
+			expect(isContextWindowOnlyMetrics(modelsDisplay)).toBe(true);
 		});
 	});
 });

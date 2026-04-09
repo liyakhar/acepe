@@ -713,6 +713,7 @@ mod tests {
                 content: ContentBlock::Text {
                     text: text.to_string(),
                 },
+                aggregation_hint: None,
             },
             part_id: None,
             message_id: None,
@@ -855,6 +856,7 @@ mod tests {
                         chunk:
                             ContentChunk {
                                 content: ContentBlock::Text { text },
+                                ..
                             },
                         ..
                     } => text.clone(),
@@ -921,6 +923,7 @@ mod tests {
                     content: ContentBlock::Text {
                         text: "hello".to_string(),
                     },
+                    aggregation_hint: None,
                 },
                 part_id: None,
                 message_id: Some("msg-1".to_string()),
@@ -950,9 +953,9 @@ mod tests {
                     id: "permission-1".to_string(),
                     session_id: "session-1".to_string(),
                     json_rpc_request_id: Some(7),
-                    reply_handler: Some(crate::acp::session_update::InteractionReplyHandler::json_rpc(
-                        7,
-                    )),
+                    reply_handler: Some(
+                        crate::acp::session_update::InteractionReplyHandler::json_rpc(7),
+                    ),
                     permission: "execute".to_string(),
                     patterns: vec![],
                     metadata: json!({ "command": "bun test" }),

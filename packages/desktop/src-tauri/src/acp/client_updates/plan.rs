@@ -1,4 +1,5 @@
 use super::*;
+use crate::acp::parsers::provider_capabilities::provider_capabilities;
 
 pub(super) fn extract_streaming_plan(
     update: &SessionUpdate,
@@ -81,7 +82,7 @@ pub(super) fn enrich_plan_data(
 ) -> PlanData {
     let canonical_agent = provider
         .map(|provider| provider.id().to_string())
-        .unwrap_or_else(|| agent_id_for_agent(agent_type).to_string());
+        .unwrap_or_else(|| agent_type.as_str().to_string());
 
     plan.has_plan = plan.has_plan
         || plan.content.is_some()
@@ -99,14 +100,11 @@ pub(super) fn enrich_plan_data(
     }
 
     if plan.source.is_none() {
-        plan.source = Some(provider.map(AgentProvider::default_plan_source).unwrap_or(
-            match agent_type {
-                AgentType::ClaudeCode | AgentType::Copilot | AgentType::Cursor => {
-                    PlanSource::Deterministic
-                }
-                AgentType::OpenCode | AgentType::Codex => PlanSource::Heuristic,
-            },
-        ));
+        plan.source = Some(
+            provider
+                .map(AgentProvider::default_plan_source)
+                .unwrap_or(provider_capabilities(agent_type).default_plan_source),
+        );
     }
     if plan.confidence.is_none() {
         plan.confidence = Some(
@@ -156,12 +154,50 @@ fn render_steps_markdown(steps: &[crate::acp::session_update::PlanStep]) -> Opti
     Some(markdown)
 }
 
-fn agent_id_for_agent(agent_type: AgentType) -> &'static str {
-    match agent_type {
-        AgentType::ClaudeCode => "claude-code",
-        AgentType::Copilot => "copilot",
-        AgentType::OpenCode => "opencode",
-        AgentType::Cursor => "cursor",
-        AgentType::Codex => "codex",
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::acp::providers::claude_code::ClaudeCodeProvider;
+    use crate::acp::session_update::PlanStep;
+    use crate::acp::session_update::PlanStepStatus;
+
+    fn empty_plan() -> PlanData {
+        PlanData::from_steps(Vec::new())
+    }
+
+    #[test]
+    fn enrich_plan_data_uses_registry_defaults_without_provider() {
+        let plan = enrich_plan_data(empty_plan(), AgentType::Cursor, None);
+
+        assert_eq!(plan.source, Some(PlanSource::Deterministic));
+        assert_eq!(plan.confidence, Some(PlanConfidence::High));
+        assert_eq!(plan.agent_id.as_deref(), Some("cursor"));
+    }
+
+    #[test]
+    fn enrich_plan_data_preserves_provider_owned_defaults() {
+        let provider = ClaudeCodeProvider;
+        let plan = enrich_plan_data(empty_plan(), AgentType::OpenCode, Some(&provider));
+
+        assert_eq!(plan.source, Some(PlanSource::Deterministic));
+        assert_eq!(plan.confidence, Some(PlanConfidence::High));
+        assert_eq!(plan.agent_id.as_deref(), Some("claude-code"));
+    }
+
+    #[test]
+    fn enrich_plan_data_renders_steps_markdown_when_content_missing() {
+        let plan = enrich_plan_data(
+            PlanData::from_steps(vec![PlanStep {
+                description: "Ship the refactor".to_string(),
+                status: PlanStepStatus::InProgress,
+            }]),
+            AgentType::Codex,
+            None,
+        );
+
+        assert_eq!(
+            plan.content_markdown.as_deref(),
+            Some("# Plan\n\n- [-] Ship the refactor\n")
+        );
     }
 }

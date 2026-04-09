@@ -53,7 +53,9 @@ export type SessionUpdate = { type: "userMessageChunk"; chunk: ContentChunk; ses
  * This handles both direct format `{ content: ContentBlock }`
  * and nested format `{ chunk: { content: ContentBlock } }`.
  */
-export type ContentChunk = { content: ContentBlock }
+export type ContentChunk = { content: ContentBlock; aggregationHint?: ChunkAggregationHint | null }
+
+export type ChunkAggregationHint = "boundaryCarryover"
 
 /**
  * Tool call data.
@@ -838,4 +840,3 @@ export type FileExplorerPreviewResponse =
  * Fallback for binary, too-large, deleted, or unsupported files.
  */
 { kind: "fallback"; file_path: string; file_name: string; reason: string; size_bytes: number | null; git_status: FileGitStatus | null; preview_kind: PreviewKind }
-

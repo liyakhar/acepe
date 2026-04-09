@@ -277,7 +277,7 @@ mod explicit_agent_parsing {
                 other => panic!("expected ToolCall, got {:?}", other),
             }
 
-            assert_eq!(current_agent(), AgentType::ClaudeCode);
+            assert_eq!(current_agent(), Some(AgentType::ClaudeCode));
         });
     }
 
@@ -302,7 +302,7 @@ mod explicit_agent_parsing {
                 other => panic!("expected UsageTelemetryUpdate, got {:?}", other),
             }
 
-            assert_eq!(current_agent(), AgentType::ClaudeCode);
+            assert_eq!(current_agent(), Some(AgentType::ClaudeCode));
         });
     }
 }
@@ -1883,7 +1883,11 @@ fn parses_parent_task_and_children_from_tool_call() {
         ]
     });
 
-    let parsed: ToolCallData = serde_json::from_value(json).expect("tool call should parse");
+    let parsed: ToolCallData = crate::acp::agent_context::with_agent(
+        crate::acp::parsers::AgentType::ClaudeCode,
+        || serde_json::from_value(json),
+    )
+    .expect("tool call should parse");
     assert_eq!(parsed.parent_tool_use_id.as_deref(), Some("parent-123"));
     let children = parsed.task_children.expect("children should exist");
     assert_eq!(children.len(), 1);
@@ -2008,6 +2012,30 @@ fn replays_serialized_tool_call_update_from_event_hub() {
         }
         other => panic!("Expected ToolCallUpdate, got {:?}", other),
     }
+}
+
+#[test]
+fn serialized_tool_call_deserialization_fails_without_agent_context() {
+    let json = json!({
+        "id": "tooluse_gUVhTYrqJnLirn08ln2wxu",
+        "name": "unknown",
+        "arguments": {
+            "kind": "other",
+            "raw": {
+                "path": "/tmp/example.rs"
+            }
+        },
+        "status": "pending",
+        "kind": "other",
+        "title": "Viewing /tmp/example.rs"
+    });
+
+    let result: Result<ToolCallData, serde_json::Error> = serde_json::from_value(json);
+
+    assert!(
+        result.is_err(),
+        "serialized tool call should fail without explicit agent context"
+    );
 }
 
 mod parse_tool_call_update_from_acp {

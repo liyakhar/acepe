@@ -29,7 +29,8 @@ use crate::acp::client_transport::{
 };
 use crate::acp::client_updates::process_through_reconciler;
 use crate::acp::error::{AcpError, AcpResult};
-use crate::acp::model_display::get_transformer;
+use crate::acp::model_display::{build_models_for_display, ModelPresentationMetadata};
+use crate::acp::parsers::provider_capabilities::provider_capabilities;
 use crate::acp::parsers::{get_parser, AgentType};
 use crate::acp::projections::{
     InteractionPayload, InteractionResponse, InteractionState, ProjectionRegistry,
@@ -124,6 +125,7 @@ impl ToolCallIdTracker {
         }
     }
 
+    #[cfg(test)]
     /// Record a tool_name → tool_use_id mapping from a stream event.
     async fn record(&self, tool_name: String, tool_use_id: String) {
         self.record_with_input(tool_name, tool_use_id, None).await;
@@ -178,6 +180,7 @@ impl ToolCallIdTracker {
         Some(id)
     }
 
+    #[cfg(test)]
     /// Pop the oldest tool_use_id for a given tool name (FIFO).
     async fn take(&self, tool_name: &str) -> Option<String> {
         let mut map = self.map.lock().await;
@@ -976,6 +979,7 @@ impl CcSdkClaudeClient {
         .await;
     }
 
+    #[cfg(test)]
     async fn reject_interaction_for_request(&self, request_id: u64, message: &str) {
         self.update_interaction_projection(
             request_id,
@@ -1216,8 +1220,14 @@ impl CcSdkClaudeClient {
         apply_provider_model_fallback(self.provider.as_ref(), &mut model_state);
 
         let agent_type = self.provider.parser_agent_type();
-        model_state.models_display =
-            get_transformer(agent_type).transform(&model_state.available_models);
+        let capabilities = provider_capabilities(agent_type);
+        model_state.models_display = build_models_for_display(
+            &model_state.available_models,
+            ModelPresentationMetadata {
+                display_family: capabilities.model_display_family,
+                usage_metrics: capabilities.usage_metrics_presentation,
+            },
+        );
 
         tracing::info!(
             provider = %self.provider.id(),
@@ -3386,9 +3396,9 @@ mod tests {
                 id: "permission-1".to_string(),
                 session_id: "session-1".to_string(),
                 json_rpc_request_id: Some(7),
-                reply_handler: Some(crate::acp::session_update::InteractionReplyHandler::json_rpc(
-                    7,
-                )),
+                reply_handler: Some(
+                    crate::acp::session_update::InteractionReplyHandler::json_rpc(7),
+                ),
                 permission: "Read".to_string(),
                 patterns: vec![path.to_string()],
                 metadata: serde_json::json!({}),
@@ -3486,9 +3496,9 @@ mod tests {
                 id: "permission-1".to_string(),
                 session_id: "session-1".to_string(),
                 json_rpc_request_id: Some(7),
-                reply_handler: Some(crate::acp::session_update::InteractionReplyHandler::json_rpc(
-                    7,
-                )),
+                reply_handler: Some(
+                    crate::acp::session_update::InteractionReplyHandler::json_rpc(7),
+                ),
                 permission: "Read".to_string(),
                 patterns: vec![path.to_string()],
                 metadata: serde_json::json!({}),
@@ -4863,6 +4873,7 @@ mod tests {
                     content: ContentBlock::Text {
                         text: "There you go!".to_string(),
                     },
+                    aggregation_hint: None,
                 },
                 part_id: None,
                 message_id: None,

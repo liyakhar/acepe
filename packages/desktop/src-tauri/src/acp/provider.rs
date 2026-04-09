@@ -8,10 +8,12 @@ use std::sync::OnceLock;
 
 use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::client_trait::CommunicationMode;
-use crate::acp::cursor_extensions::{CursorExtensionEvent, CursorResponseAdapter};
 use crate::acp::error::AcpResult;
 use crate::acp::parsers::AgentType;
+use crate::acp::parsers::provider_capabilities::provider_capabilities;
+use crate::acp::provider_extensions::{InboundResponseAdapter, ProviderExtensionEvent};
 use crate::acp::session_update::{PlanConfidence, PlanSource, SessionUpdate};
+use crate::acp::task_reconciler::TaskReconciliationPolicy;
 use crate::acp::types::CanonicalAgentId;
 
 #[derive(Debug, Clone)]
@@ -182,7 +184,7 @@ pub trait AgentProvider: Send + Sync {
 
     /// Default source classification for plan updates emitted by this provider.
     fn default_plan_source(&self) -> PlanSource {
-        PlanSource::Heuristic
+        provider_capabilities(self.parser_agent_type()).default_plan_source
     }
 
     /// Default confidence classification for plan updates emitted by this provider.
@@ -208,13 +210,22 @@ pub trait AgentProvider: Send + Sync {
         _params: &Value,
         _request_id: Option<u64>,
         _current_session_id: Option<&str>,
-    ) -> Result<Option<CursorExtensionEvent>, String> {
+    ) -> Result<Option<ProviderExtensionEvent>, String> {
         Ok(None)
     }
 
     /// Provider extension response adapter hook.
-    fn adapt_inbound_response(&self, _adapter: &CursorResponseAdapter, result: &Value) -> Value {
+    fn adapt_inbound_response(&self, _adapter: &InboundResponseAdapter, result: &Value) -> Value {
         result.clone()
+    }
+
+    /// Provider-owned query recovery for synthetic permission requests.
+    fn extract_synthetic_permission_query(
+        &self,
+        _parsed_arguments: &Option<Value>,
+        _forwarded: &Value,
+    ) -> Option<String> {
+        None
     }
 
     /// Whether a raw ACP notification should be suppressed before generic handling.
@@ -223,8 +234,13 @@ pub trait AgentProvider: Send + Sync {
     }
 
     /// Whether this provider requires TaskReconciler pass for tool call graph assembly.
+    fn task_reconciliation_policy(&self) -> TaskReconciliationPolicy {
+        TaskReconciliationPolicy::Disabled
+    }
+
+    /// Whether this provider requires TaskReconciler pass for tool call graph assembly.
     fn uses_task_reconciler(&self) -> bool {
-        false
+        self.task_reconciliation_policy().uses_task_reconciler()
     }
 
     /// Whether wrapper-based plan extraction from text chunks is enabled.

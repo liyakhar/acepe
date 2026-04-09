@@ -85,6 +85,7 @@ export class AgentStore {
 					autonomous_supported_mode_ids: a.autonomous_supported_mode_ids
 						? a.autonomous_supported_mode_ids
 						: [],
+					default_selection_rank: a.default_selection_rank,
 				}));
 				this.agentsLoading = false;
 				logger.debug("Loaded agents", { count: this.agents.length });
@@ -150,15 +151,10 @@ export class AgentStore {
 	}
 
 	/**
-	 * Get the default agent ID based on priority order.
+	 * Get the default agent ID using backend-owned precedence metadata.
 	 */
 	getDefaultAgentId(): string | null {
-		const priorityOrder = ["claude-code", "cursor", "opencode", "codex"];
-		return (
-			priorityOrder.find((id) => this.agents.some((a) => a.id === id)) ??
-			this.agents[0]?.id ??
-			null
-		);
+		return resolveDefaultAgentId(this.agents);
 	}
 
 	destroy() {
@@ -180,4 +176,25 @@ export function createAgentStore(): AgentStore {
  */
 export function getAgentStore(): AgentStore {
 	return getContext<AgentStore>(AGENT_STORE_KEY);
+}
+
+export function resolveDefaultAgentId(agents: readonly Agent[]): string | null {
+	let selectedAgentId: string | null = null;
+	let selectedRank: number | null = null;
+
+	for (const agent of agents) {
+		if (agent.default_selection_rank === undefined) {
+			continue;
+		}
+		if (selectedRank === null || agent.default_selection_rank < selectedRank) {
+			selectedAgentId = agent.id;
+			selectedRank = agent.default_selection_rank;
+		}
+	}
+
+	if (selectedAgentId !== null) {
+		return selectedAgentId;
+	}
+
+	return agents[0]?.id ?? null;
 }

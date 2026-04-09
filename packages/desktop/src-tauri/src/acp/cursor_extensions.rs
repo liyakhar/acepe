@@ -1,3 +1,7 @@
+use crate::acp::provider_extensions::{
+    InboundResponseAdapter, ProviderExtensionEvent, QuestionOptionResponseAdapter,
+    QuestionResponseAdapter,
+};
 use crate::acp::session_update::{
     ContentChunk, PlanConfidence, PlanData, PlanSource, PlanStep, PlanStepStatus, QuestionData,
     QuestionItem, QuestionOption, SessionUpdate, TodoItem, TodoStatus, ToolArguments, ToolCallData,
@@ -18,35 +22,6 @@ const CURSOR_GENERATE_IMAGE: &str = "cursor/generate_image";
 pub enum CursorExtensionKind {
     Request,
     Notification,
-}
-
-#[derive(Debug, Clone)]
-pub struct CursorExtensionEvent {
-    pub updates: Vec<SessionUpdate>,
-    pub response_adapter: Option<CursorResponseAdapter>,
-}
-
-#[derive(Debug, Clone)]
-pub enum CursorResponseAdapter {
-    AskQuestion {
-        questions: Vec<CursorQuestionResponseAdapter>,
-    },
-    CreatePlan {
-        plan_uri: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub struct CursorQuestionResponseAdapter {
-    pub question: String,
-    pub question_id: String,
-    pub options: Vec<CursorQuestionOptionResponseAdapter>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CursorQuestionOptionResponseAdapter {
-    pub label: String,
-    pub option_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,7 +175,7 @@ pub fn normalize_cursor_extension(
     params: &Value,
     request_id: Option<u64>,
     current_session_id: Option<&str>,
-) -> Result<CursorExtensionEvent, String> {
+) -> Result<ProviderExtensionEvent, String> {
     let session_id = current_session_id
         .filter(|value| !value.is_empty())
         .unwrap_or("unknown")
@@ -216,14 +191,14 @@ pub fn normalize_cursor_extension(
     }
 }
 
-pub fn adapt_cursor_response(adapter: &CursorResponseAdapter, result: &Value) -> Value {
+pub fn adapt_cursor_response(adapter: &InboundResponseAdapter, result: &Value) -> Value {
     let outcome = result
         .pointer("/outcome/outcome")
         .and_then(|value| value.as_str())
         .unwrap_or("selected");
 
     match adapter {
-        CursorResponseAdapter::AskQuestion { questions } => {
+        InboundResponseAdapter::AskQuestion { questions } => {
             if outcome == "cancelled" {
                 return json!({
                     "outcome": {
@@ -263,7 +238,7 @@ pub fn adapt_cursor_response(adapter: &CursorResponseAdapter, result: &Value) ->
                 }
             })
         }
-        CursorResponseAdapter::CreatePlan { plan_uri } => {
+        InboundResponseAdapter::CreatePlan { plan_uri } => {
             if outcome == "cancelled" {
                 return json!({
                     "outcome": {
@@ -302,7 +277,7 @@ fn normalize_cursor_ask_question(
     params: &Value,
     request_id: Option<u64>,
     session_id: String,
-) -> Result<CursorExtensionEvent, String> {
+) -> Result<ProviderExtensionEvent, String> {
     let parsed: AskQuestionParams =
         serde_json::from_value(params.clone()).map_err(|error| error.to_string())?;
 
@@ -327,7 +302,7 @@ fn normalize_cursor_ask_question(
                     .unwrap_or_else(|| format!("Option {}", option_index + 1))
             });
             let option_id = option.id.unwrap_or_else(|| label.clone());
-            adapter_options.push(CursorQuestionOptionResponseAdapter {
+            adapter_options.push(QuestionOptionResponseAdapter {
                 label: label.clone(),
                 option_id,
             });
@@ -337,7 +312,7 @@ fn normalize_cursor_ask_question(
             });
         }
 
-        adapter_questions.push(CursorQuestionResponseAdapter {
+        adapter_questions.push(QuestionResponseAdapter {
             question: question_text.clone(),
             question_id,
             options: adapter_options,
@@ -350,7 +325,7 @@ fn normalize_cursor_ask_question(
         });
     }
 
-    Ok(CursorExtensionEvent {
+    Ok(ProviderExtensionEvent {
         updates: vec![SessionUpdate::QuestionRequest {
             question: QuestionData {
                 id: parsed
@@ -377,7 +352,7 @@ fn normalize_cursor_ask_question(
             },
             session_id: Some(session_id),
         }],
-        response_adapter: Some(CursorResponseAdapter::AskQuestion {
+        response_adapter: Some(InboundResponseAdapter::AskQuestion {
             questions: adapter_questions,
         }),
     })
@@ -387,7 +362,7 @@ fn normalize_cursor_create_plan(
     params: &Value,
     request_id: Option<u64>,
     session_id: String,
-) -> Result<CursorExtensionEvent, String> {
+) -> Result<ProviderExtensionEvent, String> {
     let parsed: CreatePlanParams =
         serde_json::from_value(params.clone()).map_err(|error| error.to_string())?;
     let plan_steps = create_plan_steps(&parsed.todos, &parsed.phases);
@@ -443,11 +418,11 @@ fn normalize_cursor_create_plan(
         });
     }
 
-    let response_adapter = request_id.map(|_| CursorResponseAdapter::CreatePlan {
+    let response_adapter = request_id.map(|_| InboundResponseAdapter::CreatePlan {
         plan_uri: parsed.plan_uri,
     });
 
-    Ok(CursorExtensionEvent {
+    Ok(ProviderExtensionEvent {
         updates,
         response_adapter,
     })
@@ -456,14 +431,14 @@ fn normalize_cursor_create_plan(
 fn normalize_cursor_update_todos(
     params: &Value,
     session_id: String,
-) -> Result<CursorExtensionEvent, String> {
+) -> Result<ProviderExtensionEvent, String> {
     let parsed: UpdateTodosParams =
         serde_json::from_value(params.clone()).map_err(|error| error.to_string())?;
     let tool_call_id = parsed
         .tool_call_id
         .ok_or_else(|| "cursor/update_todos missing toolCallId".to_string())?;
 
-    Ok(CursorExtensionEvent {
+    Ok(ProviderExtensionEvent {
         updates: vec![SessionUpdate::ToolCallUpdate {
             update: ToolCallUpdateData {
                 tool_call_id,
@@ -501,7 +476,7 @@ fn normalize_cursor_update_todos(
 fn normalize_cursor_task(
     params: &Value,
     session_id: String,
-) -> Result<CursorExtensionEvent, String> {
+) -> Result<ProviderExtensionEvent, String> {
     let parsed: TaskParams =
         serde_json::from_value(params.clone()).map_err(|error| error.to_string())?;
     let tool_call_id = parsed
@@ -526,7 +501,7 @@ fn normalize_cursor_task(
         raw: None,
     };
 
-    Ok(CursorExtensionEvent {
+    Ok(ProviderExtensionEvent {
         updates: vec![SessionUpdate::ToolCallUpdate {
             update: ToolCallUpdateData {
                 tool_call_id,
@@ -550,7 +525,7 @@ fn normalize_cursor_task(
 fn normalize_cursor_generate_image(
     params: &Value,
     session_id: String,
-) -> Result<CursorExtensionEvent, String> {
+) -> Result<ProviderExtensionEvent, String> {
     let parsed: GenerateImageParams =
         serde_json::from_value(params.clone()).map_err(|error| error.to_string())?;
     let tool_call_id = parsed
@@ -560,7 +535,7 @@ fn normalize_cursor_generate_image(
         .file_path
         .ok_or_else(|| "cursor/generate_image missing filePath".to_string())?;
 
-    Ok(CursorExtensionEvent {
+    Ok(ProviderExtensionEvent {
         updates: vec![
             SessionUpdate::AgentMessageChunk {
                 chunk: ContentChunk {
@@ -569,6 +544,7 @@ fn normalize_cursor_generate_image(
                         mime_type: mime_type_for_path(&file_path).to_string(),
                         uri: Some(file_path.clone()),
                     },
+                    aggregation_hint: None,
                 },
                 part_id: None,
                 message_id: None,
@@ -733,7 +709,7 @@ mod tests {
         }
 
         match event.response_adapter {
-            Some(CursorResponseAdapter::AskQuestion { questions }) => {
+            Some(InboundResponseAdapter::AskQuestion { questions }) => {
                 assert_eq!(questions[0].question_id, "question-1");
                 assert_eq!(questions[0].options[0].option_id, "a");
             }
@@ -770,7 +746,7 @@ mod tests {
         }
 
         match event.response_adapter {
-            Some(CursorResponseAdapter::CreatePlan { plan_uri }) => {
+            Some(InboundResponseAdapter::CreatePlan { plan_uri }) => {
                 assert_eq!(plan_uri.as_deref(), Some("/tmp/plan.md"));
             }
             other => panic!("unexpected adapter: {other:?}"),
@@ -779,16 +755,16 @@ mod tests {
 
     #[test]
     fn adapts_cursor_question_response_from_generic_answers() {
-        let adapter = CursorResponseAdapter::AskQuestion {
-            questions: vec![CursorQuestionResponseAdapter {
+        let adapter = InboundResponseAdapter::AskQuestion {
+            questions: vec![QuestionResponseAdapter {
                 question: "Select an option".to_string(),
                 question_id: "question-1".to_string(),
                 options: vec![
-                    CursorQuestionOptionResponseAdapter {
+                    QuestionOptionResponseAdapter {
                         label: "Option A".to_string(),
                         option_id: "a".to_string(),
                     },
-                    CursorQuestionOptionResponseAdapter {
+                    QuestionOptionResponseAdapter {
                         label: "Option B".to_string(),
                         option_id: "b".to_string(),
                     },
@@ -820,7 +796,7 @@ mod tests {
 
     #[test]
     fn adapts_cursor_plan_response_approved() {
-        let adapter = CursorResponseAdapter::CreatePlan {
+        let adapter = InboundResponseAdapter::CreatePlan {
             plan_uri: Some("/tmp/plan.md".to_string()),
         };
 
@@ -839,7 +815,7 @@ mod tests {
 
     #[test]
     fn adapts_cursor_plan_response_rejected() {
-        let adapter = CursorResponseAdapter::CreatePlan {
+        let adapter = InboundResponseAdapter::CreatePlan {
             plan_uri: Some("/tmp/plan.md".to_string()),
         };
 

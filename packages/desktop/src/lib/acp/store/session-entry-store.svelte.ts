@@ -19,6 +19,7 @@ import { SvelteMap } from "svelte/reactivity";
 
 import type {
 	ContentBlock,
+	ContentChunk,
 	ToolArguments,
 	ToolCallData,
 } from "../../services/converted-session-types.js";
@@ -350,7 +351,7 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 
 	aggregateAssistantChunk(
 		sessionId: string,
-		chunk: { content: ContentBlock },
+		chunk: ContentChunk,
 		messageId: string | undefined,
 		isThought: boolean
 	) {

@@ -1,6 +1,7 @@
-use super::{extract_query_from_synthetic_permission, SyntheticToolCallContext};
+use super::SyntheticToolCallContext;
 use crate::acp::parsers::kind::is_web_search_id;
 use crate::acp::permission_tracker::WebSearchDedup;
+use crate::acp::provider::AgentProvider;
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -86,6 +87,7 @@ impl ForwardedPermissionRequest {
 
 pub(crate) fn remap_forwarded_web_search_tool_call_id(
     forwarded: &mut ForwardedPermissionRequest,
+    provider: Option<&dyn AgentProvider>,
     parsed_arguments: &Option<Value>,
     synthetic_tool_call: &mut Option<Box<SyntheticToolCallContext>>,
     web_search_dedup: &mut WebSearchDedup,
@@ -95,7 +97,8 @@ pub(crate) fn remap_forwarded_web_search_tool_call_id(
         return None;
     }
 
-    let query = extract_query_from_synthetic_permission(parsed_arguments, forwarded.value())?;
+    let query =
+        provider?.extract_synthetic_permission_query(parsed_arguments, forwarded.value())?;
     let session_id = forwarded.session_id()?;
     let canonical_id = web_search_dedup.take(&session_id, &query)?;
 

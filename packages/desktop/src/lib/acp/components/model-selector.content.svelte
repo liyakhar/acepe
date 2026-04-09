@@ -11,7 +11,6 @@ import type {
 
 import type { Model } from "../application/dto/model.js";
 import * as preferencesStore from "../store/agent-model-preferences-store.svelte.js";
-import { AGENT_IDS } from "../types/agent-id.js";
 import { CanonicalModeId } from "../types/canonical-mode-id.js";
 import type { ModelId } from "../types/model-id.js";
 import ModelSelectorFavoriteStar from "./model-selector.favorite-star.svelte";
@@ -19,11 +18,13 @@ import ModelSelectorModeBar from "./model-selector.mode-bar.svelte";
 import ModelSelectorRow from "./model-selector.row.svelte";
 import {
 	getCodexCurrentVariant,
+	getModelDisplayFamily,
 	getModelDisplayName,
 	getProviderFromModelId,
 	groupCodexModelsByBase,
 	groupModelsByProvider,
 	isDefaultModel,
+	supportsReasoningEffortPicker,
 } from "./model-selector-logic.js";
 
 interface Props {
@@ -99,11 +100,12 @@ function getModelId(model: Model | DisplayableModel): string {
 }
 
 function getDisplayName(model: Model | DisplayableModel): string {
-	return "displayName" in model ? model.displayName : getModelDisplayName(model, agentId);
+	return "displayName" in model ? model.displayName : getModelDisplayName(model, agentId, modelsDisplay);
 }
 
 function matchesSearch(model: Model | DisplayableModel, query: string): boolean {
-	const d = "displayName" in model ? model.displayName : getModelDisplayName(model, agentId);
+	const d =
+		"displayName" in model ? model.displayName : getModelDisplayName(model, agentId, modelsDisplay);
 	const mid = getModelId(model).toLowerCase();
 	const desc = (model.description ?? "").toLowerCase();
 	const prov = "displayName" in model ? "" : getProviderFromModelId(model.id).toLowerCase();
@@ -158,11 +160,19 @@ const showGroups = $derived(
 		: filteredGroupedModels.length > 1 && filteredModels.length >= 5
 );
 
-const isCodexAgent = $derived(agentId === AGENT_IDS.CODEX);
-const showSearch = $derived(!isCodexAgent && totalModelCount > MODEL_SEARCH_THRESHOLD);
+const usesReasoningEffortPickerDisplay = $derived(
+	supportsReasoningEffortPicker(availableModels, modelsDisplay)
+);
+const showSearch = $derived(!usesReasoningEffortPickerDisplay && totalModelCount > MODEL_SEARCH_THRESHOLD);
 
 const codexBaseGroupsFromDisplay = $derived.by(() => {
-	if (!hasModelsDisplay || !isCodexAgent || !modelsDisplay?.groups) return [];
+	if (
+		!hasModelsDisplay ||
+		getModelDisplayFamily(modelsDisplay) !== "codexReasoningEffort" ||
+		!modelsDisplay?.groups
+	) {
+		return [];
+	}
 	return modelsDisplay.groups.map((g) => {
 		const firstModelId = g.models[0]?.modelId ?? "";
 		const baseModelId = firstModelId.includes("/")
@@ -189,18 +199,18 @@ const codexBaseGroupsFromDisplay = $derived.by(() => {
 });
 
 const codexBaseGroups = $derived.by(() =>
-	hasModelsDisplay && isCodexAgent
+	hasModelsDisplay && usesReasoningEffortPickerDisplay
 		? codexBaseGroupsFromDisplay
-		: isCodexAgent
+		: usesReasoningEffortPickerDisplay
 			? groupCodexModelsByBase(filteredModels)
 			: []
 );
 
 const selectedCodexVariant = $derived.by(() =>
-	isCodexAgent ? getCodexCurrentVariant(codexBaseGroups, currentModelId) : null
+	usesReasoningEffortPickerDisplay ? getCodexCurrentVariant(codexBaseGroups, currentModelId) : null
 );
 const selectedCodexBaseGroup = $derived.by(() => {
-	if (!isCodexAgent || codexBaseGroups.length === 0) {
+	if (!usesReasoningEffortPickerDisplay || codexBaseGroups.length === 0) {
 		return null;
 	}
 
@@ -255,7 +265,7 @@ function handleCodexEffortSelect(modelId: string): void {
 		</div>
 	{/if}
 
-	{#if isCodexAgent}
+	{#if usesReasoningEffortPickerDisplay}
 		<div
 			class="overflow-y-auto max-h-[250px] px-0 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent"
 		>

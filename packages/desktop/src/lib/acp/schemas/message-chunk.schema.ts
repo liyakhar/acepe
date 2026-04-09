@@ -15,6 +15,8 @@ export const TextContentSchema = z.object({
 	text: z.string(),
 });
 
+export const ChunkAggregationHintSchema = z.enum(["boundaryCarryover"]);
+
 /**
  * Schema for validating assistant chunk input data.
  * Used by SessionStore to validate incoming streaming chunks.
@@ -24,6 +26,7 @@ export const AssistantChunkInputSchema = z.object({
 	messageId: MessageIdSchema.optional(),
 	content: TextContentSchema,
 	isThought: z.boolean(),
+	aggregationHint: ChunkAggregationHintSchema.optional().nullable(),
 });
 
 /**
