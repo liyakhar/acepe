@@ -103,6 +103,25 @@ function compactToolEntry(entry: AgentToolEntry): CompactToolDisplay {
 	};
 }
 
+function resolveToolEntryTitle(options: ToolDisplayOptions, kind: ToolKind): string {
+	const semanticTitle =
+		getToolKindTitle(kind, options.toolCall, options.turnState) ?? options.toolCall.name;
+	const rawTitle = options.toolCall.title?.trim();
+
+	if (!rawTitle) {
+		return semanticTitle;
+	}
+
+	if (
+		kind === "delete" &&
+		rawTitle.localeCompare("apply_patch", undefined, { sensitivity: "accent" }) === 0
+	) {
+		return semanticTitle;
+	}
+
+	return rawTitle;
+}
+
 function buildDefaultFullEntry(options: ToolDisplayOptions): AgentToolEntry {
 	const kind = options.toolKind ?? options.toolCall.kind ?? "other";
 
@@ -110,10 +129,7 @@ function buildDefaultFullEntry(options: ToolDisplayOptions): AgentToolEntry {
 		id: options.toolCall.id,
 		type: "tool_call",
 		kind: toAgentToolKind(kind),
-		title:
-			options.toolCall.title ??
-			getToolKindTitle(kind, options.toolCall, options.turnState) ??
-			options.toolCall.name,
+		title: resolveToolEntryTitle(options, kind),
 		subtitle: getToolKindSubtitle(kind, options.toolCall) || undefined,
 		filePath: getToolKindFilePath(kind, options.toolCall) ?? undefined,
 		status: mapAgentToolStatus(

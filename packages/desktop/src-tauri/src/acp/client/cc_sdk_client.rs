@@ -1,6 +1,6 @@
 //! cc-sdk based AgentClient implementation for Claude Code.
 //!
-//! [`CcSdkClaudeClient`] communicates with the Claude Code CLI via the `cc_sdk` Rust
+//! [`ClaudeCcSdkClient`] communicates with the Claude Code CLI via the `cc_sdk` Rust
 //! crate directly — no Bun subprocess or JSON-RPC stdio indirection.
 
 use std::collections::HashMap;
@@ -861,10 +861,10 @@ impl cc_sdk::HookCallback for AcepePermissionRequestHook {
 }
 
 // ---------------------------------------------------------------------------
-// CcSdkClaudeClient
+// ClaudeCcSdkClient
 // ---------------------------------------------------------------------------
 
-pub struct CcSdkClaudeClient {
+pub struct ClaudeCcSdkClient {
     #[allow(dead_code)]
     provider: Arc<dyn AgentProvider>,
     /// Active sdk client, set after connect_and_start_bridge.
@@ -898,7 +898,7 @@ pub struct CcSdkClaudeClient {
     current_cwd: Option<PathBuf>,
 }
 
-impl CcSdkClaudeClient {
+impl ClaudeCcSdkClient {
     pub fn new(
         provider: Arc<dyn AgentProvider>,
         app_handle: AppHandle,
@@ -935,6 +935,10 @@ impl CcSdkClaudeClient {
     }
 
     fn reset_stream_runtime_state(&mut self) {
+        // Reconnects should rehydrate durable approvals onto a fresh bridge
+        // instead of converting in-flight requests from the previous stream
+        // instance into synthetic denials.
+        self.permission_bridge = Arc::new(PermissionBridge::new());
         self.tool_call_tracker = Arc::new(ToolCallIdTracker::new());
         self.approval_callback_tracker = Arc::new(ApprovalCallbackTracker::new());
         self.task_reconciler = Arc::new(std::sync::Mutex::new(TaskReconciler::new()));
@@ -2202,7 +2206,7 @@ fn dispatch_cc_sdk_update(
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-impl AgentClient for CcSdkClaudeClient {
+impl AgentClient for ClaudeCcSdkClient {
     async fn start(&mut self) -> AcpResult<()> {
         // cc-sdk resolves the claude CLI path internally.
         // Any failure will surface at connect() time with a clear error.
@@ -2831,8 +2835,8 @@ mod tests {
         }
     }
 
-    fn make_test_client_with_provider(provider: Arc<dyn AgentProvider>) -> CcSdkClaudeClient {
-        CcSdkClaudeClient {
+    fn make_test_client_with_provider(provider: Arc<dyn AgentProvider>) -> ClaudeCcSdkClient {
+        ClaudeCcSdkClient {
             provider,
             sdk_client: None,
             session_id: None,
@@ -2877,7 +2881,7 @@ mod tests {
         .expect("replay context")
     }
 
-    fn make_test_client() -> CcSdkClaudeClient {
+    fn make_test_client() -> ClaudeCcSdkClient {
         make_test_client_with_provider(Arc::new(
             crate::acp::providers::claude_code::ClaudeCodeProvider,
         ))
@@ -3094,6 +3098,35 @@ mod tests {
                 .expect("cached approval should resolve immediately"),
             cc_sdk::PermissionResult::Allow(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn reset_stream_runtime_state_does_not_deny_pending_permissions() {
+        let mut client = make_test_client();
+        let previous_bridge = client.permission_bridge.clone();
+        let registration = previous_bridge
+            .register_tool(
+                previous_bridge.next_id(),
+                ToolPermissionRequest {
+                    tool_call_id: "toolu_resume".to_string(),
+                    tool_name: "Read".to_string(),
+                    reusable_approval_key: Some("Read::/tmp/file.txt".to_string()),
+                    permission_suggestions: Vec::new(),
+                },
+            )
+            .await;
+
+        client.reset_stream_runtime_state();
+        client
+            .restore_session_permission_approvals("session-resume")
+            .await;
+
+        assert!(
+            timeout(Duration::from_millis(50), registration.receiver)
+                .await
+                .is_err(),
+            "resume should leave in-flight permissions pending until the new stream replays them"
+        );
     }
 
     #[tokio::test]

@@ -878,6 +878,93 @@ describe("SessionEventService streaming delta handling", () => {
 		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
+	it("does not buffer permissionRequest updates for disconnected sessions", () => {
+		const disconnectedHandler = createMockHandler();
+		const onPermissionRequest = vi.fn();
+		service.setCallbacks({ onPermissionRequest });
+		const session = {
+			id: "session-123",
+			agentId: "copilot",
+		} as unknown as SessionCold;
+		(disconnectedHandler.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue(session);
+		(disconnectedHandler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: false,
+			status: "idle",
+		});
+
+		const update: SessionUpdate = {
+			type: "permissionRequest",
+			permission: {
+				id: "perm-1",
+				sessionId: "session-123",
+				jsonRpcRequestId: 42,
+				permission: "Write",
+				patterns: ["/tmp/file.txt"],
+				metadata: { rawInput: { file_path: "/tmp/file.txt" } },
+				always: [],
+				tool: {
+					messageId: "",
+					callId: "tool-write-1",
+				},
+			},
+			session_id: "session-123",
+		};
+
+		service.handleSessionUpdate(update, disconnectedHandler);
+
+		expect(onPermissionRequest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: "perm-1",
+				sessionId: "session-123",
+			})
+		);
+	});
+
+	it("does not buffer questionRequest updates for disconnected sessions", () => {
+		const disconnectedHandler = createMockHandler();
+		const onQuestionRequest = vi.fn();
+		service.setCallbacks({ onQuestionRequest });
+		const session = {
+			id: "session-123",
+			agentId: "copilot",
+		} as unknown as SessionCold;
+		(disconnectedHandler.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue(session);
+		(disconnectedHandler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: false,
+			status: "idle",
+		});
+
+		const update: SessionUpdate = {
+			type: "questionRequest",
+			question: {
+				id: "question-1",
+				sessionId: "session-123",
+				questions: [
+					{
+						question: "Proceed?",
+						header: "Confirm",
+						options: [{ label: "Yes", description: "Continue" }],
+						multiSelect: false,
+					},
+				],
+				tool: {
+					messageId: "",
+					callId: "tool-question-1",
+				},
+			},
+			session_id: "session-123",
+		};
+
+		service.handleSessionUpdate(update, disconnectedHandler);
+
+		expect(onQuestionRequest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: "question-1",
+				sessionId: "session-123",
+			})
+		);
+	});
+
 	it("accepts updates for disconnected sessions while connecting", () => {
 		const connectingHandler = createMockHandler();
 		const session = {

@@ -430,7 +430,7 @@ const features = [
 					<img
 						src="/images/landing/acepe-working-view.png"
 						alt="Acepe main app view"
-						class="h-auto w-full rounded-lg"
+						class="h-auto w-full rounded-lg border border-white/10 shadow-[0_24px_80px_rgba(0,0,0,0.42)]"
 					/>
 				</div>
 			</div>

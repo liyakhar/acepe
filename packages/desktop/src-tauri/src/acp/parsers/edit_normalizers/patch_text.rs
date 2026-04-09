@@ -37,6 +37,13 @@ pub(crate) fn parse_patch_text_value(patch_text: &str) -> Option<ToolArguments> 
         if let Some(move_arguments) = parse_move_section(&sections[0]) {
             return Some(move_arguments);
         }
+        if let Some(delete_arguments) = parse_delete_section(&sections[0]) {
+            return Some(delete_arguments);
+        }
+    }
+
+    if let Some(delete_arguments) = parse_delete_sections(&sections) {
+        return Some(delete_arguments);
     }
 
     let edits = parse_patch_text_sections_to_edits(sections);
@@ -108,6 +115,34 @@ fn parse_move_section(section: &PatchSection) -> Option<ToolArguments> {
     Some(ToolArguments::Move {
         from: Some(section.file_path.clone()),
         to: Some(destination_path.clone()),
+    })
+}
+
+fn parse_delete_section(section: &PatchSection) -> Option<ToolArguments> {
+    if section.kind != PatchSectionKind::Delete || section.move_to.is_some() {
+        return None;
+    }
+
+    Some(ToolArguments::Delete {
+        file_path: Some(section.file_path.clone()),
+        file_paths: None,
+    })
+}
+
+fn parse_delete_sections(sections: &[PatchSection]) -> Option<ToolArguments> {
+    if sections.is_empty()
+        || sections
+            .iter()
+            .any(|section| section.kind != PatchSectionKind::Delete || section.move_to.is_some())
+    {
+        return None;
+    }
+
+    let file_paths: Vec<String> = sections.iter().map(|section| section.file_path.clone()).collect();
+
+    Some(ToolArguments::Delete {
+        file_path: file_paths.first().cloned(),
+        file_paths: Some(file_paths),
     })
 }
 
@@ -357,17 +392,41 @@ mod tests {
         let result = parse_patch_text(&raw).expect("should parse delete patch_text");
 
         match result {
-            ToolArguments::Edit { edits } => {
-                assert_eq!(edits.len(), 1);
-                assert_eq!(edits[0].file_path.as_deref(), Some("src/old.ts"));
-                assert_eq!(edits[0].new_string, None);
-                assert_eq!(edits[0].content, None);
+            ToolArguments::Delete {
+                file_path,
+                file_paths,
+            } => {
+                assert_eq!(file_path.as_deref(), Some("src/old.ts"));
+                assert!(file_paths.is_none());
+            }
+            other => panic!("Expected Delete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_patch_text_supports_multi_delete_file_sections() {
+        let patch = r#"*** Begin Patch
+*** Delete File: src/old-a.ts
+ old a
+*** Delete File: src/old-b.ts
+ old b
+*** End Patch"#;
+
+        let raw = serde_json::json!({ "patch_text": patch });
+        let result = parse_patch_text(&raw).expect("should parse multi delete patch_text");
+
+        match result {
+            ToolArguments::Delete {
+                file_path,
+                file_paths,
+            } => {
+                assert_eq!(file_path.as_deref(), Some("src/old-a.ts"));
                 assert_eq!(
-                    edits[0].old_string.as_deref(),
-                    Some("export const value = 1;")
+                    file_paths,
+                    Some(vec!["src/old-a.ts".to_string(), "src/old-b.ts".to_string()])
                 );
             }
-            other => panic!("Expected Edit, got {other:?}"),
+            other => panic!("Expected Delete, got {other:?}"),
         }
     }
 

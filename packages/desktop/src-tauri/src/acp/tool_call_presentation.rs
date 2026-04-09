@@ -19,7 +19,17 @@ pub(crate) fn synthesize_title(arguments: &ToolArguments) -> Option<String> {
             file_path.as_ref().map(|path| format!("Read {}", path))
         }
         ToolArguments::Edit { edits, .. } => edits.first().and_then(synthesize_edit_title),
-        ToolArguments::Delete { file_path } => {
+        ToolArguments::Delete {
+            file_path,
+            file_paths,
+        } => {
+            if let Some(paths) = file_paths.as_ref().filter(|paths| !paths.is_empty()) {
+                if paths.len() == 1 {
+                    return paths.first().map(|path| format!("Delete {}", path));
+                }
+                return Some(format!("Delete {} files", paths.len()));
+            }
+
             file_path.as_ref().map(|path| format!("Delete {}", path))
         }
         ToolArguments::Execute { command } => command.clone(),
@@ -28,7 +38,11 @@ pub(crate) fn synthesize_title(arguments: &ToolArguments) -> Option<String> {
 }
 
 pub(crate) fn synthesize_locations(arguments: &ToolArguments) -> Option<Vec<ToolCallLocation>> {
-    extract_path(arguments).map(|path| vec![ToolCallLocation { path }])
+    extract_paths(arguments).map(|paths| {
+        paths.into_iter()
+            .map(|path| ToolCallLocation { path })
+            .collect()
+    })
 }
 
 pub(crate) fn merge_edit_entries(
@@ -80,13 +94,23 @@ pub(crate) fn merge_tool_arguments(
     }
 }
 
-fn extract_path(arguments: &ToolArguments) -> Option<String> {
+fn extract_paths(arguments: &ToolArguments) -> Option<Vec<String>> {
     match arguments {
-        ToolArguments::Read { file_path }
-        | ToolArguments::Delete { file_path }
-        | ToolArguments::Search { file_path, .. } => file_path.clone(),
-        ToolArguments::Edit { edits, .. } => edits.first().and_then(|edit| edit.file_path.clone()),
-        ToolArguments::Glob { path, .. } => path.clone(),
+        ToolArguments::Read { file_path } | ToolArguments::Search { file_path, .. } => {
+            file_path.clone().map(|path| vec![path])
+        }
+        ToolArguments::Delete {
+            file_path,
+            file_paths,
+        } => file_paths
+            .clone()
+            .filter(|paths| !paths.is_empty())
+            .or_else(|| file_path.clone().map(|path| vec![path])),
+        ToolArguments::Edit { edits, .. } => edits
+            .first()
+            .and_then(|edit| edit.file_path.clone())
+            .map(|path| vec![path]),
+        ToolArguments::Glob { path, .. } => path.clone().map(|value| vec![value]),
         _ => None,
     }
 }
@@ -136,8 +160,20 @@ mod tests {
         assert_eq!(
             synthesize_title(&ToolArguments::Delete {
                 file_path: Some("/tmp/delete.rs".to_string()),
+                file_paths: None,
             }),
             Some("Delete /tmp/delete.rs".to_string())
+        );
+
+        assert_eq!(
+            synthesize_title(&ToolArguments::Delete {
+                file_path: Some("/tmp/delete-a.rs".to_string()),
+                file_paths: Some(vec![
+                    "/tmp/delete-a.rs".to_string(),
+                    "/tmp/delete-b.rs".to_string()
+                ]),
+            }),
+            Some("Delete 2 files".to_string())
         );
 
         assert_eq!(
@@ -176,6 +212,19 @@ mod tests {
 
         assert_eq!(locations.len(), 1);
         assert_eq!(locations[0].path, "/tmp/file.rs");
+
+        let delete_locations = synthesize_locations(&ToolArguments::Delete {
+            file_path: Some("/tmp/delete-a.rs".to_string()),
+            file_paths: Some(vec![
+                "/tmp/delete-a.rs".to_string(),
+                "/tmp/delete-b.rs".to_string(),
+            ]),
+        })
+        .expect("delete locations");
+
+        assert_eq!(delete_locations.len(), 2);
+        assert_eq!(delete_locations[0].path, "/tmp/delete-a.rs");
+        assert_eq!(delete_locations[1].path, "/tmp/delete-b.rs");
     }
 
     #[test]

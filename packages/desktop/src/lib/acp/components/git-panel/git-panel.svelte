@@ -34,6 +34,7 @@ import { GitBranch } from "phosphor-svelte";
 import { GitPullRequest } from "phosphor-svelte";
 import { Trash } from "phosphor-svelte";
 import { Tree } from "phosphor-svelte";
+import { X } from "phosphor-svelte";
 import { onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import * as m from "$lib/paraglide/messages.js";
@@ -140,6 +141,9 @@ let worktrees = $state<WorktreeInfo[]>([]);
 let worktreeDeleteConfirm = $state<string | "all" | null>(null);
 let selectedChangesFile = $state<string>("");
 let selectedChangesDiff = $state<FileDiffType | null>(null);
+let selectedChangesLoading = $state(false);
+let selectedChangesDismissed = $state(false);
+let selectedChangesRequestId = $state(0);
 let stackedActionRunning = $state(false);
 
 // ─── Resize State ────────────────────────────────────────────────────
@@ -164,6 +168,26 @@ const surfaceClass = $derived(
 );
 const currentWorktree = $derived(resolveCurrentWorktree(projectPath, worktrees));
 const worktreeItems = $derived(buildWorktreeListItems(projectPath, worktrees));
+const navigableChangesFiles = $derived([
+	...stagedFiles.map((file) => ({
+		file: {
+			path: file.path,
+			status: (file.indexStatus ?? "modified") as FileDiffType["status"],
+			additions: file.additions,
+			deletions: file.deletions,
+		},
+		staged: true,
+	})),
+	...unstagedFiles.map((file) => ({
+		file: {
+			path: file.path,
+			status: (file.worktreeStatus === "untracked" ? "added" : file.worktreeStatus ?? "modified") as FileDiffType["status"],
+			additions: file.additions,
+			deletions: file.deletions,
+		},
+		staged: false,
+	})),
+]);
 
 /** Map Tauri file status → shared UI GitStatusFile */
 const stagedFiles: GitStatusFile[] = $derived(
@@ -173,8 +197,8 @@ const stagedFiles: GitStatusFile[] = $derived(
 			path: f.path,
 			indexStatus: f.indexStatus as GitIndexStatus,
 			worktreeStatus: f.worktreeStatus as GitWorktreeStatus | null,
-			additions: f.insertions,
-			deletions: f.deletions,
+			additions: f.indexInsertions,
+			deletions: f.indexDeletions,
 		}))
 );
 
@@ -185,8 +209,8 @@ const unstagedFiles: GitStatusFile[] = $derived(
 			path: f.path,
 			indexStatus: null,
 			worktreeStatus: f.worktreeStatus as GitWorktreeStatus,
-			additions: f.insertions,
-			deletions: f.deletions,
+			additions: f.worktreeInsertions,
+			deletions: f.worktreeDeletions,
 		}))
 );
 
@@ -282,9 +306,30 @@ async function refresh() {
 	worktreeResult.map((items) => (worktrees = items));
 	selectedChangesFile = "";
 	selectedChangesDiff = null;
+	selectedChangesLoading = false;
+	selectedChangesDismissed = false;
+	selectedChangesRequestId += 1;
 
 	_loading = false;
 }
+
+$effect(() => {
+	if (
+		activeSection !== "changes" ||
+		activeView !== "status" ||
+		_loading ||
+		selectedChangesDismissed ||
+		selectedChangesFile ||
+		navigableChangesFiles.length === 0
+	) {
+		return;
+	}
+
+	const [firstFile] = navigableChangesFiles;
+	if (firstFile) {
+		void handleFileSelect(firstFile.file, firstFile.staged);
+	}
+});
 
 async function loadStash() {
 	const result = await tauriClient.git.stashList(projectPath);
@@ -534,19 +579,106 @@ async function handleDeleteAllWorktrees() {
 	await refresh();
 }
 
-async function handleFileSelect(path: string, staged: boolean) {
-	selectedChangesFile = path;
-	selectedChangesDiff = null;
+async function handleFileSelect(
+	file: {
+		path: string;
+		status: FileDiffType["status"];
+		additions: number;
+		deletions: number;
+	},
+	staged: boolean
+) {
+	const requestId = selectedChangesRequestId + 1;
+	selectedChangesRequestId = requestId;
+	selectedChangesFile = file.path;
+	selectedChangesDiff = {
+		path: file.path,
+		status: file.status,
+		additions: file.additions,
+		deletions: file.deletions,
+		patch: "",
+	};
+	selectedChangesLoading = true;
+	selectedChangesDismissed = false;
 
-	const result = await fetchWorkingFileDiff(projectPath, path, staged);
+	const result = await fetchWorkingFileDiff(
+		projectPath,
+		file.path,
+		staged,
+		file.status,
+		file.additions,
+		file.deletions,
+	);
 	result.match(
 		(diff) => {
+			if (requestId !== selectedChangesRequestId) {
+				return;
+			}
 			selectedChangesDiff = diff;
+			selectedChangesLoading = false;
 		},
 		() => {
+			if (requestId !== selectedChangesRequestId) {
+				return;
+			}
 			selectedChangesDiff = null;
+			selectedChangesLoading = false;
 		}
 	);
+}
+
+function closeSelectedChangesPreview() {
+	selectedChangesRequestId += 1;
+	selectedChangesFile = "";
+	selectedChangesDiff = null;
+	selectedChangesLoading = false;
+	selectedChangesDismissed = true;
+}
+
+function handleChangesKeyDown(event: KeyboardEvent) {
+	if (
+		activeSection !== "changes" ||
+		activeView !== "status" ||
+		event.altKey ||
+		event.ctrlKey ||
+		event.metaKey ||
+		navigableChangesFiles.length === 0
+	) {
+		return;
+	}
+
+	const target = event.target;
+	if (
+		target instanceof HTMLInputElement ||
+		target instanceof HTMLTextAreaElement ||
+		target instanceof HTMLSelectElement ||
+		target instanceof HTMLButtonElement === false &&
+			target instanceof HTMLElement &&
+			target.isContentEditable
+	) {
+		return;
+	}
+
+	if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+		return;
+	}
+
+	event.preventDefault();
+
+	const currentIndex = navigableChangesFiles.findIndex((entry) => entry.file.path === selectedChangesFile);
+	const fallbackIndex = event.key === "ArrowDown" ? 0 : navigableChangesFiles.length - 1;
+	const nextIndex =
+		currentIndex === -1
+			? fallbackIndex
+			: event.key === "ArrowDown"
+				? Math.min(currentIndex + 1, navigableChangesFiles.length - 1)
+				: Math.max(currentIndex - 1, 0);
+	const nextFile = navigableChangesFiles[nextIndex];
+	if (!nextFile || nextFile.file.path === selectedChangesFile) {
+		return;
+	}
+
+	void handleFileSelect(nextFile.file, nextFile.staged);
 }
 
 async function handleOpenCommit(rawQuery: string) {
@@ -775,88 +907,108 @@ async function handleOpenPr(prNumber: number) {
 		{/if}
 	{/snippet}
 
-	{#if activeSection === "changes"}
-		<div
-			class="flex items-center gap-1.5 border-b border-border/30 px-2 py-1.5 shrink-0 bg-muted/5"
+	{#snippet commitComposerActions()}
+		<button
+			type="button"
+			class="inline-flex items-center gap-1 rounded-full border border-border/50 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border hover:bg-accent/20 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+			disabled={!canCommitPush}
+			onclick={() => void handleCommitPush()}
 		>
-			<button
-				type="button"
-				class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors bg-muted/50 text-foreground hover:bg-muted disabled:opacity-50 disabled:pointer-events-none"
-				disabled={!canCommitPush}
-				onclick={() => void handleCommitPush()}
-			>
-				Commit & push
-			</button>
-			<button
-				type="button"
-				class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors bg-muted/50 text-foreground hover:bg-muted disabled:opacity-50 disabled:pointer-events-none"
-				disabled={!canCommitPushPr}
-				onclick={() => void handleCommitPushPr()}
-			>
-				Commit, push & create PR
-			</button>
-		</div>
-		<GitPanelLayout
-			branch={branch ?? ""}
-			{stagedFiles}
-			{unstagedFiles}
-			remoteStatus={uiRemoteStatus}
-			{commitMessage}
-			stashEntries={uiStashEntries}
-			logEntries={uiLogEntries}
-			{activeView}
-			iconBasePath="/svgs/icons"
-			onStage={handleStage}
-			onUnstage={handleUnstage}
-			onStageAll={handleStageAll}
-			onDiscard={handleDiscard}
-			onCommitMessageChange={(msg) => (commitMessage = msg)}
-			onCommit={handleCommit}
-			onGenerate={onRequestGeneration ? handleGenerate : undefined}
-			commitMicButton={commitMicButton}
-			{generating}
-			onPush={handlePush}
-			onPull={handlePull}
-			onFetch={handleFetch}
-			onViewChange={handleViewChange}
-			onStashPop={handleStashPop}
-			onStashDrop={handleStashDrop}
-			onLogExpand={handleLogExpand}
-			onFileSelect={handleFileSelect}
-			selectedFile={selectedChangesFile}
-			{expandedCommitFiles}
-			logFileDiffContent={renderFileDiff}
-			class="flex-1 min-h-0"
-		/>
+			Commit & push
+		</button>
+		<button
+			type="button"
+			class="inline-flex items-center gap-1 rounded-full border border-border/50 bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border hover:bg-accent/20 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+			disabled={!canCommitPushPr}
+			onclick={() => void handleCommitPushPr()}
+		>
+			Commit, push & create PR
+		</button>
+	{/snippet}
 
-		{#if selectedChangesDiff?.patch}
-			<div class="border-t border-border/30 max-h-[50%] min-h-0 flex flex-col">
-				<div
-					class="sticky top-0 z-10 flex items-center gap-2 border-b border-border/20 bg-background px-2.5 py-1.5"
-				>
-					<FilePathBadge
-						filePath={selectedChangesDiff.path}
-						iconBasePath="/svgs/icons"
-						linesAdded={selectedChangesDiff.additions}
-						linesRemoved={selectedChangesDiff.deletions}
-						interactive={false}
-						size="sm"
-					/>
+	{#if activeSection === "changes"}
+		<div class="flex min-h-0 flex-1 overflow-hidden" onkeydown={handleChangesKeyDown}>
+			<GitPanelLayout
+				branch={branch ?? ""}
+				{stagedFiles}
+				{unstagedFiles}
+				remoteStatus={uiRemoteStatus}
+				{commitMessage}
+				stashEntries={uiStashEntries}
+				logEntries={uiLogEntries}
+				{activeView}
+				iconBasePath="/svgs/icons"
+				onStage={handleStage}
+				onUnstage={handleUnstage}
+				onStageAll={handleStageAll}
+				onDiscard={handleDiscard}
+				onCommitMessageChange={(msg) => (commitMessage = msg)}
+				onCommit={handleCommit}
+				onGenerate={onRequestGeneration ? handleGenerate : undefined}
+				commitActions={commitComposerActions}
+				commitMicButton={commitMicButton}
+				{generating}
+				onPush={handlePush}
+				onPull={handlePull}
+				onFetch={handleFetch}
+				onViewChange={handleViewChange}
+				onStashPop={handleStashPop}
+				onStashDrop={handleStashDrop}
+				onLogExpand={handleLogExpand}
+				onFileSelect={handleFileSelect}
+				selectedFile={selectedChangesFile}
+				{expandedCommitFiles}
+				logFileDiffContent={renderFileDiff}
+				class="min-h-0 min-w-0 flex-1"
+			/>
+
+			{#if selectedChangesDiff}
+				<div class="flex min-h-0 w-[min(44%,480px)] min-w-[320px] flex-col border-l border-border/30 bg-background">
+					<div class="flex items-center gap-2 border-b border-border/20 px-2.5 py-1.5">
+						<FilePathBadge
+							filePath={selectedChangesDiff.path}
+							iconBasePath="/svgs/icons"
+							linesAdded={selectedChangesDiff.additions}
+							linesRemoved={selectedChangesDiff.deletions}
+							interactive={false}
+							size="sm"
+							class="!border-transparent !bg-transparent !px-0 !py-0 text-foreground"
+						/>
+						<div class="flex-1"></div>
+						<button
+							type="button"
+							class="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+							title="Close preview"
+							onclick={closeSelectedChangesPreview}
+						>
+							<X size={14} weight="bold" />
+						</button>
+					</div>
+					<div class="min-h-0 flex-1 overflow-y-auto">
+						{#if selectedChangesLoading}
+							<div class="px-3 py-4 text-sm text-muted-foreground">
+								Loading diff...
+							</div>
+						{:else if selectedChangesDiff.patch}
+							<PierreDiffView
+								diff={{
+									path: selectedChangesDiff.path,
+									status: selectedChangesDiff.status as FileDiffType["status"],
+									additions: selectedChangesDiff.additions,
+									deletions: selectedChangesDiff.deletions,
+									patch: selectedChangesDiff.patch,
+								}}
+								viewMode="inline"
+							/>
+						{:else}
+							<div class="px-3 py-4 text-sm text-muted-foreground">
+								No textual diff is available for this file.
+							</div>
+						{/if}
+					</div>
 				</div>
-				<div class="min-h-0 flex-1 overflow-y-auto">
-					<PierreDiffView
-						diff={{
-							path: selectedChangesDiff.path,
-							status: selectedChangesDiff.status as FileDiffType["status"],
-							additions: selectedChangesDiff.additions,
-							deletions: selectedChangesDiff.deletions,
-							patch: selectedChangesDiff.patch,
-						}}
-						viewMode="inline"
-					/>
-				</div>
-			</div>
-		{/if}
+			{/if}
+		</div>
 	{:else if activeSection === "worktrees"}
 		<div class="flex-1 min-h-0 overflow-y-auto px-2.5 py-2">
 			<div class="space-y-1.5">

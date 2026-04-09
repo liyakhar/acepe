@@ -53,6 +53,17 @@ function getNormalizedToolLabel(toolCall: RequestPermissionParams["toolCall"]): 
 	return "Execute tool";
 }
 
+function getNormalizedToolCallId(
+	request: JsonRpcRequest,
+	toolCall: RequestPermissionParams["toolCall"]
+): string {
+	if (toolCall.toolCallId !== undefined) {
+		return toolCall.toolCallId;
+	}
+
+	return `permission-request-${request.id}`;
+}
+
 function normalizeQuestionItems(
 	questions: AskUserQuestionData["questions"]
 ): QuestionRequest["questions"] {
@@ -95,7 +106,7 @@ function buildNormalizedBase(
 	return {
 		sessionId: params.sessionId,
 		jsonRpcRequestId: request.id,
-		toolCallId: params.toolCall.toolCallId,
+		toolCallId: getNormalizedToolCallId(request, params.toolCall),
 		toolLabel: getNormalizedToolLabel(params.toolCall),
 		rawInput: params.toolCall.rawInput,
 		parsedArguments: params.toolCall.parsedArguments,

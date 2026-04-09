@@ -45,7 +45,8 @@ use acp::commands::{
 use acp::event_bridge_server::start_event_bridge_server;
 use acp::event_hub::AcpEventHubState;
 use acp::github_commands::{
-    fetch_commit_diff, fetch_pr_diff, get_github_repo_context, list_pull_requests,
+    fetch_commit_diff, fetch_pr_diff, get_github_repo_context, git_working_file_diff,
+    list_pull_requests,
 };
 use acp::github_issues::{
     check_github_auth, create_github_issue, create_issue_comment, get_github_issue,
@@ -1099,6 +1100,7 @@ pub fn run() {
             fetch_commit_diff,
             fetch_pr_diff,
             get_github_repo_context,
+            git_working_file_diff,
             list_pull_requests,
             check_github_auth,
             create_github_issue,

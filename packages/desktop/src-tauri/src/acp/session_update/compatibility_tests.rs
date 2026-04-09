@@ -587,8 +587,12 @@ fn test_tool_arguments_delete() {
     let raw = json!({"file_path": "/tmp/delete.txt"});
     let args = ToolArguments::from_raw(ToolKind::Delete, raw);
     match args {
-        ToolArguments::Delete { file_path } => {
+        ToolArguments::Delete {
+            file_path,
+            file_paths,
+        } => {
             assert_eq!(file_path, Some("/tmp/delete.txt".to_string()));
+            assert!(file_paths.is_none());
         }
         _ => panic!("Expected Delete variant"),
     }

@@ -1,5 +1,5 @@
 use crate::acp::parsers::AgentType;
-use crate::acp::session_update::ToolCallData;
+use crate::acp::session_update::{SessionUpdate, ToolCallData};
 use serde_json::Value;
 use tauri::AppHandle;
 
@@ -29,13 +29,20 @@ pub(crate) enum InboundRoutingDecision {
         /// Parsed tool arguments to inject as `parsedArguments` into toolCall metadata.
         parsed_arguments: Option<Value>,
         /// When present, the client should emit a synthetic pending ToolCall before
-        /// forwarding the inbound request, so the UI has a tool row to anchor the permission.
+        /// emitting the canonical interaction update, so the UI has a tool row to anchor
+        /// the permission.
         synthetic_tool_call: Option<Box<SyntheticToolCallContext>>,
+        /// Canonical interaction update derived from the inbound request.
+        canonical_interaction: Option<SessionUpdate>,
+        /// Whether this request still needs to be forwarded on the legacy inbound-request
+        /// bridge. Canonicalized permission/question requests should keep this false.
+        forward_legacy_event: bool,
     },
 }
 
 pub(crate) async fn route_backend_inbound_request(
     app_handle: Option<&AppHandle>,
+    request_id: u64,
     method: &str,
     params: &Value,
     agent_type: AgentType,
@@ -44,7 +51,8 @@ pub(crate) async fn route_backend_inbound_request(
         "fs/read_text_file" => fs_handlers::handle_fs_read_text_file(params).await,
         "fs/write_text_file" => fs_handlers::handle_fs_write_text_file(app_handle, params).await,
         "session/request_permission" => {
-            permission_handlers::handle_session_request_permission(params, agent_type).await
+            permission_handlers::handle_session_request_permission(params, request_id, agent_type)
+                .await
         }
         "terminal/create" => terminal_handlers::handle_terminal_create(app_handle, params).await,
         "terminal/output" => terminal_handlers::handle_terminal_output(app_handle, params).await,
@@ -56,6 +64,8 @@ pub(crate) async fn route_backend_inbound_request(
         _ => InboundRoutingDecision::ForwardToUi {
             parsed_arguments: None,
             synthetic_tool_call: None,
+            canonical_interaction: None,
+            forward_legacy_event: true,
         },
     }
 }
@@ -72,6 +82,7 @@ mod tests {
     async fn forwards_permission_request_to_ui() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "session/request_permission",
             &json!({
                 "sessionId": "session-1",
@@ -90,6 +101,7 @@ mod tests {
     async fn injects_parsed_arguments_for_edit_permission() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "session/request_permission",
             &json!({
                 "sessionId": "session-1",
@@ -112,6 +124,12 @@ mod tests {
             InboundRoutingDecision::ForwardToUi {
                 parsed_arguments: Some(args),
                 synthetic_tool_call: Some(ref ctx),
+                canonical_interaction:
+                    Some(crate::acp::session_update::SessionUpdate::PermissionRequest {
+                        permission,
+                        ..
+                    }),
+                forward_legacy_event: false,
             } => {
                 assert_eq!(args["kind"], "edit");
                 assert_eq!(args["edits"][0]["filePath"], "/src/main.rs");
@@ -119,6 +137,15 @@ mod tests {
                 assert_eq!(args["edits"][0]["newString"], "bar");
                 assert_eq!(ctx.tool_call_data.id, "tc-1");
                 assert_eq!(ctx.tool_call_data.name, "Edit");
+                assert_eq!(permission.id, "session-1\u{0}tc-1\u{0}7");
+                assert_eq!(
+                    permission.tool.as_ref().map(|tool| tool.call_id.as_str()),
+                    Some("tc-1")
+                );
+                assert_eq!(
+                    permission.reply_handler,
+                    Some(crate::acp::session_update::InteractionReplyHandler::json_rpc(7))
+                );
             }
             _ => panic!("Expected ForwardToUi with parsed_arguments and synthetic_tool_call"),
         }
@@ -128,6 +155,7 @@ mod tests {
     async fn injects_parsed_arguments_for_codex_changes_map_permission() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "session/request_permission",
             &json!({
                 "sessionId": "session-1",
@@ -153,6 +181,7 @@ mod tests {
             InboundRoutingDecision::ForwardToUi {
                 parsed_arguments: Some(args),
                 synthetic_tool_call: Some(_),
+                ..
             } => {
                 assert_eq!(args["kind"], "edit");
                 assert_eq!(args["edits"][0]["filePath"], "/tmp/README.md");
@@ -166,6 +195,7 @@ mod tests {
     async fn injects_parsed_arguments_for_execute_permission() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "session/request_permission",
             &json!({
                 "sessionId": "session-1",
@@ -186,6 +216,7 @@ mod tests {
             InboundRoutingDecision::ForwardToUi {
                 parsed_arguments: Some(args),
                 synthetic_tool_call: Some(ref ctx),
+                ..
             } => {
                 assert_eq!(args["kind"], "execute");
                 assert_eq!(args["command"], "ls -la");
@@ -198,9 +229,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn canonicalizes_ask_user_question_into_question_request() {
+        let decision = route_backend_inbound_request(
+            None,
+            9,
+            "session/request_permission",
+            &json!({
+                "sessionId": "session-1",
+                "toolCall": {
+                    "toolCallId": "question-tool",
+                    "name": "AskUserQuestion",
+                    "rawInput": {
+                        "questions": [
+                            {
+                                "question": "Proceed?",
+                                "header": "Confirm",
+                                "options": [
+                                    { "label": "Yes", "description": "Continue" }
+                                ],
+                                "multiSelect": false
+                            }
+                        ]
+                    }
+                },
+                "options": []
+            }),
+            AgentType::Copilot,
+        )
+        .await;
+
+        match decision {
+            InboundRoutingDecision::ForwardToUi {
+                canonical_interaction:
+                    Some(crate::acp::session_update::SessionUpdate::QuestionRequest {
+                        question, ..
+                    }),
+                forward_legacy_event: false,
+                ..
+            } => {
+                assert_eq!(question.id, "question-tool");
+                assert_eq!(question.json_rpc_request_id, Some(9));
+                assert_eq!(question.questions[0].question, "Proceed?");
+            }
+            _ => panic!("Expected canonical questionRequest session update"),
+        }
+    }
+
+    #[tokio::test]
     async fn uses_kind_hint_when_permission_tool_name_is_missing() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "session/request_permission",
             &json!({
                 "sessionId": "session-1",
@@ -221,6 +300,7 @@ mod tests {
             InboundRoutingDecision::ForwardToUi {
                 parsed_arguments: Some(args),
                 synthetic_tool_call: Some(ref ctx),
+                ..
             } => {
                 assert_eq!(args["kind"], "execute");
                 assert_eq!(args["command"], "echo hello");
@@ -232,9 +312,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_synthetic_hint_when_tool_call_id_missing() {
+    async fn synthesizes_tool_call_id_when_permission_tool_call_id_is_missing() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "session/request_permission",
             &json!({
                 "sessionId": "session-1",
@@ -251,10 +332,19 @@ mod tests {
         match decision {
             InboundRoutingDecision::ForwardToUi {
                 parsed_arguments: Some(_),
-                synthetic_tool_call: None,
-            } => {} // Expected
+                synthetic_tool_call: Some(ref ctx),
+                canonical_interaction:
+                    Some(crate::acp::session_update::SessionUpdate::PermissionRequest {
+                        permission,
+                        ..
+                    }),
+                ..
+            } => {
+                assert_eq!(ctx.tool_call_data.id, "permission-request-7");
+                assert_eq!(permission.id, "session-1\u{0}permission-request-7\u{0}7");
+            }
             _ => panic!(
-                "Expected ForwardToUi with no synthetic_tool_call when toolCallId is missing"
+                "Expected ForwardToUi with synthesized toolCallId when toolCallId is missing"
             ),
         }
     }
@@ -263,6 +353,7 @@ mod tests {
     async fn no_synthetic_hint_when_session_id_missing() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "session/request_permission",
             &json!({
                 "toolCall": {
@@ -279,6 +370,7 @@ mod tests {
         match decision {
             InboundRoutingDecision::ForwardToUi {
                 synthetic_tool_call: None,
+                canonical_interaction: None,
                 ..
             } => {} // Expected
             _ => {
@@ -294,6 +386,7 @@ mod tests {
         // from the backtick-wrapped title as a fallback.
         let decision = route_backend_inbound_request(
             None,
+            7,
             "session/request_permission",
             &json!({
                 "sessionId": "session-1",
@@ -335,6 +428,7 @@ mod tests {
 
         let decision = route_backend_inbound_request(
             None,
+            7,
             "fs/read_text_file",
             &json!({
                 "sessionId": "session-1",
@@ -361,6 +455,7 @@ mod tests {
 
         let decision = route_backend_inbound_request(
             None,
+            7,
             "fs/write_text_file",
             &json!({
                 "sessionId": "session-1",
@@ -391,6 +486,7 @@ mod tests {
     async fn returns_invalid_params_for_fs_read_without_path() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "fs/read_text_file",
             &json!({
                 "sessionId": "session-1",
@@ -421,6 +517,7 @@ mod tests {
     async fn returns_terminal_error_when_no_app_handle_is_available() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "terminal/output",
             &json!({
                 "sessionId": "session-1",
@@ -452,6 +549,7 @@ mod tests {
     async fn returns_invalid_params_for_terminal_create_without_cwd() {
         let decision = route_backend_inbound_request(
             None,
+            7,
             "terminal/create",
             &json!({
                 "sessionId": "session-1",

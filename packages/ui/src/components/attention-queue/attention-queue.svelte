@@ -50,7 +50,7 @@
 	{#if collapsed}
 		<button
 			type="button"
-			class="flex h-8 w-full items-center justify-center rounded-md border border-border bg-card/50 text-muted-foreground transition-colors duration-200 hover:bg-accent/50 hover:text-foreground"
+			class="flex h-8 w-full items-center justify-center rounded border border-border bg-card/50 text-muted-foreground transition-colors duration-200 hover:bg-accent/50 hover:text-foreground"
 			onclick={() => onActivateCollapsed?.()}
 			aria-label="Open attention queue"
 			title="Attention Queue"
@@ -63,10 +63,10 @@
 			</div>
 		</button>
 	{:else}
-		<div class="flex flex-col overflow-hidden border border-border rounded-lg bg-card/50 shrink-0 mb-0.5 transition-[transform,opacity] duration-200 ease-out">
+		<div class="mb-0.5 flex shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card/50 transition-[transform,opacity] duration-200 ease-out">
 			<button
 				type="button"
-				class="flex items-center gap-1.5 px-2 py-1.5 w-full text-left cursor-pointer bg-transparent border-none hover:bg-accent/50 rounded-md transition-colors"
+				class="flex w-full cursor-pointer items-center gap-1.5 rounded border-none bg-transparent px-2 py-1.5 text-left transition-colors hover:bg-accent/50"
 				onclick={toggleExpanded}
 			>
 				<BellSimple size={12} weight="fill" class="text-primary shrink-0" />
@@ -89,10 +89,7 @@
 				<div class="flex flex-col gap-0.5 p-1 pt-0">
 					{#each groups as group, i (group.id)}
 						{#if group.items.length > 0 || emptyHint}
-							<div 
-								class="section-card flex overflow-hidden rounded-lg border border-border/50 bg-card/20 border-l-[3px]"
-								style="border-left-color: {sectionColor(group.id)};"
-							>
+							<div class="section-card flex overflow-hidden rounded border border-border/50 bg-card/20">
 
 								<!-- Section content -->
 								<div class="flex min-w-0 flex-1 flex-col">

@@ -60,7 +60,7 @@
 	const questionIconClassName = $derived(currentQuestionAnswered ? "text-success" : "text-primary");
 </script>
 
-<div class="mt-2 flex flex-col overflow-hidden rounded-md border border-border/60 bg-muted/20 shadow-sm">
+<div class="mt-2 flex flex-col overflow-hidden rounded border border-border/60 bg-muted/20 shadow-sm">
 	<div class="flex items-center gap-1.5 border-b border-border/60 bg-muted/40 px-2 py-1.5">
 		<IconHelpCircleFilled class={`size-3.5 shrink-0 ${questionIconClassName}`} />
 		<div class="min-w-0 flex-1 text-xs leading-tight font-medium text-foreground">

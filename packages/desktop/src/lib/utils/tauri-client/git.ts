@@ -235,8 +235,10 @@ export interface GitPanelFileStatus {
 	path: string;
 	indexStatus: string | null;
 	worktreeStatus: string | null;
-	insertions: number;
-	deletions: number;
+	indexInsertions: number;
+	indexDeletions: number;
+	worktreeInsertions: number;
+	worktreeDeletions: number;
 }
 
 export interface GitDiffStats {

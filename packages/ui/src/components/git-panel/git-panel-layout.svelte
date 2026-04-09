@@ -14,6 +14,7 @@
 
 	import { cn } from "../../lib/utils.js";
 	import type { GitStatusFile, GitStashEntry, GitLogEntry, GitLogEntryFile, GitRemoteStatus } from "./types.js";
+	import type { GitViewerFile } from "../git-viewer/types.js";
 	import GitBranchBadge from "./git-branch-badge.svelte";
 	import GitRemoteStatusBadge from "./git-remote-status.svelte";
 	import GitStatusList from "./git-status-list.svelte";
@@ -51,6 +52,7 @@
 		onCommitMessageChange?: (message: string) => void;
 		onCommit?: (message: string) => void;
 		onGenerate?: () => void;
+		commitActions?: Snippet;
 		commitMicButton?: Snippet;
 		generating?: boolean;
 		onPush?: () => void;
@@ -66,8 +68,8 @@
 		/** Snippet for rendering a file's diff inline in the history tab */
 		logFileDiffContent?: Snippet<[{ file: GitLogEntryFile }]>;
 
-		/** Callback when a file is selected (for showing diff). Receives path and whether the file is staged. */
-		onFileSelect?: (path: string, staged: boolean) => void;
+		/** Callback when a file is selected (for showing diff). Receives file metadata and whether the file is staged. */
+		onFileSelect?: (file: GitViewerFile, staged: boolean) => void;
 		/** Currently selected file path (for highlighting) */
 		selectedFile?: string;
 
@@ -93,6 +95,7 @@
 		onCommitMessageChange,
 		onCommit,
 		onGenerate,
+		commitActions,
 		commitMicButton,
 		generating = false,
 		onPush,
@@ -217,6 +220,7 @@
 			onMessageChange={onCommitMessageChange ?? (() => {})}
 			onCommit={onCommit ?? (() => {})}
 			{onGenerate}
+			actions={commitActions}
 			micButton={commitMicButton}
 			{generating}
 			submitDisabled={stagedFiles.length === 0}

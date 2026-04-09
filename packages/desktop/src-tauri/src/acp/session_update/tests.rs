@@ -721,7 +721,7 @@ mod parse_tool_call_from_acp {
     }
 
     #[test]
-    fn copilot_infers_delete_edit_arguments_from_apply_patch_string_raw_input() {
+    fn copilot_infers_delete_arguments_from_apply_patch_string_raw_input() {
         with_agent(AgentType::Copilot, || {
             let data = json!({
                 "toolCallId": "tool-copilot-delete-patch",
@@ -735,16 +735,51 @@ mod parse_tool_call_from_acp {
 
             assert!(result.is_ok(), "Expected Ok, got {:?}", result);
             let tool_call = result.unwrap();
-            assert_eq!(tool_call.kind, Some(ToolKind::Edit));
+            assert_eq!(tool_call.kind, Some(ToolKind::Delete));
             match tool_call.arguments {
-                ToolArguments::Edit { edits } => {
-                    let edit = edits.first().expect("edit entry");
-                    assert_eq!(edit.file_path.as_deref(), Some("/tmp/old.txt"));
-                    assert_eq!(edit.old_string.as_deref(), Some("old content"));
-                    assert_eq!(edit.new_string, None);
-                    assert_eq!(edit.content, None);
+                ToolArguments::Delete {
+                    file_path,
+                    file_paths,
+                } => {
+                    assert_eq!(file_path.as_deref(), Some("/tmp/old.txt"));
+                    assert!(file_paths.is_none());
                 }
-                other => panic!("Expected Edit arguments, got {:?}", other),
+                other => panic!("Expected Delete arguments, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn copilot_infers_multi_delete_arguments_from_apply_patch_string_raw_input() {
+        with_agent(AgentType::Copilot, || {
+            let data = json!({
+                "toolCallId": "tool-copilot-delete-patch-multi",
+                "kind": "edit",
+                "rawInput": "*** Begin Patch\n*** Delete File: /tmp/old-a.txt\n old a\n*** Delete File: /tmp/old-b.txt\n old b\n*** End Patch\n",
+                "status": "pending",
+                "title": "apply_patch"
+            });
+
+            let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let tool_call = result.unwrap();
+            assert_eq!(tool_call.kind, Some(ToolKind::Delete));
+            match tool_call.arguments {
+                ToolArguments::Delete {
+                    file_path,
+                    file_paths,
+                } => {
+                    assert_eq!(file_path.as_deref(), Some("/tmp/old-a.txt"));
+                    assert_eq!(
+                        file_paths,
+                        Some(vec![
+                            "/tmp/old-a.txt".to_string(),
+                            "/tmp/old-b.txt".to_string()
+                        ])
+                    );
+                }
+                other => panic!("Expected Delete arguments, got {:?}", other),
             }
         });
     }
@@ -1300,8 +1335,12 @@ mod parse_tool_call_from_acp {
             let tool_call = result.unwrap();
             assert_eq!(tool_call.kind, Some(ToolKind::Delete));
             match tool_call.arguments {
-                ToolArguments::Delete { file_path } => {
+                ToolArguments::Delete {
+                    file_path,
+                    file_paths,
+                } => {
                     assert_eq!(file_path, Some("/tmp/a".to_string()));
+                    assert!(file_paths.is_none());
                 }
                 _ => panic!("Expected delete tool arguments"),
             }

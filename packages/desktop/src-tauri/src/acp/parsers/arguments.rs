@@ -20,6 +20,28 @@ pub(crate) fn extract_parser_string(value: &serde_json::Value, keys: &[&str]) ->
     })
 }
 
+pub(crate) fn extract_parser_string_list(
+    value: &serde_json::Value,
+    keys: &[&str],
+) -> Option<Vec<String>> {
+    keys.iter().find_map(|key| {
+        let items = value.get(key)?.as_array()?;
+        let values: Vec<String> = items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect();
+
+        if values.is_empty() {
+            return None;
+        }
+
+        Some(values)
+    })
+}
+
 pub(crate) fn parse_generic_edit_arguments(raw_arguments: &serde_json::Value) -> ToolArguments {
     let file_path = extract_parser_string(raw_arguments, &["file_path", "filePath", "path"]);
     let move_from = extract_parser_string(raw_arguments, &["move_from", "moveFrom"]);
@@ -302,7 +324,12 @@ pub(crate) fn parse_tool_kind_arguments(
         }
         ToolKind::Delete => ToolArguments::Delete {
             file_path: extract_parser_string(raw_arguments, &["file_path", "filePath", "path"])
-                .or_else(|| parse_parsed_cmd_path(raw_arguments, &["delete", "remove", "rm"])),
+                .or_else(|| parse_parsed_cmd_path(raw_arguments, &["delete", "remove", "rm"]))
+                .or_else(|| {
+                    extract_parser_string_list(raw_arguments, &["file_paths", "filePaths", "paths"])
+                        .and_then(|paths| paths.first().cloned())
+                }),
+            file_paths: extract_parser_string_list(raw_arguments, &["file_paths", "filePaths", "paths"]),
         },
         ToolKind::EnterPlanMode | ToolKind::ExitPlanMode | ToolKind::CreatePlan => {
             ToolArguments::PlanMode {

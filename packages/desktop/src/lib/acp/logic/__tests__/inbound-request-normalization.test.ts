@@ -179,4 +179,47 @@ describe("normalizeInboundInteractionRequest", () => {
 			},
 		});
 	});
+
+	it("normalizes sparse permission requests from Copilot into a canonical permission shape", () => {
+		const result = normalizeInboundInteractionRequest({
+			id: 15,
+			jsonrpc: "2.0",
+			method: ACP_INBOUND_METHODS.REQUEST_PERMISSION,
+			params: {
+				sessionId: "session-15",
+				toolCall: {
+					name: "Write",
+				},
+			},
+		});
+
+		expect(result.isOk()).toBe(true);
+		if (result.isErr()) {
+			throw new Error(result.error.message);
+		}
+
+		const normalized = result.value;
+		expect(normalized.kind).toBe("permission");
+		expect(toPermissionRequest(normalized)).toEqual({
+			id: "session-15\u0000permission-request-15\u000015",
+			sessionId: "session-15",
+			jsonRpcRequestId: 15,
+			replyHandler: {
+				kind: "json-rpc",
+				requestId: 15,
+			},
+			permission: "Write",
+			patterns: [],
+			metadata: {
+				rawInput: {},
+				parsedArguments: undefined,
+				options: [],
+			},
+			always: [],
+			tool: {
+				messageID: "",
+				callID: "permission-request-15",
+			},
+		});
+	});
 });

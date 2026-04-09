@@ -54,14 +54,22 @@ const PermissionOptionSchema = z.object({
 	optionId: z.string(),
 });
 
-const ToolCallSchema = z.object({
-	toolCallId: z.string(),
-	rawInput: z.custom<JsonValue>(),
+const SparseToolCallSchema = z.object({
+	toolCallId: z.string().optional(),
+	rawInput: z.custom<JsonValue>().optional(),
 	/** Rust-parsed ToolArguments from rawInput — agent-agnostic. */
 	parsedArguments: z.custom<ToolArguments>().optional(),
 	title: z.string().optional(),
 	name: z.string().optional(),
 });
+
+const ToolCallSchema = SparseToolCallSchema.optional().transform((toolCall) => ({
+	toolCallId: toolCall?.toolCallId,
+	rawInput: toolCall?.rawInput ?? {},
+	parsedArguments: toolCall?.parsedArguments,
+	title: toolCall?.title,
+	name: toolCall?.name,
+}));
 
 /**
  * Parameters for client/requestPermission method.
@@ -69,7 +77,7 @@ const ToolCallSchema = z.object({
 export const RequestPermissionParamsSchema = z
 	.object({
 		sessionId: z.string(),
-		options: z.array(PermissionOptionSchema),
+		options: z.array(PermissionOptionSchema).optional().default([]),
 		toolCall: ToolCallSchema,
 		_meta: z
 			.object({

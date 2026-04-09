@@ -21,4 +21,8 @@ describe("agent tool edit contract", () => {
 		expect(agentToolEditDiffSource).not.toContain("if (streaming || !container || !diff)");
 		expect(agentToolEditDiffSource).toContain("if (!container || !diff)");
 	});
+
+	it("renders the edit diff without Pierre line numbers", () => {
+		expect(agentToolEditDiffSource).toContain("disableLineNumbers: true");
+	});
 });

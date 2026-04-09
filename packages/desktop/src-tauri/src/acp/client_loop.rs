@@ -386,7 +386,7 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                     continue;
                                 }
 
-                                match route_backend_inbound_request(ctx.app_handle.as_ref(), method, &params, ctx.agent_type).await {
+                                match route_backend_inbound_request(ctx.app_handle.as_ref(), id, method, &params, ctx.agent_type).await {
                                     InboundRoutingDecision::Handle(result) => {
                                         if let Err(error) = send_inbound_response(&ctx.stdin_writer, id, result).await {
                                             tracing::error!(id = id, method = %method, error = %error, "Failed to send backend inbound response");
@@ -394,7 +394,12 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                             tracing::debug!(id = id, method = %method, "Handled inbound request in backend");
                                         }
                                     }
-                                    InboundRoutingDecision::ForwardToUi { parsed_arguments, mut synthetic_tool_call } => {
+                                    InboundRoutingDecision::ForwardToUi {
+                                        parsed_arguments,
+                                        mut synthetic_tool_call,
+                                        canonical_interaction,
+                                        forward_legacy_event,
+                                    } => {
                                         let mut forwarded = ForwardedPermissionRequest::new(json.clone());
                                         forwarded.inject_parsed_arguments(parsed_arguments.as_ref());
 
@@ -451,14 +456,18 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                             }
                                         }
 
-                                            if let Some(session_id) = forwarded.session_id() {
-                                                if let Some(app_handle) = ctx.app_handle.as_ref() {
-                                                    let db = app_handle.state::<DbConn>();
-                                                    let registry = app_handle.state::<SessionRegistry>();
-                                                    let projection_registry =
-                                                        app_handle.state::<StdArc<ProjectionRegistry>>();
-                                                    let responder_session_id = session_id.to_string();
-                                                    registry.store_pending_inbound_responder(
+                                        if let Some(interaction_update) = canonical_interaction {
+                                            ctx.dispatcher.enqueue(AcpUiEvent::session_update(interaction_update));
+                                        }
+
+                                        if let Some(session_id) = forwarded.session_id() {
+                                            if let Some(app_handle) = ctx.app_handle.as_ref() {
+                                                let db = app_handle.state::<DbConn>();
+                                                let registry = app_handle.state::<SessionRegistry>();
+                                                let projection_registry =
+                                                    app_handle.state::<StdArc<ProjectionRegistry>>();
+                                                let responder_session_id = session_id.to_string();
+                                                registry.store_pending_inbound_responder(
                                                     session_id,
                                                     StdArc::new(InboundRequestResponder {
                                                         session_id: responder_session_id,
@@ -474,7 +483,9 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                             }
                                         }
 
-                                        ctx.dispatcher.enqueue(AcpUiEvent::inbound_request(forwarded.into_value()));
+                                        if forward_legacy_event {
+                                            ctx.dispatcher.enqueue(AcpUiEvent::inbound_request(forwarded.into_value()));
+                                        }
                                     }
                                 }
                             } else {
@@ -750,6 +761,7 @@ mod tests {
     async fn capture_stdout_events(
         notification: Value,
         provider: Option<StdArc<dyn AgentProvider>>,
+        agent_type: AgentType,
     ) -> Vec<crate::acp::ui_event_dispatcher::AcpUiEvent> {
         let notification_line = notification.to_string();
         let mut child = Command::new("python3")
@@ -782,7 +794,7 @@ mod tests {
                 inbound_response_adapters: StdArc::new(std::sync::Mutex::new(HashMap::new())),
                 is_replay_active: StdArc::new(AtomicBool::new(false)),
                 provider,
-                agent_type: AgentType::Cursor,
+                agent_type,
                 max_logged_line_bytes: 512,
                 stderr_buffer: new_stderr_buffer(),
                 cancel,
@@ -889,6 +901,7 @@ mod tests {
         let events = capture_stdout_events(
             cursor_pre_tool_notification(),
             Some(StdArc::new(CursorNamedTestProvider)),
+            AgentType::Cursor,
         )
         .await;
 
@@ -900,9 +913,61 @@ mod tests {
         let events = capture_stdout_events(
             cursor_pre_tool_notification(),
             Some(StdArc::new(CursorProvider)),
+            AgentType::Cursor,
         )
         .await;
 
         assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn session_request_permission_emits_canonical_permission_update_without_legacy_event() {
+        let events = capture_stdout_events(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "session/request_permission",
+                "params": {
+                    "sessionId": "copilot-session",
+                    "toolCall": {
+                        "toolCallId": "write-permission",
+                        "name": "Edit",
+                        "rawInput": {
+                            "file_path": "/tmp/README.md",
+                            "old_string": "old",
+                            "new_string": "new"
+                        }
+                    },
+                    "options": [
+                        { "kind": "allow_once", "name": "Allow once", "optionId": "allow_once" },
+                        { "kind": "allow_always", "name": "Always allow", "optionId": "allow_always" },
+                        { "kind": "reject_once", "name": "Deny", "optionId": "reject_once" }
+                    ]
+                }
+            }),
+            None,
+            AgentType::Copilot,
+        )
+        .await;
+
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_name != "acp-inbound-request"),
+            "canonicalized permission requests should not use the legacy inbound-request bridge"
+        );
+
+        assert!(events.iter().any(|event| {
+            matches!(
+                &event.payload,
+                crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update)
+                    if matches!(
+                        update.as_ref(),
+                        SessionUpdate::PermissionRequest { permission, .. }
+                            if permission.id == "copilot-session\u{0}write-permission\u{0}7"
+                                && permission.tool.as_ref().is_some_and(|tool| tool.call_id == "write-permission")
+                    )
+            )
+        }));
     }
 }

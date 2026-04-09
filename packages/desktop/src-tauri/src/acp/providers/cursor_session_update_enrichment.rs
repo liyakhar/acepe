@@ -191,9 +191,11 @@ fn tool_update_needs_enrichment(update: &ToolCallUpdateData) -> bool {
 
 fn tool_arguments_need_enrichment(arguments: &ToolArguments) -> bool {
     match arguments {
-        ToolArguments::Read { file_path } | ToolArguments::Delete { file_path } => {
-            file_path.is_none()
-        }
+        ToolArguments::Read { file_path } => file_path.is_none(),
+        ToolArguments::Delete {
+            file_path,
+            file_paths,
+        } => file_path.is_none() && file_paths.as_ref().is_none_or(|paths| paths.is_empty()),
         ToolArguments::Edit { edits } => edits.first().is_none_or(|edit| {
             edit.file_path.is_none()
                 || edit.move_from.is_none()
@@ -398,7 +400,12 @@ fn tool_arguments_detail_score(arguments: &ToolArguments) -> usize {
         }
         ToolArguments::TaskOutput { task_id, .. } => usize::from(task_id.is_some()),
         ToolArguments::Move { from, to } => usize::from(from.is_some()) + usize::from(to.is_some()),
-        ToolArguments::Delete { file_path } => usize::from(file_path.is_some()),
+        ToolArguments::Delete {
+            file_path,
+            file_paths,
+        } => usize::from(
+            file_path.is_some() || file_paths.as_ref().is_some_and(|paths| !paths.is_empty())
+        ),
         ToolArguments::PlanMode { mode } => usize::from(mode.is_some()),
         ToolArguments::ToolSearch { query, max_results } => {
             usize::from(query.is_some()) + usize::from(max_results.is_some())

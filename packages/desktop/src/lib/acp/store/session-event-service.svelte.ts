@@ -215,6 +215,10 @@ export interface SessionEventServiceCallbacks {
 	onTurnComplete?: (sessionId: string) => void;
 }
 
+function shouldBypassDisconnectedBuffer(update: SessionUpdate): boolean {
+	return update.type === "permissionRequest" || update.type === "questionRequest";
+}
+
 export class SessionEventService {
 	// Event subscriber for session updates
 	private eventSubscriber: EventSubscriber | null = null;
@@ -417,7 +421,11 @@ export class SessionEventService {
 		// Buffer events for known disconnected sessions so they can be replayed
 		// when connectSession() calls flushPendingEvents(). This handles the
 		// startup race where ACP events arrive before session reconnection completes.
-		if (isDisconnectedSession && !isConnectingSession) {
+		if (
+			isDisconnectedSession &&
+			!isConnectingSession &&
+			!shouldBypassDisconnectedBuffer(update)
+		) {
 			this.telemetryDisconnectedDrops++;
 			this.warnWithCooldown("disconnected", "Buffered session update while disconnected", {
 				sessionId,

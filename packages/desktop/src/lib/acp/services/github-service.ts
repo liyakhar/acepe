@@ -269,13 +269,19 @@ export function getCacheSize(): number {
 export function fetchWorkingFileDiff(
 	projectPath: string,
 	filePath: string,
-	staged: boolean
+	staged: boolean,
+	status: FileDiff["status"],
+	additions: number,
+	deletions: number,
 ): ResultAsync<FileDiff, GitHubError> {
 	return ResultAsync.fromPromise(
 		invoke<FileDiff>(Commands.github.git_working_file_diff, {
 			projectPath,
 			filePath,
 			staged,
+			status,
+			additions,
+			deletions,
 		}),
 		(error) => tauriErrorToGitHubError(error)
 	);

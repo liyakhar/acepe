@@ -123,4 +123,47 @@ describe("tool definition display builders", () => {
 
 		expect(entry.status).toBe("done");
 	});
+
+	it("prefers the semantic delete title over raw apply_patch titles for delete entries", () => {
+		const entry = resolveFullToolEntry({
+			toolCall: createToolCall({
+				id: "tool-5",
+				name: "apply_patch",
+				kind: "delete",
+				status: "completed",
+				title: "apply_patch",
+				arguments: { kind: "delete", file_path: "/repo/README.md" },
+			}),
+			turnState: "completed",
+		});
+
+		expect(entry.title).toBe("Deleted");
+		expect(entry.filePath).toBe("/repo/README.md");
+	});
+
+	it("builds compact multi-delete displays from the delete subtitle when no single file path is available", () => {
+		const compactDisplay = resolveCompactToolDisplay({
+			toolCall: createToolCall({
+				id: "tool-6",
+				name: "apply_patch",
+				kind: "delete",
+				status: "completed",
+				title: "apply_patch",
+				arguments: {
+					kind: "delete",
+					file_path: "/repo/old-a.md",
+					file_paths: ["/repo/old-a.md", "/repo/old-b.md"],
+				},
+			}),
+			turnState: "completed",
+		});
+
+		expect(compactDisplay).toEqual({
+			id: "tool-6",
+			kind: "delete",
+			title: "old-a.md +1",
+			filePath: undefined,
+			status: "done",
+		});
+	});
 });

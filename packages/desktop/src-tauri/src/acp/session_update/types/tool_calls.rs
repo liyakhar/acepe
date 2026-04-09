@@ -193,6 +193,8 @@ pub enum ToolArguments {
     Delete {
         #[serde(skip_serializing_if = "Option::is_none")]
         file_path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_paths: Option<Vec<String>>,
     },
     PlanMode {
         #[serde(skip_serializing_if = "Option::is_none")]

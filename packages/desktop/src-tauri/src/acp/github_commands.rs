@@ -7,6 +7,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use crate::path_safety::validate_project_directory_from_str;
+
 /// Repository context extracted from .git/config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "serde", rename_all = "camelCase")]
@@ -225,6 +227,73 @@ fn parse_git_diff(diff_text: &str) -> Vec<FileDiff> {
     }
 }
 
+fn run_git_from_project(
+    project_path: &Path,
+    args: &[&str],
+    allow_diff_exit: bool,
+) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(project_path)
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if !output.status.success() && !(allow_diff_exit && output.status.code() == Some(1)) {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "Git command failed".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    String::from_utf8(output.stdout).map_err(|e| format!("Invalid UTF-8 in git output: {}", e))
+}
+
+fn fetch_working_file_diff_impl(
+    project_path: &Path,
+    file_path: &str,
+    staged: bool,
+    status: &str,
+    additions: i32,
+    deletions: i32,
+) -> Result<FileDiff, String> {
+    let is_untracked = !staged && status == "added";
+
+    let diff_args = if is_untracked {
+        vec![
+            "diff",
+            "--no-index",
+            "--patch",
+            "--",
+            "/dev/null",
+            file_path,
+        ]
+    } else if staged {
+        vec!["diff", "--cached", "--patch", "--", file_path]
+    } else {
+        vec!["diff", "--patch", "--", file_path]
+    };
+    let diff_text = run_git_from_project(project_path, &diff_args, is_untracked)?;
+    let mut file_diff = parse_git_diff(&diff_text)
+        .into_iter()
+        .next()
+        .unwrap_or(FileDiff {
+            path: file_path.to_string(),
+            status: status.to_string(),
+            additions,
+            deletions,
+            patch: diff_text.trim().to_string(),
+        });
+
+    file_diff.path = file_path.to_string();
+    file_diff.status = status.to_string();
+    file_diff.additions = additions;
+    file_diff.deletions = deletions;
+
+    Ok(file_diff)
+}
+
 /// Fetches commit diff using git show command
 fn fetch_commit_diff_via_git(sha: &str, project_path: &Path) -> Result<CommitDiff, String> {
     // Get commit metadata
@@ -416,6 +485,29 @@ pub fn fetch_commit_diff(
     }
 }
 
+/// Tauri command: Fetch the current working-tree diff for a single file.
+#[tauri::command]
+#[specta::specta]
+pub fn git_working_file_diff(
+    project_path: String,
+    file_path: String,
+    staged: bool,
+    status: String,
+    additions: i32,
+    deletions: i32,
+) -> Result<FileDiff, String> {
+    let project_path = validate_project_directory_from_str(&project_path)
+        .map_err(|error| error.message_for(Path::new(&project_path)))?;
+    fetch_working_file_diff_impl(
+        &project_path,
+        &file_path,
+        staged,
+        &status,
+        additions,
+        deletions,
+    )
+}
+
 /// Tauri command: Fetch PR diff
 /// Runs both gh API calls (metadata + files) in parallel via threads.
 #[tauri::command]
@@ -601,4 +693,96 @@ pub fn list_pull_requests(
         .collect();
 
     Ok(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fetch_working_file_diff_impl;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn git(project_path: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(project_path)
+            .output()
+            .expect("git command should execute");
+
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_repo() -> TempDir {
+        let temp_dir = tempfile::tempdir().expect("temp dir should exist");
+        let path = temp_dir.path();
+
+        git(path, &["init"]);
+        git(path, &["config", "user.name", "Acepe Test"]);
+        git(path, &["config", "user.email", "test@example.com"]);
+
+        fs::write(path.join("tracked.txt"), "one\n").expect("tracked file should be written");
+        git(path, &["add", "tracked.txt"]);
+        git(path, &["commit", "-m", "initial"]);
+
+        temp_dir
+    }
+
+    #[test]
+    fn fetches_unstaged_working_file_diff() {
+        let temp_dir = init_repo();
+        let path = temp_dir.path();
+
+        fs::write(path.join("tracked.txt"), "one\ntwo\n").expect("tracked file should be updated");
+
+        let diff = fetch_working_file_diff_impl(path, "tracked.txt", false, "modified", 1, 0)
+            .expect("unstaged diff should be returned");
+
+        assert_eq!(diff.path, "tracked.txt");
+        assert_eq!(diff.status, "modified");
+        assert_eq!(diff.additions, 1);
+        assert_eq!(diff.deletions, 0);
+        assert!(diff.patch.contains("+two"));
+    }
+
+    #[test]
+    fn fetches_staged_working_file_diff() {
+        let temp_dir = init_repo();
+        let path = temp_dir.path();
+
+        fs::write(path.join("staged.txt"), "hello\nworld\n")
+            .expect("staged file should be written");
+        git(path, &["add", "staged.txt"]);
+
+        let diff = fetch_working_file_diff_impl(path, "staged.txt", true, "added", 2, 0)
+            .expect("staged diff should be returned");
+
+        assert_eq!(diff.path, "staged.txt");
+        assert_eq!(diff.status, "added");
+        assert_eq!(diff.additions, 2);
+        assert_eq!(diff.deletions, 0);
+        assert!(diff.patch.contains("+hello"));
+    }
+
+    #[test]
+    fn fetches_untracked_file_diff() {
+        let temp_dir = init_repo();
+        let path = temp_dir.path();
+
+        fs::write(path.join("notes.txt"), "draft\n").expect("untracked file should be written");
+
+        let diff = fetch_working_file_diff_impl(path, "notes.txt", false, "added", 1, 0)
+            .expect("untracked diff should be returned");
+
+        assert_eq!(diff.path, "notes.txt");
+        assert_eq!(diff.status, "added");
+        assert_eq!(diff.additions, 1);
+        assert_eq!(diff.deletions, 0);
+        assert!(diff.patch.contains("+draft"));
+    }
 }

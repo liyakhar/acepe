@@ -13,6 +13,7 @@
 		onMessageChange: (message: string) => void;
 		onCommit: (message: string) => void;
 		onGenerate?: () => void;
+		actions?: Snippet;
 		micButton?: Snippet;
 		generating?: boolean;
 		disabled?: boolean;
@@ -25,6 +26,7 @@
 		onMessageChange,
 		onCommit,
 		onGenerate,
+		actions,
 		micButton,
 		generating = false,
 		disabled = false,
@@ -77,7 +79,11 @@
 		</div>
 	{/snippet}
 	{#snippet footer()}
-		<div class="flex min-w-0 flex-1"></div>
+		<div class="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pr-2">
+			{#if actions}
+				{@render actions()}
+			{/if}
+		</div>
 		<div class="flex items-center gap-1 pr-1">
 			{#if onGenerate}
 				<button

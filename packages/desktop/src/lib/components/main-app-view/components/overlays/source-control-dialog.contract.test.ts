@@ -10,4 +10,8 @@ describe("SourceControlDialog", () => {
 		expect(source).toContain('class="flex h-[90vh] w-fit max-w-[96vw]');
 		expect(source).toContain('class="h-full w-[min(1100px,96vw)]');
 	});
+
+	it("uses the dialog identity for standalone voice dictation", () => {
+		expect(source).toContain("voiceSessionId={gitDialog.id}");
+	});
 });

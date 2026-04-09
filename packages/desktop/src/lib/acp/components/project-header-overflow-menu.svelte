@@ -3,7 +3,9 @@ import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { mergeProps } from "bits-ui";
 import { DotsThreeVertical } from "phosphor-svelte";
 import { Palette } from "phosphor-svelte";
+import { Rows } from "phosphor-svelte";
 import { Trash } from "phosphor-svelte";
+import { TreeView } from "phosphor-svelte";
 import * as Popover from "$lib/components/ui/popover/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import * as m from "$lib/paraglide/messages.js";
@@ -11,17 +13,23 @@ import * as m from "$lib/paraglide/messages.js";
 import { COLOR_NAMES, Colors } from "../utils/colors.js";
 import { PROJECT_COLOR_OPTIONS } from "../utils/project-color-options.js";
 
+type ProjectViewMode = "sessions" | "files";
+
 interface Props {
 	projectName: string;
 	currentColor?: string;
+	currentViewMode?: ProjectViewMode;
 	onColorChange?: (color: string) => void;
+	onViewModeChange?: (mode: ProjectViewMode) => void;
 	onRemoveProject?: () => void;
 }
 
 let {
 	projectName,
 	currentColor,
+	currentViewMode = "sessions",
 	onColorChange,
+	onViewModeChange,
 	onRemoveProject,
 }: Props = $props();
 
@@ -41,11 +49,22 @@ const selectedColorHex = $derived.by(() => {
 	return selectedOption?.hex ?? colorOptions[0]?.hex ?? Colors[COLOR_NAMES.RED];
 });
 
-const showSettingsSection = $derived(Boolean(onColorChange || onRemoveProject));
+const showSettingsSection = $derived(Boolean(onColorChange || onViewModeChange || onRemoveProject));
+const displaySectionClass = $derived(
+	`px-2 py-1.5${onColorChange || onRemoveProject ? " border-b border-border/20" : ""}`
+);
+const colorTriggerClass = $derived(
+	`rounded-none px-2 py-1.5 text-[11px]${onRemoveProject ? " border-b border-border/20" : ""}`
+);
 
 function handleRemoveClick() {
 	menuOpen = false;
 	showRemoveConfirm = true;
+}
+
+function handleViewModeSelect(mode: ProjectViewMode) {
+	onViewModeChange?.(mode);
+	menuOpen = false;
 }
 </script>
 
@@ -79,9 +98,40 @@ function handleRemoveClick() {
 				>
 					Settings
 				</DropdownMenu.GroupHeading>
+				{#if onViewModeChange}
+					<div class={displaySectionClass}>
+						<div class="px-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+							Display
+						</div>
+						<div class="mt-1 flex rounded-md bg-muted/50 p-0.5" role="group" aria-label="Display">
+							<button
+								type="button"
+								class="flex h-6 flex-1 cursor-pointer items-center justify-center gap-1 rounded px-2 text-[11px] transition-colors {currentViewMode === 'sessions'
+									? 'bg-background text-foreground shadow-sm'
+									: 'text-muted-foreground hover:bg-background/60 hover:text-foreground'}"
+								aria-pressed={currentViewMode === "sessions"}
+								onclick={() => handleViewModeSelect("sessions")}
+							>
+								<Rows class="h-3.5 w-3.5" weight="fill" />
+								{m.sidebar_view_sessions()}
+							</button>
+							<button
+								type="button"
+								class="flex h-6 flex-1 cursor-pointer items-center justify-center gap-1 rounded px-2 text-[11px] transition-colors {currentViewMode === 'files'
+									? 'bg-background text-foreground shadow-sm'
+									: 'text-muted-foreground hover:bg-background/60 hover:text-foreground'}"
+								aria-pressed={currentViewMode === "files"}
+								onclick={() => handleViewModeSelect("files")}
+							>
+								<TreeView class="h-3.5 w-3.5" weight="fill" />
+								{m.sidebar_view_files()}
+							</button>
+						</div>
+					</div>
+				{/if}
 				{#if onColorChange}
 					<DropdownMenu.Sub>
-						<DropdownMenu.SubTrigger class="rounded-none border-b border-border/20 px-2 py-1.5 text-[11px]">
+						<DropdownMenu.SubTrigger class={colorTriggerClass}>
 							<Palette class="h-3.5 w-3.5 mr-2" weight="fill" />
 							<span class="flex-1">{m.project_color()}</span>
 							<span

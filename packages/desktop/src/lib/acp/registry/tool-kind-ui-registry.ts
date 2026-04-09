@@ -34,6 +34,33 @@ function getFileName(filePath: string | null | undefined): string {
 	return filePath.split("/").pop() || "";
 }
 
+function getDeleteFilePaths(toolCall: ToolCall): string[] {
+	if (toolCall.arguments.kind !== "delete") {
+		return [];
+	}
+
+	const filePaths = toolCall.arguments.file_paths;
+	if (filePaths && filePaths.length > 0) {
+		return filePaths;
+	}
+
+	const filePath = toolCall.arguments.file_path;
+	return filePath ? [filePath] : [];
+}
+
+function getDeleteSubtitle(toolCall: ToolCall): string {
+	const filePaths = getDeleteFilePaths(toolCall);
+	if (filePaths.length === 0) {
+		return "";
+	}
+
+	if (filePaths.length === 1) {
+		return truncateText(filePaths[0], 50);
+	}
+
+	return `${getFileName(filePaths[0])} +${filePaths.length - 1}`;
+}
+
 /**
  * Format raw tool names into readable titles for "other" tool kind.
  */
@@ -297,8 +324,12 @@ export const TOOL_KIND_UI_REGISTRY: Record<ToolKind, ToolKindUI> = {
 			const status = getToolStatus(toolCall, turnState);
 			return status.isPending ? m.tool_delete_running() : m.tool_delete_completed();
 		},
-		filePath: (toolCall) =>
-			toolCall.arguments.kind === "delete" ? toolCall.arguments.file_path : null,
+		subtitle: (toolCall) => getDeleteSubtitle(toolCall),
+		tooltipContent: (toolCall) => getDeleteFilePaths(toolCall).map((path) => getDisplayPath(path)).join("\n"),
+		filePath: (toolCall) => {
+			const filePaths = getDeleteFilePaths(toolCall);
+			return filePaths.length === 1 ? filePaths[0] : null;
+		},
 	},
 
 	enter_plan_mode: {

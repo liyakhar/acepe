@@ -154,6 +154,7 @@ async function renderDiff(
 			unsafeCSS,
 			expandUnchanged: false,
 			disableBackground: false,
+			disableLineNumbers: true,
 			diffIndicators: "bars",
 			lineDiffType: "word-alt",
 		},

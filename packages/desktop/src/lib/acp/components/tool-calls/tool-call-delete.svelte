@@ -1,4 +1,5 @@
 <script lang="ts">
+import { AgentToolCard } from "@acepe/ui/agent-panel";
 import { FilePathBadge } from "@acepe/ui/file-path-badge";
 import { TextShimmer } from "@acepe/ui/text-shimmer";
 import { Trash } from "phosphor-svelte";
@@ -22,61 +23,94 @@ const sessionStore = getSessionStore();
 const toolStatus = $derived(getToolStatus(toolCall, turnState));
 const isPending = $derived(toolStatus.isPending);
 
-// Extract file path (streaming args first for progressive display)
-const filePath = $derived.by(() => {
-	const streamingArgs = sessionStore.getStreamingArguments(toolCall.id);
-	if (streamingArgs?.kind === "delete" && streamingArgs.file_path) {
-		return streamingArgs.file_path;
+function resolveDeleteFilePaths(toolArguments: ToolCall["arguments"]): string[] {
+	if (toolArguments.kind !== "delete") {
+		return [];
 	}
-	return toolCall.arguments.kind === "delete" ? toolCall.arguments.file_path : null;
+
+	const filePaths = toolArguments.file_paths;
+	if (filePaths && filePaths.length > 0) {
+		return filePaths;
+	}
+
+	const filePath = toolArguments.file_path;
+	return filePath ? [filePath] : [];
+}
+
+const filePaths = $derived.by(() => {
+	const streamingArgs = sessionStore.getStreamingArguments(toolCall.id);
+	if (streamingArgs?.kind === "delete") {
+		return resolveDeleteFilePaths(streamingArgs);
+	}
+
+	return resolveDeleteFilePaths(toolCall.arguments);
 });
-const fileName = $derived(filePath ? getFileName(filePath) : null);
+const hasMultipleFilePaths = $derived(filePaths.length > 1);
+const containerClass = $derived(
+	hasMultipleFilePaths
+		? "flex min-h-7 items-start justify-between gap-2 px-2.5 py-1.5"
+		: "flex h-7 items-center justify-between gap-2 px-2.5"
+);
+const contentClass = $derived(
+	hasMultipleFilePaths
+		? "flex min-w-0 flex-1 flex-col gap-1.5"
+		: "flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground"
+);
+const fileListClass = $derived(
+	hasMultipleFilePaths
+		? "flex flex-wrap items-center gap-1.5 pl-5"
+		: "contents"
+);
 
 const label = $derived(isPending ? m.tool_delete_running() : m.tool_delete_completed());
 </script>
 
-<div>
-	<div class="flex items-start gap-1.5">
-		<div class="flex min-w-0 flex-1 items-center gap-1.5">
-			<div class="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-				<!-- Trash icon + label -->
-				<span class="inline-flex shrink-0 items-center gap-1">
-					<Trash weight="bold" class="size-3.5 text-red-500" />
-					<span class="shrink-0 text-xs font-normal text-muted-foreground">
-						{#if isPending}
-							<TextShimmer>{label}</TextShimmer>
-						{:else}
-							{label}
-						{/if}
-					</span>
+<AgentToolCard variant="muted">
+	<div class={containerClass}>
+		<div class={contentClass}>
+			<span class="inline-flex shrink-0 items-center gap-1">
+				<Trash weight="bold" class="size-3.5 text-red-500" />
+				<span class="shrink-0 text-xs font-normal text-muted-foreground">
+					{#if isPending}
+						<TextShimmer>{label}</TextShimmer>
+					{:else}
+						{label}
+					{/if}
 				</span>
+			</span>
 
-				<!-- File chip -->
-				{#if filePath}
+			{#if filePaths.length > 0}
+				<div class={fileListClass}>
 					{#if isPending}
 						<TextShimmer class="text-muted-foreground" duration={1.2}>
-							<FilePathBadge
-								{filePath}
-								{fileName}
-								iconBasePath="/svgs/icons"
-								interactive={false}
-							/>
+							<div class="flex flex-wrap items-center gap-1.5">
+								{#each filePaths as currentFilePath (currentFilePath)}
+									<FilePathBadge
+										filePath={currentFilePath}
+										fileName={getFileName(currentFilePath)}
+										iconBasePath="/svgs/icons"
+										interactive={false}
+									/>
+								{/each}
+							</div>
 						</TextShimmer>
 					{:else}
-						<FilePathBadge
-							{filePath}
-							{fileName}
-							iconBasePath="/svgs/icons"
-							interactive={false}
-						/>
+						<div class="flex flex-wrap items-center gap-1.5">
+							{#each filePaths as currentFilePath (currentFilePath)}
+								<FilePathBadge
+									filePath={currentFilePath}
+									fileName={getFileName(currentFilePath)}
+									iconBasePath="/svgs/icons"
+									interactive={false}
+								/>
+							{/each}
+						</div>
 					{/if}
-				{/if}
-			</div>
+				</div>
+			{/if}
 		</div>
 		{#if elapsedLabel}
-			<span class="shrink-0 pt-0.5 font-mono text-[10px] text-muted-foreground/70">
-				{elapsedLabel}
-			</span>
+			<span class="shrink-0 font-mono text-[10px] text-muted-foreground/70">{elapsedLabel}</span>
 		{/if}
 	</div>
-</div>
+</AgentToolCard>

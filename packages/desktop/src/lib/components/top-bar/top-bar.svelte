@@ -108,7 +108,7 @@ const layoutSectionLabelClass =
 	"text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60";
 const layoutSectionHeaderClass = "flex items-center gap-1.5 px-1";
 const layoutInfoBubbleButtonClass =
-	"h-5 min-w-5 rounded-md px-1.5 text-muted-foreground/60 shadow-none hover:text-foreground";
+	"inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border/50 bg-muted/35 p-0 text-muted-foreground/70 transition-colors hover:bg-muted/70 hover:text-foreground";
 
 const layoutPillGroupClass = "flex w-full rounded-md bg-muted/50 p-0.5";
 
@@ -128,17 +128,17 @@ const hintContentMap: Record<string, HintContent> = {
 	"layout.view.info": {
 		title: "View modes",
 		description: "Standard keeps a panel layout. Kanban turns sessions into a board.",
-		side: "right",
+		side: "left",
 	},
 	"layout.grouping.info": {
 		title: "Grouping modes",
 		description: "Single focuses one agent. Project groups related work. Multi keeps several panels visible.",
-		side: "right",
+		side: "left",
 	},
 	"layout.tabbar.info": {
 		title: "Tab Bar",
 		description: "Adds a tab row for quicker switching between open conversations.",
-		side: "top",
+		side: "left",
 	},
 };
 
@@ -256,16 +256,13 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 									open={openHintKey === "layout.view.info"}
 									onOpenChange={(isOpen) => handleHintOpenChange("layout.view.info", isOpen)}
 								>
-									<Button
-										variant="headerAction"
-										size="headerAction"
+									<button
+										type="button"
 										class={layoutInfoBubbleButtonClass}
 										aria-label="Explain view modes"
 									>
-										{#snippet children()}
-											<Info class="size-3" weight="fill" />
-										{/snippet}
-									</Button>
+										<Info class="size-3" weight="fill" />
+									</button>
 								</DismissableTooltip>
 							</div>
 							<div class={layoutPillGroupClass} role="radiogroup" aria-label="View mode">
@@ -303,16 +300,13 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 											open={openHintKey === "layout.grouping.info"}
 											onOpenChange={(isOpen) => handleHintOpenChange("layout.grouping.info", isOpen)}
 										>
-											<Button
-												variant="headerAction"
-												size="headerAction"
+											<button
+												type="button"
 												class={layoutInfoBubbleButtonClass}
 												aria-label="Explain grouping modes"
 											>
-												{#snippet children()}
-													<Info class="size-3" weight="fill" />
-												{/snippet}
-											</Button>
+												<Info class="size-3" weight="fill" />
+											</button>
 										</DismissableTooltip>
 									</div>
 									<div class={layoutPillGroupClass} role="radiogroup" aria-label="Grouping mode">
@@ -351,16 +345,13 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 											open={openHintKey === "layout.tabbar.info"}
 											onOpenChange={(isOpen) => handleHintOpenChange("layout.tabbar.info", isOpen)}
 										>
-											<Button
-												variant="headerAction"
-												size="headerAction"
+											<button
+												type="button"
 												class={layoutInfoBubbleButtonClass}
 												aria-label="Explain tab bar"
 											>
-												{#snippet children()}
-													<Info class="size-3" weight="fill" />
-												{/snippet}
-											</Button>
+												<Info class="size-3" weight="fill" />
+											</button>
 										</DismissableTooltip>
 									</div>
 									<Switch

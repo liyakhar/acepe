@@ -14,10 +14,8 @@ import { Check } from "phosphor-svelte";
 import { GitBranch } from "phosphor-svelte";
 import { MagnifyingGlass } from "phosphor-svelte";
 import { Recycle } from "phosphor-svelte";
-import { Rows } from "phosphor-svelte";
 import { Sparkle } from "phosphor-svelte";
 import { TestTube } from "phosphor-svelte";
-import { TreeView } from "phosphor-svelte";
 import { Wrench } from "phosphor-svelte";
 import type { Component } from "svelte";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
@@ -787,9 +785,11 @@ function openCreateBranchDialog(projectPath: string): void {
 											<ProjectHeaderOverflowMenu
 												projectName={group.projectName}
 												currentColor={group.projectColor}
+												currentViewMode={viewMode}
 												onColorChange={onProjectColorChange
 													? (color) => onProjectColorChange(group.projectPath, color)
 													: undefined}
+												onViewModeChange={(mode) => setProjectViewMode(group.projectPath, mode)}
 												onRemoveProject={onRemoveProject
 													? () => onRemoveProject(group.projectPath)
 													: undefined}
@@ -926,54 +926,14 @@ function openCreateBranchDialog(projectPath: string): void {
 									onclick={(e) => e.stopPropagation()}
 									onkeydown={(e) => e.stopPropagation()}
 								>
-									{#if isExpanded}
-										<div class="flex shrink-0 items-center border-l border-border/50">
-											<Tooltip.Root>
-												<Tooltip.Trigger>
-													{#snippet child({ props })}
-														<button
-															{...props}
-															type="button"
-															class="inline-flex items-center justify-center h-7 w-7 cursor-pointer transition-colors {viewMode === 'sessions'
-																? 'bg-accent text-foreground'
-																: 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-															title={m.sidebar_view_sessions()}
-															aria-label={m.sidebar_view_sessions()}
-															onclick={() => setProjectViewMode(group.projectPath, "sessions")}
-														>
-															<Rows class="h-3 w-3" weight="fill" />
-														</button>
-													{/snippet}
-												</Tooltip.Trigger>
-												<Tooltip.Content>{m.sidebar_view_sessions()}</Tooltip.Content>
-											</Tooltip.Root>
-											<Tooltip.Root>
-												<Tooltip.Trigger>
-													{#snippet child({ props })}
-														<button
-															{...props}
-															type="button"
-															class="inline-flex items-center justify-center h-7 w-7 cursor-pointer border-l border-border/30 transition-colors {viewMode === 'files'
-																? 'bg-accent text-foreground'
-																: 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-															title={m.sidebar_view_files()}
-															aria-label={m.sidebar_view_files()}
-															onclick={() => setProjectViewMode(group.projectPath, "files")}
-														>
-															<TreeView class="h-3 w-3" weight="fill" />
-														</button>
-													{/snippet}
-												</Tooltip.Trigger>
-												<Tooltip.Content>{m.sidebar_view_files()}</Tooltip.Content>
-											</Tooltip.Root>
-										</div>
-									{/if}
 									<ProjectHeaderOverflowMenu
 										projectName={group.projectName}
 										currentColor={group.projectColor}
+										currentViewMode={viewMode}
 										onColorChange={onProjectColorChange
 											? (color) => onProjectColorChange(group.projectPath, color)
 											: undefined}
+										onViewModeChange={(mode) => setProjectViewMode(group.projectPath, mode)}
 										onRemoveProject={onRemoveProject
 											? () => onRemoveProject(group.projectPath)
 											: undefined}

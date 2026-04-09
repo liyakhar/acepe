@@ -24,7 +24,7 @@
 	interface Props {
 		files: GitViewerFile[];
 		selectedFile: string;
-		onSelect: (path: string) => void;
+		onSelect: (file: GitViewerFile) => void;
 		iconBasePath?: string;
 		/** Optional per-file action buttons rendered after the diff pill on hover. */
 		rowActions?: Snippet<[{ file: GitViewerFile }]>;
@@ -167,7 +167,11 @@
 					)}
 					style="padding-left: {node.depth * 12 + 8}px"
 					title={`${node.path} (+${diff?.additions ?? 0} -${diff?.deletions ?? 0})`}
-					onclick={() => onSelect(node.path)}
+					onclick={() => {
+						if (diff) {
+							onSelect(diff);
+						}
+					}}
 				>
 					<!-- Spacer matching chevron width -->
 					<span class="h-3.5 w-3.5 shrink-0"></span>

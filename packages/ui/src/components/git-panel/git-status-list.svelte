@@ -21,8 +21,8 @@
 		onUnstage?: (path: string) => void;
 		onStageAll?: () => void;
 		onDiscard?: (path: string) => void;
-		/** Callback when a file is selected (for showing diff). Receives path and whether the file is staged. */
-		onFileSelect?: (path: string, staged: boolean) => void;
+		/** Callback when a file is selected (for showing diff). Receives file metadata and whether the file is staged. */
+		onFileSelect?: (file: GitViewerFile, staged: boolean) => void;
 		/** Currently selected file path (for highlighting) */
 		selectedFile?: string;
 		class?: string;
@@ -86,7 +86,7 @@
 				<GitFileTree
 					files={stagedViewerFiles}
 					{selectedFile}
-					onSelect={(path) => onFileSelect?.(path, true)}
+					onSelect={(file) => onFileSelect?.(file, true)}
 					{iconBasePath}
 					class="overflow-visible bg-transparent"
 				>
@@ -142,7 +142,7 @@
 				<GitFileTree
 					files={unstagedViewerFiles}
 					{selectedFile}
-					onSelect={(path) => onFileSelect?.(path, false)}
+					onSelect={(file) => onFileSelect?.(file, false)}
 					{iconBasePath}
 					class="overflow-visible bg-transparent"
 				>

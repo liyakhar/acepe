@@ -11,6 +11,7 @@
 		onMessageChange: (message: string) => void;
 		onCommit: (message: string) => void;
 		onGenerate?: () => void;
+		actions?: Snippet;
 		micButton?: Snippet;
 		generating?: boolean;
 		disabled?: boolean;
@@ -23,6 +24,7 @@
 		onMessageChange,
 		onCommit,
 		onGenerate,
+		actions,
 		micButton,
 		generating = false,
 		disabled = false,
@@ -37,6 +39,7 @@
 		onMessageChange={onMessageChange}
 		onCommit={onCommit}
 		onGenerate={onGenerate}
+		{actions}
 		micButton={micButton}
 		{generating}
 		{disabled}

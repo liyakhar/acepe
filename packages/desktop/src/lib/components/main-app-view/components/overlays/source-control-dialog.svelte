@@ -31,17 +31,6 @@ const projectName = $derived.by(() => {
 	const lastSegment = segments[segments.length - 1];
 	return lastSegment ? lastSegment : gitDialog.projectPath;
 });
-const activeVoiceSessionId = $derived.by(() => {
-	if (gitDialog === null) {
-		return null;
-	}
-
-	const agentPanel = panelStore.panels.find(
-		(panel) => panel.projectPath === gitDialog.projectPath && panel.sessionId !== null
-	);
-	return agentPanel?.sessionId ?? null;
-});
-
 function handleOpenChange(open: boolean) {
 	if (!open) {
 		panelStore.closeGitDialog();
@@ -76,7 +65,7 @@ function handleRequestGeneration(prompt: string) {
 						projectColor={project?.color}
 						width={gitDialog.width}
 						initialTarget={gitDialog.initialTarget}
-						voiceSessionId={activeVoiceSessionId}
+						voiceSessionId={gitDialog.id}
 						isFullscreenEmbedded={true}
 						hideProjectBadge={true}
 						onClose={() => panelStore.closeGitDialog()}

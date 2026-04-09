@@ -28,10 +28,22 @@
 	}: DismissableTooltipProps = $props();
 
 	const CLOSE_DELAY_MS = 120;
-
+	const TOOLTIP_WIDTH_PX = 224;
+	const VIEWPORT_PADDING_PX = 12;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 	let triggerElement: HTMLSpanElement | null = null;
+	let contentElement: HTMLDivElement | null = null;
 	let contentPositionStyle = "";
+
+	function portalToBody(node: HTMLElement): { destroy: () => void } {
+		document.body.appendChild(node);
+
+		return {
+			destroy(): void {
+				node.remove();
+			},
+		};
+	}
 
 	function cancelClose(): void {
 		if (closeTimer === null) {
@@ -62,6 +74,22 @@
 		onOpenChange?.(false);
 	}
 
+	function handleTriggerMouseleave(event: MouseEvent): void {
+		if (contentElement !== null && event.relatedTarget instanceof Node && contentElement.contains(event.relatedTarget)) {
+			return;
+		}
+
+		requestClose();
+	}
+
+	function handleContentMouseleave(event: MouseEvent): void {
+		if (triggerElement !== null && event.relatedTarget instanceof Node && triggerElement.contains(event.relatedTarget)) {
+			return;
+		}
+
+		requestClose();
+	}
+
 	function handleContentKeydown(event: KeyboardEvent): void {
 		if (event.key !== "Escape") {
 			return;
@@ -77,19 +105,22 @@
 		}
 
 		const rect = triggerElement.getBoundingClientRect();
+		const maxLeft = Math.max(VIEWPORT_PADDING_PX, window.innerWidth - TOOLTIP_WIDTH_PX - VIEWPORT_PADDING_PX);
+		const clampLeft = (value: number): number =>
+			Math.min(Math.max(value, VIEWPORT_PADDING_PX), maxLeft);
 
 		if (side === "top") {
 			contentPositionStyle = [
-				`left: ${rect.left + rect.width / 2}px`,
+				`left: ${clampLeft(rect.left + rect.width / 2 - TOOLTIP_WIDTH_PX / 2)}px`,
 				`top: ${rect.top - sideOffset}px`,
-				"transform: translate(-50%, -100%)",
+				"transform: translateY(-100%)",
 			].join("; ");
 			return;
 		}
 
 		if (side === "right") {
 			contentPositionStyle = [
-				`left: ${rect.right + sideOffset}px`,
+				`left: ${clampLeft(rect.right + sideOffset)}px`,
 				`top: ${rect.top + rect.height / 2}px`,
 				"transform: translateY(-50%)",
 			].join("; ");
@@ -98,35 +129,38 @@
 
 		if (side === "bottom") {
 			contentPositionStyle = [
-				`left: ${rect.left + rect.width / 2}px`,
+				`left: ${clampLeft(rect.left + rect.width / 2 - TOOLTIP_WIDTH_PX / 2)}px`,
 				`top: ${rect.bottom + sideOffset}px`,
-				"transform: translateX(-50%)",
+				"transform: none",
 			].join("; ");
 			return;
 		}
 
 		contentPositionStyle = [
-			`left: ${rect.left - sideOffset}px`,
+			`left: ${clampLeft(rect.left - sideOffset - TOOLTIP_WIDTH_PX)}px`,
 			`top: ${rect.top + rect.height / 2}px`,
-			"transform: translate(-100%, -50%)",
+			"transform: translateY(-50%)",
 		].join("; ");
 	}
 </script>
 
-{#if dismissed}
-	{@render children()}
-{:else}
-	<span bind:this={triggerElement} class={triggerClass} onpointerleave={requestClose}>
-		<span onpointermove={requestOpen}>
-			{@render children()}
-		</span>
+{#if !dismissed}
+	<span
+		bind:this={triggerElement}
+		class={triggerClass}
+		onmouseover={requestOpen}
+		onmouseleave={handleTriggerMouseleave}
+	>
+		{@render children()}
 
 		{#if open}
 			<div
-				class="bg-popover border-border text-foreground fixed z-[var(--overlay-z)] w-56 rounded-md border px-3 py-2 text-xs shadow-md"
+				bind:this={contentElement}
+				use:portalToBody
+				class="bg-popover border-border text-foreground fixed z-[9999] w-56 rounded-md border px-3 py-2 text-xs shadow-md"
 				style={contentPositionStyle}
-				onpointerenter={cancelClose}
-				onpointerleave={requestClose}
+				onmouseenter={cancelClose}
+				onmouseleave={handleContentMouseleave}
 				onkeydown={handleContentKeydown}
 			>
 				<p class="mb-1 font-semibold">{title}</p>

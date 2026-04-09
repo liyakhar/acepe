@@ -45,7 +45,19 @@ pub(super) struct TerminalCreateParamsRaw {
 #[serde(rename_all = "camelCase")]
 pub(super) struct SessionRequestPermissionParamsRaw {
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub options: Vec<PermissionOptionRaw>,
     pub tool_call: Option<PermissionToolCallRaw>,
+    #[serde(rename = "_meta")]
+    pub meta: Option<PermissionRequestMetaRaw>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PermissionOptionRaw {
+    pub kind: String,
+    pub name: String,
+    pub option_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,4 +69,42 @@ pub(super) struct PermissionToolCallRaw {
     pub kind: Option<String>,
     #[serde(default)]
     pub raw_input: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PermissionRequestMetaRaw {
+    pub ask_user_question: Option<AskUserQuestionDataRaw>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct AskUserQuestionDataRaw {
+    pub questions: Vec<InboundQuestionItemRaw>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RawInputWithQuestionsRaw {
+    pub questions: Vec<InboundQuestionItemRaw>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct InboundQuestionItemRaw {
+    pub question: String,
+    #[serde(default)]
+    pub header: String,
+    #[serde(default)]
+    pub options: Vec<InboundQuestionOptionRaw>,
+    #[serde(default)]
+    pub multi_select: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct InboundQuestionOptionRaw {
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
 }

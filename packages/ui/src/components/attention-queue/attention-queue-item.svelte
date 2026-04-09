@@ -17,7 +17,7 @@
 
 	const paddingClass = $derived(collapsed ? "px-0 py-0.5" : compactPadding ? "px-1.5 py-1" : "px-2 py-1.5");
 	const baseClass =
-		$derived(`flex flex-col ${collapsed ? "items-center" : ""} justify-center w-full text-left gap-1 ${paddingClass} rounded-md transition-[background-color] duration-75 ease-out`);
+		$derived(`flex flex-col ${collapsed ? "items-center" : ""} justify-center w-full text-left gap-1 ${paddingClass} rounded transition-[background-color] duration-75 ease-out`);
 	const withHover = $derived(slidingHighlight ? "" : "hover:bg-accent/50");
 	const selectedClass = $derived(selected ? "bg-accent/20" : "");
 </script>

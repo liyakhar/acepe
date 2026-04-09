@@ -2,6 +2,7 @@
 //!
 //! Uses `git2` crate for local operations and `git` CLI for remote/stash operations.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use git2::{IndexAddOption, StatusOptions};
@@ -24,8 +25,10 @@ pub struct GitPanelFileStatus {
     pub index_status: Option<String>,
     /// Unstaged status (worktree vs index). Null if clean in worktree.
     pub worktree_status: Option<String>,
-    pub insertions: u64,
-    pub deletions: u64,
+    pub index_insertions: u64,
+    pub index_deletions: u64,
+    pub worktree_insertions: u64,
+    pub worktree_deletions: u64,
 }
 
 /// Result of a commit operation.
@@ -151,6 +154,33 @@ async fn run_git_command(project_path: &Path, args: &[&str]) -> Result<String, S
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn run_git_command_sync(
+    project_path: &Path,
+    args: &[&str],
+    allow_diff_exit: bool,
+) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(project_path)
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if !output.status.success() && !(allow_diff_exit && output.status.code() == Some(1)) {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!(
+                "git {} failed with exit code {:?}",
+                args[0],
+                output.status.code()
+            )
+        } else {
+            stderr
+        });
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 fn validate_project_path(project_path: &str) -> Result<PathBuf, String> {
     validate_project_directory_from_str(project_path)
         .map_err(|e| e.message_for(Path::new(project_path.trim())))
@@ -180,6 +210,57 @@ fn worktree_status_string(status: git2::Status) -> Option<String> {
     } else {
         None
     }
+}
+
+fn parse_numstat_map(output: &str) -> HashMap<String, (u64, u64)> {
+    let mut stats = HashMap::new();
+
+    for line in output.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let Some(insertions_raw) = parts.next() else {
+            continue;
+        };
+        let Some(deletions_raw) = parts.next() else {
+            continue;
+        };
+        let Some(path) = parts.next() else {
+            continue;
+        };
+
+        let insertions = insertions_raw.parse::<u64>().unwrap_or(0);
+        let deletions = deletions_raw.parse::<u64>().unwrap_or(0);
+        stats.insert(path.to_string(), (insertions, deletions));
+    }
+
+    stats
+}
+
+fn read_numstat_map(
+    project_path: &Path,
+    args: &[&str],
+) -> Result<HashMap<String, (u64, u64)>, String> {
+    let output = run_git_command_sync(project_path, args, false)?;
+    Ok(parse_numstat_map(&output))
+}
+
+fn read_untracked_numstat(project_path: &Path, file_path: &str) -> Result<(u64, u64), String> {
+    let output = run_git_command_sync(
+        project_path,
+        &[
+            "diff",
+            "--no-index",
+            "--numstat",
+            "--",
+            "/dev/null",
+            file_path,
+        ],
+        true,
+    )?;
+    Ok(parse_numstat_map(&output)
+        .into_iter()
+        .next()
+        .map(|(_, stats)| stats)
+        .unwrap_or((0, 0)))
 }
 
 /// Build a PR step from existing open PR info (used for both "opened_existing" and "created").
@@ -303,6 +384,8 @@ pub async fn git_panel_status(project_path: String) -> Result<Vec<GitPanelFileSt
 
     tokio::task::spawn_blocking(move || {
         let repo = open_repository(&path).map_err(|e| e.to_string())?;
+        let staged_stats = read_numstat_map(&path, &["diff", "--cached", "--numstat"])?;
+        let unstaged_stats = read_numstat_map(&path, &["diff", "--numstat"])?;
 
         let mut opts = StatusOptions::new();
         opts.include_untracked(true)
@@ -331,12 +414,22 @@ pub async fn git_panel_status(project_path: String) -> Result<Vec<GitPanelFileSt
                 continue;
             }
 
+            let (index_insertions, index_deletions) =
+                staged_stats.get(&file_path).copied().unwrap_or((0, 0));
+            let (worktree_insertions, worktree_deletions) = if wt.as_deref() == Some("untracked") {
+                read_untracked_numstat(&path, &file_path)?
+            } else {
+                unstaged_stats.get(&file_path).copied().unwrap_or((0, 0))
+            };
+
             results.push(GitPanelFileStatus {
                 path: file_path,
                 index_status: idx,
                 worktree_status: wt,
-                insertions: 0,
-                deletions: 0,
+                index_insertions,
+                index_deletions,
+                worktree_insertions,
+                worktree_deletions,
             });
         }
 
@@ -1213,7 +1306,9 @@ mod tests {
 
     use crate::file_index::git::open_repository;
 
-    use super::{do_commit, git_run_stacked_action, git_stage_files, has_staged_changes};
+    use super::{
+        do_commit, git_panel_status, git_run_stacked_action, git_stage_files, has_staged_changes,
+    };
 
     /// Create a new git repo in a temp dir with user config set (required for commits).
     fn init_repo_with_config() -> (TempDir, git2::Repository) {
@@ -1393,6 +1488,42 @@ mod tests {
 
         drop(repo);
         drop(outside_dir);
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn git_panel_status_reports_per_file_insertions_and_deletions() {
+        let (dir, repo) = init_repo_with_config();
+
+        let tracked_path = dir.path().join("tracked.txt");
+        fs::write(&tracked_path, "one\n").expect("write tracked baseline");
+        run_test_git(dir.path(), &["add", "tracked.txt"]);
+        do_commit(dir.path(), "initial tracked file").expect("commit tracked baseline");
+
+        fs::write(&tracked_path, "one\ntwo\n").expect("update tracked file");
+        let untracked_path = dir.path().join("new-file.txt");
+        fs::write(&untracked_path, "draft\nnotes\n").expect("write untracked file");
+
+        let statuses = git_panel_status(dir.path().display().to_string())
+            .await
+            .expect("git panel status");
+
+        let tracked = statuses
+            .iter()
+            .find(|status| status.path == "tracked.txt")
+            .expect("tracked status");
+        assert_eq!(tracked.worktree_insertions, 1);
+        assert_eq!(tracked.worktree_deletions, 0);
+
+        let untracked = statuses
+            .iter()
+            .find(|status| status.path == "new-file.txt")
+            .expect("untracked status");
+        assert_eq!(untracked.worktree_status.as_deref(), Some("untracked"));
+        assert_eq!(untracked.worktree_insertions, 2);
+        assert_eq!(untracked.worktree_deletions, 0);
+
+        drop(repo);
         drop(dir);
     }
 
