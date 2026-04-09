@@ -10,11 +10,15 @@ const modelSelectorTriggerPath = resolve(__dirname, "../model-selector.trigger.s
 const modelSelectorTriggerSource = readFileSync(modelSelectorTriggerPath, "utf8");
 
 describe("model selector structure", () => {
-	it("keeps codex-only split model and reasoning effort picker when supportsReasoningEffortPicker", () => {
-		expect(modelSelectorSource).toContain("isCodexModelOpen");
-		expect(modelSelectorSource).toContain("isCodexEffortOpen");
-		expect(modelSelectorSource).toContain("handleCodexBaseSelect");
-		expect(modelSelectorSource).toContain("handleCodexEffortSelect");
+	it("keeps split model and reasoning effort picker with provider-neutral state names", () => {
+		expect(modelSelectorSource).toContain("isPrimarySelectorOpen");
+		expect(modelSelectorSource).toContain("isVariantSelectorOpen");
+		expect(modelSelectorSource).toContain("handlePrimarySelect");
+		expect(modelSelectorSource).toContain("handleVariantSelect");
+		expect(modelSelectorSource).not.toContain("isCodexModelOpen");
+		expect(modelSelectorSource).not.toContain("isCodexEffortOpen");
+		expect(modelSelectorSource).not.toContain("handleCodexBaseSelect");
+		expect(modelSelectorSource).not.toContain("handleCodexEffortSelect");
 	});
 
 	it("removes the model trigger tooltip while keeping the reasoning-effort help", () => {
@@ -28,6 +32,13 @@ describe("model selector structure", () => {
 	it("renders model selector triggers without the legacy CPU icon", () => {
 		expect(modelSelectorSource).not.toContain("<Cpu");
 		expect(modelSelectorTriggerSource).not.toContain("<Cpu");
+	});
+
+	it("drives the live split selector from backend display groups instead of reparsing raw ids", () => {
+		expect(modelSelectorSource).toContain("reasoningBaseGroupsFromDisplay");
+		expect(modelSelectorSource).not.toContain(
+			"usesVariantSelector ? groupCodexModelsByBase(availableModels) : []"
+		);
 	});
 
 	it("only renders the sticky search header when search is visible", () => {

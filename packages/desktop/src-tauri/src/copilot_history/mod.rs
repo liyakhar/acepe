@@ -1,7 +1,9 @@
 use crate::acp::client::{AcpClient, SessionInfo};
 use crate::acp::event_hub::{AcpEventEnvelope, AcpEventHubState};
+use crate::acp::parsers::AgentType;
 use crate::acp::provider::AgentProvider;
 use crate::acp::providers::copilot::CopilotProvider;
+use crate::acp::session_descriptor::SessionReplayContext;
 use crate::acp::session_update::{SessionUpdate, ToolArguments, ToolCallData};
 use crate::acp::types::ContentBlock;
 use crate::history::constants::MAX_SESSIONS_PER_PROJECT;
@@ -116,7 +118,7 @@ pub async fn list_workspace_sessions(
 
 pub async fn load_session(
     app: &AppHandle,
-    session_id: &str,
+    replay_context: &SessionReplayContext,
     cwd: &str,
     title: &str,
 ) -> Result<Option<ConvertedSession>, String> {
@@ -140,14 +142,19 @@ pub async fn load_session(
         .map_err(|error| format!("Failed to initialize Copilot session loader: {error}"))?;
 
     let load_result = client
-        .load_session(session_id.to_string(), cwd.to_string())
+        .load_session(replay_context.history_session_id.clone(), cwd.to_string())
         .await;
-    let replay_updates = collect_replay_updates(&mut receiver, session_id).await;
+    let replay_updates = collect_replay_updates(
+        &mut receiver,
+        &replay_context.history_session_id,
+        replay_context.parser_agent_type,
+    )
+    .await;
     client.stop();
 
     match load_result {
         Ok(_) => Ok(Some(convert_replay_updates_to_session(
-            session_id,
+            &replay_context.local_session_id,
             title,
             &replay_updates,
         ))),
@@ -206,6 +213,7 @@ fn normalize_copilot_session_info(
 async fn collect_replay_updates(
     receiver: &mut tokio::sync::broadcast::Receiver<AcpEventEnvelope>,
     session_id: &str,
+    replay_agent: AgentType,
 ) -> Vec<(u64, SessionUpdate)> {
     let started = tokio::time::Instant::now();
     let mut updates = Vec::new();
@@ -229,10 +237,9 @@ async fn collect_replay_updates(
                     continue;
                 }
 
-                match crate::acp::agent_context::with_agent(
-                    crate::acp::parsers::AgentType::Copilot,
-                    || serde_json::from_value::<SessionUpdate>(envelope.payload),
-                ) {
+                match crate::acp::agent_context::with_agent(replay_agent, || {
+                    serde_json::from_value::<SessionUpdate>(envelope.payload)
+                }) {
                     Ok(update) => updates.push((envelope.emitted_at_ms, update)),
                     Err(error) => {
                         tracing::warn!(
@@ -621,7 +628,10 @@ fn build_stats(entries: &[StoredEntry]) -> SessionStats {
 
 #[cfg(test)]
 mod tests {
-    use super::convert_replay_updates_to_session;
+    use super::{collect_replay_updates, convert_replay_updates_to_session};
+    use crate::acp::agent_context::with_agent;
+    use crate::acp::event_hub::AcpEventEnvelope;
+    use crate::acp::parsers::AgentType;
     use crate::acp::session_update::{
         ContentChunk, ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind,
     };
@@ -860,6 +870,42 @@ mod tests {
                 assert_eq!(children[0].id, "child-read-1");
             }
             other => panic!("expected tool call entry, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn collect_replay_updates_uses_explicit_replay_agent() {
+        let (sender, mut receiver) = tokio::sync::broadcast::channel(4);
+        sender
+            .send(AcpEventEnvelope {
+                seq: 1,
+                event_name: "acp-session-update".to_string(),
+                session_id: Some("replay-session".to_string()),
+                payload: serde_json::json!({
+                    "sessionId": "replay-session",
+                    "toolCallId": "tool-search-1",
+                    "title": "Search branch:main|branch: in desktop",
+                    "kind": "search",
+                    "status": "running"
+                }),
+                priority: "normal".to_string(),
+                droppable: false,
+                emitted_at_ms: 1_710_000_000_000,
+            })
+            .expect("send replay event");
+
+        let updates = with_agent(AgentType::ClaudeCode, || async {
+            collect_replay_updates(&mut receiver, "replay-session", AgentType::Codex).await
+        })
+        .await;
+
+        assert_eq!(updates.len(), 1);
+        match &updates[0].1 {
+            crate::acp::session_update::SessionUpdate::ToolCall { tool_call, .. } => {
+                assert_eq!(tool_call.id, "tool-search-1");
+                assert_eq!(tool_call.kind, Some(ToolKind::Search));
+            }
+            other => panic!("expected replayed tool call, got {:?}", other),
         }
     }
 }

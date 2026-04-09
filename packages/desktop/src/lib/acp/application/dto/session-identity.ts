@@ -1,8 +1,9 @@
 /**
  * Session identity - immutable lookup keys.
  *
- * These fields uniquely identify a session and never change after creation.
- * Used for O(1) lookups in maps and database queries.
+ * The local Acepe session ID is the canonical reconnect key. The remaining
+ * fields are persisted descriptor facts used for display and history loading,
+ * but existing-session resume resolution stays backend-owned.
  */
 export interface SessionIdentity {
 	readonly id: string;

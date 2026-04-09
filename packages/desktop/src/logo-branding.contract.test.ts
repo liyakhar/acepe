@@ -22,6 +22,10 @@ const websiteLogoComponentPath = resolve(
 	import.meta.dir,
 	"../../website/src/lib/components/logo.svelte"
 );
+const sharedBrandLockupPath = resolve(
+	import.meta.dir,
+	"../../ui/src/components/brand-lockup/brand-lockup.svelte"
+);
 const websiteHeaderPath = resolve(
 	import.meta.dir,
 	"../../website/src/lib/components/header.svelte"
@@ -124,9 +128,10 @@ describe("desktop logo branding", () => {
 		expect(embeddedDimensions).toEqual({ width: 1460, height: 1452 });
 	});
 
-	it("centralizes website branding through a single Logo component using favicon.svg", () => {
+	it("centralizes shared lockups through the canonical generated logo asset", () => {
 		expect(existsSync(websiteFaviconAssetPath)).toBe(true);
 		expect(existsSync(websiteLogoComponentPath)).toBe(true);
+		expect(existsSync(sharedBrandLockupPath)).toBe(true);
 		expect(existsSync(websiteHeaderPath)).toBe(true);
 		expect(existsSync(websiteLayoutPath)).toBe(true);
 		expect(existsSync(websiteLayoutCssPath)).toBe(true);
@@ -137,6 +142,7 @@ describe("desktop logo branding", () => {
 		if (
 			!existsSync(websiteFaviconAssetPath) ||
 			!existsSync(websiteLogoComponentPath) ||
+			!existsSync(sharedBrandLockupPath) ||
 			!existsSync(websiteHeaderPath) ||
 			!existsSync(websiteLayoutPath) ||
 			!existsSync(websiteLayoutCssPath) ||
@@ -149,6 +155,7 @@ describe("desktop logo branding", () => {
 
 		const websiteFaviconSource = readFileSync(websiteFaviconAssetPath, "utf8");
 		const websiteLogoSource = readFileSync(websiteLogoComponentPath, "utf8");
+		const sharedBrandLockupSource = readFileSync(sharedBrandLockupPath, "utf8");
 		const websiteHeaderSource = readFileSync(websiteHeaderPath, "utf8");
 		const websiteLayoutSource = readFileSync(websiteLayoutPath, "utf8");
 		const websiteLayoutCssSource = readFileSync(websiteLayoutCssPath, "utf8");
@@ -161,7 +168,7 @@ describe("desktop logo branding", () => {
 		expect(websiteFaviconSource).toContain("data:image/png;base64,");
 		expect(getEmbeddedPngDimensions(websiteFaviconSource)).toEqual({ width: 1460, height: 1452 });
 
-		// The Logo component imports favicon.svg -- single source of truth for the website
+		// The legacy website Logo component still points at the generated favicon asset.
 		expect(websiteLogoSource).toContain('import logo from "$lib/assets/favicon.svg"');
 		expect(websiteLogoSource).toContain("<img");
 		expect(websiteLogoSource).toContain("rounded-[20%]");
@@ -174,25 +181,36 @@ describe("desktop logo branding", () => {
 			"@custom-variant dark (&:is([data-theme='dark'] *));"
 		);
 
-		// All pages use the centralized Logo component (not direct asset imports)
-		expect(websiteHeaderSource).toContain('import Logo from "$lib/components/logo.svelte"');
+		// The shared BrandLockup uses the canonical generated desktop asset.
+		expect(sharedBrandLockupSource).toContain('import logo from "../../../../../assets/logo.svg?url";');
+		expect(sharedBrandLockupSource).toContain("<img");
+		expect(sharedBrandLockupSource).toContain("rounded-[22%]");
+		expect(sharedBrandLockupSource).not.toContain("<svg");
+
+		// Branded pages now compose through the shared lockup instead of local logo wrappers.
+		expect(websiteHeaderSource).toContain('import { BrandLockup } from "@acepe/ui"');
+		expect(websiteHeaderSource).not.toContain('import Logo from "$lib/components/logo.svelte"');
 		expect(websiteHeaderSource).not.toContain("logoForLight");
 		expect(websiteHeaderSource).not.toContain("logoForDark");
 		expect(websiteHeaderSource).not.toContain("logo-light-bg");
 
-		expect(websiteHomeSource).toContain('import Logo from "$lib/components/logo.svelte"');
+		expect(websiteHomeSource).toContain("BrandLockup");
+		expect(websiteHomeSource).not.toContain('import Logo from "$lib/components/logo.svelte"');
 		expect(websiteHomeSource).not.toContain("logoForLight");
 		expect(websiteHomeSource).not.toContain("logo-light-bg");
 
-		expect(websiteDownloadSource).toContain('import Logo from "$lib/components/logo.svelte"');
+		expect(websiteDownloadSource).toContain("BrandLockup");
+		expect(websiteDownloadSource).not.toContain('import Logo from "$lib/components/logo.svelte"');
 		expect(websiteDownloadSource).not.toContain("logoForLight");
 		expect(websiteDownloadSource).not.toContain("logo-light-bg");
 
-		expect(websitePricingSource).toContain('import Logo from "$lib/components/logo.svelte"');
+		expect(websitePricingSource).toContain("BrandLockup");
+		expect(websitePricingSource).not.toContain('import Logo from "$lib/components/logo.svelte"');
 		expect(websitePricingSource).not.toContain("logoForLight");
 		expect(websitePricingSource).not.toContain("logo-light-bg");
 
-		expect(websiteLoginSource).toContain('import Logo from "$lib/components/logo.svelte"');
+		expect(websiteLoginSource).toContain("BrandLockup");
+		expect(websiteLoginSource).not.toContain('import Logo from "$lib/components/logo.svelte"');
 		expect(websiteLoginSource).not.toContain("logoForLight");
 		expect(websiteLoginSource).not.toContain("logo-light-bg");
 	});
@@ -293,13 +311,13 @@ describe("desktop logo branding", () => {
 			? readFileSync(welcomeScreenPath, "utf8")
 			: "";
 
-		expect(updatePageSource).toContain("logo.svg");
+		expect(updatePageSource).toContain("BrandLockup");
 
 		if (translationSource) {
-			expect(translationSource).toContain("logo");
+			expect(translationSource).toContain("BrandLockup");
 		}
 		if (welcomeSource) {
-			expect(welcomeSource).toContain("logo");
+			expect(welcomeSource).toContain("BrandLockup");
 		}
 	});
 
@@ -310,7 +328,7 @@ describe("desktop logo branding", () => {
 		const englishMessages = readFileSync(englishMessagesPath, "utf8");
 
 		expect(welcomeSource).toContain('{ id: "copilot"');
-		expect(welcomeSource).toContain('rounded-[20%]');
+		expect(welcomeSource).toContain("BrandLockup");
 		expect(welcomeSource).toContain('bg-background p-8');
 		expect(welcomeSource).toContain('Button, PillButton');
 		expect(welcomeSource).toContain('variant="headerAction"');

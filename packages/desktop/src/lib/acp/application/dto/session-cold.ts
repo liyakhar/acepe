@@ -4,7 +4,8 @@ import type { SessionMetadata } from "./session-metadata.js";
 /**
  * Session cold data - serializable to database.
  *
- * Combines identity and metadata. This is what gets persisted.
- * Does not include transient state (hot state) or content (entries).
+ * Combines immutable session facts with persisted metadata. Existing-session
+ * reconnect still routes through backend descriptor resolution rather than
+ * trusting these fields as frontend resume authority.
  */
 export interface SessionCold extends SessionIdentity, SessionMetadata {}

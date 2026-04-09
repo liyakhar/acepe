@@ -67,6 +67,14 @@ pub enum Relation {}
 impl ActiveModelBehavior for ActiveModel {}
 
 impl Model {
+    pub fn history_session_id(&self) -> &str {
+        self.provider_session_id.as_deref().unwrap_or(&self.id)
+    }
+
+    pub fn effective_project_path(&self) -> &str {
+        self.worktree_path.as_deref().unwrap_or(&self.project_path)
+    }
+
     /// Get agent_id as CanonicalAgentId
     ///
     /// This always succeeds since CanonicalAgentId::parse accepts any string

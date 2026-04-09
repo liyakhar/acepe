@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { okAsync } from "neverthrow";
 
 const isPermissionGrantedMock = mock(async (): Promise<boolean> => true);
 const requestPermissionMock = mock(
 	async (): Promise<"default" | "denied" | "granted"> => "granted"
 );
-const sendNotificationMock = mock(() => {});
+const sendNotificationMock = mock(() => okAsync(undefined));
 const playSoundMock = mock(() => {});
 
 async function flushAsyncNotifications(): Promise<void> {

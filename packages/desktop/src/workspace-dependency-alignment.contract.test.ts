@@ -45,6 +45,7 @@ describe("workspace dependency alignment", () => {
 		expect(desktopPackageJson.devDependencies?.typescript).toBe("^5.9.3");
 		expect(desktopPackageJson.devDependencies?.vite).toBe("^7.2.6");
 		expect(uiPackageJson.dependencies?.["@lucide/svelte"]).toBe("^0.562.0");
+		expect(uiPackageJson.dependencies?.["@paper-design/shaders"]).toBeDefined();
 		expect(uiPackageJson.dependencies?.["phosphor-svelte"]).toBe("^3.1.0");
 		expect(websitePackageJson.devDependencies?.["@lucide/svelte"]).toBe("^0.562.0");
 	});
@@ -63,6 +64,7 @@ describe("workspace dependency alignment", () => {
 		expect(desktopWorkspace).toContain('"vite": "^7.2.6"');
 		expect(desktopWorkspace).toContain('"phosphor-svelte": "^3.1.0"');
 		expect(uiWorkspace).toContain('"@lucide/svelte": "^0.562.0"');
+		expect(uiWorkspace).toContain('"@paper-design/shaders":');
 		expect(uiWorkspace).toContain('"phosphor-svelte": "^3.1.0"');
 		expect(websiteWorkspace).toContain('"@lucide/svelte": "^0.562.0"');
 	});

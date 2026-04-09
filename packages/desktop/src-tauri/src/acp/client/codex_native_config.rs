@@ -3,6 +3,7 @@ use crate::acp::client::{
 };
 use crate::acp::client_session::default_modes;
 use crate::acp::error::{AcpError, AcpResult};
+use crate::acp::parsers::{provider_capabilities::provider_capabilities, AgentType};
 use crate::acp::session_update::{ConfigOptionData, ConfigOptionValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -367,6 +368,7 @@ fn build_codex_native_session_model_state_with_state(
         available_models,
         current_model_id,
         models_display: Default::default(),
+        provider_metadata: Some(provider_capabilities(AgentType::Codex).frontend_projection),
     }
 }
 

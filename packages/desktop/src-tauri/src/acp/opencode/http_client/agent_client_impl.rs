@@ -83,6 +83,7 @@ impl AgentClient for OpenCodeHttpClient {
                 available_models,
                 current_model_id,
                 models_display: Default::default(),
+                provider_metadata: Some(self.provider.frontend_projection()),
             },
             modes: SessionModes {
                 current_mode_id: "build".to_string(),
@@ -142,6 +143,7 @@ impl AgentClient for OpenCodeHttpClient {
                 available_models,
                 current_model_id,
                 models_display: Default::default(),
+                provider_metadata: Some(self.provider.frontend_projection()),
             },
             modes: SessionModes {
                 current_mode_id: "build".to_string(),

@@ -108,13 +108,12 @@ export const acp = {
 		request: InteractionReplyRequest
 	): ResultAsync<void, AppError> => {
 		return invokeAsync(CMD.acp.reply_interaction, {
-			sessionId: request.sessionId,
-			interactionId: request.interactionId,
-			replyHandler: {
-				kind: request.replyHandler.kind,
-				requestId: request.replyHandler.requestId,
+			request: {
+				sessionId: request.sessionId,
+				interactionId: request.interactionId,
+				replyHandler: serializeInteractionReplyHandler(request.replyHandler),
+				payload: serializeInteractionReplyPayload(request.payload),
 			},
-			payload: serializeInteractionReplyPayload(request.payload),
 		});
 	},
 
@@ -165,6 +164,15 @@ export const acp = {
 	},
 };
 
+function serializeInteractionReplyHandler(
+	replyHandler: InteractionReplyRequest["replyHandler"]
+): Record<string, unknown> {
+	return {
+		kind: replyHandler.kind === "json-rpc" ? "json_rpc" : "http",
+		requestId: String(replyHandler.requestId),
+	};
+}
+
 function serializeInteractionReplyPayload(
 	payload: InteractionReplyRequest["payload"]
 ): Record<string, unknown> {
@@ -173,13 +181,13 @@ function serializeInteractionReplyPayload(
 			return {
 				kind: "permission",
 				reply: payload.reply,
-				optionId: payload.optionId,
+				option_id: payload.optionId,
 			};
 		case "question":
 			return {
 				kind: "question",
 				answers: payload.answers,
-				answerMap: payload.answerMap,
+				answer_map: payload.answerMap,
 			};
 		case "question_cancel":
 			return {

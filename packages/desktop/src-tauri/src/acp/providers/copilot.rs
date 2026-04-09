@@ -3,11 +3,19 @@ use super::copilot_settings::apply_copilot_session_defaults;
 use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::parsers::AgentType;
+use crate::acp::session_descriptor::SessionReplayContext;
 use crate::acp::task_reconciler::TaskReconciliationPolicy;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
+use crate::db::repository::SessionMetadataRepository;
+use crate::history::session_context::SessionContext;
+use crate::session_jsonl::types::ConvertedSession;
+use sea_orm::DbConn;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use tauri::{AppHandle, Manager};
 
 /// GitHub Copilot CLI ACP provider.
 pub struct CopilotProvider;
@@ -148,6 +156,48 @@ impl AgentProvider for CopilotProvider {
         modes: &mut SessionModes,
     ) -> AcpResult<()> {
         apply_copilot_session_defaults(cwd, models, modes)
+    }
+
+    fn load_provider_owned_session<'a>(
+        &'a self,
+        app: &'a AppHandle,
+        context: &'a SessionContext,
+        replay_context: &'a SessionReplayContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ConvertedSession>, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let session_id = &context.local_session_id;
+            let db = app.try_state::<DbConn>().map(|state| state.inner().clone());
+            let session_title = match db.as_ref() {
+                Some(db) => SessionMetadataRepository::get_by_id(db, session_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|row| row.display)
+                    .unwrap_or_else(|| {
+                        format!("Session {}", &session_id[..8.min(session_id.len())])
+                    }),
+                None => format!("Session {}", &session_id[..8.min(session_id.len())]),
+            };
+
+            match crate::copilot_history::load_session(
+                app,
+                replay_context,
+                &context.effective_project_path,
+                &session_title,
+            )
+            .await
+            {
+                Ok(session) => Ok(session),
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %error,
+                        "Copilot session replay load failed"
+                    );
+                    Ok(None)
+                }
+            }
+        })
     }
 }
 
@@ -358,6 +408,7 @@ mod tests {
             ],
             current_model_id: "auto".to_string(),
             models_display: Default::default(),
+            provider_metadata: None,
         };
         let mut modes = SessionModes {
             current_mode_id: "build".to_string(),
@@ -395,6 +446,7 @@ mod tests {
             available_models: vec![],
             current_model_id: "auto".to_string(),
             models_display: Default::default(),
+            provider_metadata: None,
         };
         let mut modes = SessionModes {
             current_mode_id: "build".to_string(),

@@ -1,11 +1,11 @@
-use crate::acp::parsers::{AgentType, get_parser};
-use crate::acp::tool_classification::{ToolClassificationHints, classify_raw_tool_call};
+use crate::acp::parsers::{get_parser, AgentType};
+use crate::acp::tool_classification::{classify_raw_tool_call, ToolClassificationHints};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::AppHandle;
 
-use super::InboundRoutingDecision;
 use super::types::TerminalRequestParamsRaw;
+use super::InboundRoutingDecision;
 
 pub(super) fn invalid_params(message: &str) -> InboundRoutingDecision {
     InboundRoutingDecision::Handle(json!({

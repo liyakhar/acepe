@@ -173,6 +173,7 @@ export {
 	PlanIcon,
 	RevertIcon,
 } from "./components/icons/index.js";
+export { ProviderMark } from "./components/provider-mark/index.js";
 export {
 	InlineArtefactBadge,
 	buildInlineArtefactIconClassName,
@@ -229,6 +230,8 @@ export {
 	OverflowMenuTriggerAction,
 	SegmentedToggleGroup,
 } from "./components/panel-header/index.js";
+export { BrandLockup } from "./components/brand-lockup/index.js";
+export { BrandShaderBackground } from "./components/brand-shader-background/index.js";
 export { PillButton } from "./components/pill-button/index.js";
 export { ProjectCard } from "./components/project-card/index.js";
 export { ProjectLetterBadge } from "./components/project-letter-badge/index.js";
@@ -238,6 +241,11 @@ export { SegmentedProgress } from "./components/segmented-progress/index.js";
 export { Selector } from "./components/selector/index.js";
 export { TextShimmer } from "./components/text-shimmer/index.js";
 export { UserMessageContainer } from "./components/user-message-container/index.js";
+export {
+	BRAND_SHADER_DARK_PALETTE,
+	type BrandShaderColorTuple,
+	type BrandShaderPalette,
+} from "./lib/brand-shader-palette.js";
 export {
 	COLOR_NAMES,
 	Colors,
@@ -252,6 +260,8 @@ export {
 export { getFallbackIconSrc, getFileIconName, getFileIconSrc } from "./lib/file-icon/index.js";
 // Icon context
 export { getIconBasePath, setIconConfig } from "./lib/icon-context.js";
+export { getProviderDisplayName, resolveProviderBrand } from "./lib/provider-brand.js";
+export type { ProviderBrand } from "./lib/provider-brand.js";
 export type {
 	InlineArtefactSegment,
 	InlineArtefactTokenType,

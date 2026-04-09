@@ -9,7 +9,6 @@ use crate::acp::session_update_parser::{
 };
 use crate::acp::streaming_log::{log_emitted_event, log_streaming_event};
 use crate::acp::task_reconciler::{ReconcilerOutput, TaskReconciler};
-use crate::acp::types::ContentBlock;
 use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher, AcpUiEventPriority};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -18,10 +17,7 @@ use std::sync::Arc as StdArc;
 mod plan;
 mod reconciler;
 
-use plan::{
-    enrich_plan_data, enrich_plan_update, extract_codex_wrapper_plan, extract_streaming_plan,
-    finalize_codex_wrapper_on_turn_end,
-};
+use plan::{enrich_plan_data, enrich_plan_update, extract_streaming_plan};
 pub(crate) use reconciler::process_through_reconciler;
 
 #[allow(clippy::too_many_arguments)]
@@ -95,22 +91,6 @@ pub(crate) async fn handle_session_update_notification(
 
             let normalized_update = enrich_plan_update(normalized_update, agent_type, provider);
 
-            // Provider-specific wrapper parsing from assistant text chunks.
-            let wrapper_stream_plan =
-                if provider.is_some_and(|provider| provider.uses_wrapper_plan_streaming()) {
-                    extract_codex_wrapper_plan(&normalized_update)
-                } else {
-                    None
-                };
-
-            // Finalize partial wrapper plan if stream ends without closing tag.
-            let wrapper_finalize_plan =
-                if provider.is_some_and(|provider| provider.uses_wrapper_plan_streaming()) {
-                    finalize_codex_wrapper_on_turn_end(&normalized_update)
-                } else {
-                    None
-                };
-
             // Extract streaming plan before batching (it won't survive serialization)
             let streaming_plan = extract_streaming_plan(&normalized_update, agent_type, provider);
 
@@ -123,20 +103,6 @@ pub(crate) async fn handle_session_update_notification(
 
             // Emit Plan event if streaming plan data was present
             if let Some((plan, session_id)) = streaming_plan {
-                let update = SessionUpdate::Plan { plan, session_id };
-                let sid = update.session_id().unwrap_or("unknown").to_string();
-                log_emitted_event(&sid, &update);
-                dispatcher.enqueue(AcpUiEvent::session_update(update));
-            }
-
-            if let Some((plan, session_id)) = wrapper_stream_plan {
-                let update = SessionUpdate::Plan { plan, session_id };
-                let sid = update.session_id().unwrap_or("unknown").to_string();
-                log_emitted_event(&sid, &update);
-                dispatcher.enqueue(AcpUiEvent::session_update(update));
-            }
-
-            if let Some((plan, session_id)) = wrapper_finalize_plan {
                 let update = SessionUpdate::Plan { plan, session_id };
                 let sid = update.session_id().unwrap_or("unknown").to_string();
                 log_emitted_event(&sid, &update);

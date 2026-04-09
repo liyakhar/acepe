@@ -3,15 +3,15 @@
 use crate::acp::parsers::adapters::OpenCodeAdapter;
 use crate::acp::parsers::arguments::parse_tool_kind_arguments;
 use crate::acp::parsers::edit_normalizers::opencode::parse_edit_arguments;
-use crate::acp::parsers::provider_capabilities::{ProviderCapabilities, provider_capabilities};
+use crate::acp::parsers::provider_capabilities::{provider_capabilities, ProviderCapabilities};
 use crate::acp::parsers::types::{
-    AgentParser, AgentType, ParseError, ParsedQuestion, ParsedQuestionOption, ParsedTodo,
-    ParsedTodoStatus, ParsedUsageTelemetry, UpdateType, parse_common_update_type_name,
-    parse_standard_usage_telemetry,
+    parse_common_update_type_name, parse_standard_usage_telemetry, AgentParser, AgentType,
+    ParseError, ParsedQuestion, ParsedQuestionOption, ParsedTodo, ParsedTodoStatus,
+    ParsedUsageTelemetry, UpdateType,
 };
 use crate::acp::session_update::{
-    RawToolCallInput, RawToolCallUpdateInput, ToolArguments, ToolCallStatus, ToolKind,
-    build_tool_call_from_raw, build_tool_call_update_from_raw,
+    build_tool_call_from_raw, build_tool_call_update_from_raw, RawToolCallInput,
+    RawToolCallUpdateInput, ToolArguments, ToolCallStatus, ToolKind,
 };
 
 pub struct OpenCodeParser;

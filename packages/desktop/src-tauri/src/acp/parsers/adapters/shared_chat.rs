@@ -50,7 +50,7 @@ pub(crate) fn normalize_shared_chat_tool_name(name: &str) -> ToolKind {
     if any_eq(clean_name, &["glob", "ls"]) {
         return ToolKind::Glob;
     }
-    if any_eq(clean_name, &["grep", "search", "rg", "ripgrep"]) {
+    if any_eq(clean_name, &["grep", "rg", "ripgrep", "search"]) {
         return ToolKind::Search;
     }
     if clean_name.eq_ignore_ascii_case("find") {
@@ -97,4 +97,16 @@ pub(crate) fn normalize_shared_chat_tool_name(name: &str) -> ToolKind {
     }
 
     ToolKind::Other
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_shared_chat_tool_name;
+    use crate::acp::session_update::ToolKind;
+
+    #[test]
+    fn maps_rg_and_ripgrep_to_search() {
+        assert_eq!(normalize_shared_chat_tool_name("rg"), ToolKind::Search);
+        assert_eq!(normalize_shared_chat_tool_name("ripgrep"), ToolKind::Search);
+    }
 }

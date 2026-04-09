@@ -6,13 +6,18 @@
  */
 
 import type { Model } from "../application/dto/model.js";
-import type {
-	DisplayableModel,
-	ModelDisplayFamily,
-	ModelsForDisplay,
-	UsageMetricsPresentation,
+import {
+	getProviderMetadataFromModelsDisplay,
+	resolveProviderMetadataProjection,
+	type ProviderMetadataProjection,
+	type DisplayModelGroup,
+	type DisplayableModel,
+	type ModelDisplayFamily,
+	type ModelsForDisplay,
+	type UsageMetricsPresentation,
 } from "../../services/acp-types.js";
 
+import { getProviderDisplayName } from "@acepe/ui";
 import { AGENT_IDS } from "../types/agent-id.js";
 
 /**
@@ -90,23 +95,18 @@ export function getModelDisplayName(
  *
  * Handles formats:
  * - "anthropic/claude-3" -> "Anthropic"
- * - "openai:gpt-4" -> "Openai"
+ * - "openai:gpt-4" -> "OpenAI"
  * - "google.gemini-pro" -> "Google"
+ * - "claude-sonnet-4" -> "Anthropic"
+ * - "gpt-5.3-codex" -> "OpenAI"
  * - "default" -> "Default"
  * - "opus" -> "Other" (no separator)
  *
  * @param modelId - The model ID to extract provider from
- * @returns Capitalized provider name or "Other" if not found
+ * @returns Provider display name or "Other" if not found
  */
 export function getProviderFromModelId(modelId: string): string {
-	if (modelId === "default") return "Default";
-
-	const parts = modelId.split(/[/:.]/);
-	if (parts.length > 1 && parts[0]) {
-		return capitalizeName(parts[0]);
-	}
-
-	return "Other";
+	return getProviderDisplayName(modelId);
 }
 
 /**
@@ -265,6 +265,45 @@ export function getCodexCurrentVariant(
 	return baseGroups[0]?.variants[0] ?? null;
 }
 
+function getReasoningBaseModelId(group: DisplayModelGroup): string {
+	const firstModelId = group.models[0]?.modelId ?? "";
+	if (!firstModelId) {
+		return "";
+	}
+
+	const slashIndex = firstModelId.lastIndexOf("/");
+	return slashIndex > 0 ? firstModelId.slice(0, slashIndex) : firstModelId;
+}
+
+export function groupReasoningModelsFromDisplay(
+	modelsDisplay: ModelsForDisplay | null | undefined
+): readonly CodexBaseModelGroup[] {
+	if (getModelDisplayFamily(modelsDisplay) !== "codexReasoningEffort" || !modelsDisplay?.groups) {
+		return [];
+	}
+
+	return modelsDisplay.groups.map((group) => ({
+		baseModelId: getReasoningBaseModelId(group),
+		baseModelName: group.label,
+		variants: group.models.map((model) => {
+			const slashIndex = model.modelId.lastIndexOf("/");
+			const effort = (
+				slashIndex > 0 && slashIndex < model.modelId.length - 1
+					? model.modelId.slice(slashIndex + 1)
+					: "medium"
+			) as "low" | "medium" | "high" | "xhigh";
+
+			return {
+				fullModelId: model.modelId,
+				baseModelId: slashIndex > 0 ? model.modelId.slice(0, slashIndex) : model.modelId,
+				effort,
+				name: model.displayName,
+				description: model.description ?? undefined,
+			};
+		}),
+	}));
+}
+
 export function getModelDisplayFamily(
 	modelsDisplay: ModelsForDisplay | null | undefined
 ): ModelDisplayFamily | null {
@@ -277,10 +316,90 @@ export function getUsageMetricsPresentation(
 	return modelsDisplay?.presentation?.usageMetrics ?? null;
 }
 
+export function getProviderMetadata(
+	modelsDisplay: ModelsForDisplay | null | undefined
+): ProviderMetadataProjection | null {
+	return getProviderMetadataFromModelsDisplay(modelsDisplay);
+}
+
+export interface SplitSelectorState {
+	primaryOpen: boolean;
+	variantOpen: boolean;
+}
+
+export function togglePrimarySelector(state: SplitSelectorState): SplitSelectorState {
+	const nextPrimaryOpen = !state.primaryOpen;
+	return {
+		primaryOpen: nextPrimaryOpen,
+		variantOpen: false,
+	};
+}
+
+export function setPrimarySelectorOpen(
+	state: SplitSelectorState,
+	primaryOpen: boolean
+): SplitSelectorState {
+	return {
+		primaryOpen,
+		variantOpen: primaryOpen ? false : state.variantOpen,
+	};
+}
+
+export function setVariantSelectorOpen(
+	state: SplitSelectorState,
+	variantOpen: boolean
+): SplitSelectorState {
+	return {
+		primaryOpen: variantOpen ? false : state.primaryOpen,
+		variantOpen,
+	};
+}
+
+export function closeSplitSelector(_: SplitSelectorState): SplitSelectorState {
+	return {
+		primaryOpen: false,
+		variantOpen: false,
+	};
+}
+
+export function isSplitSelectorOpen(state: SplitSelectorState): boolean {
+	return state.primaryOpen || state.variantOpen;
+}
+
+export function resolveSelectorProviderMetadata(
+	agentId: string | null,
+	modelsDisplay: ModelsForDisplay | null | undefined
+): ProviderMetadataProjection | null {
+	const projectedProviderMetadata = getProviderMetadata(modelsDisplay);
+	if (projectedProviderMetadata) {
+		return projectedProviderMetadata;
+	}
+
+	if (!agentId) {
+		return null;
+	}
+
+	return resolveProviderMetadataProjection(agentId, null, agentId);
+}
+
+export function getProviderMarkSource(
+	providerMetadata: ProviderMetadataProjection | null | undefined
+): string {
+	if (!providerMetadata) {
+		return "other";
+	}
+
+	return providerMetadata.providerBrand;
+}
+
 export function supportsReasoningEffortPicker(
 	models: readonly Model[],
 	modelsDisplay?: ModelsForDisplay | null
 ): boolean {
+	if (getProviderMetadata(modelsDisplay)?.reasoningEffortSupport) {
+		return true;
+	}
+
 	if (getModelDisplayFamily(modelsDisplay) === "codexReasoningEffort") {
 		return true;
 	}

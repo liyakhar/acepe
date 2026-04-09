@@ -20,47 +20,6 @@ pub(super) fn extract_streaming_plan(
     }
 }
 
-pub(super) fn extract_codex_wrapper_plan(
-    update: &SessionUpdate,
-) -> Option<(PlanData, Option<String>)> {
-    let session_id = update.session_id()?.to_string();
-    let text = match update {
-        SessionUpdate::AgentMessageChunk { chunk, .. }
-        | SessionUpdate::AgentThoughtChunk { chunk, .. } => extract_text(chunk),
-        _ => None,
-    }?;
-
-    let plan = crate::acp::streaming_accumulator::process_codex_plan_chunk(&session_id, text)?;
-    Some((
-        enrich_plan_data(plan, AgentType::Codex, None),
-        Some(session_id),
-    ))
-}
-
-pub(super) fn finalize_codex_wrapper_on_turn_end(
-    update: &SessionUpdate,
-) -> Option<(PlanData, Option<String>)> {
-    match update {
-        SessionUpdate::TurnComplete { session_id }
-        | SessionUpdate::TurnError { session_id, .. } => {
-            let sid = session_id.as_ref()?;
-            let plan = crate::acp::streaming_accumulator::finalize_codex_plan_streaming(sid)?;
-            Some((
-                enrich_plan_data(plan, AgentType::Codex, None),
-                Some(sid.clone()),
-            ))
-        }
-        _ => None,
-    }
-}
-
-fn extract_text(chunk: &crate::acp::session_update::ContentChunk) -> Option<&str> {
-    match &chunk.content {
-        ContentBlock::Text { text } => Some(text.as_str()),
-        _ => None,
-    }
-}
-
 pub(super) fn enrich_plan_update(
     update: SessionUpdate,
     agent_type: AgentType,
@@ -158,8 +117,12 @@ fn render_steps_markdown(steps: &[crate::acp::session_update::PlanStep]) -> Opti
 mod tests {
     use super::*;
     use crate::acp::providers::claude_code::ClaudeCodeProvider;
+    use crate::acp::providers::codex::adapt_codex_wrapper_plan_update;
     use crate::acp::session_update::PlanStep;
     use crate::acp::session_update::PlanStepStatus;
+    use crate::acp::session_update::{ContentChunk, SessionUpdate};
+    use crate::acp::streaming_accumulator::cleanup_codex_plan_streaming;
+    use crate::acp::types::ContentBlock;
 
     fn empty_plan() -> PlanData {
         PlanData::from_steps(Vec::new())
@@ -199,5 +162,119 @@ mod tests {
             plan.content_markdown.as_deref(),
             Some("# Plan\n\n- [-] Ship the refactor\n")
         );
+    }
+
+    #[test]
+    fn provider_owned_codex_wrapper_chunk_keeps_shared_enrichment_parity() {
+        let session_id = "plan-test-provider-wrapper-chunk";
+        let adapted = adapt_codex_wrapper_plan_update(&SessionUpdate::AgentMessageChunk {
+            chunk: ContentChunk {
+                content: ContentBlock::Text {
+                    text: "<proposed_plan># Plan\n\n- ship it\n</proposed_plan>".to_string(),
+                },
+                aggregation_hint: None,
+            },
+            part_id: Some("msg-1".to_string()),
+            message_id: Some("msg-1".to_string()),
+            session_id: Some(session_id.to_string()),
+        })
+        .expect("wrapper plan should adapt");
+
+        let enriched = enrich_plan_update(adapted, AgentType::Codex, None);
+        match enriched {
+            SessionUpdate::Plan {
+                plan,
+                session_id: emitted_session_id,
+            } => {
+                assert_eq!(emitted_session_id.as_deref(), Some(session_id));
+                assert!(!plan.streaming);
+                assert_eq!(plan.content.as_deref(), Some("# Plan\n\n- ship it\n"));
+                assert_eq!(
+                    plan.content_markdown.as_deref(),
+                    Some("# Plan\n\n- ship it\n")
+                );
+                assert_eq!(plan.source, Some(PlanSource::Heuristic));
+                assert_eq!(plan.confidence, Some(PlanConfidence::Medium));
+                assert_eq!(plan.agent_id.as_deref(), Some("codex"));
+                assert!(plan.updated_at.is_some());
+            }
+            other => panic!("expected plan update, got {other:?}"),
+        }
+
+        cleanup_codex_plan_streaming(session_id);
+    }
+
+    #[test]
+    fn provider_owned_codex_wrapper_turn_end_flushes_partial_plan() {
+        let session_id = "plan-test-provider-wrapper-turn-end";
+        let streamed = adapt_codex_wrapper_plan_update(&SessionUpdate::AgentThoughtChunk {
+            chunk: ContentChunk {
+                content: ContentBlock::Text {
+                    text: "<proposed_plan># Partial".to_string(),
+                },
+                aggregation_hint: None,
+            },
+            part_id: Some("reason-1".to_string()),
+            message_id: Some("reason-1".to_string()),
+            session_id: Some(session_id.to_string()),
+        })
+        .expect("opening wrapper should stream plan");
+
+        match streamed {
+            SessionUpdate::Plan { plan, .. } => {
+                assert!(plan.streaming);
+                assert_eq!(plan.content.as_deref(), Some(""));
+            }
+            other => panic!("expected streaming plan, got {other:?}"),
+        }
+
+        let finalized = adapt_codex_wrapper_plan_update(&SessionUpdate::TurnComplete {
+            session_id: Some(session_id.to_string()),
+        })
+        .expect("turn end should flush plan");
+        let enriched = enrich_plan_update(finalized, AgentType::Codex, None);
+
+        match enriched {
+            SessionUpdate::Plan { plan, .. } => {
+                assert!(!plan.streaming);
+                assert_eq!(plan.content.as_deref(), Some("# Partial"));
+                assert_eq!(plan.source, Some(PlanSource::Heuristic));
+                assert_eq!(plan.confidence, Some(PlanConfidence::Medium));
+            }
+            other => panic!("expected finalized plan, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn provider_owned_codex_wrapper_adapter_noops_for_non_plan_and_malformed_updates() {
+        let session_id = "plan-test-provider-wrapper-noop";
+
+        let non_plan = adapt_codex_wrapper_plan_update(&SessionUpdate::AgentMessageChunk {
+            chunk: ContentChunk {
+                content: ContentBlock::Text {
+                    text: "plain assistant text".to_string(),
+                },
+                aggregation_hint: None,
+            },
+            part_id: Some("msg-plain".to_string()),
+            message_id: Some("msg-plain".to_string()),
+            session_id: Some(session_id.to_string()),
+        });
+        assert!(non_plan.is_none());
+
+        let malformed = adapt_codex_wrapper_plan_update(&SessionUpdate::AgentMessageChunk {
+            chunk: ContentChunk {
+                content: ContentBlock::Text {
+                    text: "</proposed_plan>".to_string(),
+                },
+                aggregation_hint: None,
+            },
+            part_id: Some("msg-malformed".to_string()),
+            message_id: Some("msg-malformed".to_string()),
+            session_id: Some(session_id.to_string()),
+        });
+        assert!(malformed.is_none());
+
+        cleanup_codex_plan_streaming(session_id);
     }
 }

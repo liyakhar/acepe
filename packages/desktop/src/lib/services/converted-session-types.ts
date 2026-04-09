@@ -566,6 +566,10 @@ export type UserSettingKey =
  */
 "agent_available_models_display_cache" | 
 /**
+ * Cached provider metadata per agent (JSON map)
+ */
+"agent_provider_metadata_cache" | 
+/**
  * Cached available modes per agent (JSON map)
  */
 "agent_available_modes_cache" | 
@@ -656,7 +660,11 @@ export type UserSettingKey =
 /**
  * Preferred merge strategy for PRs (e.g., "squash", "merge", "rebase")
  */
-"git_merge_strategy_preference"
+"git_merge_strategy_preference" | 
+/**
+ * Set of dismissed tooltip keys (JSON array of string keys)
+ */
+"dismissed_tooltips"
 
 /**
  * Information about a single indexed file.

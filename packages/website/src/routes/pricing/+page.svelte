@@ -1,11 +1,9 @@
 <script lang="ts">
+import { BrandLockup, TextShimmer } from "@acepe/ui";
 import * as m from "$lib/paraglide/messages.js";
-import AppName from "$lib/components/app-name.svelte";
-import { TextShimmer } from "@acepe/ui";
 import Header from "$lib/components/header.svelte";
 import { Check, ArrowRight, Terminal } from "@lucide/svelte";
 import { GithubLogo } from "phosphor-svelte";
-import Logo from "$lib/components/logo.svelte";
 import { pricingFaqItems } from "./faq.js";
 
 let { data } = $props();
@@ -257,8 +255,7 @@ let { data } = $props();
 				<!-- Brand -->
 				<div class="col-span-2 md:col-span-1">
 					<a href="/" class="mb-3 inline-flex items-center gap-2">
-						<Logo class="h-6 w-6" />
-						<AppName />
+						<BrandLockup class="gap-2" markClass="h-6 w-6" wordmarkClass="text-sm" />
 					</a>
 					<p class="max-w-[200px] text-[13px] leading-relaxed text-muted-foreground">
 						{m.landing_hero_title()}

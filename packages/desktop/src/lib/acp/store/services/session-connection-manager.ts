@@ -12,6 +12,12 @@
  */
 
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import {
+	normalizeModelsForDisplay,
+	resolveProviderMetadataProjection,
+	type ModelsForDisplay,
+	type ProviderMetadataProjection,
+} from "../../../services/acp-types.js";
 import { tauriClient } from "../../../utils/tauri-client.js";
 import type { ExecutionProfileRequest } from "../../../utils/tauri-client/acp.js";
 import type { AppError } from "../../errors/app-error.js";
@@ -44,6 +50,7 @@ const CONNECTION_TIMEOUT_MS = 15_000;
 
 interface ConnectSessionOptions {
 	executionProfile?: ExecutionProfileRequest;
+	agentOverrideId?: string;
 }
 
 /**
@@ -101,13 +108,22 @@ export class SessionConnectionManager {
 		return modeId === CanonicalModeId.PLAN ? CanonicalModeId.PLAN : CanonicalModeId.BUILD;
 	}
 
-	private isUnsupportedAutonomousProfileError(error: AppError): boolean {
-		const errorMessage = error.message;
-		const causeMessage = error.cause ? error.cause.message : "";
-		return (
-			errorMessage.includes("unsupported autonomous execution profile") ||
-			causeMessage.includes("unsupported autonomous execution profile")
+	private resolveProviderMetadata(
+		agentId: string,
+		providerMetadata: ProviderMetadataProjection | null | undefined
+	): ProviderMetadataProjection {
+		return resolveProviderMetadataProjection(
+			agentId,
+			providerMetadata ?? preferencesStore.getCachedProviderMetadata(agentId),
+			agentId
 		);
+	}
+
+	private getSessionProviderMetadata(
+		sessionId: string
+	): ProviderMetadataProjection | null | undefined {
+		const sessionCapabilities = this.capabilitiesManager.getCapabilities(sessionId);
+		return sessionCapabilities ? sessionCapabilities.providerMetadata : undefined;
 	}
 
 	private applyExecutionProfile(
@@ -118,12 +134,82 @@ export class SessionConnectionManager {
 		return api.setExecutionProfile(sessionId, modeId, autonomousEnabled);
 	}
 
-	private shouldReconnectClaudeForAutonomous(
-		session: SessionCold,
+	private shouldReconnectForAutonomous(
+		agentId: string,
 		modeId: string,
-		enabled: boolean
+		enabled: boolean,
+		providerMetadata: ProviderMetadataProjection | null | undefined
 	): boolean {
-		return session.agentId === "claude-code" && enabled && modeId === CanonicalModeId.BUILD;
+		if (!enabled || modeId !== CanonicalModeId.BUILD) {
+			return false;
+		}
+
+		return (
+			this.resolveProviderMetadata(agentId, providerMetadata).autonomousApplyStrategy ===
+			"launchProfile"
+		);
+	}
+
+	private resolveDisplayGroupBaseModelId(group: ModelsForDisplay["groups"][number]): string | null {
+		const firstModelId = group.models[0]?.modelId;
+		if (!firstModelId) {
+			return null;
+		}
+
+		const slashIndex = firstModelId.lastIndexOf("/");
+		return slashIndex > 0 ? firstModelId.slice(0, slashIndex) : firstModelId;
+	}
+
+	private matchesDisplayGroupIdentity(
+		group: ModelsForDisplay["groups"][number],
+		currentModelId: string
+	): boolean {
+		const baseModelId = this.resolveDisplayGroupBaseModelId(group);
+		if (!baseModelId) {
+			return false;
+		}
+
+		if (baseModelId === currentModelId) {
+			return true;
+		}
+
+		const trailingBaseToken = baseModelId.includes("/")
+			? baseModelId.slice(baseModelId.lastIndexOf("/") + 1)
+			: baseModelId;
+		return trailingBaseToken === currentModelId;
+	}
+
+	private resolveModelFromDisplayGroup(
+		availableModels: readonly Model[],
+		currentModelId: string,
+		modelsDisplay: ModelsForDisplay | null | undefined,
+		providerMetadata: ProviderMetadataProjection
+	): Model | null {
+		if (!modelsDisplay || modelsDisplay.groups.length === 0) {
+			return null;
+		}
+
+		const matchingGroup =
+			modelsDisplay.groups.find((group) =>
+				this.matchesDisplayGroupIdentity(group, currentModelId)
+			) ??
+			(providerMetadata.variantGroup === "reasoningEffort" && modelsDisplay.groups.length === 1
+				? modelsDisplay.groups[0]
+				: null);
+
+		if (!matchingGroup) {
+			return null;
+		}
+
+		for (const displayModel of matchingGroup.models) {
+			const resolvedModel =
+				availableModels.find((model) => model.id === displayModel.modelId) ?? null;
+			if (resolvedModel) {
+				return resolvedModel;
+			}
+		}
+
+		return null;
 	}
 
 	private resolveDefaultModelForMode(
@@ -144,8 +230,11 @@ export class SessionConnectionManager {
 	 * Some agents return a base model ID while available models include variant suffixes.
 	 */
 	private resolveCurrentModel(
+		agentId: string,
 		availableModels: readonly Model[],
-		currentModelId: string | null | undefined
+		currentModelId: string | null | undefined,
+		modelsDisplay: ModelsForDisplay | null | undefined,
+		providerMetadata: ProviderMetadataProjection | null | undefined
 	): Model | null {
 		if (availableModels.length === 0) {
 			return null;
@@ -157,10 +246,15 @@ export class SessionConnectionManager {
 				return exact;
 			}
 
-			const prefix = `${currentModelId}/`;
-			const prefixed = availableModels.find((model) => model.id.startsWith(prefix));
-			if (prefixed) {
-				return prefixed;
+			const resolvedProviderMetadata = this.resolveProviderMetadata(agentId, providerMetadata);
+			const groupedVariant = this.resolveModelFromDisplayGroup(
+				availableModels,
+				currentModelId,
+				modelsDisplay,
+				resolvedProviderMetadata
+			);
+			if (groupedVariant) {
+				return groupedVariant;
 			}
 		}
 
@@ -214,8 +308,21 @@ export class SessionConnectionManager {
 				const {
 					availableModels: rawModels = [],
 					currentModelId,
-					modelsDisplay,
+					modelsDisplay: rawModelsDisplay,
+					providerMetadata: rawProviderMetadata,
 				} = result.models ?? {};
+				const providerMetadata = this.resolveProviderMetadata(
+					options.agentId,
+					rawProviderMetadata
+				);
+				const modelsDisplay =
+					normalizeModelsForDisplay(
+						options.agentId,
+						rawModelsDisplay,
+						options.agentId,
+						providerMetadata
+					) ??
+					undefined;
 
 				const availableModes: Mode[] = (result.modes?.availableModes ?? []).map((m) => ({
 					id: m.id,
@@ -233,7 +340,13 @@ export class SessionConnectionManager {
 
 				let currentMode =
 					availableModes.find((m) => m.id === result.modes?.currentModeId) ?? null;
-				let currentModel = this.resolveCurrentModel(availableModels, currentModelId);
+				let currentModel = this.resolveCurrentModel(
+					options.agentId,
+					availableModels,
+					currentModelId,
+					modelsDisplay,
+					providerMetadata
+				);
 				const explicitInitialMode = options.initialModeId
 					? (availableModes.find((mode) => mode.id === options.initialModeId) ?? null)
 					: null;
@@ -332,17 +445,6 @@ export class SessionConnectionManager {
 							? this.applyExecutionProfile(sessionId, currentMode.id, true)
 									.map(() => true)
 									.orElse((error) => {
-										if (this.isUnsupportedAutonomousProfileError(error)) {
-											logger.warn(
-												"Skipping initial autonomous profile because the provider rejected it",
-												{
-													sessionId,
-													modeId: currentMode ? currentMode.id : null,
-													error,
-												}
-											);
-											return okAsync(false);
-										}
 										logger.warn(
 											"Failed to apply initial autonomous profile after session creation",
 											{
@@ -359,9 +461,14 @@ export class SessionConnectionManager {
 
 						// Cache available models and modes for settings/optimistic display
 						preferencesStore.updateModelsCache(options.agentId, availableModels);
-						preferencesStore.updateModelsDisplayCache(options.agentId, modelsDisplay);
+						preferencesStore.updateProviderMetadataCache(options.agentId, providerMetadata);
+						preferencesStore.updateModelsDisplayCache(
+							options.agentId,
+							modelsDisplay,
+							providerMetadata
+						);
 						preferencesStore.updateModesCache(options.agentId, availableModes);
-						logger.info("Claude model capabilities on session creation", {
+						logger.info("Provider model capabilities on session creation", {
 							sessionId,
 							agentId: options.agentId,
 							responseCurrentModelId: currentModelId ? currentModelId : null,
@@ -439,6 +546,7 @@ export class SessionConnectionManager {
 							availableModels,
 							availableCommands,
 							modelsDisplay,
+							providerMetadata,
 						});
 
 						// Mark as preloaded since it's a new session with no entries
@@ -482,20 +590,9 @@ export class SessionConnectionManager {
 		if (!session) {
 			return errAsync(new SessionNotFoundError(sessionId));
 		}
+		const effectiveAgentId = options?.agentOverrideId ?? session.agentId;
 
 		const hotState = this.stateReader.getHotState(sessionId);
-		const launchExecutionProfile =
-			options?.executionProfile ??
-			(hotState.autonomousEnabled &&
-			hotState.currentMode &&
-			this.shouldReconnectClaudeForAutonomous(session, hotState.currentMode.id, true)
-				? {
-						modeId: hotState.currentMode.id,
-						autonomousEnabled: true,
-					}
-				: undefined);
-		const shouldRestoreAutonomous =
-			launchExecutionProfile?.autonomousEnabled === true ? true : hotState.autonomousEnabled;
 		if (hotState.isConnected) {
 			logger.debug("Session already connected, skipping", {
 				sessionId,
@@ -545,22 +642,76 @@ export class SessionConnectionManager {
 		});
 
 		// Always send projectPath as the base CWD. The backend will override it
-		// with the DB's worktree_path when it still exists on disk, avoiding the
-		// case where the frontend sends a stale worktree path that has been deleted.
+		// with the descriptor's worktree path when it still exists on disk, avoiding
+		// the case where the frontend sends stale workspace metadata back as resume
+		// authority.
 		const resumeCwd = session.projectPath;
-		const connection = withTimeout(
-			api.resumeSession(sessionId, resumeCwd, session.agentId, launchExecutionProfile),
-			CONNECTION_TIMEOUT_MS,
-			new ConnectionError(`Session connection timed out after ${CONNECTION_TIMEOUT_MS / 1000}s`)
-		)
+		const connection = preferencesStore
+			.ensureLoaded()
+			.orElse((error) => {
+				logger.warn("Failed to load provider metadata before reconnect", {
+					sessionId,
+					agentId: session.agentId,
+					error,
+				});
+				return okAsync(undefined);
+			})
+			.andThen(() => {
+				const reconnectHotState = this.stateReader.getHotState(sessionId);
+				const sessionProviderMetadata = this.getSessionProviderMetadata(sessionId);
+				const launchExecutionProfile =
+					options?.executionProfile ??
+					(reconnectHotState.autonomousEnabled &&
+					reconnectHotState.currentMode &&
+					this.shouldReconnectForAutonomous(
+						effectiveAgentId,
+						reconnectHotState.currentMode.id,
+						true,
+						sessionProviderMetadata
+					)
+						? {
+								modeId: reconnectHotState.currentMode.id,
+								autonomousEnabled: true,
+							}
+						: undefined);
+				const shouldRestoreAutonomous =
+					launchExecutionProfile?.autonomousEnabled === true
+						? true
+						: reconnectHotState.autonomousEnabled;
+
+				return withTimeout(
+					api.resumeSession(
+						sessionId,
+						resumeCwd,
+						options?.agentOverrideId,
+						launchExecutionProfile
+					),
+					CONNECTION_TIMEOUT_MS,
+					new ConnectionError(
+						`Session connection timed out after ${CONNECTION_TIMEOUT_MS / 1000}s`
+					)
+				)
 			.andThen((result) => preferencesStore.ensureLoaded().map(() => result))
 			.andThen((result) => {
 				this.connectionManager.setConnecting(sessionId, false);
 				const {
 					availableModels: rawModels = [],
 					currentModelId,
-					modelsDisplay,
+					modelsDisplay: rawModelsDisplay,
+					providerMetadata: rawProviderMetadata,
 				} = result.models ?? {};
+				const providerMetadata = this.resolveProviderMetadata(
+					effectiveAgentId,
+					rawProviderMetadata
+				);
+				const modelsDisplay =
+					normalizeModelsForDisplay(
+						effectiveAgentId,
+						rawModelsDisplay,
+						effectiveAgentId,
+						providerMetadata
+					) ??
+					undefined;
 
 				const availableModes: Mode[] = (result.modes?.availableModes ?? []).map((m) => ({
 					id: m.id,
@@ -578,7 +729,13 @@ export class SessionConnectionManager {
 
 				const currentMode =
 					availableModes.find((m) => m.id === result.modes?.currentModeId) ?? null;
-				const initialModel = this.resolveCurrentModel(availableModels, currentModelId);
+				const initialModel = this.resolveCurrentModel(
+					effectiveAgentId,
+					availableModels,
+					currentModelId,
+					modelsDisplay,
+					providerMetadata
+				);
 
 				const storedModelId = currentMode?.id
 					? preferencesStore.getSessionModelForMode(sessionId, currentMode.id)
@@ -606,6 +763,7 @@ export class SessionConnectionManager {
 							availableCommands,
 							configOptions,
 							modelsDisplay: modelsDisplay,
+							providerMetadata,
 							currentMode,
 							currentModel: storedModel ?? initialModel,
 						}))
@@ -624,6 +782,7 @@ export class SessionConnectionManager {
 								availableCommands,
 								configOptions,
 								modelsDisplay: modelsDisplay,
+								providerMetadata,
 								currentMode,
 								currentModel: initialModel,
 							})
@@ -640,6 +799,7 @@ export class SessionConnectionManager {
 					availableCommands,
 					configOptions,
 					modelsDisplay: modelsDisplay,
+					providerMetadata,
 					currentMode,
 					currentModel: initialModel,
 				});
@@ -651,6 +811,7 @@ export class SessionConnectionManager {
 					availableCommands,
 					configOptions,
 					modelsDisplay,
+					providerMetadata,
 					currentMode,
 					currentModel,
 				}) => {
@@ -661,6 +822,7 @@ export class SessionConnectionManager {
 							availableCommands,
 							configOptions,
 							modelsDisplay,
+							providerMetadata,
 							currentMode,
 							currentModel,
 							autonomousEnabled: shouldRestoreAutonomous,
@@ -678,6 +840,7 @@ export class SessionConnectionManager {
 							availableCommands,
 							configOptions,
 							modelsDisplay,
+							providerMetadata,
 							currentMode,
 							currentModel,
 							autonomousEnabled: true,
@@ -691,6 +854,7 @@ export class SessionConnectionManager {
 							availableCommands,
 							configOptions,
 							modelsDisplay,
+							providerMetadata,
 							currentMode,
 							currentModel,
 							autonomousEnabled: true,
@@ -707,13 +871,15 @@ export class SessionConnectionManager {
 								availableCommands,
 								configOptions,
 								modelsDisplay,
+								providerMetadata,
 								currentMode,
 								currentModel,
 								autonomousEnabled: false,
 							});
 						});
 				}
-			)
+			);
+			})
 			.map(
 				({
 					availableModes,
@@ -721,21 +887,30 @@ export class SessionConnectionManager {
 					availableCommands,
 					configOptions,
 					modelsDisplay,
+					providerMetadata,
 					currentMode,
 					currentModel,
 					autonomousEnabled,
 				}) => {
 					// Cache available models and modes for settings/optimistic display
-					preferencesStore.updateModelsCache(session.agentId, availableModels);
-					preferencesStore.updateModelsDisplayCache(session.agentId, modelsDisplay);
-					preferencesStore.updateModesCache(session.agentId, availableModes);
-					logger.info("Claude model capabilities on session resume", {
+					preferencesStore.updateModelsCache(effectiveAgentId, availableModels);
+					preferencesStore.updateProviderMetadataCache(
+						effectiveAgentId,
+						providerMetadata
+					);
+					preferencesStore.updateModelsDisplayCache(
+						effectiveAgentId,
+						modelsDisplay,
+						providerMetadata
+					);
+					preferencesStore.updateModesCache(effectiveAgentId, availableModes);
+					logger.info("Provider model capabilities on session resume", {
 						sessionId,
-						agentId: session.agentId,
+						agentId: effectiveAgentId,
 						availableModelIds: availableModels.map((model) => model.id),
 						currentModelId: currentModel?.id ?? null,
 						cachedModelIds: preferencesStore
-							.getCachedModels(session.agentId)
+							.getCachedModels(effectiveAgentId)
 							.map((model) => model.id),
 					});
 
@@ -745,6 +920,7 @@ export class SessionConnectionManager {
 						availableModels,
 						availableCommands,
 						modelsDisplay,
+						providerMetadata,
 					});
 
 					this.pendingConnections.delete(sessionId);
@@ -943,20 +1119,7 @@ export class SessionConnectionManager {
 		this.hotStateManager.updateHotState(sessionId, { currentMode: newMode || null });
 		logger.debug("Setting mode (optimistic)", { sessionId, modeId });
 
-		const applyMode = this.applyExecutionProfile(session.id, modeId, oldAutonomousEnabled).orElse(
-			(error) => {
-				if (!oldAutonomousEnabled || !this.isUnsupportedAutonomousProfileError(error)) {
-					return errAsync(error);
-				}
-
-				logger.info("Falling back to non-autonomous mode change", {
-					sessionId,
-					modeId,
-				});
-				this.hotStateManager.updateHotState(sessionId, { autonomousEnabled: false });
-				return this.applyExecutionProfile(session.id, modeId, false);
-			}
-		);
+		const applyMode = this.applyExecutionProfile(session.id, modeId, oldAutonomousEnabled);
 
 		return applyMode
 			.andThen(() => {
@@ -1050,7 +1213,15 @@ export class SessionConnectionManager {
 		}
 
 		const previousAutonomousEnabled = hotState.autonomousEnabled;
-		if (this.shouldReconnectClaudeForAutonomous(session, currentModeId, enabled)) {
+		const sessionProviderMetadata = this.getSessionProviderMetadata(sessionId);
+		if (
+			this.shouldReconnectForAutonomous(
+				session.agentId,
+				currentModeId,
+				enabled,
+				sessionProviderMetadata
+			)
+		) {
 			if (!eventHandler) {
 				return errAsync(
 					new AgentError(

@@ -31,7 +31,7 @@ describe("kanban layout wiring contract", () => {
 		expect(appSidebarSource).toContain("<AppQueueRow");
 	});
 
-	it("splits layout settings into a Standard versus Kanban choice", () => {
+	it("renders view selection as inline pills instead of a nested submenu", () => {
 		expect(existsSync(topBarPath)).toBe(true);
 		if (!existsSync(topBarPath)) return;
 
@@ -40,11 +40,48 @@ describe("kanban layout wiring contract", () => {
 		expect(topBarSource).toContain("type LayoutFamily = \"standard\" | \"kanban\";");
 		expect(topBarSource).toContain("const isKanbanView = $derived(panelStore.viewMode === \"kanban\")");
 		expect(topBarSource).toContain("function switchLayoutFamily(nextFamily: LayoutFamily): void {");
+		expect(topBarSource).toContain('role="radiogroup"');
+		expect(topBarSource).toContain('aria-label="View mode"');
+		expect(topBarSource).toContain("aria-checked={isActive}");
 		expect(topBarSource).toContain('{ value: "standard", label: "Standard" }');
 		expect(topBarSource).toContain('{ value: "kanban", label: "Kanban" }');
-		expect(topBarSource).toContain('<span class="flex-1">View</span>');
 		expect(topBarSource).toContain("{#each layoutFamilies as family (family.value)}");
 		expect(topBarSource).toContain('import { Kanban } from "phosphor-svelte"');
+		expect(topBarSource).not.toContain("<DropdownMenu.SubTrigger");
+		expect(topBarSource).not.toContain("<ToggleGroup.");
+	});
+
+	it("keeps the layout menu focused on layout controls instead of duplicating the sidebar toggle", () => {
+		expect(existsSync(topBarPath)).toBe(true);
+		if (!existsSync(topBarPath)) return;
+
+		const topBarSource = readFileSync(topBarPath, "utf8");
+		const layoutMenuSource = topBarSource
+			.split("<DropdownMenu.Content")[1]
+			?.split("</DropdownMenu.Content>")[0];
+
+		expect(layoutMenuSource).toBeDefined();
+		expect(layoutMenuSource).not.toContain('<span class="flex-1">Sidebar</span>');
+		expect(layoutMenuSource).not.toContain("viewState.setSidebarOpen(!viewState.sidebarOpen)");
+		expect(layoutMenuSource).toContain('<span>Tab Bar</span>');
+	});
+
+	it("reveals standard-only grouping pills and tab bar toggle with slide animation", () => {
+		expect(existsSync(topBarPath)).toBe(true);
+		if (!existsSync(topBarPath)) return;
+
+		const topBarSource = readFileSync(topBarPath, "utf8");
+
+		expect(topBarSource).toContain("{#if !isKanbanView}");
+		expect(topBarSource).toContain("transition:slide");
+		expect(topBarSource).toContain('aria-label="Grouping mode"');
+		expect(topBarSource).toContain('label: "Single"');
+		expect(topBarSource).toContain('label: "Project"');
+		expect(topBarSource).toContain('label: "Multi"');
+		expect(topBarSource).toContain('<span>Tab Bar</span>');
+		expect(topBarSource).toContain("viewState.topBarVisible");
+		expect(topBarSource).not.toContain("<Accordion.");
+		expect(topBarSource).not.toContain("<ToggleGroup.");
 	});
 
 	it("reveals single, project, and multi choices only inside Standard", () => {
@@ -57,7 +94,8 @@ describe("kanban layout wiring contract", () => {
 			'const standardViewModes: { value: Exclude<ViewMode, "kanban">; label: string; color: string }[] = ['
 		);
 		expect(topBarSource).toContain('{#if !isKanbanView}');
-		expect(topBarSource).toContain('<span class="flex-1">Grouping</span>');
+		expect(topBarSource).toContain(">Grouping</div>");
+		expect(topBarSource).toContain('aria-label="Grouping mode"');
 		expect(topBarSource).toContain('label: "Single"');
 		expect(topBarSource).toContain('label: "Project"');
 		expect(topBarSource).toContain('label: "Multi"');

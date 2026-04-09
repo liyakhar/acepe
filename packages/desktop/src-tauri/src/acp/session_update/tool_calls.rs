@@ -5,9 +5,9 @@ use super::types::{
 };
 #[cfg(test)]
 use crate::acp::agent_context::current_agent;
-use crate::acp::parsers::{AgentParser, AgentType, get_parser};
+use crate::acp::parsers::{get_parser, AgentParser, AgentType};
 use crate::acp::tool_classification::{
-    ToolClassificationHints, classify_raw_tool_call, resolve_raw_tool_identity,
+    classify_raw_tool_call, resolve_raw_tool_identity, ToolClassificationHints,
 };
 use serde_json::json;
 
@@ -714,6 +714,34 @@ mod tests {
                 "description": "Say hi"
             }))
         );
+    }
+
+    #[test]
+    fn build_tool_call_from_raw_repairs_missing_read_path_from_title_after_partial_parse() {
+        let parser = &CursorParser as &dyn AgentParser;
+        let raw = RawToolCallInput {
+            id: "toolu_partial_read".to_string(),
+            name: "Read".to_string(),
+            arguments: json!({
+                "offset": 0,
+                "limit": 200
+            }),
+            status: ToolCallStatus::Pending,
+            kind: Some(ToolKind::Read),
+            title: Some("Read /repo/src/lib.rs".to_string()),
+            suppress_title_read_path_hint: false,
+            parent_tool_use_id: None,
+            task_children: None,
+        };
+
+        let tool_call = build_tool_call_from_raw(parser, raw);
+
+        match tool_call.arguments {
+            ToolArguments::Read { file_path } => {
+                assert_eq!(file_path.as_deref(), Some("/repo/src/lib.rs"));
+            }
+            other => panic!("expected Read arguments, got {:?}", other),
+        }
     }
 
     // --- extract_backtick_command unit tests ---

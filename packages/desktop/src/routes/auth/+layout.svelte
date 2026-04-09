@@ -1,8 +1,8 @@
 <script lang="ts">
-import { IconArrowLeft } from "@tabler/icons-svelte";
-import AnimatedBackground from "$lib/components/animated-background.svelte";
-import Logo from "$lib/components/logo.svelte";
-import { Button } from "$lib/components/ui/button/index.js";
+	import { BrandLockup } from "@acepe/ui";
+	import { IconArrowLeft } from "@tabler/icons-svelte";
+	import AnimatedBackground from "$lib/components/animated-background.svelte";
+	import { Button } from "$lib/components/ui/button/index.js";
 </script>
 
 <main class="h-screen w-full overflow-hidden">
@@ -12,10 +12,11 @@ import { Button } from "$lib/components/ui/button/index.js";
 			<AnimatedBackground class="absolute inset-0" />
 			<div class="absolute inset-0 z-10 flex flex-col justify-center px-12 text-white">
 				<div class="flex max-w-lg flex-col gap-8">
-					<div class="mb-4 flex items-center gap-3">
-						<Logo class="h-10 w-10" />
-						<h1 class="font-sans text-2xl font-medium tracking-tight">Acepe</h1>
-					</div>
+					<BrandLockup
+						class="mb-4 gap-3"
+						markClass="h-10 w-10"
+						wordmarkClass="text-2xl font-medium tracking-[0.14em] text-white"
+					/>
 					<div class="space-y-6">
 						<h2 class="font-sans text-5xl leading-[1.1] tracking-[-1.5px] font-normal">
 							The interface

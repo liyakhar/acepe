@@ -5,17 +5,23 @@ import type { ModelsForDisplay } from "../../../services/acp-types.js";
 import { AGENT_IDS } from "../../types/agent-id.js";
 import {
 	CODEX_REASONING_EFFORTS,
+	closeSplitSelector,
 	getCodexCurrentVariant,
 	getModelDisplayFamily,
 	getModelDisplayName,
+	getProviderMetadata,
 	getProviderFromModelId,
 	getUsageMetricsPresentation,
 	isContextWindowOnlyMetrics,
 	groupCodexModelsByBase,
 	groupModelsByProvider,
+	isSplitSelectorOpen,
 	isDefaultModel,
 	parseCodexModelVariant,
+	setPrimarySelectorOpen,
+	setVariantSelectorOpen,
 	supportsReasoningEffortPicker,
+	togglePrimarySelector,
 } from "../model-selector-logic.js";
 
 describe("model-selector-logic", () => {
@@ -190,11 +196,19 @@ describe("model-selector-logic", () => {
 		});
 
 		it("extracts provider from colon-separated format", () => {
-			expect(getProviderFromModelId("openai:gpt-4")).toBe("Openai");
+			expect(getProviderFromModelId("openai:gpt-4")).toBe("OpenAI");
 		});
 
 		it("extracts provider from dot-separated format", () => {
 			expect(getProviderFromModelId("google.gemini-pro")).toBe("Google");
+		});
+
+		it("infers Anthropic from claude-family model ids", () => {
+			expect(getProviderFromModelId("claude-sonnet-4")).toBe("Anthropic");
+		});
+
+		it("infers OpenAI from gpt-family model ids", () => {
+			expect(getProviderFromModelId("gpt-5.3-codex")).toBe("OpenAI");
 		});
 
 		it("returns 'Other' for modelId without separator", () => {
@@ -223,7 +237,7 @@ describe("model-selector-logic", () => {
 			expect(result).toHaveLength(2);
 			expect(result[0].provider).toBe("Anthropic");
 			expect(result[0].models).toHaveLength(2);
-			expect(result[1].provider).toBe("Openai");
+			expect(result[1].provider).toBe("OpenAI");
 			expect(result[1].models).toHaveLength(1);
 		});
 
@@ -248,7 +262,7 @@ describe("model-selector-logic", () => {
 
 			const result = groupModelsByProvider(models);
 
-			expect(result.map((g) => g.provider)).toEqual(["Anthropic", "Google", "Openai"]);
+			expect(result.map((g) => g.provider)).toEqual(["Anthropic", "Google", "OpenAI"]);
 		});
 
 		it("sorts models within each provider alphabetically by name", () => {
@@ -478,6 +492,28 @@ describe("model-selector-logic", () => {
 
 			expect(supportsReasoningEffortPicker([], modelsDisplay)).toBe(true);
 		});
+
+		it("trusts provider metadata reasoning support when available", () => {
+			const modelsDisplay: ModelsForDisplay = {
+				groups: [],
+				presentation: {
+					displayFamily: "providerGrouped",
+					usageMetrics: "spendAndContext",
+					provider: {
+						providerBrand: "codex",
+						displayName: "Codex",
+						displayOrder: 50,
+						supportsModelDefaults: true,
+						variantGroup: "reasoningEffort",
+						defaultAlias: undefined,
+						reasoningEffortSupport: true,
+						autonomousApplyStrategy: "postConnect",
+					},
+				},
+			};
+
+			expect(supportsReasoningEffortPicker([], modelsDisplay)).toBe(true);
+		});
 	});
 
 	describe("presentation metadata helpers", () => {
@@ -486,6 +522,16 @@ describe("model-selector-logic", () => {
 			presentation: {
 				displayFamily: "claudeLike",
 				usageMetrics: "contextWindowOnly",
+				provider: {
+					providerBrand: "claude-code",
+					displayName: "Claude Code",
+					displayOrder: 10,
+					supportsModelDefaults: true,
+					variantGroup: "plain",
+					defaultAlias: "default",
+					reasoningEffortSupport: false,
+					autonomousApplyStrategy: "launchProfile",
+				},
 			},
 		};
 
@@ -496,6 +542,54 @@ describe("model-selector-logic", () => {
 		it("reads usage metrics presentation from backend metadata", () => {
 			expect(getUsageMetricsPresentation(modelsDisplay)).toBe("contextWindowOnly");
 			expect(isContextWindowOnlyMetrics(modelsDisplay)).toBe(true);
+		});
+
+		it("reads provider projection metadata from backend metadata", () => {
+			expect(getProviderMetadata(modelsDisplay)).toEqual({
+				providerBrand: "claude-code",
+				displayName: "Claude Code",
+				displayOrder: 10,
+				supportsModelDefaults: true,
+				variantGroup: "plain",
+				defaultAlias: "default",
+				reasoningEffortSupport: false,
+				autonomousApplyStrategy: "launchProfile",
+			});
+		});
+	});
+
+	describe("split selector helpers", () => {
+		it("toggles the primary selector and closes the variant selector when opening", () => {
+			expect(togglePrimarySelector({ primaryOpen: false, variantOpen: true })).toEqual({
+				primaryOpen: true,
+				variantOpen: false,
+			});
+		});
+
+		it("keeps the variant selector closed when the primary selector closes", () => {
+			expect(setPrimarySelectorOpen({ primaryOpen: true, variantOpen: false }, false)).toEqual({
+				primaryOpen: false,
+				variantOpen: false,
+			});
+		});
+
+		it("hands off from the primary selector to the variant selector", () => {
+			expect(setVariantSelectorOpen({ primaryOpen: true, variantOpen: false }, true)).toEqual({
+				primaryOpen: false,
+				variantOpen: true,
+			});
+		});
+
+		it("reports whether either split selector control is open", () => {
+			expect(isSplitSelectorOpen({ primaryOpen: false, variantOpen: false })).toBe(false);
+			expect(isSplitSelectorOpen({ primaryOpen: false, variantOpen: true })).toBe(true);
+		});
+
+		it("closes both controls after a model handoff completes", () => {
+			expect(closeSplitSelector({ primaryOpen: true, variantOpen: true })).toEqual({
+				primaryOpen: false,
+				variantOpen: false,
+			});
 		});
 	});
 });

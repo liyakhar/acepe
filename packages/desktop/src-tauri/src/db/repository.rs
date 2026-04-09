@@ -1,5 +1,13 @@
 use crate::db::entities::prelude::*;
 use crate::{
+    acp::parsers::provider_capabilities::{
+        all_provider_capabilities, find_provider_capabilities_by_id,
+    },
+    acp::session_descriptor::{
+        resolve_existing_session_descriptor, resolve_existing_session_resume,
+        ResolvedResumeSession, SessionCompatibilityInput, SessionDescriptor,
+        SessionDescriptorFacts, SessionDescriptorResolutionError, SessionReplayContext,
+    },
     acp::session_journal::{
         ProjectionJournalUpdate, SessionJournalEvent as SessionJournalRecord,
         SessionJournalEventPayload,
@@ -632,31 +640,42 @@ impl SessionProjectionSnapshotRepository {
 // Session Journal Event Repository
 // ============================================================================
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SerializedSessionJournalEventRow {
+    pub event_id: String,
+    pub session_id: String,
+    pub event_seq: i64,
+    pub event_kind: String,
+    pub event_json: String,
+    pub created_at_ms: i64,
+}
+
 pub struct SessionJournalEventRepository;
 
 impl SessionJournalEventRepository {
-    pub async fn list(db: &DbConn, session_id: &str) -> Result<Vec<SessionJournalRecord>> {
-        tracing::debug!(session_id = %session_id, "Loading session journal events");
+    pub async fn list_serialized(
+        db: &DbConn,
+        session_id: &str,
+    ) -> Result<Vec<SerializedSessionJournalEventRow>> {
+        tracing::debug!(session_id = %session_id, "Loading serialized session journal events");
 
-        let models = crate::db::entities::session_journal_event::Entity::find()
+        let rows = crate::db::entities::session_journal_event::Entity::find()
             .filter(session_journal_event::Column::SessionId.eq(session_id))
             .order_by_asc(session_journal_event::Column::EventSeq)
             .all(db)
-            .await?;
-
-        models
+            .await?
             .into_iter()
-            .map(|row| {
-                let payload = serde_json::from_str::<SessionJournalEventPayload>(&row.event_json)?;
-                Ok(SessionJournalRecord {
-                    event_id: row.event_id,
-                    session_id: row.session_id,
-                    event_seq: row.event_seq,
-                    created_at_ms: row.created_at.timestamp_millis().max(0),
-                    payload,
-                })
+            .map(|row| SerializedSessionJournalEventRow {
+                event_id: row.event_id,
+                session_id: row.session_id,
+                event_seq: row.event_seq,
+                event_kind: row.event_kind,
+                event_json: row.event_json,
+                created_at_ms: row.created_at.timestamp_millis().max(0),
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        Ok(rows)
     }
 
     pub async fn append_session_update(
@@ -795,8 +814,34 @@ pub struct SessionMetadataRow {
 }
 
 impl SessionMetadataRow {
+    pub fn agent_id_enum(&self) -> Option<crate::acp::types::CanonicalAgentId> {
+        if self.agent_id.is_empty() {
+            None
+        } else {
+            Some(crate::acp::types::CanonicalAgentId::parse(&self.agent_id))
+        }
+    }
+
     pub fn history_session_id(&self) -> &str {
-        self.provider_session_id.as_deref().unwrap_or(&self.id)
+        backend_identity_policy_for_provider_id(&self.agent_id)
+            .history_session_id(&self.id, self.provider_session_id.as_deref())
+    }
+
+    pub fn effective_project_path(&self) -> Option<&str> {
+        self.worktree_path
+            .as_deref()
+            .or_else(|| (!self.project_path.is_empty()).then_some(self.project_path.as_str()))
+    }
+
+    pub fn descriptor_facts(&self) -> SessionDescriptorFacts {
+        SessionDescriptorFacts {
+            local_session_id: self.id.clone(),
+            provider_session_id: self.provider_session_id.clone(),
+            agent_id: self.agent_id_enum(),
+            project_path: (!self.project_path.is_empty()).then_some(self.project_path.clone()),
+            worktree_path: self.worktree_path.clone(),
+            source_path: SessionMetadataRepository::normalized_source_path(&self.file_path),
+        }
     }
 
     pub fn lifecycle_state(&self) -> SessionLifecycleState {
@@ -854,6 +899,14 @@ fn compose_session_metadata_row(
     }
 }
 
+fn backend_identity_policy_for_provider_id(
+    provider_id: &str,
+) -> crate::acp::provider::BackendIdentityPolicy {
+    find_provider_capabilities_by_id(all_provider_capabilities(), provider_id)
+        .map(|capabilities| capabilities.backend_identity_policy)
+        .unwrap_or_default()
+}
+
 /// A batch record for session metadata upsert:
 /// (session_id, display, timestamp, project_path, agent_id, file_path, file_mtime, file_size)
 pub type SessionMetadataRecord = (String, String, i64, String, String, String, i64, i64);
@@ -865,6 +918,38 @@ pub type SessionMetadataRecord = (String, String, i64, String, String, String, i
 pub struct SessionMetadataRepository;
 
 impl SessionMetadataRepository {
+    pub fn resolve_existing_session_descriptor_from_metadata(
+        session_id: &str,
+        metadata: Option<&SessionMetadataRow>,
+        compatibility: SessionCompatibilityInput,
+    ) -> Result<SessionDescriptor, SessionDescriptorResolutionError> {
+        let facts = metadata
+            .map(SessionMetadataRow::descriptor_facts)
+            .unwrap_or_else(|| SessionDescriptorFacts::for_session(session_id));
+        resolve_existing_session_descriptor(facts, compatibility)
+    }
+
+    pub fn resolve_existing_session_resume_from_metadata(
+        session_id: &str,
+        metadata: Option<&SessionMetadataRow>,
+        requested_cwd: &str,
+        explicit_agent_override: Option<crate::acp::types::CanonicalAgentId>,
+    ) -> Result<ResolvedResumeSession, SessionDescriptorResolutionError> {
+        let facts = metadata
+            .map(SessionMetadataRow::descriptor_facts)
+            .unwrap_or_else(|| SessionDescriptorFacts::for_session(session_id));
+        resolve_existing_session_resume(facts, requested_cwd, explicit_agent_override)
+    }
+
+    pub fn resolve_existing_session_replay_context_from_metadata(
+        session_id: &str,
+        metadata: Option<&SessionMetadataRow>,
+        compatibility: SessionCompatibilityInput,
+    ) -> Result<SessionReplayContext, SessionDescriptorResolutionError> {
+        Self::resolve_existing_session_descriptor_from_metadata(session_id, metadata, compatibility)
+            .map(SessionReplayContext::from)
+    }
+
     fn dedupe_records_by_session_id(
         records: Vec<SessionMetadataRecord>,
     ) -> Vec<SessionMetadataRecord> {
@@ -1022,14 +1107,12 @@ impl SessionMetadataRepository {
         incoming_agent_id: &str,
         incoming_session_id: &str,
     ) -> Option<String> {
-        if incoming_agent_id == "claude-code" && incoming_session_id != existing_model.id {
-            return Some(incoming_session_id.to_string());
-        }
-
-        existing_model
-            .provider_session_id
-            .clone()
-            .filter(|provider_session_id| provider_session_id != &existing_model.id)
+        backend_identity_policy_for_provider_id(incoming_agent_id)
+            .provider_session_id_for_existing_session(
+                &existing_model.id,
+                incoming_session_id,
+                existing_model.provider_session_id.as_deref(),
+            )
     }
 
     fn query_existing_session_by_id_or_provider_session_id(session_id: &str) -> Condition {
@@ -1745,11 +1828,9 @@ impl SessionMetadataRepository {
             return Ok(());
         };
 
-        let normalized_provider_session_id = if provider_session_id == session_id {
-            None
-        } else {
-            Some(provider_session_id.to_string())
-        };
+        let normalized_provider_session_id =
+            backend_identity_policy_for_provider_id(&model.agent_id)
+                .normalize_provider_session_id(session_id, provider_session_id);
 
         if model.provider_session_id == normalized_provider_session_id {
             return Ok(());

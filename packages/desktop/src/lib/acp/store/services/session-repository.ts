@@ -15,7 +15,6 @@ import { okAsync, ResultAsync } from "neverthrow";
 import type { HistoryEntry } from "../../../services/claude-history-types.js";
 import type { StoredEntry } from "../../../services/converted-session-types.js";
 import { tauriClient } from "../../../utils/tauri-client.js";
-import { BACKEND_TO_UI_MODE_MAP, normalizeModeIdForUI } from "../../constants/mode-mapping.js";
 import { convertStoredEntryToSessionEntry } from "../../converters/stored-entry-converter.js";
 import type { AppError } from "../../errors/app-error.js";
 import { processInChunks } from "../../utils/chunked-processor.js";
@@ -30,7 +29,6 @@ import type { SessionCold, SessionEntry } from "../types.js";
 import type {
 	IConnectionManager,
 	IEntryManager,
-	IHotStateManager,
 	ISessionStateReader,
 	ISessionStateWriter,
 } from "./interfaces/index.js";
@@ -107,28 +105,8 @@ export class SessionRepository {
 		private readonly stateReader: ISessionStateReader,
 		private readonly stateWriter: ISessionStateWriter,
 		private readonly entryManager: IEntryManager,
-		private readonly connectionManager: IConnectionManager,
-		private readonly hotStateManager?: IHotStateManager
+		private readonly connectionManager: IConnectionManager
 	) {}
-
-	private hydrateLoadedCurrentMode(
-		sessionId: string,
-		agentId: string,
-		currentModeId: string | null | undefined
-	): void {
-		if (!this.hotStateManager || typeof currentModeId !== "string" || currentModeId.length === 0) {
-			return;
-		}
-
-		const normalizedModeId = normalizeModeIdForUI(currentModeId, agentId);
-		const modeName = BACKEND_TO_UI_MODE_MAP[normalizedModeId] ?? normalizedModeId;
-		this.hotStateManager.updateHotState(sessionId, {
-			currentMode: {
-				id: normalizedModeId,
-				name: modeName,
-			},
-		});
-	}
 
 	// ============================================
 	// SESSION CRUD
@@ -445,7 +423,6 @@ export class SessionRepository {
 					});
 
 					this.entryManager.storeEntriesAndBuildIndex(sessionId, entries);
-					this.hydrateLoadedCurrentMode(sessionId, agentId, converted.currentModeId);
 
 					return okAsync({ entries, title });
 				}
@@ -462,7 +439,6 @@ export class SessionRepository {
 					)
 				).map((entries) => {
 					this.entryManager.storeEntriesAndBuildIndex(sessionId, entries);
-					this.hydrateLoadedCurrentMode(sessionId, agentId, converted.currentModeId);
 
 					return { entries, title };
 				});

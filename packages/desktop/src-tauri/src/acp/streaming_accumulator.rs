@@ -12,11 +12,11 @@ use std::time::Instant;
 
 use super::partial_json::parse_partial_json;
 use super::session_update::{
-    PlanConfidence, PlanData, PlanSource, QuestionItem, TodoItem, ToolArguments, ToolKind,
-    parse_normalized_questions, parse_normalized_todos,
+    parse_normalized_questions, parse_normalized_todos, PlanConfidence, PlanData, PlanSource,
+    QuestionItem, TodoItem, ToolArguments, ToolKind,
 };
-use super::tool_classification::{ToolClassificationHints, classify_raw_tool_call};
-use crate::acp::parsers::{AgentType, get_parser};
+use super::tool_classification::{classify_raw_tool_call, ToolClassificationHints};
+use crate::acp::parsers::{get_parser, AgentType};
 
 /// Maximum accumulated size per tool call (1MB) to prevent DoS.
 const MAX_ACCUMULATED_SIZE: usize = 1_048_576;
@@ -653,6 +653,13 @@ pub fn finalize_codex_plan_streaming(session_id: &str) -> Option<PlanData> {
     None
 }
 
+/// Finalize and clear Codex wrapper parser state at turn end.
+pub fn finalize_codex_plan_turn(session_id: &str) -> Option<PlanData> {
+    let plan = finalize_codex_plan_streaming(session_id);
+    cleanup_codex_plan_streaming(session_id);
+    plan
+}
+
 /// Remove Codex wrapper parser state for a session.
 pub fn cleanup_codex_plan_streaming(session_id: &str) {
     CODEX_PLAN_STATES.remove(session_id);
@@ -1109,6 +1116,25 @@ mod tests {
         let plan = second.expect("plan should be emitted");
         assert!(!plan.streaming);
         assert_eq!(plan.content.as_deref(), Some("# Plan"));
+
+        cleanup_codex_plan_streaming(session_id);
+    }
+
+    #[test]
+    fn codex_plan_turn_end_cleanup_resets_state_for_next_turn() {
+        let session_id = "codex-turn-end-cleanup";
+        let emitted = process_codex_plan_chunk(session_id, "<proposed_plan># Partial");
+        assert!(emitted.is_some());
+
+        let finalized = finalize_codex_plan_turn(session_id).expect("finalized plan");
+        assert!(!finalized.streaming);
+        assert_eq!(finalized.content.as_deref(), Some("# Partial"));
+
+        let next_turn =
+            process_codex_plan_chunk(session_id, "<proposed_plan># Fresh</proposed_plan>")
+                .expect("next turn plan");
+        assert!(!next_turn.streaming);
+        assert_eq!(next_turn.content.as_deref(), Some("# Fresh"));
 
         cleanup_codex_plan_streaming(session_id);
     }

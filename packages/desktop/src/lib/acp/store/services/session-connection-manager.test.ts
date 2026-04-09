@@ -39,17 +39,23 @@ const updateModelsCache = vi.fn();
 const updateModelsDisplayCache = vi.fn();
 const updateModesCache = vi.fn();
 const getDefaultModel = vi.fn();
+const getCachedModelsDisplay = vi.fn();
+const getCachedProviderMetadata = vi.fn();
 const ensureLoaded = vi.fn();
 const isSessionModelLoaded = vi.fn();
 const getCachedModels = vi.fn().mockReturnValue([]);
+const updateProviderMetadataCache = vi.fn();
 
 vi.mock("../agent-model-preferences-store.svelte.js", () => ({
 	getSessionModelForMode,
 	setSessionModelForMode,
 	updateModelsCache,
 	updateModelsDisplayCache,
+	updateProviderMetadataCache,
 	updateModesCache,
 	getDefaultModel,
+	getCachedModelsDisplay,
+	getCachedProviderMetadata,
 	ensureLoaded,
 	isSessionModelLoaded,
 	getCachedModels,
@@ -201,6 +207,8 @@ describe("SessionConnectionManager.connectSession", () => {
 		(connectionManager.isConnecting as ReturnType<typeof vi.fn>).mockReturnValue(false);
 		ensureLoaded.mockReturnValue(okAsync(undefined));
 		isSessionModelLoaded.mockReturnValue(true);
+		getCachedModelsDisplay.mockReturnValue(null);
+		getCachedProviderMetadata.mockReturnValue(undefined);
 		setExecutionProfile.mockReturnValue(okAsync(undefined));
 		resumeSession.mockReturnValue(
 			okAsync({
@@ -285,12 +293,12 @@ describe("SessionConnectionManager.connectSession", () => {
 		);
 	});
 
-	it("launches Claude reconnects with Autonomous execution profile instead of applying it live", async () => {
+	it("launches reconnect Autonomous from provider metadata instead of applying it live", async () => {
 		(stateReader.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue({
 			id: sessionId,
 			projectPath,
-			agentId: "claude-code",
-			title: "Claude Thread",
+			agentId: "custom-agent",
+			title: "Launch Profile Thread",
 			updatedAt: new Date(),
 			createdAt: new Date(),
 			parentId: null,
@@ -316,6 +324,16 @@ describe("SessionConnectionManager.connectSession", () => {
 				availableCommands: [],
 			})
 		);
+		getCachedProviderMetadata.mockReturnValue({
+			providerBrand: "custom",
+			displayName: "Launch Profile Agent",
+			displayOrder: 10,
+			supportsModelDefaults: false,
+			variantGroup: "plain",
+			defaultAlias: undefined,
+			reasoningEffortSupport: false,
+			autonomousApplyStrategy: "launchProfile",
+		});
 
 		const manager = createManager({
 			stateReader,
@@ -329,11 +347,70 @@ describe("SessionConnectionManager.connectSession", () => {
 		const result = await manager.connectSession(sessionId, createMockEventHandler());
 		result._unsafeUnwrap();
 
-		expect(resumeSession).toHaveBeenCalledWith(sessionId, projectPath, "claude-code", {
+		expect(resumeSession).toHaveBeenCalledWith(sessionId, projectPath, undefined, {
 			modeId: "build",
 			autonomousEnabled: true,
 		});
 		expect(setExecutionProfile).not.toHaveBeenCalled();
+	});
+
+	it("uses cached provider metadata instead of display projection when reconnecting a launch-profile provider", async () => {
+		(stateReader.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue({
+			...baseSession,
+			agentId: "custom-agent",
+		} satisfies SessionCold);
+		(stateReader.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: false,
+			isStreaming: false,
+			status: "idle",
+			autonomousEnabled: true,
+			autonomousTransition: "idle",
+			currentMode: { id: "build", name: "Build", description: null },
+		});
+		getCachedModelsDisplay.mockReturnValue({
+			groups: [],
+			presentation: {
+				displayFamily: "providerGrouped",
+				usageMetrics: "spendAndContext",
+				provider: {
+					providerBrand: "custom",
+					displayName: "Misleading display projection",
+					displayOrder: 10,
+					supportsModelDefaults: false,
+					variantGroup: "plain",
+					defaultAlias: undefined,
+					reasoningEffortSupport: false,
+					autonomousApplyStrategy: "postConnect",
+				},
+			},
+		});
+		getCachedProviderMetadata.mockReturnValue({
+			providerBrand: "custom",
+			displayName: "Launch Profile Agent",
+			displayOrder: 10,
+			supportsModelDefaults: false,
+			variantGroup: "plain",
+			defaultAlias: undefined,
+			reasoningEffortSupport: false,
+			autonomousApplyStrategy: "launchProfile",
+		});
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.connectSession(sessionId, createMockEventHandler());
+		result._unsafeUnwrap();
+
+		expect(resumeSession).toHaveBeenCalledWith(sessionId, projectPath, undefined, {
+			modeId: "build",
+			autonomousEnabled: true,
+		});
 	});
 
 	it("restores stored model for current mode on connect", async () => {
@@ -357,7 +434,7 @@ describe("SessionConnectionManager.connectSession", () => {
 		expect(lastUpdate?.currentModel?.id).toBe("model-b");
 	});
 
-	it("resumes session in worktree cwd when worktreePath is set", async () => {
+	it("resumes session from the stable project cwd without a frontend agent override", async () => {
 		(stateReader.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue({
 			...baseSession,
 			worktreePath: "/tmp/project/.worktrees/feature-a",
@@ -378,9 +455,107 @@ describe("SessionConnectionManager.connectSession", () => {
 		expect(resumeSession).toHaveBeenCalledWith(
 			sessionId,
 			"/tmp/project",
-			agentId,
+			undefined,
 			undefined
 		);
+	});
+
+	it("passes through an explicit agent override when reconnect is intentionally redirected", async () => {
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.connectSession(sessionId, createMockEventHandler(), {
+			agentOverrideId: "claude-code",
+		});
+		result._unsafeUnwrap();
+
+		expect(resumeSession).toHaveBeenCalledWith(
+			sessionId,
+			projectPath,
+			"claude-code",
+			undefined
+		);
+	});
+
+	it("caches resumed capabilities under the effective override agent", async () => {
+		resumeSession.mockReturnValue(
+			okAsync({
+				modes: {
+					currentModeId: "build",
+					availableModes: [{ id: "build", name: "Build", description: null }],
+				},
+				models: {
+					currentModelId: "default",
+					availableModels: [{ modelId: "default", name: "Default", description: null }],
+					providerMetadata: {
+						providerBrand: "claude-code",
+						displayName: "Claude Code",
+						displayOrder: 10,
+						supportsModelDefaults: true,
+						variantGroup: "plain",
+						defaultAlias: "default",
+						reasoningEffortSupport: false,
+						autonomousApplyStrategy: "launchProfile",
+					},
+					modelsDisplay: {
+						groups: [],
+						presentation: {
+							displayFamily: "claudeLike",
+							usageMetrics: "contextWindowOnly",
+						},
+					},
+				},
+				availableCommands: [],
+			})
+		);
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.connectSession(sessionId, createMockEventHandler(), {
+			agentOverrideId: "claude-code",
+		});
+		result._unsafeUnwrap();
+
+		expect(updateModelsCache).toHaveBeenCalledWith("claude-code", [
+			{ id: "default", name: "Default", description: undefined },
+		]);
+		expect(updateModelsDisplayCache).toHaveBeenCalledWith(
+			"claude-code",
+			expect.objectContaining({
+				presentation: expect.objectContaining({
+					provider: expect.objectContaining({
+						providerBrand: "claude-code",
+					}),
+				}),
+			}),
+			expect.objectContaining({
+				providerBrand: "claude-code",
+				autonomousApplyStrategy: "launchProfile",
+			})
+		);
+		expect(updateProviderMetadataCache).toHaveBeenCalledWith(
+			"claude-code",
+			expect.objectContaining({
+				providerBrand: "claude-code",
+				autonomousApplyStrategy: "launchProfile",
+			})
+		);
+		expect(updateModesCache).toHaveBeenCalledWith("claude-code", [
+			{ id: "build", name: "Build", description: undefined },
+		]);
 	});
 
 	it("seeds session model-per-mode when none stored", async () => {
@@ -480,6 +655,76 @@ describe("SessionConnectionManager.connectSession", () => {
 		expect(capabilitiesUpdate?.availableCommands).toEqual([
 			{ name: "compact", description: "Compact session" },
 		]);
+	});
+
+	it("hydrates provider metadata into model display caches on connect", async () => {
+		(stateReader.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue({
+			...baseSession,
+			agentId: "codex",
+		} satisfies SessionCold);
+		resumeSession.mockReturnValue(
+			okAsync({
+				modes: {
+					currentModeId: "build",
+					availableModes: [{ id: "build", name: "Build", description: null }],
+				},
+				models: {
+					currentModelId: "gpt-5.3-codex",
+					availableModels: [
+						{
+							modelId: "gpt-5.3-codex/high",
+							name: "gpt-5.3-codex (high)",
+							description: null,
+						},
+					],
+					modelsDisplay: {
+						groups: [],
+						presentation: {
+							displayFamily: "providerGrouped",
+							usageMetrics: "spendAndContext",
+						},
+					},
+				},
+				availableCommands: [],
+			})
+		);
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.connectSession(sessionId, createMockEventHandler());
+		result._unsafeUnwrap();
+
+		expect(updateModelsDisplayCache).toHaveBeenCalledWith(
+			"codex",
+			expect.objectContaining({
+				presentation: expect.objectContaining({
+					provider: expect.objectContaining({
+						providerBrand: "codex",
+						displayName: "Codex",
+						displayOrder: 50,
+						supportsModelDefaults: true,
+						variantGroup: "reasoningEffort",
+						reasoningEffortSupport: true,
+						autonomousApplyStrategy: "postConnect",
+					}),
+				}),
+			}),
+			expect.objectContaining({
+				providerBrand: "codex",
+				autonomousApplyStrategy: "postConnect",
+			})
+		);
+
+		const capabilitiesUpdate = (capabilities.updateCapabilities as ReturnType<typeof vi.fn>).mock
+			.calls.at(-1)?.[1];
+		expect(capabilitiesUpdate?.modelsDisplay?.presentation?.provider?.providerBrand).toBe("codex");
 	});
 
 	it("hydrates hot state with available commands on connect", async () => {
@@ -671,6 +916,7 @@ describe("SessionConnectionManager.createSession", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		ensureLoaded.mockReturnValue(okAsync(undefined));
+		getCachedModelsDisplay.mockReturnValue(null);
 		getDefaultModel.mockReturnValue(undefined);
 		setMode.mockReturnValue(okAsync(undefined));
 		setExecutionProfile.mockReturnValue(okAsync(undefined));
@@ -702,7 +948,66 @@ describe("SessionConnectionManager.createSession", () => {
 		);
 	});
 
-	it("falls back to a prefixed model variant when currentModelId has no exact match", async () => {
+	it("resolves grouped variant models from canonical display metadata when currentModelId is a base id", async () => {
+		newSession.mockReturnValue(
+			okAsync({
+				sessionId,
+				modes: {
+					currentModeId: "build",
+					availableModes: [{ id: "build", name: "Build", description: null }],
+				},
+				models: {
+					currentModelId: "codex-enterprise",
+					availableModels: [
+						{
+							modelId: "vendor/codex-enterprise/high",
+							name: "codex-enterprise (high)",
+							description: null,
+						},
+						{
+							modelId: "vendor/codex-enterprise/medium",
+							name: "codex-enterprise (medium)",
+							description: null,
+						},
+					],
+					modelsDisplay: {
+						groups: [
+							{
+								label: "Codex enterprise",
+								models: [
+									{
+										modelId: "vendor/codex-enterprise/high",
+										displayName: "High",
+										description: null,
+									},
+									{
+										modelId: "vendor/codex-enterprise/medium",
+										displayName: "Medium",
+										description: null,
+									},
+								],
+							},
+						],
+						presentation: {
+							displayFamily: "codexReasoningEffort",
+							usageMetrics: "spendAndContext",
+							provider: {
+								providerBrand: "codex",
+								displayName: "Codex",
+								displayOrder: 50,
+								supportsModelDefaults: true,
+								variantGroup: "reasoningEffort",
+								defaultAlias: undefined,
+								reasoningEffortSupport: true,
+								autonomousApplyStrategy: "postConnect",
+							},
+						},
+					},
+				},
+				availableCommands: [{ name: "open", description: "Open file" }],
+			})
+		);
+
 		const manager = createManager({
 			stateReader,
 			stateWriter,
@@ -724,7 +1029,79 @@ describe("SessionConnectionManager.createSession", () => {
 		// Verify hot state was initialized with the resolved model
 		const hotStateInit = (hotState.initializeHotState as ReturnType<typeof vi.fn>).mock
 			.calls[0]?.[1];
-		expect(hotStateInit?.currentModel?.id).toBe("gpt-5.2-codex/high");
+		expect(hotStateInit?.currentModel?.id).toBe("vendor/codex-enterprise/high");
+	});
+
+	it("resolves grouped variants from display model ids instead of matching display labels", async () => {
+		newSession.mockReturnValue(
+			okAsync({
+				sessionId,
+				modes: {
+					currentModeId: "build",
+					availableModes: [{ id: "build", name: "Build", description: null }],
+				},
+				models: {
+					currentModelId: "vendor/codex-enterprise",
+					availableModels: [
+						{
+							modelId: "vendor/codex-pro/high",
+							name: "codex-pro (high)",
+							description: null,
+						},
+						{
+							modelId: "vendor/codex-enterprise/high",
+							name: "codex-enterprise (high)",
+							description: null,
+						},
+					],
+					modelsDisplay: {
+						groups: [
+							{
+								label: "GPT-5 Pro",
+								models: [
+									{
+										modelId: "vendor/codex-pro/high",
+										displayName: "High",
+										description: null,
+									},
+								],
+							},
+							{
+								label: "GPT-5 Enterprise",
+								models: [
+									{
+										modelId: "vendor/codex-enterprise/high",
+										displayName: "High",
+										description: null,
+									},
+								],
+							},
+						],
+						presentation: {
+							displayFamily: "codexReasoningEffort",
+							usageMetrics: "spendAndContext",
+						},
+					},
+				},
+				availableCommands: [],
+			})
+		);
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.createSession({ projectPath, agentId }, createMockEventHandler());
+		result._unsafeUnwrap();
+
+		const hotStateInit = (hotState.initializeHotState as ReturnType<typeof vi.fn>).mock
+			.calls[0]?.[1];
+		expect(hotStateInit?.currentModel?.id).toBe("vendor/codex-enterprise/high");
 	});
 
 	it("stores available commands from new session response", async () => {
@@ -1270,7 +1647,7 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 		});
 	});
 
-	it("reconnects Claude sessions to enable Autonomous instead of applying it live", async () => {
+	it("reconnects launch-profile sessions to enable Autonomous instead of applying it live", async () => {
 		const connectedHotState = {
 			isConnected: true,
 			status: "ready",
@@ -1304,6 +1681,47 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 			hotStateReadCount += 1;
 			return hotStateReadCount <= 2 ? connectedHotState : reconnectingHotState;
 		});
+		(stateReader.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue({
+			id: sessionId,
+			projectPath: "/tmp/project",
+			agentId: "custom-agent",
+			title: "Launch Profile Session",
+			updatedAt: new Date(),
+			createdAt: new Date(),
+			parentId: null,
+		} satisfies SessionCold);
+		(capabilities.getCapabilities as ReturnType<typeof vi.fn>).mockReturnValue({
+			availableModes: [],
+			availableModels: [],
+			availableCommands: [],
+			providerMetadata: {
+				providerBrand: "custom",
+				displayName: "Launch Profile Agent",
+				displayOrder: 10,
+				supportsModelDefaults: false,
+				variantGroup: "plain",
+				defaultAlias: undefined,
+				reasoningEffortSupport: false,
+				autonomousApplyStrategy: "launchProfile",
+			},
+			modelsDisplay: {
+				groups: [],
+				presentation: {
+					displayFamily: "providerGrouped",
+					usageMetrics: "spendAndContext",
+					provider: {
+						providerBrand: "custom",
+						displayName: "Launch Profile Agent",
+						displayOrder: 10,
+						supportsModelDefaults: false,
+						variantGroup: "plain",
+						defaultAlias: undefined,
+						reasoningEffortSupport: false,
+						autonomousApplyStrategy: "launchProfile",
+					},
+				},
+			},
+		});
 		closeSession.mockReturnValue(okAsync(undefined));
 		resumeSession.mockReturnValue(
 			okAsync({
@@ -1332,14 +1750,14 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 		expect(result.isOk()).toBe(true);
 
 		expect(closeSession).toHaveBeenCalledWith(sessionId);
-		expect(resumeSession).toHaveBeenCalledWith(sessionId, "/tmp/project", "claude-code", {
+		expect(resumeSession).toHaveBeenCalledWith(sessionId, "/tmp/project", undefined, {
 			modeId: "build",
 			autonomousEnabled: true,
 		});
 		expect(setExecutionProfile).not.toHaveBeenCalled();
 	});
 
-	it("forces Autonomous off when a mode change is unsupported in autonomous mode", async () => {
+	it("surfaces the canonical autonomous mode-change error without a fallback retry", async () => {
 		(stateReader.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
 			isConnected: true,
 			status: "ready",
@@ -1354,18 +1772,31 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 			modelPerMode: {},
 			statusChangedAt: Date.now(),
 		});
-		setExecutionProfile
-			.mockReturnValueOnce(
-				errAsync(
-					new AgentError(
-						"setExecutionProfile",
-						new Error(
-							"unsupported autonomous execution profile: provider=claude-code ui_mode=plan autonomous=true"
-						)
+		(stateReader.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue({
+			id: sessionId,
+			projectPath: "/tmp/project",
+			agentId: "claude-code",
+			title: "Claude Session",
+			updatedAt: new Date(),
+			createdAt: new Date(),
+			parentId: null,
+		} satisfies SessionCold);
+		(capabilities.getCapabilities as ReturnType<typeof vi.fn>).mockReturnValue({
+			availableModes: [{ id: "plan", name: "Plan", description: null }],
+			availableModels: [],
+			availableCommands: [],
+			modelsDisplay: undefined,
+		});
+		setExecutionProfile.mockReturnValue(
+			errAsync(
+				new AgentError(
+					"setExecutionProfile",
+					new Error(
+						"unsupported autonomous execution profile: provider=claude-code ui_mode=plan autonomous=true"
 					)
 				)
 			)
-			.mockReturnValueOnce(okAsync(undefined));
+		);
 
 		const manager = createManager({
 			stateReader,
@@ -1377,12 +1808,13 @@ describe("SessionConnectionManager Autonomous execution profile", () => {
 		});
 
 		const result = await manager.setMode(sessionId, "plan");
-		result._unsafeUnwrap();
+		expect(result.isErr()).toBe(true);
 
-		expect(setExecutionProfile).toHaveBeenNthCalledWith(1, sessionId, "plan", true);
-		expect(setExecutionProfile).toHaveBeenNthCalledWith(2, sessionId, "plan", false);
+		expect(setExecutionProfile).toHaveBeenCalledTimes(1);
+		expect(setExecutionProfile).toHaveBeenCalledWith(sessionId, "plan", true);
 		expect(hotState.updateHotState).toHaveBeenCalledWith(sessionId, {
-			autonomousEnabled: false,
+			currentMode: { id: "build", name: "Build", description: null },
+			autonomousEnabled: true,
 		});
 	});
 });

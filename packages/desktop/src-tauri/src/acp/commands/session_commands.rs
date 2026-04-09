@@ -1,6 +1,9 @@
 use super::*;
 use crate::acp::client::ExecutionProfileRequest;
 use crate::acp::projections::{ProjectionRegistry, SessionProjectionSnapshot};
+use crate::acp::session_descriptor::{
+    ResolvedForkSession, ResolvedResumeSession, SessionCompatibilityInput,
+};
 use crate::acp::session_journal::load_stored_projection;
 use crate::acp::session_registry::redact_session_id;
 use crate::acp::types::CanonicalAgentId;
@@ -10,7 +13,16 @@ use sea_orm::DbConn;
 pub(crate) fn resume_path_needs_post_connect_execution_profile_reset(
     agent_id: &CanonicalAgentId,
 ) -> bool {
-    !matches!(agent_id, CanonicalAgentId::ClaudeCode)
+    crate::acp::parsers::provider_capabilities::find_provider_capabilities_by_id(
+        crate::acp::parsers::provider_capabilities::all_provider_capabilities(),
+        agent_id.as_str(),
+    )
+    .map(|capabilities| {
+        capabilities
+            .session_lifecycle_policy
+            .requires_post_connect_execution_profile_reset
+    })
+    .unwrap_or(true)
 }
 
 fn resolve_launch_execution_profile_mode_id(
@@ -154,6 +166,63 @@ pub(crate) async fn persist_session_metadata_for_cwd(
     Ok(sequence_id)
 }
 
+async fn resolve_resume_session_target(
+    db: &DbConn,
+    session_id: &str,
+    requested_cwd: &str,
+    explicit_agent_id: Option<&str>,
+) -> Result<ResolvedResumeSession, SerializableAcpError> {
+    let metadata = SessionMetadataRepository::get_by_id(db, session_id)
+        .await
+        .map_err(|error| SerializableAcpError::InvalidState {
+            message: format!("Failed to load session metadata for resume: {error}"),
+        })?;
+
+    SessionMetadataRepository::resolve_existing_session_resume_from_metadata(
+        session_id,
+        metadata.as_ref(),
+        requested_cwd,
+        explicit_agent_id.map(CanonicalAgentId::parse),
+    )
+    .map_err(SerializableAcpError::from)
+}
+
+pub(crate) fn resolve_requested_agent_id(
+    explicit_agent_id: Option<&str>,
+    active_agent_id: Option<CanonicalAgentId>,
+) -> CanonicalAgentId {
+    explicit_agent_id
+        .map(CanonicalAgentId::parse)
+        .or(active_agent_id)
+        .unwrap_or(CanonicalAgentId::ClaudeCode)
+}
+
+async fn resolve_fork_session_target(
+    db: &DbConn,
+    session_id: &str,
+    requested_cwd: &str,
+    explicit_agent_id: Option<&str>,
+) -> Result<ResolvedForkSession, SerializableAcpError> {
+    let metadata = SessionMetadataRepository::get_by_id(db, session_id)
+        .await
+        .map_err(|error| SerializableAcpError::InvalidState {
+            message: format!("Failed to load session metadata for fork: {error}"),
+        })?;
+
+    let Some(metadata) = metadata.as_ref() else {
+        return Err(SerializableAcpError::SessionNotFound {
+            session_id: session_id.to_string(),
+        });
+    };
+
+    crate::acp::session_descriptor::resolve_existing_session_fork(
+        metadata.descriptor_facts(),
+        requested_cwd,
+        explicit_agent_id.map(CanonicalAgentId::parse),
+    )
+    .map_err(SerializableAcpError::from)
+}
+
 /// Initialize the ACP connection.
 ///
 /// With per-session clients, this is now a lightweight check.
@@ -206,19 +275,30 @@ pub async fn acp_get_session_projection(
                 "Failed to load session metadata for projection lookup {session_id}: {error}"
             ),
         })?;
-    let stored_projection = load_stored_projection(
-        db.inner(),
-        &session_id,
-        metadata
-            .as_ref()
-            .map(|row| CanonicalAgentId::parse(&row.agent_id)),
-    )
-    .await
-    .map_err(|error| SerializableAcpError::InvalidState {
-        message: format!(
-            "Failed to rebuild session projection from journal for session {session_id}: {error}"
-        ),
-    })?;
+    let replay_context = metadata
+        .as_ref()
+        .map(|row| {
+            SessionMetadataRepository::resolve_existing_session_replay_context_from_metadata(
+                &session_id,
+                Some(row),
+                SessionCompatibilityInput::default(),
+            )
+        })
+        .transpose()
+        .map_err(|error| SerializableAcpError::InvalidState {
+            message: format!("Failed to resolve replay context for session {session_id}: {error}"),
+        })?;
+    let stored_projection = if let Some(replay_context) = replay_context.as_ref() {
+        load_stored_projection(db.inner(), replay_context)
+            .await
+            .map_err(|error| SerializableAcpError::InvalidState {
+                message: format!(
+                    "Failed to rebuild session projection from journal for session {session_id}: {error}"
+                ),
+            })?
+    } else {
+        None
+    };
     if let Some(stored_projection) = stored_projection {
         if projection_has_runtime_state(&stored_projection) {
             SessionProjectionSnapshotRepository::set(db.inner(), &session_id, &stored_projection)
@@ -244,23 +324,23 @@ pub async fn acp_get_session_projection(
         return Ok(persisted_projection);
     }
 
-    let Some(metadata) = metadata else {
+    let Some(_metadata) = metadata else {
         return Ok(runtime_projection);
     };
 
-    let imported_session = crate::history::commands::session_loading::get_unified_session(
-        app.clone(),
-        session_id.clone(),
-        metadata.project_path.clone(),
-        metadata.agent_id.clone(),
-        Some(metadata.file_path.clone()),
-    )
-    .await
-    .map_err(|error| SerializableAcpError::InvalidState {
-        message: format!(
-            "Failed to import legacy session {session_id} into projection view: {error}"
-        ),
-    })?;
+    let imported_session =
+        crate::history::commands::session_loading::load_unified_session_from_replay_context(
+            app.clone(),
+            replay_context
+                .as_ref()
+                .expect("replay context should exist with metadata"),
+        )
+        .await
+        .map_err(|error| SerializableAcpError::InvalidState {
+            message: format!(
+                "Failed to import legacy session {session_id} into projection view: {error}"
+            ),
+        })?;
 
     let Some(imported_session) = imported_session else {
         return Ok(runtime_projection);
@@ -268,7 +348,13 @@ pub async fn acp_get_session_projection(
 
     let imported_projection = ProjectionRegistry::project_converted_session(
         &session_id,
-        Some(CanonicalAgentId::parse(&metadata.agent_id)),
+        Some(
+            replay_context
+                .as_ref()
+                .expect("replay context should exist with metadata")
+                .agent_id
+                .clone(),
+        ),
         &imported_session,
     );
 
@@ -306,11 +392,7 @@ pub async fn acp_new_session(
     let db = app.state::<DbConn>();
 
     // Determine which agent to use
-    let agent_id_enum = agent_id
-        .as_deref()
-        .map(CanonicalAgentId::parse)
-        .or_else(|| active_agent.get())
-        .unwrap_or(CanonicalAgentId::ClaudeCode);
+    let agent_id_enum = resolve_requested_agent_id(agent_id.as_deref(), active_agent.get());
 
     // Create and initialize client with cwd so subprocess spawns in correct directory
     let mut client = create_and_initialize_client(
@@ -380,58 +462,19 @@ pub async fn acp_resume_session(
     execution_profile: Option<ExecutionProfileRequest>,
 ) -> Result<ResumeSessionResponse, SerializableAcpError> {
     tracing::info!(session_id = %session_id, cwd = %cwd, agent_id = ?agent_id, "acp_resume_session called");
-
-    // Safety net for the startup timing gap: earlyPreloadPanelSessions fires before the
-    // sidebar scan completes, so the frontend may send projectPath instead of worktreePath.
-    // The DB is the authoritative source — override the frontend-provided cwd when the
-    // session has a stored worktree_path, but only if the directory still exists on disk.
-    // Deleted worktrees (e.g. cleaned up after merge) should fall back to the original cwd.
     let db = app.state::<DbConn>();
-    let metadata = SessionMetadataRepository::get_by_id(db.inner(), &session_id)
-        .await
-        .map_err(|error| SerializableAcpError::InvalidState {
-            message: format!("Failed to load session metadata for resume: {error}"),
-        })?;
-
-    let effective_cwd = match metadata {
-        Some(row) if row.worktree_path.is_some() => {
-            let wt_path = row.worktree_path.unwrap();
-            let wt_exists = std::path::Path::new(&wt_path).is_dir();
-            if wt_exists {
-                tracing::info!(
-                    session_id = %session_id,
-                    worktree_path = %wt_path,
-                    original_cwd = %cwd,
-                    "Using worktree_path from DB as effective cwd for resume"
-                );
-                wt_path
-            } else {
-                tracing::warn!(
-                    session_id = %session_id,
-                    worktree_path = %wt_path,
-                    original_cwd = %cwd,
-                    "Worktree path from DB no longer exists, falling back to original cwd"
-                );
-                cwd.clone()
-            }
-        }
-        _ => cwd.clone(),
-    };
-
-    let cwd = validate_session_cwd(&effective_cwd, ProjectAccessReason::SessionResume)?;
+    let resume_target =
+        resolve_resume_session_target(db.inner(), &session_id, &cwd, agent_id.as_deref()).await?;
+    let cwd = validate_session_cwd(
+        &resume_target.launch_cwd,
+        ProjectAccessReason::SessionResume,
+    )?;
     let registry = app.state::<Arc<AgentRegistry>>();
-    let active_agent = app.state::<ActiveAgent>();
     let opencode_manager = app.state::<Arc<OpenCodeManagerRegistry>>();
     let session_registry = app.state::<SessionRegistry>();
     let projection_registry = app.state::<Arc<ProjectionRegistry>>();
-    let db = app.state::<DbConn>();
 
-    // Determine which agent to use
-    let agent_id_enum = agent_id
-        .as_deref()
-        .map(CanonicalAgentId::parse)
-        .or_else(|| active_agent.get())
-        .unwrap_or(CanonicalAgentId::ClaudeCode);
+    let agent_id_enum = resume_target.descriptor.agent_id.clone();
     let launch_mode_id = resolve_launch_execution_profile_mode_id(
         &registry,
         &agent_id_enum,
@@ -468,22 +511,27 @@ pub async fn acp_resume_session(
     )
     .await?;
 
+    if let Some(provider_session_id) = resume_target.descriptor.provider_session_id.as_deref() {
+        session_registry
+            .bind_provider_session_id(&session_id, provider_session_id)
+            .map_err(SerializableAcpError::from)?;
+    }
+
     reset_resumed_session_execution_profile(&app, &session_id, &result.modes.current_mode_id)
         .await?;
 
-    let stored_projection =
-        load_stored_projection(db.inner(), &session_id, Some(agent_id_enum.clone()))
-            .await
-            .map_err(|error| SerializableAcpError::InvalidState {
-                message: format!(
-                    "Failed to load stored session projection for session {session_id}: {error}"
-                ),
-            })?;
+    let replay_context = resume_target.descriptor.clone().into();
+    let stored_projection = load_stored_projection(db.inner(), &replay_context)
+        .await
+        .map_err(|error| SerializableAcpError::InvalidState {
+            message: format!(
+                "Failed to load stored session projection for session {session_id}: {error}"
+            ),
+        })?;
     if let Some(stored_projection) = stored_projection {
         projection_registry.restore_session_projection(stored_projection);
     }
     projection_registry.register_session(session_id.clone(), agent_id_enum.clone());
-    let _ = persist_session_metadata_for_cwd(db.inner(), &session_id, &agent_id_enum, &cwd).await?;
 
     Ok(result)
 }
@@ -501,20 +549,15 @@ pub async fn acp_fork_session(
     agent_id: Option<String>,
 ) -> Result<NewSessionResponse, SerializableAcpError> {
     tracing::info!(session_id = %session_id, cwd = %cwd, agent_id = ?agent_id, "acp_fork_session called");
-    let cwd = validate_session_cwd(&cwd, ProjectAccessReason::Other)?;
+    let db = app.state::<DbConn>();
+    let fork_target =
+        resolve_fork_session_target(db.inner(), &session_id, &cwd, agent_id.as_deref()).await?;
+    let cwd = validate_session_cwd(&fork_target.launch_cwd, ProjectAccessReason::Other)?;
     let registry = app.state::<Arc<AgentRegistry>>();
-    let active_agent = app.state::<ActiveAgent>();
     let opencode_manager = app.state::<Arc<OpenCodeManagerRegistry>>();
     let session_registry = app.state::<SessionRegistry>();
     let projection_registry = app.state::<Arc<ProjectionRegistry>>();
-    let db = app.state::<DbConn>();
-
-    // Determine which agent to use
-    let agent_id_enum = agent_id
-        .as_deref()
-        .map(CanonicalAgentId::parse)
-        .or_else(|| active_agent.get())
-        .unwrap_or(CanonicalAgentId::ClaudeCode);
+    let agent_id_enum = fork_target.launch_agent_id.clone();
 
     // Create and initialize client with cwd so subprocess spawns in correct directory
     let mut client = create_and_initialize_client(
@@ -530,7 +573,10 @@ pub async fn acp_fork_session(
     // Fork the session
     tracing::debug!("Forking session");
     let result = client
-        .fork_session(session_id.clone(), cwd.to_string_lossy().to_string())
+        .fork_session(
+            fork_target.fork_parent_session_id.clone(),
+            cwd.to_string_lossy().to_string(),
+        )
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Fork session failed");
@@ -625,9 +671,17 @@ fn projection_has_runtime_state(snapshot: &SessionProjectionSnapshot) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        persist_session_metadata_for_cwd, resolve_fork_session_target, resolve_requested_agent_id,
+        resolve_resume_session_target,
+    };
+    use crate::acp::error::SerializableAcpError;
     use crate::acp::projections::{
         InteractionResponse, InteractionSnapshot, InteractionState, SessionProjectionSnapshot,
         SessionSnapshot, SessionTurnState,
+    };
+    use crate::acp::session_descriptor::{
+        SessionCompatibilityInput, SessionDescriptorCompatibility, SessionReplayContext,
     };
     use crate::acp::session_journal::load_stored_projection;
     use crate::acp::session_update::{PermissionData, SessionUpdate};
@@ -640,6 +694,7 @@ mod tests {
     use sea_orm::{Database, DbConn};
     use sea_orm_migration::MigratorTrait;
     use serde_json::json;
+    use tempfile::tempdir;
 
     async fn setup_test_db() -> DbConn {
         let db = Database::connect("sqlite::memory:")
@@ -649,6 +704,18 @@ mod tests {
             .await
             .expect("Failed to run migrations");
         db
+    }
+
+    async fn replay_context_for_session(db: &DbConn, session_id: &str) -> SessionReplayContext {
+        let metadata = SessionMetadataRepository::get_by_id(db, session_id)
+            .await
+            .expect("load metadata");
+        SessionMetadataRepository::resolve_existing_session_replay_context_from_metadata(
+            session_id,
+            metadata.as_ref(),
+            SessionCompatibilityInput::default(),
+        )
+        .expect("replay context")
     }
 
     #[tokio::test]
@@ -748,11 +815,11 @@ mod tests {
         .await
         .unwrap();
 
-        let stored_projection =
-            load_stored_projection(&db, "session-priority", Some(CanonicalAgentId::ClaudeCode))
-                .await
-                .unwrap()
-                .expect("expected stored projection");
+        let replay_context = replay_context_for_session(&db, "session-priority").await;
+        let stored_projection = load_stored_projection(&db, &replay_context)
+            .await
+            .unwrap()
+            .expect("expected stored projection");
 
         let permission = stored_projection
             .interactions
@@ -767,5 +834,233 @@ mod tests {
                 .last_event_seq,
             2
         );
+    }
+
+    #[tokio::test]
+    async fn resume_resolution_prefers_persisted_agent_over_ui_agent_selection() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-copilot",
+            "/project",
+            "copilot",
+            Some("/project/.worktrees/feature-a"),
+        )
+        .await
+        .unwrap();
+
+        let resolved =
+            resolve_resume_session_target(&db, "session-copilot", "/fallback-project", None)
+                .await
+                .expect("resume target");
+
+        assert_eq!(resolved.descriptor.agent_id, CanonicalAgentId::Copilot);
+        assert_eq!(
+            resolved.descriptor.compatibility,
+            SessionDescriptorCompatibility::Canonical
+        );
+        assert_eq!(
+            resolved.descriptor.effective_cwd,
+            "/project/.worktrees/feature-a"
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_resolution_rejects_existing_claude_session_missing_provider_id() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-claude",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let error = resolve_resume_session_target(&db, "session-claude", "/fallback-project", None)
+            .await
+            .expect_err("resume should fail");
+
+        match error {
+            SerializableAcpError::ProtocolError { message } => {
+                assert_eq!(
+                    message,
+                    "session session-claude is not resumable because persisted descriptor facts are missing: provider_session_id"
+                );
+            }
+            other => panic!("expected protocol error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_resolution_rejects_existing_session_with_incompatible_override() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-copilot",
+            "/project",
+            "copilot",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let error = resolve_resume_session_target(
+            &db,
+            "session-copilot",
+            "/fallback-project",
+            Some("claude-code"),
+        )
+        .await
+        .expect_err("override should fail");
+
+        match error {
+            SerializableAcpError::ProtocolError { message } => {
+                assert_eq!(
+                    message,
+                    "session session-copilot is bound to copilot and cannot resume with override claude-code"
+                );
+            }
+            other => panic!("expected protocol error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn requested_agent_resolution_prefers_explicit_override() {
+        let resolved =
+            resolve_requested_agent_id(Some("copilot"), Some(CanonicalAgentId::ClaudeCode));
+
+        assert_eq!(resolved, CanonicalAgentId::Copilot);
+    }
+
+    #[tokio::test]
+    async fn fork_resolution_prefers_source_descriptor_agent_over_active_agent() {
+        let db = setup_test_db().await;
+        let temp = tempdir().expect("temp dir");
+        let repo_path = temp.path().join("repo");
+        let worktree_path = temp.path().join("worktrees").join("feature-a");
+        let gitdir_path = repo_path.join(".git").join("worktrees").join("feature-a");
+
+        std::fs::create_dir_all(&gitdir_path).expect("create gitdir");
+        std::fs::create_dir_all(&worktree_path).expect("create worktree");
+        std::fs::write(
+            worktree_path.join(".git"),
+            format!("gitdir: {}\n", gitdir_path.display()),
+        )
+        .expect("write .git file");
+        let canonical_worktree_path = worktree_path
+            .canonicalize()
+            .unwrap_or_else(|_| worktree_path.clone());
+
+        persist_session_metadata_for_cwd(
+            &db,
+            "session-copilot",
+            &CanonicalAgentId::Copilot,
+            &worktree_path,
+        )
+        .await
+        .unwrap();
+
+        let resolved =
+            resolve_fork_session_target(&db, "session-copilot", "/fallback-project", None)
+                .await
+                .expect("fork target");
+
+        assert_eq!(resolved.launch_agent_id, CanonicalAgentId::Copilot);
+        assert_eq!(resolved.fork_parent_session_id, "session-copilot");
+        assert_eq!(
+            resolved.launch_cwd,
+            canonical_worktree_path.to_string_lossy()
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_resolution_uses_provider_history_id_for_claude_sessions() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-claude",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+        SessionMetadataRepository::set_provider_session_id(
+            &db,
+            "session-claude",
+            "provider-session-1",
+        )
+        .await
+        .unwrap();
+
+        let resolved =
+            resolve_fork_session_target(&db, "session-claude", "/fallback-project", None)
+                .await
+                .expect("fork target");
+
+        assert_eq!(resolved.launch_agent_id, CanonicalAgentId::ClaudeCode);
+        assert_eq!(resolved.fork_parent_session_id, "provider-session-1");
+    }
+
+    #[tokio::test]
+    async fn fork_resolution_rejects_existing_claude_session_missing_provider_id() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-claude",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let error = resolve_fork_session_target(&db, "session-claude", "/fallback-project", None)
+            .await
+            .expect_err("fork should fail");
+
+        match error {
+            SerializableAcpError::ProtocolError { message } => {
+                assert_eq!(
+                    message,
+                    "session session-claude is not forkable because persisted descriptor facts are missing: provider_session_id"
+                );
+            }
+            other => panic!("expected protocol error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn fork_resolution_allows_intentional_override_without_ui_leak() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-copilot",
+            "/project",
+            "copilot",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let resolved = resolve_fork_session_target(
+            &db,
+            "session-copilot",
+            "/fallback-project",
+            Some("cursor"),
+        )
+        .await
+        .expect("fork target");
+
+        assert_eq!(resolved.launch_agent_id, CanonicalAgentId::Cursor);
+        assert_eq!(resolved.fork_parent_session_id, "session-copilot");
     }
 }

@@ -1,14 +1,14 @@
+use crate::acp::providers::codex::adapt_codex_wrapper_plan_update;
 use crate::acp::session_update::{
-    ChunkAggregationHint, ContentChunk, PermissionData, QuestionData, QuestionItem,
-    QuestionOption, SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus,
-    ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData, TurnErrorInfo, TurnErrorKind,
-    TurnErrorSource,
+    ChunkAggregationHint, ContentChunk, PermissionData, QuestionData, QuestionItem, QuestionOption,
+    SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind,
+    ToolReference, TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
 };
 use crate::acp::tool_call_presentation::{synthesize_locations, synthesize_title};
 use crate::acp::types::ContentBlock;
-use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
+use serde_json::Value;
 
 const COMMAND_APPROVAL_METHOD: &str = "item/commandExecution/requestApproval";
 const FILE_READ_APPROVAL_METHOD: &str = "item/fileRead/requestApproval";
@@ -90,7 +90,7 @@ fn translate_text_delta(
         }
     };
 
-    vec![update]
+    with_codex_plan_update(update)
 }
 
 fn classify_chunk_aggregation_hint(text: &str) -> Option<ChunkAggregationHint> {
@@ -211,7 +211,7 @@ fn translate_turn_completed(
             .unwrap_or("Codex turn failed")
             .to_string();
 
-        return vec![SessionUpdate::TurnError {
+        return with_codex_plan_update(SessionUpdate::TurnError {
             error: TurnErrorData::Structured(TurnErrorInfo {
                 message: error_message,
                 kind: TurnErrorKind::Fatal,
@@ -219,12 +219,12 @@ fn translate_turn_completed(
                 source: Some(TurnErrorSource::Process),
             }),
             session_id: Some(session_id.to_string()),
-        }];
+        });
     }
 
-    vec![SessionUpdate::TurnComplete {
+    with_codex_plan_update(SessionUpdate::TurnComplete {
         session_id: Some(session_id.to_string()),
-    }]
+    })
 }
 
 fn translate_error_notification(
@@ -256,7 +256,7 @@ fn translate_error_notification(
         .and_then(Value::as_i64)
         .and_then(|value| i32::try_from(value).ok());
 
-    vec![SessionUpdate::TurnError {
+    with_codex_plan_update(SessionUpdate::TurnError {
         error: TurnErrorData::Structured(TurnErrorInfo {
             message,
             kind: TurnErrorKind::Fatal,
@@ -264,7 +264,15 @@ fn translate_error_notification(
             source: Some(TurnErrorSource::Transport),
         }),
         session_id: Some(session_id.to_string()),
-    }]
+    })
+}
+
+fn with_codex_plan_update(update: SessionUpdate) -> Vec<SessionUpdate> {
+    let mut updates = vec![update.clone()];
+    if let Some(plan_update) = adapt_codex_wrapper_plan_update(&update) {
+        updates.push(plan_update);
+    }
+    updates
 }
 
 /// Translate `item/started` into a `ToolCall` when the item is a tool execution.
@@ -859,6 +867,83 @@ mod tests {
     }
 
     #[test]
+    fn translates_wrapper_plan_chunks_into_chunk_and_plan_updates() {
+        let updates = translate_codex_native_server_message(
+            "session-plan-1",
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-plan-1",
+                    "delta": "<proposed_plan># Plan\n\n- step\n</proposed_plan>"
+                }
+            }),
+        );
+
+        assert_eq!(updates.len(), 2);
+        assert!(matches!(
+            updates[0],
+            SessionUpdate::AgentMessageChunk { .. }
+        ));
+        match &updates[1] {
+            SessionUpdate::Plan { plan, session_id } => {
+                assert_eq!(session_id.as_deref(), Some("session-plan-1"));
+                assert!(!plan.streaming);
+                assert_eq!(plan.content.as_deref(), Some("# Plan\n\n- step\n"));
+            }
+            other => panic!("expected plan update, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn translates_turn_complete_with_partial_wrapper_into_turn_complete_and_plan_flush() {
+        let expected_session_id = "session-plan-turn-complete";
+        let streamed = translate_codex_native_server_message(
+            expected_session_id,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-plan-2",
+                    "delta": "<proposed_plan># Partial"
+                }
+            }),
+        );
+
+        assert_eq!(streamed.len(), 2);
+        assert!(matches!(
+            streamed[0],
+            SessionUpdate::AgentMessageChunk { .. }
+        ));
+        match &streamed[1] {
+            SessionUpdate::Plan { plan, .. } => assert!(plan.streaming),
+            other => panic!("expected streaming plan, got {other:?}"),
+        }
+
+        let finalized = translate_codex_native_server_message(
+            expected_session_id,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "turn/completed",
+                "params": {
+                    "turn": { "id": "turn-1", "status": "completed" }
+                }
+            }),
+        );
+
+        assert_eq!(finalized.len(), 2);
+        assert!(matches!(finalized[0], SessionUpdate::TurnComplete { .. }));
+        match &finalized[1] {
+            SessionUpdate::Plan { plan, session_id } => {
+                assert_eq!(session_id.as_deref(), Some(expected_session_id));
+                assert!(!plan.streaming);
+                assert_eq!(plan.content.as_deref(), Some("# Partial"));
+            }
+            other => panic!("expected finalized plan, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn ignores_retryable_transport_errors() {
         let updates = translate_codex_native_server_message(
             "session-1",
@@ -1272,31 +1357,31 @@ mod tests {
                 updates.is_empty(),
                 "item/started with type={item_type} should be ignored"
             );
-            }
         }
     }
+}
 
-    #[test]
-    fn tags_punctuation_only_text_deltas_as_boundary_carryover() {
-        let updates = translate_codex_native_server_message(
-            "session-1",
-            &json!({
-                "jsonrpc": "2.0",
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-1",
-                    "delta": "."
-                }
-            }),
-        );
-
-        match &updates[0] {
-            SessionUpdate::AgentMessageChunk { chunk, .. } => {
-                assert_eq!(
-                    chunk.aggregation_hint,
-                    Some(crate::acp::session_update::ChunkAggregationHint::BoundaryCarryover)
-                );
+#[test]
+fn tags_punctuation_only_text_deltas_as_boundary_carryover() {
+    let updates = translate_codex_native_server_message(
+        "session-1",
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-1",
+                "delta": "."
             }
-            other => panic!("unexpected update: {other:?}"),
+        }),
+    );
+
+    match &updates[0] {
+        SessionUpdate::AgentMessageChunk { chunk, .. } => {
+            assert_eq!(
+                chunk.aggregation_hint,
+                Some(crate::acp::session_update::ChunkAggregationHint::BoundaryCarryover)
+            );
         }
+        other => panic!("unexpected update: {other:?}"),
     }
+}

@@ -64,7 +64,7 @@ interface NotificationRuntime {
 	readonly isMacOs: () => boolean;
 	readonly getPermission: () => Promise<boolean>;
 	readonly requestPermission: () => Promise<NativeNotificationPermissionState>;
-	readonly send: (payload: { title: string; body: string }) => void;
+	readonly send: (payload: { title: string; body: string }) => ResultAsync<void, Error>;
 }
 
 type NativeNotificationPermission = "unknown" | "granted" | "denied";
@@ -81,9 +81,7 @@ const defaultNotificationRuntime: NotificationRuntime = {
 	},
 	getPermission: () => getNotificationPermission(),
 	requestPermission: () => requestNotificationPermission(),
-	send: (payload) => {
-		sendNativeNotification(payload);
-	},
+	send: (payload) => sendNativeNotification(payload),
 };
 
 let notificationRuntime: NotificationRuntime = defaultNotificationRuntime;
@@ -200,15 +198,12 @@ function maybeSendNativeNotification(payload: NotificationPayload): void {
 		.andThen((permissionGranted) => {
 			if (!permissionGranted) return okAsync(undefined);
 
-			return ResultAsync.fromPromise(
-				Promise.resolve().then(() => {
-					notificationRuntime.send({
-						title: payload.title,
-						body: payload.body,
-					});
-				}),
-				(error) => new Error(`Failed to send native notification: ${error}`)
-			);
+			return notificationRuntime
+				.send({
+					title: payload.title,
+					body: payload.body,
+				})
+				.mapErr((error) => new Error(`Failed to send native notification: ${error.message}`));
 		})
 		.match(
 			() => {},

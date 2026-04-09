@@ -2,7 +2,7 @@ use crate::acp::parsers::kind::{
     canonical_name_for_kind, infer_kind_from_payload, is_web_search_id, is_web_search_title,
     looks_like_web_search_arguments,
 };
-use crate::acp::parsers::{AgentParser, AgentType, get_parser};
+use crate::acp::parsers::{get_parser, AgentParser, AgentType};
 use crate::acp::session_update::{ToolArguments, ToolCallLocation, ToolKind};
 
 #[derive(Debug, Clone, Copy)]

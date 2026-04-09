@@ -22,6 +22,7 @@ import { NumberCircleTwo } from "phosphor-svelte";
 import { RocketLaunch } from "phosphor-svelte";
 import { Warning } from "phosphor-svelte";
 import { X } from "phosphor-svelte";
+import { BRAND_SHADER_DARK_PALETTE, type BrandShaderColorTuple } from "@acepe/ui";
 import { type Component, onDestroy, onMount } from "svelte";
 import { Colors } from "$lib/acp/utils/colors.js";
 import type { ChangelogEntry, ChangeType } from "$lib/changelog/index.js";
@@ -66,7 +67,7 @@ type ChangelogThemePalette = {
 	closeButtonHoverBackground: string;
 	closeButtonForeground: string;
 	shaderBackground: string;
-	shaderColors: [string, string, string, string];
+	shaderColors: BrandShaderColorTuple;
 };
 
 const themeState = useTheme();
@@ -84,8 +85,8 @@ const changelogThemePalettes: Record<EffectiveTheme, ChangelogThemePalette> = {
 		closeButtonBackground: "rgba(255, 255, 255, 0.10)",
 		closeButtonHoverBackground: "rgba(255, 255, 255, 0.18)",
 		closeButtonForeground: "#f5f0ea",
-		shaderBackground: "#1a1a1a",
-		shaderColors: ["#F77E2C", "#ff8558", "#d69d5c", "#ffb380"],
+		shaderBackground: BRAND_SHADER_DARK_PALETTE.background,
+		shaderColors: BRAND_SHADER_DARK_PALETTE.colors,
 	},
 	light: {
 		surface: "#fcfbf7",

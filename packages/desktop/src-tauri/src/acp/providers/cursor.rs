@@ -2,7 +2,10 @@
 //!
 //! This provider spawns Cursor CLI's native ACP server via `agent acp`.
 
-use super::super::provider::{command_exists, AgentProvider, ModelFallbackCandidate, SpawnConfig};
+use super::super::provider::{
+    command_exists, AgentProvider, ModelFallbackCandidate, ProjectDiscoveryCompleteness,
+    ProjectPathListing, SpawnConfig,
+};
 use super::cursor_session_update_enrichment::enrich_cursor_session_update;
 use crate::acp::cursor_extensions::{
     adapt_cursor_response, cursor_extension_kind, is_cursor_extension_pre_tool,
@@ -10,12 +13,16 @@ use crate::acp::cursor_extensions::{
 };
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::provider_extensions::{InboundResponseAdapter, ProviderExtensionEvent};
+use crate::acp::session_descriptor::SessionReplayContext;
 use crate::acp::session_update::SessionUpdate;
 use crate::acp::task_reconciler::TaskReconciliationPolicy;
+use crate::history::session_context::SessionContext;
+use crate::session_jsonl::types::ConvertedSession;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use tauri::AppHandle;
 
 /// Cursor ACP Agent Provider
 ///
@@ -189,6 +196,115 @@ impl AgentProvider for CursorProvider {
     fn should_suppress_notification(&self, json: &Value) -> bool {
         is_cursor_extension_pre_tool(json)
     }
+
+    fn load_provider_owned_session<'a>(
+        &'a self,
+        _app: &'a AppHandle,
+        context: &'a SessionContext,
+        _replay_context: &'a SessionReplayContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ConvertedSession>, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let session_id = &context.local_session_id;
+            let lookup_session_id = &context.history_session_id;
+
+            if let Some(source_path) = context.source_path.as_deref() {
+                match crate::cursor_history::parser::load_session_from_source(
+                    lookup_session_id,
+                    source_path,
+                )
+                .await
+                {
+                    Ok(Some(full_session)) => Ok(Some(
+                        crate::session_converter::convert_cursor_full_session_to_entries(
+                            &full_session,
+                        ),
+                    )),
+                    Ok(None) => {
+                        match crate::cursor_history::parser::find_session_by_id(lookup_session_id)
+                            .await
+                        {
+                            Ok(Some(full_session)) => Ok(Some(
+                                crate::session_converter::convert_cursor_full_session_to_entries(
+                                    &full_session,
+                                ),
+                            )),
+                            Ok(None) => Ok(None),
+                            Err(error) => {
+                                tracing::warn!(
+                                    session_id = %session_id,
+                                    error = %error,
+                                    "Cursor session lookup failed"
+                                );
+                                Ok(None)
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            source_path = %source_path,
+                            error = %error,
+                            "Cursor source_path load failed, falling back to find_session_by_id"
+                        );
+                        match crate::cursor_history::parser::find_session_by_id(lookup_session_id)
+                            .await
+                        {
+                            Ok(Some(full_session)) => Ok(Some(
+                                crate::session_converter::convert_cursor_full_session_to_entries(
+                                    &full_session,
+                                ),
+                            )),
+                            Ok(None) => Ok(None),
+                            Err(error) => {
+                                tracing::warn!(
+                                    session_id = %session_id,
+                                    error = %error,
+                                    "Cursor session lookup failed"
+                                );
+                                Ok(None)
+                            }
+                        }
+                    }
+                }
+            } else {
+                match crate::cursor_history::parser::find_session_by_id(lookup_session_id).await {
+                    Ok(Some(full_session)) => Ok(Some(
+                        crate::session_converter::convert_cursor_full_session_to_entries(
+                            &full_session,
+                        ),
+                    )),
+                    Ok(None) => Ok(None),
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %error,
+                            "Cursor session lookup failed"
+                        );
+                        Ok(None)
+                    }
+                }
+            }
+        })
+    }
+
+    fn list_project_paths<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProjectPathListing, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let paths = list_cursor_project_paths().await?;
+            Ok(ProjectPathListing {
+                paths,
+                completeness: ProjectDiscoveryCompleteness::Complete,
+            })
+        })
+    }
+
+    fn count_sessions_for_project<'a>(
+        &'a self,
+        project_path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<u32, String>> + Send + 'a>> {
+        Box::pin(async move { count_cursor_sessions_for_project(project_path).await })
+    }
 }
 
 /// Environment allowlist for downloaded agent subprocesses.
@@ -209,6 +325,97 @@ const ALLOWED_ENV_KEYS: &[&str] = &[
 
 fn filtered_env() -> HashMap<String, String> {
     crate::shell_env::build_env(crate::shell_env::EnvStrategy::Allowlist(ALLOWED_ENV_KEYS))
+}
+
+async fn list_cursor_project_paths() -> Result<Vec<String>, String> {
+    use crate::cursor_history::parser::get_cursor_projects_dir;
+
+    let projects_dir = get_cursor_projects_dir()
+        .map_err(|error| format!("Failed to get Cursor projects directory: {error}"))?;
+
+    if !projects_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut project_paths = Vec::new();
+    let mut read_dir = tokio::fs::read_dir(&projects_dir)
+        .await
+        .map_err(|error| format!("Failed to read projects directory: {error}"))?;
+
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .map_err(|error| format!("Failed to read directory entry: {error}"))?
+    {
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if file_name_str.starts_with('.') {
+            continue;
+        }
+
+        if !entry
+            .file_type()
+            .await
+            .map_err(|error| format!("Failed to get file type: {error}"))?
+            .is_dir()
+        {
+            continue;
+        }
+
+        project_paths.push(format!("/{}", file_name_str.replace('-', "/")));
+    }
+
+    Ok(project_paths)
+}
+
+async fn count_cursor_sessions_for_project(project_path: &str) -> Result<u32, String> {
+    use crate::cursor_history::parser::get_cursor_projects_dir;
+
+    let projects_dir = get_cursor_projects_dir()
+        .map_err(|error| format!("Failed to get Cursor projects directory: {error}"))?;
+
+    if !projects_dir.exists() {
+        return Ok(0);
+    }
+
+    let project_dir = projects_dir.join(project_path.trim_start_matches('/').replace('/', "-"));
+    if !project_dir.exists() || !project_dir.is_dir() {
+        return Ok(0);
+    }
+
+    let transcripts_dir = project_dir.join("agent-transcripts");
+    if !transcripts_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut count = 0u32;
+    let mut read_dir = tokio::fs::read_dir(&transcripts_dir)
+        .await
+        .map_err(|error| format!("Failed to read transcripts directory {project_path}: {error}"))?;
+
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .map_err(|error| format!("Failed to read directory entry: {error}"))?
+    {
+        if !entry
+            .file_type()
+            .await
+            .map_err(|error| format!("Failed to get file type: {error}"))?
+            .is_file()
+        {
+            continue;
+        }
+
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_name.ends_with(".json") || file_name.ends_with(".txt") {
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }
 
 fn extract_cursor_query_from_synthetic_permission(

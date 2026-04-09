@@ -32,6 +32,7 @@ pub mod provider;
 pub mod provider_extensions;
 pub mod providers;
 pub mod registry;
+pub mod session_descriptor;
 pub mod session_journal;
 pub mod session_registry;
 pub mod session_update;

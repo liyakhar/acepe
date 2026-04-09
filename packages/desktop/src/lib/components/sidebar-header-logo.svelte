@@ -1,4 +1,5 @@
 <script lang="ts">
+import { BrandLockup } from "@acepe/ui";
 import Logo from "$lib/components/logo.svelte";
 import { SidebarHeader, SidebarTrigger, useSidebar } from "$lib/components/ui/sidebar/index.js";
 
@@ -31,10 +32,11 @@ function handleExpand(e: MouseEvent) {
 				<Logo class="h-6 w-6" />
 			</div>
 		{:else}
-			<div class="flex items-center gap-1">
-				<Logo class="h-6 w-6" />
-				<h1 class="font-sans text-lg font-semibold text-sidebar-foreground">Acepe</h1>
-			</div>
+			<BrandLockup
+				class="gap-1.5"
+				markClass="h-6 w-6"
+				wordmarkClass="text-lg text-sidebar-foreground tracking-[0.16em]"
+			/>
 		{/if}
 		<SidebarTrigger class="group-data-[collapsible=icon]:hidden" />
 	</div>

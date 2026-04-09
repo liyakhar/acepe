@@ -345,12 +345,10 @@ mod tests {
 
         // Meta message should be skipped
         assert_eq!(converted.entries.len(), 2);
-        assert!(
-            !converted
-                .entries
-                .iter()
-                .any(|e| matches!(e, StoredEntry::User { id, .. } if id == "meta-1"))
-        );
+        assert!(!converted
+            .entries
+            .iter()
+            .any(|e| matches!(e, StoredEntry::User { id, .. } if id == "meta-1")));
     }
 
     #[test]
@@ -380,12 +378,10 @@ mod tests {
 
         // Empty user message should be skipped
         assert_eq!(converted.entries.len(), 2);
-        assert!(
-            !converted
-                .entries
-                .iter()
-                .any(|e| matches!(e, StoredEntry::User { id, .. } if id == "empty-user"))
-        );
+        assert!(!converted
+            .entries
+            .iter()
+            .any(|e| matches!(e, StoredEntry::User { id, .. } if id == "empty-user")));
     }
 
     #[test]
@@ -605,12 +601,10 @@ mod tests {
 
         // Empty user message should be skipped
         assert_eq!(converted.entries.len(), 1);
-        assert!(
-            !converted
-                .entries
-                .iter()
-                .any(|e| matches!(e, StoredEntry::User { id, .. } if id == "user-1"))
-        );
+        assert!(!converted
+            .entries
+            .iter()
+            .any(|e| matches!(e, StoredEntry::User { id, .. } if id == "user-1")));
     }
 
     #[test]

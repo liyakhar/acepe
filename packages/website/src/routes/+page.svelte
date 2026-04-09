@@ -1,6 +1,6 @@
 <script lang="ts">
 import * as m from "$lib/paraglide/messages.js";
-import { ArrowRightIcon, PillButton } from "@acepe/ui";
+import { ArrowRightIcon, BrandLockup, BrandShaderBackground, PillButton } from "@acepe/ui";
 import { CheckpointTimeline } from "@acepe/ui/checkpoint";
 import { PlanCard } from "@acepe/ui/plan-card";
 import { AgentSelectionGrid } from "@acepe/ui/agent-panel";
@@ -19,9 +19,7 @@ import type {
 	SectionedFeedItemData,
 } from "@acepe/ui/attention-queue";
 import AgentIconsRow from "$lib/components/agent-icons-row.svelte";
-import AppName from "$lib/components/app-name.svelte";
 import Header from "$lib/components/header.svelte";
-import Logo from "$lib/components/logo.svelte";
 import { websiteThemeStore } from "$lib/theme/theme.js";
 import {
 	Stack,
@@ -427,11 +425,7 @@ const features = [
 		<!-- Demo Screenshot Section -->
 		<section class="mx-auto max-w-6xl px-4 pb-24 md:px-6 md:pb-32">
 			<div class="relative overflow-hidden rounded-md bg-card/10">
-				<img
-					src="/images/landing/acepe-background.webp"
-					alt=""
-					class="absolute inset-0 h-full w-full object-cover grayscale rounded-xl"
-				/>
+				<BrandShaderBackground class="rounded-xl" fallback="gradient" />
 				<div class="relative p-4 md:p-6">
 					<img
 						src="/images/landing/acepe-working-view.png"
@@ -727,8 +721,7 @@ const features = [
 				<!-- Brand -->
 				<div class="col-span-2 md:col-span-1">
 					<a href="/" class="mb-3 inline-flex items-center gap-2">
-						<Logo class="h-6 w-6" />
-						<AppName />
+						<BrandLockup class="gap-2" markClass="h-6 w-6" wordmarkClass="text-sm" />
 					</a>
 					<p class="max-w-[200px] text-[13px] leading-relaxed text-muted-foreground">
 						{m.landing_hero_title()}

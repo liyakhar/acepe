@@ -1,14 +1,5 @@
 <script lang="ts">
-import { Button, PillButton } from "@acepe/ui";
-import {
-	GrainGradientShapes,
-	type GrainGradientUniforms,
-	getShaderColorFromString,
-	getShaderNoiseTexture,
-	grainGradientFragmentShader,
-	ShaderFitOptions,
-	ShaderMount,
-} from "@paper-design/shaders";
+import { BrandLockup, BrandShaderBackground, Button, PillButton } from "@acepe/ui";
 import { invoke } from "@tauri-apps/api/core";
 import { ResultAsync } from "neverthrow";
 import { onDestroy, onMount } from "svelte";
@@ -16,7 +7,6 @@ import { SvelteSet } from "svelte/reactivity";
 import { toast } from "svelte-sonner";
 import AgentIcon from "$lib/acp/components/agent-icon.svelte";
 import { getAgentPreferencesStore, getAgentStore } from "$lib/acp/store/index.js";
-import Logo from "$lib/components/logo.svelte";
 import { Spinner } from "$lib/components/ui/spinner/index.js";
 import * as m from "$lib/paraglide/messages.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
@@ -47,8 +37,6 @@ let onboardingProjects = $state<ProjectWithSessions[]>([]);
 let onboardingAddedPaths = $state<Set<string>>(new Set());
 let onboardingSelectedAgents = $state<string[]>([]);
 let onboardingBusyMessage = $state("");
-let shaderContainer: HTMLDivElement | null = $state(null);
-let shaderMountRef: ShaderMount | null = null;
 
 const agentStore = getAgentStore();
 const agentPreferencesStore = getAgentPreferencesStore();
@@ -219,65 +207,12 @@ async function loadOnboardingProjects(): Promise<void> {
 	);
 }
 
-async function initShader() {
-	if (!shaderContainer) return;
-
-	try {
-		const noiseTexture = getShaderNoiseTexture();
-
-		if (noiseTexture && !noiseTexture.complete) {
-			await new Promise<void>((resolve, reject) => {
-				noiseTexture.onload = () => resolve();
-				noiseTexture.onerror = () => reject(new Error("Failed to load shader noise texture"));
-			});
-		}
-
-		const containerWidth = shaderContainer.offsetWidth;
-		const containerHeight = shaderContainer.offsetHeight;
-
-		shaderMountRef = new ShaderMount(
-			shaderContainer,
-			grainGradientFragmentShader,
-			{
-				u_colorBack: getShaderColorFromString("#1a1a1a"),
-				u_colors: [
-					getShaderColorFromString("#99FFE4"),
-					getShaderColorFromString("#FFC799"),
-					getShaderColorFromString("#99FFE4"),
-					getShaderColorFromString("#FFC799"),
-				],
-				u_colorsCount: 4,
-				u_softness: 0.3,
-				u_intensity: 0.8,
-				u_noise: 0.15,
-				u_shape: GrainGradientShapes.corners,
-				u_noiseTexture: noiseTexture,
-				u_fit: ShaderFitOptions.cover,
-				u_scale: 1,
-				u_rotation: 0,
-				u_originX: 0.5,
-				u_originY: 0.5,
-				u_offsetX: 0,
-				u_offsetY: 0,
-				u_worldWidth: containerWidth,
-				u_worldHeight: containerHeight,
-			} satisfies Partial<GrainGradientUniforms>,
-			{ alpha: false, premultipliedAlpha: false },
-			0.5
-		);
-	} catch (error) {
-		console.error("[WelcomeScreen] Failed to initialize shader:", error);
-	}
-}
-
 onMount(() => {
 	window.addEventListener("keydown", handleKeydown);
-	initShader();
 });
 
 onDestroy(() => {
 	window.removeEventListener("keydown", handleKeydown);
-	shaderMountRef?.dispose();
 });
 
 async function finishOnboarding(): Promise<void> {
@@ -301,9 +236,7 @@ async function finishOnboarding(): Promise<void> {
 </script>
 
 <!-- Shader background layer (persistent across all steps) -->
-<div class="absolute inset-0 bg-[#1a1a1a]">
-	<div bind:this={shaderContainer} class="absolute inset-0"></div>
-</div>
+<BrandShaderBackground />
 
 <!-- Content layer -->
 <div
@@ -315,10 +248,11 @@ async function finishOnboarding(): Promise<void> {
 			class="flex aspect-video w-[640px] flex-col rounded-2xl bg-background p-8"
 		>
 			<!-- Top Left: Logo + Label -->
-			<div class="flex items-center gap-3">
-				<Logo class="h-8 w-8 rounded-[20%]" />
-				<span class="text-lg font-semibold tracking-wider text-foreground">ACEPE</span>
-			</div>
+			<BrandLockup
+				class="gap-3"
+				markClass="h-8 w-8"
+				wordmarkClass="text-lg text-foreground"
+			/>
 
 			<!-- Center: Welcome Message -->
 			<div class="flex-1 flex flex-col justify-center gap-4">
@@ -350,10 +284,11 @@ async function finishOnboarding(): Promise<void> {
 	{:else}
 		<!-- Agents / Projects / Scanning steps -->
 		{#if onboardingStep !== "projects"}
-			<div class="flex items-center gap-3 mb-8">
-				<Logo class="h-10 w-10 rounded-[20%]" />
-				<h1 class="font-sans font-semibold text-3xl tracking-tight text-foreground">ACEPE</h1>
-			</div>
+			<BrandLockup
+				class="mb-8 gap-3"
+				markClass="h-10 w-10"
+				wordmarkClass="text-3xl text-foreground tracking-[0.14em]"
+			/>
 		{/if}
 
 		<div

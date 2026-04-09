@@ -25,6 +25,8 @@ pub enum UserSettingKey {
     AgentAvailableModelsCache,
     /// Cached available models display groups per agent (JSON map)
     AgentAvailableModelsDisplayCache,
+    /// Cached provider metadata per agent (JSON map)
+    AgentProviderMetadataCache,
     /// Cached available modes per agent (JSON map)
     AgentAvailableModesCache,
     /// Per-session model memory (JSON map)
@@ -74,6 +76,8 @@ pub enum UserSettingKey {
     /// Preferred merge strategy for PRs (e.g., "squash", "merge", "rebase")
     #[serde(rename = "git_merge_strategy_preference")]
     GitMergeStrategyPreference,
+    /// Set of dismissed tooltip keys (JSON array of string keys)
+    DismissedTooltips,
 }
 
 impl UserSettingKey {
@@ -92,6 +96,7 @@ impl UserSettingKey {
             UserSettingKey::AgentAvailableModelsDisplayCache => {
                 "agent_available_models_display_cache"
             }
+            UserSettingKey::AgentProviderMetadataCache => "agent_provider_metadata_cache",
             UserSettingKey::AgentAvailableModesCache => "agent_available_modes_cache",
             UserSettingKey::SessionModelPerMode => "session_model_per_mode",
             UserSettingKey::PrGenerationPreferences => "pr_generation_preferences",
@@ -117,6 +122,7 @@ impl UserSettingKey {
             UserSettingKey::VoiceEnabled => "voice_enabled",
             UserSettingKey::GitTextGenerationAgent => "git_text_generation_agent",
             UserSettingKey::GitMergeStrategyPreference => "git_merge_strategy_preference",
+            UserSettingKey::DismissedTooltips => "dismissed_tooltips",
         }
     }
 }
@@ -142,6 +148,7 @@ mod tests {
             "agent_favorite_models",
             "agent_available_models_cache",
             "agent_available_models_display_cache",
+            "agent_provider_metadata_cache",
             "agent_available_modes_cache",
             "session_model_per_mode",
             "pr_generation_preferences",
@@ -159,6 +166,7 @@ mod tests {
             "voice_language",
             "voice_enabled",
             "git_text_generation_agent",
+            "dismissed_tooltips",
         ];
 
         for key in keys {

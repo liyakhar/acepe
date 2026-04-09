@@ -17,6 +17,7 @@ use crate::acp::client_trait::AgentClient;
 use crate::acp::client_transport::write_serialized_line;
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::provider::AgentProvider;
+use crate::acp::session_registry::{bind_provider_session_id_persisted, SessionRegistry};
 use crate::acp::streaming_log::{log_emitted_event, log_streaming_event};
 use crate::acp::types::{ContentBlock, EmbeddedResource, PromptRequest};
 use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher, DispatchPolicy};
@@ -47,6 +48,7 @@ pub struct CodexNativeClient {
     cwd: PathBuf,
     dispatcher: AcpUiEventDispatcher,
     db: Option<DbConn>,
+    app_handle: Option<AppHandle>,
     child: ChildHandle,
     stdin_writer: StdArc<Mutex<Option<ChildStdin>>>,
     pending_requests: PendingCodexRequests,
@@ -71,6 +73,7 @@ impl CodexNativeClient {
         app_handle: AppHandle,
         cwd: PathBuf,
     ) -> AcpResult<Self> {
+        let binding_app_handle = app_handle.clone();
         let db = app_handle
             .try_state::<DbConn>()
             .map(|state| state.inner().clone());
@@ -82,6 +85,7 @@ impl CodexNativeClient {
             cwd,
             dispatcher,
             db,
+            app_handle: Some(binding_app_handle),
             child: StdArc::new(std::sync::Mutex::new(None)),
             stdin_writer: StdArc::new(Mutex::new(None)),
             pending_requests: StdArc::new(Mutex::new(HashMap::new())),
@@ -174,6 +178,7 @@ impl CodexNativeClient {
 
         self.provider_thread_id = Some(provider_thread_id.clone());
         persist_provider_thread_id(
+            self.app_handle.as_ref(),
             self.db.as_ref(),
             session_id,
             self.provider.id(),
@@ -250,6 +255,7 @@ impl AgentClient for CodexNativeClient {
         let active_session_id = self.active_session_id.clone();
         let pending_question_ids = self.pending_question_ids.clone();
         let db = self.db.clone();
+        let app_handle = self.app_handle.clone();
 
         self.stdout_reader_task = Some(tauri::async_runtime::spawn(async move {
             let reader = BufReader::new(stdout);
@@ -281,7 +287,8 @@ impl AgentClient for CodexNativeClient {
                                 }
 
                                 remember_question_ids(&pending_question_ids, &message).await;
-                                persist_thread_id_alias(&db, &active_session_id, &message).await;
+                                persist_thread_id_alias(app_handle.as_ref(), &db, &active_session_id, &message)
+                                .await;
 
                                 let session_id = active_session_id.lock().await.clone();
                                 let Some(session_id) = session_id else {
@@ -354,8 +361,12 @@ impl AgentClient for CodexNativeClient {
         self.session_id = Some(session_id.clone());
         *self.active_session_id.lock().await = Some(session_id.clone());
         self.execution_profile = CodexExecutionProfile::Standard;
-        let resume_thread_id =
-            provider_thread_id_for_app_session(self.db.as_ref(), &session_id).await;
+        let resume_thread_id = provider_thread_id_for_app_session(
+            self.app_handle.as_ref(),
+            self.db.as_ref(),
+            &session_id,
+        )
+        .await;
         self.open_thread(&session_id, &cwd, resume_thread_id)
             .await?;
         Ok(self.build_resume_session_response().await)
@@ -824,13 +835,11 @@ async fn remember_question_ids(
 }
 
 async fn persist_thread_id_alias(
+    app_handle: Option<&AppHandle>,
     db: &Option<DbConn>,
     active_session_id: &StdArc<Mutex<Option<String>>>,
     message: &Value,
 ) {
-    let Some(db) = db.as_ref() else {
-        return;
-    };
     let Some(method) = message.get("method").and_then(Value::as_str) else {
         return;
     };
@@ -852,8 +861,9 @@ async fn persist_thread_id_alias(
         return;
     };
 
-    let _ = crate::db::repository::SessionMetadataRepository::set_provider_session_id(
-        db,
+    let _ = bind_provider_session_id_persisted(
+        app_handle,
+        db.as_ref(),
         &session_id,
         provider_thread_id,
     )
@@ -861,9 +871,22 @@ async fn persist_thread_id_alias(
 }
 
 async fn provider_thread_id_for_app_session(
+    app_handle: Option<&AppHandle>,
     db: Option<&DbConn>,
     session_id: &str,
 ) -> Option<String> {
+    if let Some(provider_session_id) = app_handle
+        .and_then(|app_handle| {
+            app_handle
+                .try_state::<SessionRegistry>()
+                .map(|state| state.get_descriptor(session_id))
+        })
+        .flatten()
+        .and_then(|descriptor| descriptor.provider_session_id)
+    {
+        return Some(provider_session_id);
+    }
+
     let db = db?;
     crate::db::repository::SessionMetadataRepository::get_by_id(db, session_id)
         .await
@@ -873,6 +896,7 @@ async fn provider_thread_id_for_app_session(
 }
 
 async fn persist_provider_thread_id(
+    app_handle: Option<&AppHandle>,
     db: Option<&DbConn>,
     session_id: &str,
     agent_id: &str,
@@ -888,12 +912,9 @@ async fn persist_provider_thread_id(
     )
     .await;
 
-    let _ = crate::db::repository::SessionMetadataRepository::set_provider_session_id(
-        db,
-        session_id,
-        provider_thread_id,
-    )
-    .await;
+    let _ =
+        bind_provider_session_id_persisted(app_handle, Some(db), session_id, provider_thread_id)
+            .await;
 }
 
 #[cfg(test)]

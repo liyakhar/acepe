@@ -1,5 +1,5 @@
 use crate::acp::model_display::ModelsForDisplay;
-use crate::acp::provider::AgentProvider;
+use crate::acp::provider::{AgentProvider, FrontendProviderProjection};
 use crate::acp::session_update::AvailableCommand;
 use crate::acp::session_update::ConfigOptionData;
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,8 @@ pub struct SessionModelState {
     pub current_model_id: String,
     #[serde(default)]
     pub models_display: ModelsForDisplay,
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub provider_metadata: Option<FrontendProviderProjection>,
 }
 
 fn default_current_model_id() -> String {
@@ -85,7 +87,15 @@ pub(crate) fn default_session_model_state() -> SessionModelState {
         available_models: Vec::new(),
         current_model_id: default_current_model_id(),
         models_display: ModelsForDisplay::default(),
+        provider_metadata: None,
     }
+}
+
+pub(crate) fn apply_provider_metadata(
+    provider: &dyn AgentProvider,
+    model_state: &mut SessionModelState,
+) {
+    model_state.provider_metadata = Some(provider.frontend_projection());
 }
 
 pub(crate) fn apply_provider_model_fallback(

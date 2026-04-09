@@ -654,6 +654,46 @@ mod parse_tool_call_from_acp {
     }
 
     #[test]
+    fn copilot_infers_search_from_rg_title_when_tool_name_missing() {
+        with_agent(AgentType::Copilot, || {
+            let data = json!({
+                "toolCallId": "tool-rg-1",
+                "kind": "other",
+                "rawInput": {
+                    "pattern": "package main|func main|module |^#|^//",
+                    "path": "/Users/alex/Documents/sandbox/hello-go",
+                    "glob": "*.{go,md,mod,txt,yml,yaml,json}",
+                    "output_mode": "content",
+                    "head_limit": 200,
+                    "-n": true
+                },
+                "status": "pending",
+                "title": "rg"
+            });
+
+            let result: Result<ToolCallData, serde_json::Error> = parse_tool_call_from_acp(&data);
+
+            assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+            let tool_call = result.unwrap();
+            assert_eq!(tool_call.name, "Search");
+            assert_eq!(tool_call.kind, Some(ToolKind::Search));
+            match tool_call.arguments {
+                ToolArguments::Search { query, file_path } => {
+                    assert_eq!(
+                        query.as_deref(),
+                        Some("package main|func main|module |^#|^//")
+                    );
+                    assert_eq!(
+                        file_path.as_deref(),
+                        Some("/Users/alex/Documents/sandbox/hello-go")
+                    );
+                }
+                other => panic!("Expected search tool arguments, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
     fn copilot_infers_edit_arguments_from_apply_patch_string_raw_input() {
         with_agent(AgentType::Copilot, || {
             let data = json!({

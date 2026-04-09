@@ -34,7 +34,7 @@ type TestPanel = {
 	sessionId: string | null;
 	width: number;
 	pendingProjectSelection: boolean;
-	selectedAgentId: string;
+	selectedAgentId: string | null;
 	projectPath: string | null;
 	agentId: string | null;
 	sessionTitle: string | null;
@@ -440,6 +440,34 @@ describe("InitializationManager", () => {
 			expect(mockPanelStore.updatePanelSession).not.toHaveBeenCalledWith("panel-1", null);
 		});
 
+		it("preserves recoverable created-session restored ids without frontend agent hints", async () => {
+			mockProjectManager.projects = [
+				{ path: "/project1", name: "Project 1", createdAt: new Date(), color: "blue" },
+			];
+			mockWorkspaceStore.restore = mock(
+				() => ["recoverable-session"]
+			) as WorkspaceStore["restore"];
+			mockPanelStore.panels = [
+				{
+					id: "panel-1",
+					kind: "agent",
+					ownerPanelId: null,
+					sessionId: "recoverable-session",
+					width: 600,
+					pendingProjectSelection: false,
+					selectedAgentId: null,
+					projectPath: "/project1",
+					agentId: null,
+					sessionTitle: "Recover me",
+					sourcePath: null,
+				},
+			] as TestPanel[];
+
+			await manager.initialize();
+
+			expect(mockPanelStore.updatePanelSession).not.toHaveBeenCalledWith("panel-1", null);
+		});
+
 		it("preloads restored sessions using stored session metadata when panel metadata is missing", async () => {
 			mockProjectManager.projects = [
 				{ path: "/project1", name: "Project 1", createdAt: new Date(), color: "blue" },
@@ -536,6 +564,56 @@ describe("InitializationManager", () => {
 				"/project1/.cursor/sessions/session-1.json",
 				"/project1/.git/worktrees/feature-a",
 				"Feature thread"
+			);
+			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("session-1");
+		});
+
+		it("preloads restored sessions from canonical session metadata before stale panel cache", async () => {
+			mockProjectManager.projects = [
+				{ path: "/project1", name: "Project 1", createdAt: new Date(), color: "blue" },
+			];
+			mockWorkspaceStore.restore = mock(() => ["session-1"]) as WorkspaceStore["restore"];
+			mockPanelStore.panels = [
+				{
+					id: "panel-1",
+					kind: "agent",
+					ownerPanelId: null,
+					sessionId: "session-1",
+					width: 600,
+					pendingProjectSelection: false,
+					selectedAgentId: "codex",
+					projectPath: "/stale-project",
+					agentId: "codex",
+					sessionTitle: "Stale cached title",
+					sourcePath: "/stale/session.json",
+					worktreePath: "/stale/.git/worktrees/feature-a",
+				},
+			];
+			mockSessionStore.getSessionCold = mock((sessionId: string) =>
+				sessionId === "session-1"
+					? {
+						id: "session-1",
+						projectPath: "/project1",
+						agentId: "claude-code",
+						title: "Canonical title",
+						createdAt: new Date(),
+						updatedAt: new Date(),
+						parentId: null,
+						sourcePath: "/project1/.claude/session-1.jsonl",
+						worktreePath: "/project1/.git/worktrees/feature-b",
+					}
+					: undefined
+			) as SessionStore["getSessionCold"];
+
+			await manager.initialize();
+
+			expect(mockSessionStore.loadSessionById).toHaveBeenCalledWith(
+				"session-1",
+				"/project1",
+				"claude-code",
+				"/project1/.claude/session-1.jsonl",
+				"/project1/.git/worktrees/feature-b",
+				"Canonical title"
 			);
 			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("session-1");
 		});
@@ -721,6 +799,7 @@ describe("InitializationManager", () => {
 				undefined,
 				"Aliased Session"
 			);
+			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("acepe-uuid");
 		});
 
 		it("should handle initialization errors", async () => {

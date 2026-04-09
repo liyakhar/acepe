@@ -515,8 +515,14 @@ mod tests {
                 usage_metrics: UsageMetricsPresentation::ContextWindowOnly,
             },
         );
-        assert_eq!(out.groups[0].models[0].display_name, "claude-sonnet-4 (default)");
-        assert_eq!(out.presentation.usage_metrics, UsageMetricsPresentation::ContextWindowOnly);
+        assert_eq!(
+            out.groups[0].models[0].display_name,
+            "claude-sonnet-4 (default)"
+        );
+        assert_eq!(
+            out.presentation.usage_metrics,
+            UsageMetricsPresentation::ContextWindowOnly
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import type { ModelsForDisplay } from "../../../services/acp-types.js";
+import type { ModelsForDisplay, ProviderMetadataProjection } from "../../../services/acp-types.js";
 import type { AvailableCommand } from "../../types/available-command.js";
 import type { Mode } from "./mode.js";
 import type { Model } from "./model.js";
@@ -18,4 +18,5 @@ export interface SessionCapabilities {
 	 * uses this instead of client-side parsing (groupModelsByProvider, etc.).
 	 */
 	readonly modelsDisplay?: ModelsForDisplay;
+	readonly providerMetadata?: ProviderMetadataProjection;
 }

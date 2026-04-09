@@ -1,4 +1,8 @@
 use super::*;
+use crate::acp::provider::HistoryReplayFamily;
+use crate::acp::registry::AgentRegistry;
+use crate::acp::session_descriptor::SessionReplayContext;
+use std::sync::Arc;
 
 fn canonicalize_persisted_worktree_path(worktree_path: &str) -> Result<std::path::PathBuf, String> {
     let canonical = std::path::Path::new(worktree_path)
@@ -14,20 +18,6 @@ fn canonicalize_persisted_worktree_path(worktree_path: &str) -> Result<std::path
     }
 
     Ok(canonical)
-}
-
-fn fallback_project_path_for_history_load(
-    agent: &CanonicalAgentId,
-    project_path: &str,
-    effective_project_path: &str,
-) -> String {
-    match agent {
-        CanonicalAgentId::ClaudeCode
-        | CanonicalAgentId::Copilot
-        | CanonicalAgentId::OpenCode
-        | CanonicalAgentId::Codex => effective_project_path.to_string(),
-        _ => project_path.to_string(),
-    }
 }
 
 fn apply_session_title_metadata(
@@ -83,6 +73,88 @@ fn apply_derived_current_mode_metadata(mut session: ConvertedSession) -> Convert
     session
 }
 
+fn history_replay_family(agent: &CanonicalAgentId) -> HistoryReplayFamily {
+    crate::acp::parsers::provider_capabilities::provider_capabilities(
+        crate::acp::parsers::AgentType::from_canonical(agent),
+    )
+    .history_replay_policy
+    .family
+}
+
+pub async fn load_unified_session_from_replay_context(
+    app: AppHandle,
+    replay_context: &SessionReplayContext,
+) -> Result<Option<ConvertedSession>, String> {
+    load_unified_session_with_context(
+        app,
+        crate::history::session_context::SessionContext {
+            local_session_id: replay_context.local_session_id.clone(),
+            history_session_id: replay_context.history_session_id.clone(),
+            project_path: replay_context.project_path.clone(),
+            worktree_path: replay_context.worktree_path.clone(),
+            effective_project_path: replay_context.effective_cwd.clone(),
+            source_path: replay_context.source_path.clone(),
+            agent_id: replay_context.agent_id.clone(),
+            compatibility: replay_context.compatibility.clone(),
+        },
+    )
+    .await
+}
+
+async fn load_unified_session_with_context(
+    app: AppHandle,
+    context: crate::history::session_context::SessionContext,
+) -> Result<Option<ConvertedSession>, String> {
+    tracing::info!(
+        session_id = %context.local_session_id,
+        agent_id = %context.agent_id,
+        compatibility = ?context.compatibility,
+        "Loading unified session"
+    );
+
+    let db = app.try_state::<DbConn>().map(|s| s.inner().clone());
+    let replay_context = context.replay_context();
+    let registry = app.state::<Arc<AgentRegistry>>();
+    let provider = registry.get(&context.agent_id);
+
+    let replay_family = provider
+        .as_ref()
+        .map(|provider| provider.history_replay_policy().family)
+        .unwrap_or_else(|| history_replay_family(&context.agent_id));
+
+    let result = match replay_family {
+        HistoryReplayFamily::ProviderOwned => match provider {
+            Some(provider) => {
+                provider
+                    .load_provider_owned_session(&app, &context, &replay_context)
+                    .await?
+            }
+            None => None,
+        },
+        HistoryReplayFamily::SharedCanonical => None,
+    };
+
+    let session_metadata = match db.as_ref() {
+        Some(db) => SessionMetadataRepository::get_by_id(db, &context.local_session_id)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+
+    let result = result
+        .or_else(|| Some(ConvertedSession::empty(&context.local_session_id)))
+        .map(apply_derived_current_mode_metadata)
+        .map(|session| apply_session_title_metadata(session, session_metadata.as_ref()));
+
+    tracing::info!(
+        session_id = %context.local_session_id,
+        found = result.is_some(),
+        "Unified session loaded"
+    );
+    Ok(result)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_unified_session(
@@ -92,12 +164,6 @@ pub async fn get_unified_session(
     agent_id: String,
     source_path: Option<String>,
 ) -> Result<Option<ConvertedSession>, String> {
-    tracing::info!(
-        session_id = %session_id,
-        agent_id = %agent_id,
-        "Loading unified session"
-    );
-
     let db = app.try_state::<DbConn>().map(|s| s.inner().clone());
     let context = crate::history::session_context::resolve_session_context(
         db.as_ref(),
@@ -107,281 +173,13 @@ pub async fn get_unified_session(
         source_path.as_deref(),
     )
     .await;
-
-    let canonical_agent = CanonicalAgentId::parse(&context.agent_id);
-
-    let result = match canonical_agent {
-        CanonicalAgentId::ClaudeCode => {
-            match crate::session_jsonl::parser::parse_full_session(
-                &context.history_session_id,
-                &context.effective_project_path,
-            )
-            .await
-            {
-                Ok(full_session) => {
-                    let converted =
-                        crate::session_converter::convert_claude_full_session_to_entries(
-                            &full_session,
-                        );
-                    Some(converted)
-                }
-                // Worktree slug failed — try the project slug before giving up
-                Err(_) if context.effective_project_path != context.project_path => {
-                    match crate::session_jsonl::parser::parse_full_session(
-                        &context.history_session_id,
-                        &context.project_path,
-                    )
-                    .await
-                    {
-                        Ok(full_session) => {
-                            let converted =
-                                crate::session_converter::convert_claude_full_session_to_entries(
-                                    &full_session,
-                                );
-                            Some(converted)
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                session_id = %session_id,
-                                error = %e,
-                                "Claude session parse failed (both worktree and project paths)"
-                            );
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "Claude session parse failed"
-                    );
-                    None
-                }
-            }
-        }
-        CanonicalAgentId::Cursor => {
-            // Try direct O(1) lookup first if source_path provided
-            if let Some(ref sp) = context.source_path {
-                match crate::cursor_history::parser::load_session_from_source(&session_id, sp).await
-                {
-                    Ok(Some(fs)) => {
-                        let converted =
-                            crate::session_converter::convert_cursor_full_session_to_entries(&fs);
-                        Some(converted)
-                    }
-                    Ok(None) => {
-                        match crate::cursor_history::parser::find_session_by_id(&session_id).await {
-                            Ok(Some(fs)) => {
-                                let converted =
-                                crate::session_converter::convert_cursor_full_session_to_entries(&fs);
-                                Some(converted)
-                            }
-                            Ok(None) => None,
-                            Err(e) => {
-                                tracing::warn!(
-                                    session_id = %session_id,
-                                    error = %e,
-                                    "Cursor session lookup failed"
-                                );
-                                None
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            source_path = %sp,
-                            error = %e,
-                            "Cursor source_path load failed, falling back to find_session_by_id"
-                        );
-                        match crate::cursor_history::parser::find_session_by_id(&session_id).await {
-                            Ok(Some(fs)) => {
-                                let converted =
-                                    crate::session_converter::convert_cursor_full_session_to_entries(
-                                        &fs,
-                                    );
-                                Some(converted)
-                            }
-                            Ok(None) => None,
-                            Err(e) => {
-                                tracing::warn!(
-                                    session_id = %session_id,
-                                    error = %e,
-                                    "Cursor session lookup failed"
-                                );
-                                None
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Fallback: search across all projects (existing O(n) behavior)
-                match crate::cursor_history::parser::find_session_by_id(&session_id).await {
-                    Ok(Some(fs)) => {
-                        let converted =
-                            crate::session_converter::convert_cursor_full_session_to_entries(&fs);
-                        Some(converted)
-                    }
-                    Ok(None) => None,
-                    Err(e) => {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            error = %e,
-                            "Cursor session lookup failed"
-                        );
-                        None
-                    }
-                }
-            }
-        }
-        CanonicalAgentId::OpenCode => {
-            // Try disk-based loading first (no HTTP server needed)
-            let disk_result = opencode_parser::load_session_from_disk(
-                &session_id,
-                context.source_path.as_deref(),
-            )
-            .await;
-
-            if let Ok(Some(converted)) = disk_result {
-                tracing::info!(
-                    session_id = %session_id,
-                    "Loaded OpenCode session from local disk"
-                );
-                Some(converted)
-            } else {
-                // Log why disk loading didn't work, then fall back to HTTP API
-                match &disk_result {
-                    Ok(None) => tracing::info!(
-                        session_id = %session_id,
-                        "No local messages for OpenCode session, trying HTTP API"
-                    ),
-                    Err(e) => tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "Disk-based OpenCode loading failed, trying HTTP API"
-                    ),
-                    _ => unreachable!(),
-                }
-                match crate::opencode_history::commands::get_opencode_session(
-                    app,
-                    session_id.clone(),
-                    fallback_project_path_for_history_load(
-                        &CanonicalAgentId::OpenCode,
-                        &context.project_path,
-                        &context.effective_project_path,
-                    ),
-                )
-                .await
-                {
-                    Ok(converted) => Some(converted),
-                    Err(e) => {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            error = %e,
-                            "HTTP fallback also failed for OpenCode session"
-                        );
-                        None
-                    }
-                }
-            }
-        }
-        CanonicalAgentId::Codex => {
-            match codex_parser::load_session(
-                &session_id,
-                &fallback_project_path_for_history_load(
-                    &CanonicalAgentId::Codex,
-                    &context.project_path,
-                    &context.effective_project_path,
-                ),
-                context.source_path.as_deref(),
-            )
-            .await
-            {
-                Ok(session) => session,
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "Codex session parse failed"
-                    );
-                    None
-                }
-            }
-        }
-        CanonicalAgentId::Copilot => {
-            let session_title = match db.as_ref() {
-                Some(db) => SessionMetadataRepository::get_by_id(db, &session_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|row| row.display)
-                    .unwrap_or_else(|| {
-                        format!("Session {}", &session_id[..8.min(session_id.len())])
-                    }),
-                None => format!("Session {}", &session_id[..8.min(session_id.len())]),
-            };
-
-            match crate::copilot_history::load_session(
-                &app,
-                &context.history_session_id,
-                &fallback_project_path_for_history_load(
-                    &CanonicalAgentId::Copilot,
-                    &context.project_path,
-                    &context.effective_project_path,
-                ),
-                &session_title,
-            )
-            .await
-            {
-                Ok(session) => session,
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "Copilot session replay load failed"
-                    );
-                    None
-                }
-            }
-        }
-        CanonicalAgentId::Forge => {
-            // Forge session loading not yet implemented
-            None
-        }
-        CanonicalAgentId::Custom(_) => {
-            // Unknown custom agent - no parser available
-            None
-        }
-    };
-
-    // Catch-all: if any agent failed to load content, return an empty session
-    // instead of None. This prevents the frontend from treating the session as
-    // "not found" and auto-removing it from the session list.
-    let session_metadata = match db.as_ref() {
-        Some(db) => SessionMetadataRepository::get_by_id(db, &session_id)
-            .await
-            .ok()
-            .flatten(),
-        None => None,
-    };
-
-    let result = result
-        .or_else(|| Some(ConvertedSession::empty(&session_id)))
-        .map(apply_derived_current_mode_metadata)
-        .map(|session| apply_session_title_metadata(session, session_metadata.as_ref()));
-
-    tracing::info!(
-        session_id = %session_id,
-        found = result.is_some(),
-        "Unified session loaded"
-    );
-    Ok(result)
+    load_unified_session_with_context(app, context).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_session_title_metadata, fallback_project_path_for_history_load};
+    use super::{apply_session_title_metadata, history_replay_family};
+    use crate::acp::provider::HistoryReplayFamily;
     use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
     use crate::acp::types::CanonicalAgentId;
     use crate::db::repository::SessionMetadataRow;
@@ -426,15 +224,19 @@ mod tests {
     }
 
     #[test]
-    fn opencode_uses_effective_project_path_for_history_fallback() {
-        assert_eq!(
-            fallback_project_path_for_history_load(
-                &CanonicalAgentId::OpenCode,
-                "/repo",
-                "/repo/.worktrees/feature-a"
-            ),
-            "/repo/.worktrees/feature-a"
-        );
+    fn builtin_history_dispatch_uses_provider_owned_policy() {
+        for agent in [
+            CanonicalAgentId::ClaudeCode,
+            CanonicalAgentId::Copilot,
+            CanonicalAgentId::OpenCode,
+            CanonicalAgentId::Cursor,
+            CanonicalAgentId::Codex,
+        ] {
+            assert_eq!(
+                history_replay_family(&agent),
+                HistoryReplayFamily::ProviderOwned
+            );
+        }
     }
 
     #[test]

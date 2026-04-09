@@ -1,12 +1,17 @@
 use super::*;
-use crate::acp::providers::CustomAgentConfig;
-use crate::acp::registry::AgentRegistry;
 use crate::acp::model_display::{ModelDisplayFamily, UsageMetricsPresentation};
 use crate::acp::parsers::provider_capabilities::{
     find_provider_capabilities_by_id, EditNormalization, InvocationEnrichment,
     ProviderCapabilities, ToolVocabulary, TransportFamily, UsageTelemetryFamily,
 };
 use crate::acp::parsers::types::ParsedUsageTelemetry;
+use crate::acp::provider::{
+    AutonomousApplyStrategy, BackendIdentityPolicy, FrontendProviderProjection,
+    FrontendVariantGroup, HistoryReplayFamily, HistoryReplayPolicy, PlanAdapterPolicy,
+    SessionLifecyclePolicy,
+};
+use crate::acp::providers::CustomAgentConfig;
+use crate::acp::registry::AgentRegistry;
 use crate::acp::session_update::{PlanSource, ToolCallStatus, ToolKind};
 use serde_json::json;
 use std::collections::HashMap;
@@ -17,6 +22,31 @@ static FUTURE_PROVIDER_CAPABILITIES: [ProviderCapabilities; 1] = [ProviderCapabi
     provider_id: "future-shared-chat",
     agent: AgentType::ClaudeCode,
     parser: &FutureSharedChatParser,
+    backend_identity_policy: BackendIdentityPolicy {
+        requires_persisted_provider_session_id: false,
+        prefers_incoming_provider_session_id_alias: false,
+    },
+    session_lifecycle_policy: SessionLifecyclePolicy {
+        requires_post_connect_execution_profile_reset: true,
+    },
+    plan_adapter_policy: PlanAdapterPolicy {
+        parses_wrapper_plan_from_text_stream: false,
+        finalizes_wrapper_plan_on_turn_end: false,
+        clears_message_tracker_on_prompt_response: false,
+    },
+    history_replay_policy: HistoryReplayPolicy {
+        family: HistoryReplayFamily::SharedCanonical,
+    },
+    frontend_projection: FrontendProviderProjection {
+        provider_brand: "future-shared-chat",
+        display_name: "Future Shared Chat",
+        display_order: 999,
+        supports_model_defaults: false,
+        variant_group: FrontendVariantGroup::Plain,
+        default_alias: None,
+        reasoning_effort_support: false,
+        autonomous_apply_strategy: AutonomousApplyStrategy::PostConnect,
+    },
     transport_family: TransportFamily::SharedChat,
     tool_vocabulary: ToolVocabulary::ClaudeCode,
     invocation_enrichment: InvocationEnrichment {

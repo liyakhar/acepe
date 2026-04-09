@@ -15,7 +15,6 @@ import { Kanban } from "phosphor-svelte";
 import { Palette } from "phosphor-svelte";
 import { Robot } from "phosphor-svelte";
 import { Rows } from "phosphor-svelte";
-import { Sidebar } from "phosphor-svelte";
 import { SlidersHorizontal } from "phosphor-svelte";
 import { Square } from "phosphor-svelte";
 import { SquaresFour } from "phosphor-svelte";
@@ -23,6 +22,7 @@ import { Wrench } from "phosphor-svelte";
 import type { Snippet } from "svelte";
 import { getPanelStore } from "$lib/acp/store/index.js";
 import type { ViewMode } from "$lib/acp/store/types.js";
+import { slide } from "svelte/transition";
 import type { MainAppViewState } from "$lib/components/main-app-view/logic/main-app-view-state.svelte.js";
 import type { UpdaterBannerState } from "$lib/components/main-app-view/logic/updater-state.js";
 import { ThemeToggle } from "$lib/components/theme/index.js";
@@ -101,9 +101,15 @@ const activeStandardViewMode = $derived.by((): Exclude<ViewMode, "kanban"> => {
 	return panelStore.viewMode;
 });
 
-function preventDropdownItemSelection(event: Event): void {
-	event.preventDefault();
-}
+const layoutSectionLabelClass =
+	"px-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60";
+
+const layoutPillGroupClass = "flex w-full rounded-md bg-muted/50 p-0.5";
+
+const layoutPillBaseClass =
+	"flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2 h-6 text-[11px] text-muted-foreground transition-colors";
+
+const layoutPillActiveClass = "bg-background text-foreground shadow-sm";
 
 function switchLayoutFamily(nextFamily: LayoutFamily): void {
 	if (nextFamily === "kanban") {
@@ -189,94 +195,75 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 						</Tooltip.Root>
 					{/snippet}
 				</DropdownMenu.Trigger>
-				<DropdownMenu.Content align="end" class="min-w-0 w-auto p-0 text-[11px]">
-					<DropdownMenu.Group>
-						<DropdownMenu.Item
-							class="cursor-pointer rounded-none border-b border-border/20 px-2 py-1 text-[11px]"
-							onSelect={preventDropdownItemSelection}
-							onclick={() => viewState.setSidebarOpen(!viewState.sidebarOpen)}
-						>
-							<Sidebar class="size-3.5" weight="fill" />
-							<span class="flex-1">Sidebar</span>
-							<Switch
-								checked={viewState.sidebarOpen}
-								class="data-[state=checked]:bg-foreground/50 data-[state=unchecked]:bg-input/60 h-3.5 w-6 [&_[data-slot=switch-thumb]]:size-2.5 [&_[data-slot=switch-thumb]]:data-[state=checked]:translate-x-[11px]"
-							/>
-						</DropdownMenu.Item>
-						<DropdownMenu.Item
-							class="cursor-pointer rounded-none border-b border-border/20 px-2 py-1 text-[11px]"
-							onSelect={preventDropdownItemSelection}
-							onclick={() => viewState.setTopBarVisible(!viewState.topBarVisible)}
-						>
-							<Rows class="size-3.5" weight="fill" />
-							<span class="flex-1">Tab Bar</span>
-							<Switch
-								checked={viewState.topBarVisible}
-								class="data-[state=checked]:bg-foreground/50 data-[state=unchecked]:bg-input/60 h-3.5 w-6 [&_[data-slot=switch-thumb]]:size-2.5 [&_[data-slot=switch-thumb]]:data-[state=checked]:translate-x-[11px]"
-							/>
-						</DropdownMenu.Item>
-					</DropdownMenu.Group>
-					<DropdownMenu.Separator />
-					<DropdownMenu.Group>
-						<DropdownMenu.Sub>
-							<DropdownMenu.SubTrigger class="rounded-none px-2 py-1 text-[11px]">
-								{#if isKanbanView}
-									<Kanban class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PINK]}" />
-								{:else}
-									<SquaresFour class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PURPLE]}" />
-								{/if}
-								<span class="flex-1">View</span>
-							</DropdownMenu.SubTrigger>
-							<DropdownMenu.SubContent class="min-w-0 w-auto p-0 text-[11px]">
+				<DropdownMenu.Content
+					align="end"
+					class="w-[240px] rounded-xl border border-border/40 bg-background/95 p-2 text-[11px] shadow-xl backdrop-blur"
+				>
+					<div class="flex flex-col gap-2">
+						<div class="space-y-1.5">
+							<div class={layoutSectionLabelClass}>View</div>
+							<div class={layoutPillGroupClass} role="radiogroup" aria-label="View mode">
 								{#each layoutFamilies as family (family.value)}
 									{@const isActive = family.value === (isKanbanView ? "kanban" : "standard")}
-									<DropdownMenu.Item
-										class="cursor-pointer px-2 py-1 text-[11px] {isActive ? 'text-foreground' : ''}"
+									<button
+										type="button"
+										role="radio"
+										aria-checked={isActive}
+										class="{layoutPillBaseClass} {isActive ? layoutPillActiveClass : ''}"
 										onclick={() => switchLayoutFamily(family.value)}
 									>
 										{#if family.value === "standard"}
-											<SquaresFour class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PURPLE]}" />
+											<SquaresFour class="size-3" weight="fill" style="color: {Colors[COLOR_NAMES.PURPLE]}" />
 										{:else}
-											<Kanban class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PINK]}" />
+											<Kanban class="size-3" weight="fill" style="color: {Colors[COLOR_NAMES.PINK]}" />
 										{/if}
 										<span>{family.label}</span>
-									</DropdownMenu.Item>
+									</button>
 								{/each}
-							</DropdownMenu.SubContent>
-						</DropdownMenu.Sub>
+							</div>
+						</div>
+
 						{#if !isKanbanView}
-							<DropdownMenu.Sub>
-								<DropdownMenu.SubTrigger class="rounded-none px-2 py-1 text-[11px]">
-									{#if activeStandardViewMode === "single"}
-										<Square class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.PURPLE]}" />
-									{:else if activeStandardViewMode === "project"}
-										<Columns class="size-3.5" weight="fill" style="color: {Colors[COLOR_NAMES.ORANGE]}" />
-									{:else}
-										<SquaresFour class="size-3.5" weight="fill" style="color: var(--success)" />
-									{/if}
-									<span class="flex-1">Grouping</span>
-								</DropdownMenu.SubTrigger>
-								<DropdownMenu.SubContent class="min-w-0 w-auto p-0 text-[11px]">
-									{#each standardViewModes as mode (mode.value)}
-										{@const isActive = activeStandardViewMode === mode.value}
-										<DropdownMenu.Item
-											class="cursor-pointer px-2 py-1 text-[11px] {isActive ? 'text-foreground' : ''}"
-											onclick={() => panelStore.setViewMode(mode.value)}
-										>
-											{#if mode.value === "single"}
-												<Square class="size-3.5" weight="fill" style="color: {mode.color}" />
-											{:else if mode.value === "project"}
-												<Columns class="size-3.5" weight="fill" style="color: {mode.color}" />
-											{:else}
-												<SquaresFour class="size-3.5" weight="fill" style="color: {mode.color}" />
-											{/if}
-											<span>{mode.label}</span>
-										</DropdownMenu.Item>
-									{/each}
-								</DropdownMenu.SubContent>
-							</DropdownMenu.Sub>
+							<div transition:slide={{ duration: 150 }} class="flex flex-col gap-2">
+								<div class="space-y-1.5">
+									<div class={layoutSectionLabelClass}>Grouping</div>
+									<div class={layoutPillGroupClass} role="radiogroup" aria-label="Grouping mode">
+										{#each standardViewModes as mode (mode.value)}
+											{@const isActive = mode.value === activeStandardViewMode}
+											<button
+												type="button"
+												role="radio"
+												aria-checked={isActive}
+												class="{layoutPillBaseClass} {isActive ? layoutPillActiveClass : ''}"
+												onclick={() => panelStore.setViewMode(mode.value)}
+											>
+												{#if mode.value === "single"}
+													<Square class="size-3" weight="fill" style="color: {mode.color}" />
+												{:else if mode.value === "project"}
+													<Columns class="size-3" weight="fill" style="color: {mode.color}" />
+												{:else}
+													<SquaresFour class="size-3" weight="fill" style="color: {mode.color}" />
+												{/if}
+												<span>{mode.label}</span>
+											</button>
+										{/each}
+									</div>
+								</div>
+
+								<div class="flex items-center justify-between px-1 py-0.5">
+									<div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+										<Rows class="size-3" weight="fill" style="color: {Colors[COLOR_NAMES.ORANGE]}" />
+										<span>Tab Bar</span>
+									</div>
+									<Switch
+										checked={viewState.topBarVisible}
+										onclick={() => viewState.setTopBarVisible(!viewState.topBarVisible)}
+										class="data-[state=checked]:bg-foreground/50 data-[state=unchecked]:bg-input/60 h-3.5 w-6 [&_[data-slot=switch-thumb]]:size-2.5 [&_[data-slot=switch-thumb]]:data-[state=checked]:translate-x-[11px]"
+									/>
+								</div>
+							</div>
 						{/if}
-					</DropdownMenu.Group>
+					</div>
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
 		{/snippet}

@@ -160,8 +160,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 			this,
 			this,
 			this.entryStore,
-			this.connectionService,
-			this.hotStateStore
+			this.connectionService
 		);
 		// Create connection manager
 		this.connectionMgr = new SessionConnectionManager(

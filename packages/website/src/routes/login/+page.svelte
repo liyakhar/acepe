@@ -1,9 +1,8 @@
 <script lang="ts">
+import { BrandLockup } from "@acepe/ui";
 import * as m from "$lib/paraglide/messages.js";
-import AppName from "$lib/components/app-name.svelte";
 import AgentIconsRow from "$lib/components/agent-icons-row.svelte";
 import AnimatedBackground from "$lib/components/animated-background.svelte";
-import Logo from "$lib/components/logo.svelte";
 </script>
 
 <div class="fixed inset-0 flex items-center justify-center">
@@ -17,8 +16,11 @@ import Logo from "$lib/components/logo.svelte";
 		href="/"
 		class="absolute top-6 left-6 z-20 flex items-center gap-3 transition-opacity hover:opacity-80"
 	>
-		<Logo class="h-7 w-7" />
-		<AppName class="text-lg text-foreground" />
+		<BrandLockup
+			class="gap-3"
+			markClass="h-7 w-7"
+			wordmarkClass="text-lg text-foreground tracking-[0.16em]"
+		/>
 	</a>
 
 	<!-- Content Card -->

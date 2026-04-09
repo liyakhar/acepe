@@ -6,7 +6,7 @@ use crate::acp::agent_context::current_agent;
 use crate::acp::parsers::AgentType;
 use crate::acp::session_update::normalize::derive_normalized_questions_and_todos;
 use crate::acp::tool_classification::{
-    ToolClassificationHints, classify_serialized_tool_call, is_unknown_tool_name,
+    classify_serialized_tool_call, is_unknown_tool_name, ToolClassificationHints,
 };
 
 /// Tool kind for routing to appropriate UI components.

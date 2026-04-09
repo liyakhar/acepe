@@ -71,12 +71,14 @@ export class SessionCapabilitiesStore implements ICapabilitiesManager {
 			availableModels: Model[];
 			availableModes: Mode[];
 			availableCommands?: AvailableCommand[];
+			providerMetadata?: SessionCapabilities["providerMetadata"];
 		}
 	): void {
 		this.capabilities.set(sessionId, {
 			availableModels: capabilities.availableModels,
 			availableModes: capabilities.availableModes,
 			availableCommands: capabilities.availableCommands ?? [],
+			providerMetadata: capabilities.providerMetadata,
 		});
 	}
 

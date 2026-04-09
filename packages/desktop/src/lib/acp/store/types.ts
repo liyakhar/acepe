@@ -33,6 +33,7 @@ export type {
 // ============================================
 
 import type { ConfigOptionData } from "../../services/converted-session-types.js";
+import type { ProviderMetadataProjection } from "../../services/acp-types.js";
 import type { Mode, Model, SessionStatus } from "../application/dto/session";
 import type { ComposerRestoreSnapshot } from "../components/agent-input/logic/first-send-recovery.js";
 import type { ModifiedFilesState } from "../components/modified-files/types/modified-files-state";
@@ -443,6 +444,8 @@ export interface Agent {
 	readonly autonomous_supported_mode_ids?: ReadonlyArray<string>;
 	/** Registry-owned precedence for default selection. */
 	readonly default_selection_rank?: number;
+	/** Canonical provider metadata projection for shared frontend surfaces. */
+	readonly providerMetadata?: ProviderMetadataProjection;
 }
 
 // ============================================

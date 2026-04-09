@@ -4,6 +4,8 @@
 //! Full session content is parsed on-demand from source files (not stored in DB).
 
 use acepe_lib::db::migrations::Migrator;
+use acepe_lib::db::repository::SessionMetadataRepository;
+use acepe_lib::history::session_context::resolve_session_context;
 use sea_orm::{Database, DatabaseConnection, DbErr};
 use sea_orm_migration::MigratorTrait;
 
@@ -30,4 +32,56 @@ async fn test_migration_creates_tables() {
         .await
         .expect("Should query session_metadata");
     assert_eq!(count, 0, "Should start with empty session_metadata table");
+}
+
+#[tokio::test]
+async fn test_history_context_matches_descriptor_replay_identity() {
+    let db = setup_test_db().await.expect("Failed to setup test DB");
+
+    SessionMetadataRepository::ensure_exists(
+        &db,
+        "acepe-session",
+        "/repo",
+        "claude-code",
+        Some("/repo/.worktrees/feature-a"),
+    )
+    .await
+    .expect("ensure exists");
+    SessionMetadataRepository::set_provider_session_id(&db, "acepe-session", "provider-session")
+        .await
+        .expect("set provider session id");
+
+    let metadata = SessionMetadataRepository::get_by_id(&db, "acepe-session")
+        .await
+        .expect("load metadata")
+        .expect("metadata");
+    let replay_context =
+        SessionMetadataRepository::resolve_existing_session_replay_context_from_metadata(
+            "acepe-session",
+            Some(&metadata),
+            Default::default(),
+        )
+        .expect("replay context");
+    let session_context = resolve_session_context(
+        Some(&db),
+        "acepe-session",
+        "/fallback-repo",
+        "claude-code",
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        replay_context.local_session_id,
+        session_context.local_session_id
+    );
+    assert_eq!(
+        replay_context.history_session_id,
+        session_context.history_session_id
+    );
+    assert_eq!(replay_context.project_path, session_context.project_path);
+    assert_eq!(
+        replay_context.effective_cwd,
+        session_context.effective_project_path
+    );
 }

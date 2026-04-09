@@ -11,6 +11,7 @@ import { fileIndex } from "./file-index.js";
 import { fs } from "./fs.js";
 import { git } from "./git.js";
 import { history } from "./history.js";
+import { notifications } from "./notifications.js";
 import { projects } from "./projects.js";
 import { sessionReviewState } from "./session-review-state.js";
 import { settings } from "./settings.js";
@@ -28,6 +29,7 @@ export const tauriClient = {
 	fs,
 	git,
 	history,
+	notifications,
 	projects,
 	sessionReviewState,
 	settings,

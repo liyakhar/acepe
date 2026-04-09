@@ -1,19 +1,9 @@
 <script lang="ts">
-import { TextShimmer } from "@acepe/ui";
-import RefreshCw from "@lucide/svelte/icons/refresh-cw";
-import {
-	GrainGradientShapes,
-	type GrainGradientUniforms,
-	getShaderColorFromString,
-	getShaderNoiseTexture,
-	grainGradientFragmentShader,
-	ShaderFitOptions,
-	ShaderMount,
-} from "@paper-design/shaders";
-import { onDestroy, onMount } from "svelte";
-import { Button } from "$lib/components/ui/button/index.js";
-import { Spinner } from "$lib/components/ui/spinner/index.js";
-import * as m from "$lib/paraglide/messages.js";
+	import { BrandLockup, BrandShaderBackground, TextShimmer } from "@acepe/ui";
+	import RefreshCw from "@lucide/svelte/icons/refresh-cw";
+	import { Button } from "$lib/components/ui/button/index.js";
+	import { Spinner } from "$lib/components/ui/spinner/index.js";
+	import * as m from "$lib/paraglide/messages.js";
 
 export type UpdateState = "checking" | "downloading" | "error";
 
@@ -27,9 +17,6 @@ interface Props {
 
 let { updateState, progress, total, errorMessage, onRetry }: Props = $props();
 
-let shaderContainer: HTMLDivElement | null = $state(null);
-let shaderMountRef: ShaderMount | null = null;
-
 const downloadPercent = $derived(
 	total != null && total > 0 ? Math.min(Math.round((progress / total) * 100), 100) : null
 );
@@ -39,66 +26,6 @@ function formatBytes(bytes: number): string {
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
-
-onMount(() => {
-	if (!shaderContainer) return;
-	initShader();
-});
-
-async function initShader() {
-	if (!shaderContainer) return;
-
-	try {
-		const noiseTexture = getShaderNoiseTexture();
-
-		if (noiseTexture && !noiseTexture.complete) {
-			await new Promise<void>((resolve, reject) => {
-				noiseTexture.onload = () => resolve();
-				noiseTexture.onerror = () => reject(new Error("Failed to load noise texture"));
-			});
-		}
-
-		const containerWidth = shaderContainer.offsetWidth;
-		const containerHeight = shaderContainer.offsetHeight;
-
-		shaderMountRef = new ShaderMount(
-			shaderContainer,
-			grainGradientFragmentShader,
-			{
-				u_colorBack: getShaderColorFromString("#1a1a1a"),
-				u_colors: [
-					getShaderColorFromString("#99FFE4"),
-					getShaderColorFromString("#FFC799"),
-					getShaderColorFromString("#99FFE4"),
-					getShaderColorFromString("#FFC799"),
-				],
-				u_colorsCount: 4,
-				u_softness: 0.3,
-				u_intensity: 0.8,
-				u_noise: 0.15,
-				u_shape: GrainGradientShapes.corners,
-				u_noiseTexture: noiseTexture,
-				u_fit: ShaderFitOptions.cover,
-				u_scale: 1,
-				u_rotation: 0,
-				u_originX: 0.5,
-				u_originY: 0.5,
-				u_offsetX: 0,
-				u_offsetY: 0,
-				u_worldWidth: containerWidth,
-				u_worldHeight: containerHeight,
-			} satisfies Partial<GrainGradientUniforms>,
-			{ alpha: false, premultipliedAlpha: false },
-			0.5
-		);
-	} catch (error) {
-		console.error("[UpdatePage] Failed to initialize shader:", error);
-	}
-}
-
-onDestroy(() => {
-	shaderMountRef?.dispose();
-});
 </script>
 
 <div
@@ -108,41 +35,16 @@ onDestroy(() => {
 	aria-label="Updating Acepe"
 >
 	<!-- Full-screen shader backdrop -->
-	<div bind:this={shaderContainer} class="absolute inset-0 bg-[#1a1a1a]"></div>
+	<BrandShaderBackground />
 
 	<!-- Compact modal card -->
 	<div class="update-card">
 		<!-- Logo row -->
-		<div class="flex items-center gap-2.5">
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				width="20"
-				height="20"
-				viewBox="0 0 32 32"
-				fill="none"
-			>
-				<rect
-					x="5"
-					y="5"
-					width="6"
-					height="22"
-					rx="2"
-					fill="currentColor"
-					class="text-primary/30"
-				/>
-				<rect
-					x="13"
-					y="5"
-					width="6"
-					height="22"
-					rx="2"
-					fill="currentColor"
-					class="text-primary/60"
-				/>
-				<rect x="21" y="5" width="6" height="22" rx="2" fill="currentColor" class="text-primary" />
-			</svg>
-			<span class="text-[13px] font-semibold tracking-wider text-white/80">ACEPE</span>
-		</div>
+		<BrandLockup
+			class="gap-2.5"
+			markClass="h-5 w-5"
+			wordmarkClass="text-[13px] text-white/80"
+		/>
 
 		<!-- State content -->
 		<div class="mt-5">

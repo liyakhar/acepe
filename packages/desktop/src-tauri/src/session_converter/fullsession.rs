@@ -1,9 +1,9 @@
-use crate::acp::parsers::{AgentType, get_parser};
+use crate::acp::parsers::{get_parser, AgentType};
 use crate::acp::session_update::{
-    SkillMeta, ToolCallData, parse_normalized_questions, parse_normalized_todos,
-    tool_call_status_from_str,
+    parse_normalized_questions, parse_normalized_todos, tool_call_status_from_str, SkillMeta,
+    ToolCallData,
 };
-use crate::acp::tool_classification::{ToolClassificationHints, classify_raw_tool_call};
+use crate::acp::tool_classification::{classify_raw_tool_call, ToolClassificationHints};
 use crate::session_jsonl::display_names::format_model_display_name;
 use crate::session_jsonl::types::{
     ContentBlock, ConvertedSession, FullSession, OrderedMessage, QuestionAnswer,

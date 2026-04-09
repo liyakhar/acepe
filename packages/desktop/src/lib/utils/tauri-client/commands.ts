@@ -50,6 +50,12 @@ export const CMD = {
 		set_session_pr_number: "set_session_pr_number",
 	} as const,
 
+	notifications: {
+		send: "plugin:notification|notify",
+		get_permission: "plugin:notification|is_permission_granted",
+		request_permission: "plugin:notification|request_permission",
+	} as const,
+
 	projects: {
 		get_projects: storage.get_projects,
 		get_recent_projects: storage.get_recent_projects,

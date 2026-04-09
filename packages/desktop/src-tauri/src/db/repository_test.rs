@@ -8,7 +8,11 @@ mod session_metadata_tests {
         InteractionResponse, InteractionSnapshot, InteractionState, SessionProjectionSnapshot,
         SessionSnapshot, SessionTurnState,
     };
-    use crate::acp::session_journal::rebuild_session_projection;
+    use crate::acp::session_descriptor::{
+        SessionCompatibilityInput, SessionDescriptorCompatibility, SessionDescriptorMissingFact,
+        SessionDescriptorResolutionError, SessionReplayContext,
+    };
+    use crate::acp::session_journal::{decode_serialized_events, rebuild_session_projection};
     use crate::acp::session_update::{PermissionData, QuestionData, SessionUpdate};
     use crate::db::entities::prelude::AcepeSessionState;
     use crate::db::repository::{
@@ -32,6 +36,18 @@ mod session_metadata_tests {
             .expect("Failed to run migrations");
 
         db
+    }
+
+    async fn replay_context_for_session(db: &DbConn, session_id: &str) -> SessionReplayContext {
+        let metadata = SessionMetadataRepository::get_by_id(db, session_id)
+            .await
+            .expect("load metadata");
+        SessionMetadataRepository::resolve_existing_session_replay_context_from_metadata(
+            session_id,
+            metadata.as_ref(),
+            SessionCompatibilityInput::default(),
+        )
+        .expect("replay context")
     }
 
     #[tokio::test]
@@ -213,19 +229,17 @@ mod session_metadata_tests {
         .await
         .unwrap();
 
-        let journal = SessionJournalEventRepository::list(&db, "session-journal")
+        let replay_context = replay_context_for_session(&db, "session-journal").await;
+        let serialized = SessionJournalEventRepository::list_serialized(&db, "session-journal")
             .await
             .unwrap();
+        let journal = decode_serialized_events(&replay_context, serialized).unwrap();
         assert_eq!(journal.len(), 3);
         assert_eq!(journal[0].event_seq, 1);
         assert_eq!(journal[1].event_seq, 2);
         assert_eq!(journal[2].event_seq, 3);
 
-        let replayed = rebuild_session_projection(
-            "session-journal",
-            Some(crate::acp::types::CanonicalAgentId::ClaudeCode),
-            &journal,
-        );
+        let replayed = rebuild_session_projection(&replay_context, &journal);
 
         let session = replayed
             .session
@@ -248,6 +262,76 @@ mod session_metadata_tests {
             }
             other => panic!("expected answered question response, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_session_journal_list_with_replay_context_deserializes_serialized_tool_calls() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-tool-call".to_string(),
+            "Tool call session".to_string(),
+            1704067200000,
+            "/Users/test/project".to_string(),
+            "claude-code".to_string(),
+            "-Users-test-project/session-tool-call.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .unwrap();
+
+        let tool_call = SessionUpdate::ToolCall {
+            tool_call: crate::acp::session_update::ToolCallData {
+                id: "tooluse_read_1".to_string(),
+                name: "unknown".to_string(),
+                arguments: crate::acp::session_update::ToolArguments::Other {
+                    raw: json!({ "path": "/Users/test/project/README.md" }),
+                },
+                raw_input: None,
+                status: crate::acp::session_update::ToolCallStatus::Pending,
+                kind: Some(crate::acp::session_update::ToolKind::Other),
+                result: None,
+                title: Some("Viewing /Users/test/project/README.md".to_string()),
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                normalized_todos: None,
+                parent_tool_use_id: None,
+                task_children: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+            },
+            session_id: Some("session-tool-call".to_string()),
+        };
+        SessionJournalEventRepository::append_session_update(&db, "session-tool-call", &tool_call)
+            .await
+            .unwrap();
+
+        let replay_context = replay_context_for_session(&db, "session-tool-call").await;
+        let serialized = SessionJournalEventRepository::list_serialized(&db, "session-tool-call")
+            .await
+            .expect("journal rows should load without replay parsing");
+        assert_eq!(serialized.len(), 1);
+        assert!(serialized[0].event_json.contains("tooluse_read_1"));
+        let journal = decode_serialized_events(&replay_context, serialized)
+            .expect("journal should deserialize with explicit replay context");
+        let replayed = rebuild_session_projection(&replay_context, &journal);
+
+        assert_eq!(journal.len(), 1);
+        let session = replayed
+            .session
+            .expect("expected replayed session snapshot");
+        assert_eq!(
+            session.agent_id,
+            Some(crate::acp::types::CanonicalAgentId::ClaudeCode)
+        );
+        assert_eq!(replayed.operations.len(), 1);
+        assert_eq!(
+            replayed.operations[0].kind,
+            Some(crate::acp::session_update::ToolKind::Read)
+        );
     }
 
     #[tokio::test]
@@ -1081,6 +1165,28 @@ mod session_metadata_tests {
             .is_none());
     }
 
+    #[test]
+    fn test_session_metadata_row_history_session_id_preserves_generic_provider_alias() {
+        let row = crate::db::repository::SessionMetadataRow {
+            id: "session-generic".to_string(),
+            display: "Generic".to_string(),
+            title_overridden: false,
+            timestamp: 0,
+            project_path: "/project".to_string(),
+            agent_id: "cursor".to_string(),
+            file_path: "/project/session-generic.jsonl".to_string(),
+            file_mtime: 0,
+            file_size: 0,
+            provider_session_id: Some("cursor-provider".to_string()),
+            worktree_path: None,
+            pr_number: None,
+            is_acepe_managed: false,
+            sequence_id: None,
+        };
+
+        assert_eq!(row.history_session_id(), "cursor-provider");
+    }
+
     #[tokio::test]
     async fn test_delete_by_agent_for_projects_excluding_ids_respects_provider_session_id() {
         let db = setup_test_db().await;
@@ -1575,5 +1681,137 @@ mod session_metadata_tests {
         assert_eq!(session.project_path, "/project");
         assert_eq!(session.agent_id, "opencode");
         assert_eq!(session.worktree_path, None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_existing_session_descriptor_uses_persisted_facts_over_compatibility_inputs(
+    ) {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-copilot",
+            "/project",
+            "copilot",
+            Some("/project/.worktrees/feature-a"),
+        )
+        .await
+        .unwrap();
+
+        let metadata = SessionMetadataRepository::get_by_id(&db, "session-copilot")
+            .await
+            .unwrap();
+        let descriptor =
+            SessionMetadataRepository::resolve_existing_session_descriptor_from_metadata(
+                "session-copilot",
+                metadata.as_ref(),
+                SessionCompatibilityInput {
+                    project_path: Some("/fallback".to_string()),
+                    agent_id: Some(crate::acp::types::CanonicalAgentId::ClaudeCode),
+                    source_path: Some("/fallback/session.json".to_string()),
+                },
+            )
+            .expect("descriptor");
+
+        assert_eq!(
+            descriptor.agent_id,
+            crate::acp::types::CanonicalAgentId::Copilot
+        );
+        assert_eq!(descriptor.project_path, "/project");
+        assert_eq!(descriptor.effective_cwd, "/project/.worktrees/feature-a");
+        assert_eq!(
+            descriptor.compatibility,
+            SessionDescriptorCompatibility::Canonical
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_existing_session_descriptor_marks_unresolved_claude_as_read_only() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-claude",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let metadata = SessionMetadataRepository::get_by_id(&db, "session-claude")
+            .await
+            .unwrap();
+        let descriptor =
+            SessionMetadataRepository::resolve_existing_session_descriptor_from_metadata(
+                "session-claude",
+                metadata.as_ref(),
+                SessionCompatibilityInput::default(),
+            )
+            .expect("descriptor");
+
+        assert_eq!(descriptor.history_session_id, "session-claude");
+        assert_eq!(
+            descriptor.compatibility,
+            SessionDescriptorCompatibility::ReadOnly {
+                missing_facts: vec![SessionDescriptorMissingFact::ProviderSessionId]
+            }
+        );
+        assert!(!descriptor.is_resumable());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_existing_session_resume_requires_descriptor_facts() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-thin".to_string(),
+            "Thin session".to_string(),
+            1704067200000,
+            "".to_string(),
+            "".to_string(),
+            "".to_string(),
+            0,
+            0,
+        )
+        .await
+        .unwrap();
+
+        let metadata = SessionMetadataRepository::get_by_id(&db, "session-thin")
+            .await
+            .unwrap();
+        let error = SessionMetadataRepository::resolve_existing_session_resume_from_metadata(
+            "session-thin",
+            metadata.as_ref(),
+            "/fallback",
+            None,
+        )
+        .expect_err("descriptor facts should be required");
+
+        assert_eq!(
+            error,
+            SessionDescriptorResolutionError::MissingResolvedFacts {
+                session_id: "session-thin".to_string(),
+                missing_facts: vec![SessionDescriptorMissingFact::CanonicalAgentId]
+            }
+        );
+    }
+
+    #[test]
+    fn repository_provider_identity_rules_are_capability_driven() {
+        let source = include_str!("repository.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or_default();
+
+        assert!(
+            !source.contains("incoming_agent_id == \"claude-code\""),
+            "repository should not hardcode Claude provider alias rules"
+        );
+        assert!(
+            source.contains("backend_identity_policy_for_provider_id"),
+            "repository should resolve backend identity policy through shared capability helpers"
+        );
     }
 }

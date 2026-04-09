@@ -4,6 +4,7 @@ use crate::acp::model_display::ModelsForDisplay;
 use crate::acp::parsers::AgentType;
 use crate::acp::projections::{InteractionState, ProjectionRegistry};
 use crate::acp::provider::SpawnConfig;
+use crate::acp::session_descriptor::{SessionCompatibilityInput, SessionReplayContext};
 use crate::acp::session_journal::load_stored_projection;
 use crate::acp::session_update::PlanSource;
 use crate::acp::session_update::{PermissionData, SessionUpdate};
@@ -20,6 +21,7 @@ const CLIENT_LOOP_SOURCE: &str = include_str!("../client_loop.rs");
 const CLIENT_TRANSPORT_SOURCE: &str = include_str!("../client_transport.rs");
 const PROVIDER_SOURCE: &str = include_str!("../provider.rs");
 const TASK_RECONCILER_SOURCE: &str = include_str!("../task_reconciler.rs");
+const CLIENT_UPDATES_MOD_SOURCE: &str = include_str!("../client_updates/mod.rs");
 const INBOUND_ROUTER_HELPERS_SOURCE: &str = include_str!("../inbound_request_router/helpers.rs");
 const CLIENT_UPDATES_PLAN_SOURCE: &str = include_str!("../client_updates/plan.rs");
 const MODEL_DISPLAY_SOURCE: &str = include_str!("../model_display.rs");
@@ -251,6 +253,18 @@ async fn setup_test_db() -> DbConn {
     db
 }
 
+async fn replay_context_for_session(db: &DbConn, session_id: &str) -> SessionReplayContext {
+    let metadata = SessionMetadataRepository::get_by_id(db, session_id)
+        .await
+        .expect("load metadata");
+    SessionMetadataRepository::resolve_existing_session_replay_context_from_metadata(
+        session_id,
+        metadata.as_ref(),
+        SessionCompatibilityInput::default(),
+    )
+    .expect("replay context")
+}
+
 #[test]
 fn merge_saved_agent_env_overrides_prefers_saved_values() {
     let base = HashMap::from([
@@ -375,6 +389,29 @@ fn plan_enrichment_uses_registry_and_provider_defaults_instead_of_agent_matches(
     assert!(
         source.contains("provider_capabilities(agent_type).default_plan_source"),
         "plan enrichment should use provider capabilities for built-in defaults"
+    );
+}
+
+#[test]
+fn shared_client_updates_no_longer_own_codex_wrapper_parsing() {
+    let mod_source = production_source(CLIENT_UPDATES_MOD_SOURCE);
+    let plan_source = production_source(CLIENT_UPDATES_PLAN_SOURCE);
+
+    assert!(
+        !mod_source.contains("extract_codex_wrapper_plan"),
+        "shared update flow should not call Codex-specific wrapper extraction"
+    );
+    assert!(
+        !mod_source.contains("finalize_codex_wrapper_on_turn_end"),
+        "shared update flow should not own Codex turn-end wrapper finalization"
+    );
+    assert!(
+        !plan_source.contains("process_codex_plan_chunk"),
+        "shared plan helpers should not parse Codex wrapper chunks"
+    );
+    assert!(
+        !plan_source.contains("finalize_codex_plan_streaming"),
+        "shared plan helpers should not finalize Codex wrapper streams"
     );
 }
 
@@ -675,6 +712,7 @@ fn apply_provider_model_fallback_adds_auto_for_cursor_when_models_missing() {
         available_models: vec![],
         current_model_id: "auto".to_string(),
         models_display: ModelsForDisplay::default(),
+        provider_metadata: None,
     };
 
     apply_provider_model_fallback(&provider, &mut state);
@@ -695,6 +733,7 @@ fn apply_provider_model_fallback_keeps_existing_models() {
         }],
         current_model_id: "claude-sonnet-4".to_string(),
         models_display: ModelsForDisplay::default(),
+        provider_metadata: None,
     };
 
     apply_provider_model_fallback(&provider, &mut state);
@@ -710,6 +749,7 @@ fn apply_provider_model_fallback_does_not_apply_to_other_providers() {
         available_models: vec![],
         current_model_id: "auto".to_string(),
         models_display: ModelsForDisplay::default(),
+        provider_metadata: None,
     };
 
     apply_provider_model_fallback(&provider, &mut state);
@@ -959,7 +999,8 @@ async fn active_client_interaction_projection_persists_selected_permission_reply
         .expect("interaction should exist");
     assert_eq!(interaction.state, InteractionState::Approved);
 
-    let stored_projection = load_stored_projection(&db, "session-1", None)
+    let replay_context = replay_context_for_session(&db, "session-1").await;
+    let stored_projection = load_stored_projection(&db, &replay_context)
         .await
         .expect("load stored projection")
         .expect("stored projection should exist");

@@ -1,7 +1,17 @@
-use super::super::provider::{command_exists, AgentProvider, SpawnConfig};
+use super::super::provider::{
+    command_exists, AgentProvider, ProjectDiscoveryCompleteness, ProjectPathListing, SpawnConfig,
+};
 use crate::acp::client::codex_native_config::CODEX_BUILD_FULL_ACCESS_MODE_ID;
 use crate::acp::client_trait::CommunicationMode;
+use crate::acp::session_descriptor::SessionReplayContext;
+use crate::acp::session_update::SessionUpdate;
+use crate::acp::types::ContentBlock;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
+use crate::history::session_context::SessionContext;
+use crate::session_jsonl::types::ConvertedSession;
+use std::future::Future;
+use std::pin::Pin;
+use tauri::AppHandle;
 
 /// Native Codex app-server provider.
 pub struct CodexProvider;
@@ -61,14 +71,6 @@ impl AgentProvider for CodexProvider {
             || command_exists("codex")
     }
 
-    fn uses_wrapper_plan_streaming(&self) -> bool {
-        true
-    }
-
-    fn clear_message_tracker_on_prompt_response(&self) -> bool {
-        true
-    }
-
     fn autonomous_supported_mode_ids(&self) -> &'static [&'static str] {
         &["build"]
     }
@@ -86,6 +88,93 @@ impl AgentProvider for CodexProvider {
             (_, false) => Some(mode_id.to_string()),
             (_, true) => None,
         }
+    }
+
+    fn load_provider_owned_session<'a>(
+        &'a self,
+        _app: &'a AppHandle,
+        context: &'a SessionContext,
+        _replay_context: &'a SessionReplayContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ConvertedSession>, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let session_id = &context.local_session_id;
+
+            match crate::codex_history::parser::load_session(
+                &context.history_session_id,
+                &context.effective_project_path,
+                context.source_path.as_deref(),
+            )
+            .await
+            {
+                Ok(session) => Ok(session),
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %error,
+                        "Codex session parse failed"
+                    );
+                    Ok(None)
+                }
+            }
+        })
+    }
+
+    fn list_project_paths<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProjectPathListing, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let paths = crate::codex_history::scanner::list_project_paths()
+                .await
+                .map_err(|error| format!("Failed to list Codex projects: {error}"))?;
+            Ok(ProjectPathListing {
+                paths,
+                completeness: ProjectDiscoveryCompleteness::Complete,
+            })
+        })
+    }
+
+    fn count_sessions_for_project<'a>(
+        &'a self,
+        project_path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<u32, String>> + Send + 'a>> {
+        Box::pin(async move {
+            crate::codex_history::scanner::count_sessions_for_project(project_path)
+                .await
+                .map_err(|error| format!("Failed to count Codex sessions: {error}"))
+        })
+    }
+}
+
+pub(crate) fn adapt_codex_wrapper_plan_update(update: &SessionUpdate) -> Option<SessionUpdate> {
+    match update {
+        SessionUpdate::AgentMessageChunk {
+            chunk, session_id, ..
+        }
+        | SessionUpdate::AgentThoughtChunk {
+            chunk, session_id, ..
+        } => {
+            let session_id = session_id.as_deref()?;
+            let text = match &chunk.content {
+                ContentBlock::Text { text } => text.as_str(),
+                _ => return None,
+            };
+            let plan =
+                crate::acp::streaming_accumulator::process_codex_plan_chunk(session_id, text)?;
+            Some(SessionUpdate::Plan {
+                plan,
+                session_id: Some(session_id.to_string()),
+            })
+        }
+        SessionUpdate::TurnComplete { session_id }
+        | SessionUpdate::TurnError { session_id, .. } => {
+            let session_id = session_id.as_deref()?;
+            let plan = crate::acp::streaming_accumulator::finalize_codex_plan_turn(session_id);
+            plan.map(|plan| SessionUpdate::Plan {
+                plan,
+                session_id: Some(session_id.to_string()),
+            })
+        }
+        _ => None,
     }
 }
 

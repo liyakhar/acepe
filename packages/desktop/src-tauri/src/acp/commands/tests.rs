@@ -4,9 +4,11 @@ use crate::acp::client::{AvailableModel, ResumeSessionResponse, SessionModelStat
 use crate::acp::client_trait::AgentClient;
 use crate::acp::client_transport::InboundRequestResponder;
 use crate::acp::commands::session_commands::{
-    persist_session_metadata_for_cwd, session_metadata_context_from_cwd,
+    persist_session_metadata_for_cwd, resolve_requested_agent_id, session_metadata_context_from_cwd,
 };
 use crate::acp::error::{AcpError, AcpResult};
+use crate::acp::parsers::provider_capabilities::all_provider_capabilities;
+use crate::acp::provider::AutonomousApplyStrategy;
 use crate::acp::types::CanonicalAgentId;
 use crate::acp::ui_event_dispatcher::{AcpUiEventDispatcher, DispatchPolicy};
 use crate::db::repository::SessionMetadataRepository;
@@ -142,6 +144,13 @@ fn validate_session_cwd_accepts_directory() {
     );
 
     assert!(result.is_ok(), "valid directory cwd should be accepted");
+}
+
+#[test]
+fn resolve_requested_agent_id_prefers_explicit_over_active_agent() {
+    let resolved = resolve_requested_agent_id(Some("copilot"), Some(CanonicalAgentId::ClaudeCode));
+
+    assert_eq!(resolved, CanonicalAgentId::Copilot);
 }
 
 #[test]
@@ -434,6 +443,53 @@ fn claude_resume_skips_post_connect_execution_profile_reset() {
     assert!(resume_path_needs_post_connect_execution_profile_reset(
         &CanonicalAgentId::Cursor,
     ));
+}
+
+#[test]
+fn resume_execution_profile_reset_policy_is_capability_driven() {
+    let source = include_str!("session_commands.rs")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or_default();
+
+    assert!(
+        !source.contains("!matches!(agent_id, CanonicalAgentId::ClaudeCode)"),
+        "session commands should not hardcode Claude resume policy"
+    );
+    assert!(
+        source.contains("session_lifecycle_policy"),
+        "session commands should read lifecycle policy from provider capabilities"
+    );
+}
+
+#[test]
+fn resume_lifecycle_policy_matches_frontend_autonomous_strategy() {
+    for capabilities in all_provider_capabilities() {
+        let agent_id = CanonicalAgentId::parse(capabilities.provider_id);
+        let requires_post_connect_reset =
+            resume_path_needs_post_connect_execution_profile_reset(&agent_id);
+
+        assert_eq!(
+            requires_post_connect_reset,
+            capabilities
+                .session_lifecycle_policy
+                .requires_post_connect_execution_profile_reset,
+            "resume helper should mirror provider lifecycle policy for {}",
+            capabilities.provider_id
+        );
+
+        let expected_strategy = if requires_post_connect_reset {
+            AutonomousApplyStrategy::PostConnect
+        } else {
+            AutonomousApplyStrategy::LaunchProfile
+        };
+
+        assert_eq!(
+            capabilities.frontend_projection.autonomous_apply_strategy, expected_strategy,
+            "frontend autonomous strategy should stay aligned with resume lifecycle policy for {}",
+            capabilities.provider_id
+        );
+    }
 }
 
 #[test]
@@ -787,6 +843,7 @@ impl AgentClient for MockAgentClient {
                 }],
                 current_model_id: "gpt-5".to_string(),
                 models_display: Default::default(),
+                provider_metadata: None,
             },
             modes: SessionModes {
                 current_mode_id: "build".to_string(),

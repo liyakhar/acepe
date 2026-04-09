@@ -272,6 +272,14 @@ mod tests {
             infer_kind_from_payload("id", Some("Codebase Search"), Some("other")),
             Some(ToolKind::Search)
         );
+        assert_eq!(
+            infer_kind_from_payload("id", Some("rg"), Some("other")),
+            Some(ToolKind::Search)
+        );
+        assert_eq!(
+            infer_kind_from_payload("id", Some("ripgrep"), None),
+            Some(ToolKind::Search)
+        );
     }
 
     #[test]

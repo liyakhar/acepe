@@ -31,11 +31,18 @@ describe("update available page structure", () => {
 		expect(source).not.toContain("{#if downloadPercent !== null && downloadPercent >= 100}");
 	});
 
-	it("uses the tracked logo asset on the splash background", () => {
-		expect(source).toContain('import splashLogo from "../../../../../../assets/logo.svg?url";');
-		expect(source).toContain("<img src={splashLogo}");
+	it("uses the shared brand lockup on the splash background", () => {
+		expect(source).toContain("BrandLockup");
+		expect(source).not.toContain('import splashLogo from "../../../../../../assets/logo.svg?url";');
+		expect(source).not.toContain("<img src={splashLogo}");
 		expect(source).not.toContain('import Logo from "$lib/components/logo.svelte"');
 		expect(source).not.toContain("<Logo");
+	});
+
+	it("uses the shared branded shader background", () => {
+		expect(source).toContain("BrandShaderBackground");
+		expect(source).not.toContain("ShaderMount");
+		expect(source).not.toContain("u_colors:");
 	});
 
 	it("has an opaque card with no border", () => {

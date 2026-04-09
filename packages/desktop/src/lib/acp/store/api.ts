@@ -7,7 +7,10 @@
 
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { InteractionReplyRequest } from "../types/interaction-reply-request.js";
-import type { SessionProjectionSnapshot } from "../../services/acp-types.js";
+import type {
+	ProviderMetadataProjection,
+	SessionProjectionSnapshot,
+} from "../../services/acp-types.js";
 import type { HistoryEntry, StartupSessionsResponse } from "../../services/claude-history-types";
 import type { ConfigOptionData, ConvertedSession } from "../../services/converted-session-types.js";
 import { tauriClient } from "../../utils/tauri-client";
@@ -28,7 +31,8 @@ export function initialize(): ResultAsync<void, AppError> {
 }
 
 /**
- * Resume or create a session with the ACP agent.
+ * Resume an existing session using backend-owned descriptor resolution.
+ * `agentId` is only for explicit override flows.
  */
 export function resumeSession(
 	sessionId: string,
@@ -265,6 +269,7 @@ export interface AgentInfo {
 	availability_kind?: AgentAvailabilityKind;
 	autonomous_supported_mode_ids?: ReadonlyArray<string>;
 	default_selection_rank?: number;
+	provider_metadata?: ProviderMetadataProjection;
 }
 
 /**

@@ -1,26 +1,198 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use specta::Type;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::OnceLock;
+use tauri::AppHandle;
 
 use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::error::AcpResult;
+use crate::acp::parsers::provider_capabilities::{
+    all_provider_capabilities, find_provider_capabilities_by_id, provider_capabilities,
+};
 use crate::acp::parsers::AgentType;
-use crate::acp::parsers::provider_capabilities::provider_capabilities;
 use crate::acp::provider_extensions::{InboundResponseAdapter, ProviderExtensionEvent};
+use crate::acp::session_descriptor::SessionReplayContext;
 use crate::acp::session_update::{PlanConfidence, PlanSource, SessionUpdate};
 use crate::acp::task_reconciler::TaskReconciliationPolicy;
 use crate::acp::types::CanonicalAgentId;
+use crate::history::session_context::SessionContext;
+use crate::session_jsonl::types::ConvertedSession;
 
 #[derive(Debug, Clone)]
 pub struct ModelFallbackCandidate {
     pub model_id: String,
     pub name: String,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackendIdentityPolicy {
+    pub requires_persisted_provider_session_id: bool,
+    pub prefers_incoming_provider_session_id_alias: bool,
+}
+
+impl BackendIdentityPolicy {
+    pub fn missing_provider_session_id(self, provider_session_id: Option<&str>) -> bool {
+        self.requires_persisted_provider_session_id && provider_session_id.is_none()
+    }
+
+    pub fn normalize_provider_session_id(
+        self,
+        local_session_id: &str,
+        provider_session_id: &str,
+    ) -> Option<String> {
+        if provider_session_id == local_session_id {
+            None
+        } else {
+            Some(provider_session_id.to_string())
+        }
+    }
+
+    pub fn provider_session_id_for_existing_session(
+        self,
+        local_session_id: &str,
+        incoming_session_id: &str,
+        persisted_provider_session_id: Option<&str>,
+    ) -> Option<String> {
+        if self.prefers_incoming_provider_session_id_alias {
+            return self.normalize_provider_session_id(local_session_id, incoming_session_id);
+        }
+
+        persisted_provider_session_id
+            .filter(|provider_session_id| *provider_session_id != local_session_id)
+            .map(ToOwned::to_owned)
+    }
+
+    pub fn history_session_id<'a>(
+        self,
+        local_session_id: &'a str,
+        provider_session_id: Option<&'a str>,
+    ) -> &'a str {
+        let _ = self;
+        provider_session_id.unwrap_or(local_session_id)
+    }
+}
+
+impl Default for BackendIdentityPolicy {
+    fn default() -> Self {
+        Self {
+            requires_persisted_provider_session_id: false,
+            prefers_incoming_provider_session_id_alias: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionLifecyclePolicy {
+    pub requires_post_connect_execution_profile_reset: bool,
+}
+
+impl Default for SessionLifecyclePolicy {
+    fn default() -> Self {
+        Self {
+            requires_post_connect_execution_profile_reset: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PlanAdapterPolicy {
+    pub parses_wrapper_plan_from_text_stream: bool,
+    pub finalizes_wrapper_plan_on_turn_end: bool,
+    pub clears_message_tracker_on_prompt_response: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryReplayFamily {
+    SharedCanonical,
+    ProviderOwned,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryReplayPolicy {
+    pub family: HistoryReplayFamily,
+}
+
+impl Default for HistoryReplayPolicy {
+    fn default() -> Self {
+        Self {
+            family: HistoryReplayFamily::SharedCanonical,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectDiscoveryCompleteness {
+    Complete,
+    Partial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectPathListing {
+    pub paths: Vec<String>,
+    pub completeness: ProjectDiscoveryCompleteness,
+}
+
+impl Default for ProjectPathListing {
+    fn default() -> Self {
+        Self {
+            paths: Vec::new(),
+            completeness: ProjectDiscoveryCompleteness::Complete,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum FrontendVariantGroup {
+    Plain,
+    ReasoningEffort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AutonomousApplyStrategy {
+    PostConnect,
+    LaunchProfile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendProviderProjection {
+    pub provider_brand: &'static str,
+    pub display_name: &'static str,
+    pub display_order: u16,
+    pub supports_model_defaults: bool,
+    pub variant_group: FrontendVariantGroup,
+    pub default_alias: Option<&'static str>,
+    pub reasoning_effort_support: bool,
+    pub autonomous_apply_strategy: AutonomousApplyStrategy,
+}
+
+impl Default for FrontendProviderProjection {
+    fn default() -> Self {
+        Self {
+            provider_brand: "custom",
+            display_name: "Custom",
+            display_order: u16::MAX,
+            supports_model_defaults: false,
+            variant_group: FrontendVariantGroup::Plain,
+            default_alias: None,
+            reasoning_effort_support: false,
+            autonomous_apply_strategy: AutonomousApplyStrategy::PostConnect,
+        }
+    }
+}
+
+fn builtin_capabilities_for_provider_id(
+    provider_id: &str,
+) -> Option<&'static crate::acp::parsers::provider_capabilities::ProviderCapabilities> {
+    find_provider_capabilities_by_id(all_provider_capabilities(), provider_id)
 }
 
 /// Configuration for spawning an agent subprocess
@@ -182,6 +354,20 @@ pub trait AgentProvider: Send + Sync {
         None
     }
 
+    /// Provider-owned backend identity policy for descriptor and metadata semantics.
+    fn backend_identity_policy(&self) -> BackendIdentityPolicy {
+        builtin_capabilities_for_provider_id(self.id())
+            .map(|capabilities| capabilities.backend_identity_policy)
+            .unwrap_or_default()
+    }
+
+    /// Provider-owned lifecycle policy for reconnect and resume orchestration.
+    fn session_lifecycle_policy(&self) -> SessionLifecyclePolicy {
+        builtin_capabilities_for_provider_id(self.id())
+            .map(|capabilities| capabilities.session_lifecycle_policy)
+            .unwrap_or_default()
+    }
+
     /// Default source classification for plan updates emitted by this provider.
     fn default_plan_source(&self) -> PlanSource {
         provider_capabilities(self.parser_agent_type()).default_plan_source
@@ -193,6 +379,52 @@ pub trait AgentProvider: Send + Sync {
             PlanSource::Deterministic => PlanConfidence::High,
             PlanSource::Heuristic => PlanConfidence::Medium,
         }
+    }
+
+    /// Provider-owned plan adapter policy for wrapper buffering and turn-end finalization.
+    fn plan_adapter_policy(&self) -> PlanAdapterPolicy {
+        builtin_capabilities_for_provider_id(self.id())
+            .map(|capabilities| capabilities.plan_adapter_policy)
+            .unwrap_or_default()
+    }
+
+    /// Provider-owned history and replay loading contract.
+    fn history_replay_policy(&self) -> HistoryReplayPolicy {
+        builtin_capabilities_for_provider_id(self.id())
+            .map(|capabilities| capabilities.history_replay_policy)
+            .unwrap_or_default()
+    }
+
+    /// Provider-owned history loading for replay families that cannot use the shared canonical path.
+    fn load_provider_owned_session<'a>(
+        &'a self,
+        _app: &'a AppHandle,
+        _context: &'a SessionContext,
+        _replay_context: &'a SessionReplayContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ConvertedSession>, String>> + Send + 'a>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    /// Provider-owned project discovery for history-backed project listing.
+    fn list_project_paths<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProjectPathListing, String>> + Send + 'a>> {
+        Box::pin(async { Ok(ProjectPathListing::default()) })
+    }
+
+    /// Provider-owned per-project session counting for history-backed project listings.
+    fn count_sessions_for_project<'a>(
+        &'a self,
+        _project_path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<u32, String>> + Send + 'a>> {
+        Box::pin(async { Ok(0) })
+    }
+
+    /// Presentation-only provider metadata for shared frontend surfaces.
+    fn frontend_projection(&self) -> FrontendProviderProjection {
+        builtin_capabilities_for_provider_id(self.id())
+            .map(|capabilities| capabilities.frontend_projection)
+            .unwrap_or_default()
     }
 
     /// Provider-owned hook for enriching parsed session updates before shared processing.
@@ -245,12 +477,14 @@ pub trait AgentProvider: Send + Sync {
 
     /// Whether wrapper-based plan extraction from text chunks is enabled.
     fn uses_wrapper_plan_streaming(&self) -> bool {
-        false
+        self.plan_adapter_policy()
+            .parses_wrapper_plan_from_text_stream
     }
 
     /// Whether per-session message-id tracker should be cleared on prompt response.
     fn clear_message_tracker_on_prompt_response(&self) -> bool {
-        false
+        self.plan_adapter_policy()
+            .clears_message_tracker_on_prompt_response
     }
 }
 

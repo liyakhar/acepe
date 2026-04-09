@@ -1,11 +1,19 @@
-use super::super::provider::{AgentProvider, SpawnConfig};
+use super::super::provider::{
+    AgentProvider, ProjectDiscoveryCompleteness, ProjectPathListing, SpawnConfig,
+};
 use super::opencode_settings::apply_opencode_session_defaults;
 use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::error::AcpResult;
+use crate::acp::session_descriptor::SessionReplayContext;
 use crate::acp::types::CanonicalAgentId;
+use crate::history::session_context::SessionContext;
+use crate::session_jsonl::types::ConvertedSession;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use tauri::AppHandle;
 
 /// OpenCode HTTP Agent Provider
 /// Uses HTTP REST API + SSE instead of ACP JSON-RPC
@@ -124,6 +132,151 @@ impl AgentProvider for OpenCodeProvider {
     ) -> AcpResult<()> {
         apply_opencode_session_defaults(cwd, models, modes)
     }
+
+    fn load_provider_owned_session<'a>(
+        &'a self,
+        app: &'a AppHandle,
+        context: &'a SessionContext,
+        _replay_context: &'a SessionReplayContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ConvertedSession>, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let session_id = &context.local_session_id;
+            let lookup_session_id = &context.history_session_id;
+
+            let disk_result = crate::opencode_history::parser::load_session_from_disk(
+                lookup_session_id,
+                context.source_path.as_deref(),
+            )
+            .await;
+
+            if let Ok(Some(converted)) = disk_result {
+                tracing::info!(
+                    session_id = %session_id,
+                    "Loaded OpenCode session from local disk"
+                );
+                return Ok(Some(converted));
+            }
+
+            match &disk_result {
+                Ok(None) => tracing::info!(
+                    session_id = %session_id,
+                    "No local messages for OpenCode session, trying HTTP API"
+                ),
+                Err(error) => tracing::warn!(
+                    session_id = %session_id,
+                    error = %error,
+                    "Disk-based OpenCode loading failed, trying HTTP API"
+                ),
+                _ => unreachable!(),
+            }
+
+            match crate::opencode_history::commands::get_opencode_session(
+                app.clone(),
+                lookup_session_id.to_string(),
+                context.effective_project_path.clone(),
+            )
+            .await
+            {
+                Ok(converted) => Ok(Some(converted)),
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %error,
+                        "HTTP fallback also failed for OpenCode session"
+                    );
+                    Ok(None)
+                }
+            }
+        })
+    }
+
+    fn list_project_paths<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProjectPathListing, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let paths = list_opencode_project_paths().await?;
+            Ok(ProjectPathListing {
+                paths,
+                completeness: ProjectDiscoveryCompleteness::Complete,
+            })
+        })
+    }
+
+    fn count_sessions_for_project<'a>(
+        &'a self,
+        project_path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<u32, String>> + Send + 'a>> {
+        Box::pin(async move { count_opencode_sessions_for_project(project_path).await })
+    }
+}
+
+async fn list_opencode_project_paths() -> Result<Vec<String>, String> {
+    let project_map = crate::opencode_history::parser::scan_projects()
+        .await
+        .map_err(|error| format!("Failed to scan OpenCode projects: {error}"))?;
+
+    let mut paths: Vec<String> = project_map.values().cloned().collect();
+    paths.sort();
+    paths.dedup();
+
+    Ok(paths)
+}
+
+async fn count_opencode_sessions_for_project(project_path: &str) -> Result<u32, String> {
+    use crate::opencode_history::parser::get_storage_dir;
+
+    let storage_dir = get_storage_dir()
+        .map_err(|error| format!("Failed to get OpenCode storage directory: {error}"))?;
+    let sessions_dir = storage_dir.join("session");
+
+    if !sessions_dir.exists() {
+        return Ok(0);
+    }
+
+    let project_map = crate::opencode_history::parser::scan_projects()
+        .await
+        .map_err(|error| format!("Failed to scan OpenCode projects: {error}"))?;
+
+    let Some(project_hash) = project_map
+        .iter()
+        .find(|(_, path)| *path == project_path)
+        .map(|(hash, _)| hash.clone())
+    else {
+        return Ok(0);
+    };
+
+    let project_sessions_dir = sessions_dir.join(project_hash);
+    if !project_sessions_dir.exists() || !project_sessions_dir.is_dir() {
+        return Ok(0);
+    }
+
+    let mut count = 0u32;
+    let mut read_dir = tokio::fs::read_dir(&project_sessions_dir)
+        .await
+        .map_err(|error| {
+            format!("Failed to read sessions directory for {project_path}: {error}")
+        })?;
+
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .map_err(|error| format!("Failed to read directory entry: {error}"))?
+    {
+        if !entry
+            .file_type()
+            .await
+            .map_err(|error| format!("Failed to get file type: {error}"))?
+            .is_file()
+        {
+            continue;
+        }
+
+        if entry.file_name().to_string_lossy().ends_with(".json") {
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -203,6 +356,7 @@ mod tests {
             ],
             current_model_id: "auto".to_string(),
             models_display: Default::default(),
+            provider_metadata: None,
         };
         let mut modes = SessionModes {
             current_mode_id: "build".to_string(),
@@ -242,6 +396,7 @@ mod tests {
             available_models: vec![],
             current_model_id: "auto".to_string(),
             models_display: Default::default(),
+            provider_metadata: None,
         };
         let mut modes = SessionModes {
             current_mode_id: "build".to_string(),

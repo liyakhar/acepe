@@ -105,6 +105,10 @@ impl AcpClient {
         self.hydrate_missing_models_for_provider(provider.as_ref(), &mut response.models)
             .await;
         apply_provider_model_fallback(provider.as_ref(), &mut response.models);
+        crate::acp::client_session::apply_provider_metadata(
+            provider.as_ref(),
+            &mut response.models,
+        );
         provider.apply_session_defaults(&self.cwd, &mut response.models, &mut response.modes)?;
 
         let agent_type = self
@@ -118,11 +122,10 @@ impl AcpClient {
             display_family: capabilities.model_display_family,
             usage_metrics: capabilities.usage_metrics_presentation,
         };
-        response.models.models_display =
-            crate::acp::model_display::build_models_for_display(
-                &response.models.available_models,
-                presentation,
-            );
+        response.models.models_display = crate::acp::model_display::build_models_for_display(
+            &response.models.available_models,
+            presentation,
+        );
         self.set_active_session_id(Some(response.session_id.clone()));
 
         tracing::info!(
@@ -220,6 +223,10 @@ impl AcpClient {
         self.hydrate_missing_models_for_provider(provider.as_ref(), &mut response.models)
             .await;
         apply_provider_model_fallback(provider.as_ref(), &mut response.models);
+        crate::acp::client_session::apply_provider_metadata(
+            provider.as_ref(),
+            &mut response.models,
+        );
         provider.apply_session_defaults(
             std::path::Path::new(cwd),
             &mut response.models,
@@ -237,11 +244,10 @@ impl AcpClient {
             display_family: capabilities.model_display_family,
             usage_metrics: capabilities.usage_metrics_presentation,
         };
-        response.models.models_display =
-            crate::acp::model_display::build_models_for_display(
-                &response.models.available_models,
-                presentation,
-            );
+        response.models.models_display = crate::acp::model_display::build_models_for_display(
+            &response.models.available_models,
+            presentation,
+        );
         self.set_active_session_id(Some(session_id.clone()));
 
         tracing::info!(
@@ -287,6 +293,10 @@ impl AcpClient {
         self.hydrate_missing_models_for_provider(provider.as_ref(), &mut response.models)
             .await;
         apply_provider_model_fallback(provider.as_ref(), &mut response.models);
+        crate::acp::client_session::apply_provider_metadata(
+            provider.as_ref(),
+            &mut response.models,
+        );
         provider.apply_session_defaults(&self.cwd, &mut response.models, &mut response.modes)?;
 
         let agent_type = self
@@ -300,11 +310,10 @@ impl AcpClient {
             display_family: capabilities.model_display_family,
             usage_metrics: capabilities.usage_metrics_presentation,
         };
-        response.models.models_display =
-            crate::acp::model_display::build_models_for_display(
-                &response.models.available_models,
-                presentation,
-            );
+        response.models.models_display = crate::acp::model_display::build_models_for_display(
+            &response.models.available_models,
+            presentation,
+        );
         self.set_active_session_id(Some(response.session_id.clone()));
 
         tracing::info!(

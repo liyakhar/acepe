@@ -9,10 +9,11 @@ interface Props {
 	modelName: string;
 	currentModelId: string | null;
 	onSelect: () => void;
+	leading?: Snippet;
 	actions?: Snippet;
 }
 
-let { modelId, modelName, currentModelId, onSelect, actions }: Props = $props();
+let { modelId, modelName, currentModelId, onSelect, leading, actions }: Props = $props();
 </script>
 
 <DropdownMenu.Item
@@ -20,6 +21,7 @@ let { modelId, modelName, currentModelId, onSelect, actions }: Props = $props();
 	class="group/item transition-colors {modelId === currentModelId ? 'bg-accent' : ''}"
 >
 	<div class="flex w-full items-center gap-2">
+		{#if leading}{@render leading()}{/if}
 		<span class="flex-1 truncate text-xs">{modelName}</span>
 		{#if actions}{@render actions()}{/if}
 		<SelectorCheck visible={modelId === currentModelId} />

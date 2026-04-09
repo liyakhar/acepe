@@ -83,7 +83,11 @@ $effect(() => {
 <DropdownMenu.Root bind:open={isOpen}>
 	<DropdownMenu.Trigger>
 		{#snippet child({ props })}
-			<Button {...props} variant="outline" class={cn("h-8 gap-2 px-2", className)}>
+			<Button
+				{...props}
+				variant="outline"
+				class={cn("group/provider-trigger h-8 gap-2 px-2", className)}
+			>
 				{#if store.currentProviderId}
 					<ProviderLogo providerId={store.currentProviderId} class="h-4 w-4" />
 				{/if}
@@ -122,7 +126,7 @@ $effect(() => {
 				</DropdownMenu.Label>
 				{#each favoritesList as item (item.modelId)}
 					<DropdownMenu.Item
-						class="flex items-center gap-2"
+						class="group flex items-center gap-2"
 						onSelect={() => handleModelSelect(item.providerId, item.modelId)}
 					>
 						<ProviderLogo providerId={item.providerId} class="h-4 w-4" />
@@ -143,7 +147,7 @@ $effect(() => {
 				</DropdownMenu.Label>
 				{#each recentsList as item (item.modelId)}
 					<DropdownMenu.Item
-						class="flex items-center gap-2"
+						class="group flex items-center gap-2"
 						onSelect={() => handleModelSelect(item.providerId, item.modelId)}
 					>
 						<ProviderLogo providerId={item.providerId} class="h-4 w-4" />
@@ -161,9 +165,10 @@ $effect(() => {
 				</DropdownMenu.Label>
 				{#each provider.models as model (model.id)}
 					<DropdownMenu.Item
-						class="group flex items-center gap-2 pl-8"
+						class="group flex items-center gap-2 pl-4"
 						onSelect={() => handleModelSelect(provider.id, model.id)}
 					>
+						<ProviderLogo providerId={provider.id} class="h-3.5 w-3.5" />
 						<span class="flex-1 truncate">{model.name}</span>
 						<button
 							onclick={(e) => {

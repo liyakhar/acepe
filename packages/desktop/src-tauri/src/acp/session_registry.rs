@@ -3,13 +3,30 @@ use crate::acp::client_transport::InboundRequestResponder;
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::types::CanonicalAgentId;
 use dashmap::DashMap;
+use sea_orm::DbConn;
 use std::sync::Arc;
+use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex as TokioMutex;
 
-/// Per-session entry: the client plus the agent that created it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveSessionDescriptor {
+    pub agent_id: CanonicalAgentId,
+    pub provider_session_id: Option<String>,
+}
+
+impl LiveSessionDescriptor {
+    pub fn new(agent_id: CanonicalAgentId, provider_session_id: Option<String>) -> Self {
+        Self {
+            agent_id,
+            provider_session_id,
+        }
+    }
+}
+
+/// Per-session entry: the client plus the live descriptor facts bound to it.
 struct SessionEntry {
     client: Arc<TokioMutex<Box<dyn AgentClient + Send + Sync + 'static>>>,
-    agent_id: CanonicalAgentId,
+    descriptor: LiveSessionDescriptor,
 }
 
 /// Thread-safe registry of active session clients.
@@ -35,12 +52,25 @@ impl SessionRegistry {
         client: Box<dyn AgentClient + Send + Sync + 'static>,
         agent_id: CanonicalAgentId,
     ) -> Option<Arc<TokioMutex<Box<dyn AgentClient + Send + Sync + 'static>>>> {
+        self.store_descriptor(
+            session_id,
+            client,
+            LiveSessionDescriptor::new(agent_id, None),
+        )
+    }
+
+    pub fn store_descriptor(
+        &self,
+        session_id: String,
+        client: Box<dyn AgentClient + Send + Sync + 'static>,
+        descriptor: LiveSessionDescriptor,
+    ) -> Option<Arc<TokioMutex<Box<dyn AgentClient + Send + Sync + 'static>>>> {
         let client_arc = Arc::new(TokioMutex::new(client));
         self.pending_inbound_responders.remove(&session_id);
 
         let entry = SessionEntry {
             client: client_arc,
-            agent_id: agent_id.clone(),
+            descriptor: descriptor.clone(),
         };
 
         // Check for existing entry and log appropriately
@@ -48,8 +78,8 @@ impl SessionRegistry {
         if let Some((_, old_entry)) = self.sessions.remove(&session_id) {
             tracing::warn!(
                 session_id = %redacted_id,
-                old_agent_id = %old_entry.agent_id.as_str(),
-                new_agent_id = %agent_id.as_str(),
+                old_agent_id = %old_entry.descriptor.agent_id.as_str(),
+                new_agent_id = %descriptor.agent_id.as_str(),
                 "Replacing existing session client"
             );
             self.sessions.insert(session_id, entry);
@@ -57,7 +87,7 @@ impl SessionRegistry {
         } else {
             tracing::info!(
                 session_id = %redacted_id,
-                agent_id = %agent_id.as_str(),
+                agent_id = %descriptor.agent_id.as_str(),
                 "Session client stored"
             );
             self.sessions.insert(session_id, entry);
@@ -78,7 +108,45 @@ impl SessionRegistry {
 
     /// Get the agent ID for a session, if known.
     pub fn get_agent_id(&self, session_id: &str) -> Option<CanonicalAgentId> {
-        self.sessions.get(session_id).map(|r| r.agent_id.clone())
+        self.sessions
+            .get(session_id)
+            .map(|r| r.descriptor.agent_id.clone())
+    }
+
+    pub fn get_descriptor(&self, session_id: &str) -> Option<LiveSessionDescriptor> {
+        self.sessions.get(session_id).map(|r| r.descriptor.clone())
+    }
+
+    pub fn bind_provider_session_id(
+        &self,
+        session_id: &str,
+        provider_session_id: &str,
+    ) -> AcpResult<()> {
+        let Some(mut entry) = self.sessions.get_mut(session_id) else {
+            return Err(AcpError::SessionNotFound(redact_session_id(session_id)));
+        };
+
+        let normalized_provider_session_id = if provider_session_id == session_id {
+            None
+        } else {
+            Some(provider_session_id.to_string())
+        };
+
+        if entry.descriptor.provider_session_id == normalized_provider_session_id {
+            return Ok(());
+        }
+
+        if let Some(existing_provider_session_id) = entry.descriptor.provider_session_id.as_ref() {
+            return Err(AcpError::InvalidState(format!(
+                "conflicting provider session binding for {}: existing={}, new={}",
+                redact_session_id(session_id),
+                existing_provider_session_id,
+                provider_session_id
+            )));
+        }
+
+        entry.descriptor.provider_session_id = normalized_provider_session_id;
+        Ok(())
     }
 
     /// Remove a client by session ID. Returns the removed client if found.
@@ -93,7 +161,7 @@ impl SessionRegistry {
             let redacted_id = redact_session_id(session_id);
             tracing::info!(
                 session_id = %redacted_id,
-                agent_id = %entry.agent_id.as_str(),
+                agent_id = %entry.descriptor.agent_id.as_str(),
                 reason,
                 "Session client removed"
             );
@@ -170,7 +238,7 @@ impl SessionRegistry {
                     Ok(mut client) => {
                         tracing::warn!(
                             session_id = %redact_session_id(&session_id),
-                            agent_id = %entry.agent_id.as_str(),
+                            agent_id = %entry.descriptor.agent_id.as_str(),
                             reason = "session_registry.stop_all",
                             "Stopping session client during registry shutdown"
                         );
@@ -201,6 +269,165 @@ impl Drop for SessionRegistry {
 impl Default for SessionRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub async fn bind_provider_session_id_persisted(
+    app_handle: Option<&AppHandle>,
+    db: Option<&DbConn>,
+    session_id: &str,
+    provider_session_id: &str,
+) -> AcpResult<()> {
+    if let Some(session_registry) = app_handle.and_then(|app_handle| {
+        app_handle
+            .try_state::<SessionRegistry>()
+            .map(|state| state.inner())
+    }) {
+        session_registry.bind_provider_session_id(session_id, provider_session_id)?;
+    }
+
+    if let Some(db) = db {
+        crate::db::repository::SessionMetadataRepository::set_provider_session_id(
+            db,
+            session_id,
+            provider_session_id,
+        )
+        .await
+        .map_err(|error| {
+            AcpError::InvalidState(format!(
+                "failed to persist provider session binding for {}: {}",
+                redact_session_id(session_id),
+                error
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::acp::client::{
+        InitializeResponse, ListSessionsResponse, NewSessionResponse, ResumeSessionResponse,
+    };
+    use crate::acp::client_trait::AgentClient;
+    use crate::acp::error::AcpResult;
+    use crate::acp::types::PromptRequest;
+    use async_trait::async_trait;
+    use serde_json::Value;
+
+    struct NoopClient;
+
+    #[async_trait]
+    impl AgentClient for NoopClient {
+        async fn start(&mut self) -> AcpResult<()> {
+            Ok(())
+        }
+
+        async fn initialize(&mut self) -> AcpResult<InitializeResponse> {
+            Ok(InitializeResponse {
+                protocol_version: 1,
+                agent_capabilities: serde_json::json!({}),
+                agent_info: serde_json::json!({}),
+                auth_methods: vec![],
+            })
+        }
+
+        async fn new_session(&mut self, _cwd: String) -> AcpResult<NewSessionResponse> {
+            unreachable!()
+        }
+
+        async fn resume_session(
+            &mut self,
+            _session_id: String,
+            _cwd: String,
+        ) -> AcpResult<ResumeSessionResponse> {
+            unreachable!()
+        }
+
+        async fn fork_session(
+            &mut self,
+            _session_id: String,
+            _cwd: String,
+        ) -> AcpResult<NewSessionResponse> {
+            unreachable!()
+        }
+
+        async fn set_session_model(
+            &mut self,
+            _session_id: String,
+            _model_id: String,
+        ) -> AcpResult<()> {
+            Ok(())
+        }
+
+        async fn set_session_mode(
+            &mut self,
+            _session_id: String,
+            _mode_id: String,
+        ) -> AcpResult<()> {
+            Ok(())
+        }
+
+        async fn send_prompt(&mut self, _request: PromptRequest) -> AcpResult<Value> {
+            Ok(serde_json::json!({}))
+        }
+
+        async fn cancel(&mut self, _session_id: String) -> AcpResult<()> {
+            Ok(())
+        }
+
+        async fn list_sessions(&mut self, _cwd: Option<String>) -> AcpResult<ListSessionsResponse> {
+            Ok(ListSessionsResponse {
+                sessions: vec![],
+                next_cursor: None,
+            })
+        }
+
+        fn stop(&mut self) {}
+    }
+
+    #[test]
+    fn bind_provider_session_id_updates_live_descriptor() {
+        let registry = SessionRegistry::new();
+        registry.store_descriptor(
+            "session-1".to_string(),
+            Box::new(NoopClient),
+            LiveSessionDescriptor::new(CanonicalAgentId::ClaudeCode, None),
+        );
+
+        registry
+            .bind_provider_session_id("session-1", "provider-1")
+            .expect("binding should succeed");
+
+        assert_eq!(
+            registry
+                .get_descriptor("session-1")
+                .expect("descriptor")
+                .provider_session_id
+                .as_deref(),
+            Some("provider-1")
+        );
+    }
+
+    #[test]
+    fn bind_provider_session_id_rejects_conflicts() {
+        let registry = SessionRegistry::new();
+        registry.store_descriptor(
+            "session-1".to_string(),
+            Box::new(NoopClient),
+            LiveSessionDescriptor::new(
+                CanonicalAgentId::ClaudeCode,
+                Some("provider-1".to_string()),
+            ),
+        );
+
+        let error = registry
+            .bind_provider_session_id("session-1", "provider-2")
+            .expect_err("conflict should fail");
+
+        assert!(matches!(error, AcpError::InvalidState(_)));
     }
 }
 

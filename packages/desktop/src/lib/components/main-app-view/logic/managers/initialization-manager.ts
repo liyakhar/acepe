@@ -511,8 +511,7 @@ export class InitializationManager {
 		sourcePath?: string | null;
 	}): boolean {
 		const projectPath = panel.projectPath;
-		const resolvedAgentId = panel.agentId ? panel.agentId : panel.selectedAgentId;
-		if (!panel.sessionId || !projectPath || !resolvedAgentId) {
+		if (!panel.sessionId || !projectPath) {
 			return false;
 		}
 
@@ -580,8 +579,8 @@ export class InitializationManager {
 
 	/**
 	 * Pre-loads panel session content in parallel with the sidebar scan.
-	 * Panels already have sessionId + projectPath + agentId from workspace persistence.
-	 * loadSessionById handles transient loading shells, state machines, and error recovery.
+	 * Prefer canonical session metadata loaded from the backend; persisted panel fields
+	 * are only fallback hints for sessions that have not been hydrated yet.
 	 */
 	private earlyPreloadPanelSessions(): void {
 		for (const panel of this.panelStore.panels) {
@@ -589,11 +588,11 @@ export class InitializationManager {
 			if (this.sessionStore.isPreloaded(panel.sessionId)) continue;
 
 			const session = this.sessionStore.getSessionCold(panel.sessionId);
-			const projectPath = panel.projectPath ?? session?.projectPath;
-			const agentId = panel.agentId ?? session?.agentId;
-			const sourcePath = panel.sourcePath ?? session?.sourcePath;
-			const worktreePath = panel.worktreePath ?? session?.worktreePath;
-			const sessionTitle = panel.sessionTitle ?? session?.title;
+			const projectPath = session?.projectPath ?? panel.projectPath;
+			const agentId = session?.agentId ?? panel.agentId;
+			const sourcePath = session?.sourcePath ?? panel.sourcePath;
+			const worktreePath = session?.worktreePath ?? panel.worktreePath;
+			const sessionTitle = session?.title ?? panel.sessionTitle;
 
 			if (!projectPath || !agentId) continue;
 

@@ -5,20 +5,11 @@
   Matches plan dialog, agent panel header/footer, and create plan card design.
 -->
 <script lang="ts">
+import { BrandShaderBackground } from "@acepe/ui";
 import { EmbeddedIconButton, EmbeddedPanelHeader, HeaderTitleCell } from "@acepe/ui/panel-header";
 import { Colors } from "@acepe/ui/colors";
-import {
-	GrainGradientShapes,
-	type GrainGradientUniforms,
-	getShaderColorFromString,
-	getShaderNoiseTexture,
-	grainGradientFragmentShader,
-	ShaderFitOptions,
-	ShaderMount,
-} from "@paper-design/shaders";
 import { ArrowsClockwise } from "phosphor-svelte";
 import { WarningCircle } from "phosphor-svelte";
-import { onDestroy, onMount } from "svelte";
 import * as m from "$lib/paraglide/messages.js";
 
 interface Props {
@@ -28,76 +19,11 @@ interface Props {
 }
 
 let { error, onRetry, onCancel }: Props = $props();
-
-let shaderContainer: HTMLDivElement | null = $state(null);
-let shaderMountRef: ShaderMount | null = null;
-
-onMount(() => {
-	if (!shaderContainer) return;
-	initShader();
-});
-
-async function initShader() {
-	if (!shaderContainer) return;
-
-	try {
-		const noiseTexture = getShaderNoiseTexture();
-
-		if (noiseTexture && !noiseTexture.complete) {
-			await new Promise<void>((resolve, reject) => {
-				noiseTexture.onload = () => resolve();
-				noiseTexture.onerror = () => reject(new Error("Failed to load shader noise texture"));
-			});
-		}
-
-		const containerWidth = shaderContainer.offsetWidth;
-		const containerHeight = shaderContainer.offsetHeight;
-
-		shaderMountRef = new ShaderMount(
-			shaderContainer,
-			grainGradientFragmentShader,
-			{
-				u_colorBack: getShaderColorFromString("#1a1a1a"),
-				u_colors: [
-					getShaderColorFromString("#F77E2C"),
-					getShaderColorFromString("#ff8558"),
-					getShaderColorFromString("#d69d5c"),
-					getShaderColorFromString("#ffb380"),
-				],
-				u_colorsCount: 4,
-				u_softness: 0.3,
-				u_intensity: 0.8,
-				u_noise: 0.15,
-				u_shape: GrainGradientShapes.corners,
-				u_noiseTexture: noiseTexture,
-				u_fit: ShaderFitOptions.cover,
-				u_scale: 1,
-				u_rotation: 0,
-				u_originX: 0.5,
-				u_originY: 0.5,
-				u_offsetX: 0,
-				u_offsetY: 0,
-				u_worldWidth: containerWidth,
-				u_worldHeight: containerHeight,
-			} satisfies Partial<GrainGradientUniforms>,
-			{ alpha: false, premultipliedAlpha: false },
-			0.5
-		);
-	} catch (err) {
-		console.error("[ConnectionErrorUI] Failed to initialize shader:", err);
-	}
-}
-
-onDestroy(() => {
-	shaderMountRef?.dispose();
-});
 </script>
 
 <div class="relative h-full min-h-0 overflow-hidden">
 	<!-- Shader background layer -->
-	<div class="absolute inset-0 bg-[#1a1a1a]">
-		<div bind:this={shaderContainer} class="absolute inset-0"></div>
-	</div>
+	<BrandShaderBackground />
 
 	<!-- Content layer: centered card -->
 	<div

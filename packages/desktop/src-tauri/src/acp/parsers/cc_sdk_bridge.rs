@@ -5,12 +5,12 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use super::{AgentType, get_parser};
+use super::{get_parser, AgentType};
 use crate::acp::session_update::{
-    ContentChunk, QuestionData, RawToolCallInput, RawToolCallUpdateInput, SessionUpdate,
-    ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference,
-    TurnErrorData, UsageTelemetryData, UsageTelemetryTokens, build_tool_call_from_raw,
-    build_tool_call_update_from_raw,
+    build_tool_call_from_raw, build_tool_call_update_from_raw, ContentChunk, QuestionData,
+    RawToolCallInput, RawToolCallUpdateInput, SessionUpdate, ToolArguments, ToolCallData,
+    ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData, UsageTelemetryData,
+    UsageTelemetryTokens,
 };
 use crate::acp::types::ContentBlock;
 use cc_sdk::Message;
@@ -807,13 +807,13 @@ fn build_result_telemetry(
 #[cfg(test)]
 mod tests {
     use super::{
-        CcSdkTurnStreamState, translate_cc_sdk_message, translate_cc_sdk_message_with_turn_state,
+        translate_cc_sdk_message, translate_cc_sdk_message_with_turn_state, CcSdkTurnStreamState,
     };
     use crate::acp::agent_context::with_agent;
     use crate::acp::parsers::AgentType;
     use crate::acp::session_update::{
-        RawToolCallUpdateInput, SessionUpdate, ToolArguments, ToolCallStatus, ToolKind,
-        build_tool_call_update_from_raw,
+        build_tool_call_update_from_raw, RawToolCallUpdateInput, SessionUpdate, ToolArguments,
+        ToolCallStatus, ToolKind,
     };
     use crate::acp::types::ContentBlock;
     use cc_sdk::{

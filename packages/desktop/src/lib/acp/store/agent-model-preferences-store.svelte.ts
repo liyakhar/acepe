@@ -13,7 +13,12 @@
 
 import { okAsync, ResultAsync } from "neverthrow";
 import { tauriClient } from "$lib/utils/tauri-client.js";
-import type { ModelsForDisplay } from "../../services/acp-types.js";
+import {
+	normalizeModelsForDisplay,
+	type ModelsForDisplay,
+	type ProviderMetadataProjection,
+	resolveProviderMetadataProjection,
+} from "../../services/acp-types.js";
 import type { Mode } from "../application/dto/mode.js";
 import type { Model } from "../application/dto/model.js";
 import type { AppError } from "../errors/app-error.js";
@@ -35,6 +40,7 @@ const AGENT_DEFAULT_MODELS_KEY = "agent_default_models";
 const AGENT_FAVORITE_MODELS_KEY = "agent_favorite_models";
 const AGENT_AVAILABLE_MODELS_CACHE_KEY = "agent_available_models_cache";
 const AGENT_AVAILABLE_MODELS_DISPLAY_CACHE_KEY = "agent_available_models_display_cache";
+const AGENT_PROVIDER_METADATA_CACHE_KEY = "agent_provider_metadata_cache";
 const AGENT_AVAILABLE_MODES_CACHE_KEY = "agent_available_modes_cache";
 const SESSION_MODEL_PER_MODE_KEY = "session_model_per_mode";
 const PR_GENERATION_PREFS_KEY = "pr_generation_preferences";
@@ -52,6 +58,7 @@ let defaults = $state<Record<string, AgentDefaultModels>>({});
 let favorites = $state<Record<string, string[]>>({});
 let availableModelsCache = $state<Record<string, Model[]>>({});
 let availableModelsDisplayCache = $state<Record<string, ModelsForDisplay>>({});
+let availableProviderMetadataCache = $state<Record<string, ProviderMetadataProjection>>({});
 let availableModesCache = $state<Record<string, Mode[]>>({});
 let sessionModelPerMode = $state<SessionModelPerMode>({});
 let prGenerationPrefs = $state<PrGenerationPreferences>({});
@@ -149,7 +156,21 @@ export function updateModelsCache(agentId: string, models: Model[]): void {
  * Get cached display-ready model groups for a specific agent.
  */
 export function getCachedModelsDisplay(agentId: string): ModelsForDisplay | null {
-	return availableModelsDisplayCache[agentId] ?? null;
+	return normalizeModelsForDisplay(
+		agentId,
+		availableModelsDisplayCache[agentId] ?? null,
+		undefined,
+		getCachedProviderMetadata(agentId)
+	);
+}
+
+export function getCachedProviderMetadata(agentId: string): ProviderMetadataProjection | null {
+	const providerMetadata = availableProviderMetadataCache[agentId];
+	if (!providerMetadata) {
+		return null;
+	}
+
+	return resolveProviderMetadataProjection(agentId, providerMetadata, agentId);
 }
 
 /**
@@ -158,14 +179,38 @@ export function getCachedModelsDisplay(agentId: string): ModelsForDisplay | null
  */
 export function updateModelsDisplayCache(
 	agentId: string,
-	modelsDisplay: ModelsForDisplay | undefined
+	modelsDisplay: ModelsForDisplay | undefined,
+	providerMetadata?: ProviderMetadataProjection | null
 ): void {
-	if (modelsDisplay) {
-		availableModelsDisplayCache[agentId] = modelsDisplay;
+	const normalizedModelsDisplay = normalizeModelsForDisplay(
+		agentId,
+		modelsDisplay ?? null,
+		undefined,
+		providerMetadata ?? getCachedProviderMetadata(agentId)
+	);
+	if (normalizedModelsDisplay) {
+		availableModelsDisplayCache[agentId] = normalizedModelsDisplay;
 	} else {
 		delete availableModelsDisplayCache[agentId];
 	}
 	persistModelsDisplayCache();
+}
+
+export function updateProviderMetadataCache(
+	agentId: string,
+	providerMetadata: ProviderMetadataProjection | undefined
+): void {
+	if (providerMetadata) {
+		availableProviderMetadataCache[agentId] = resolveProviderMetadataProjection(
+			agentId,
+			providerMetadata,
+			agentId
+		);
+	} else {
+		delete availableProviderMetadataCache[agentId];
+	}
+
+	persistProviderMetadataCache();
 }
 
 /**
@@ -335,13 +380,47 @@ export function loadPersistedState(): ResultAsync<void, AppError> {
 		})
 		.orElse(() => okAsync(undefined));
 
+	const providerMetadataCacheLoad = tauriClient.settings
+		.get<Record<string, ProviderMetadataProjection>>(AGENT_PROVIDER_METADATA_CACHE_KEY)
+		.map((persisted) => {
+			if (persisted && typeof persisted === "object") {
+				const normalizedPersisted: Record<string, ProviderMetadataProjection> = {};
+				for (const [agentId, providerMetadata] of Object.entries(persisted)) {
+					normalizedPersisted[agentId] = resolveProviderMetadataProjection(
+						agentId,
+						providerMetadata,
+						agentId
+					);
+				}
+				availableProviderMetadataCache = normalizedPersisted;
+				logger_instance.debug("Loaded cached provider metadata", {
+					agents: Object.keys(normalizedPersisted).length,
+				});
+			}
+			return undefined;
+		})
+		.mapErr((err) => {
+			logger_instance.debug("No cached provider metadata found (expected on first run)", {
+				error: err.message,
+			});
+			return err;
+		})
+		.orElse(() => okAsync(undefined));
+
 	const modelsDisplayCacheLoad = tauriClient.settings
 		.get<Record<string, ModelsForDisplay>>(AGENT_AVAILABLE_MODELS_DISPLAY_CACHE_KEY)
 		.map((persisted) => {
 			if (persisted && typeof persisted === "object") {
-				availableModelsDisplayCache = persisted;
+				const normalizedPersisted: Record<string, ModelsForDisplay> = {};
+				for (const [agentId, modelsDisplay] of Object.entries(persisted)) {
+					const normalizedModelsDisplay = normalizeModelsForDisplay(agentId, modelsDisplay);
+					if (normalizedModelsDisplay) {
+						normalizedPersisted[agentId] = normalizedModelsDisplay;
+					}
+				}
+				availableModelsDisplayCache = normalizedPersisted;
 				logger_instance.debug("Loaded cached available models display", {
-					agents: Object.keys(persisted).length,
+					agents: Object.keys(normalizedPersisted).length,
 				});
 			}
 			return undefined;
@@ -396,6 +475,7 @@ export function loadPersistedState(): ResultAsync<void, AppError> {
 		defaultsLoad,
 		favoritesLoad,
 		modelsCacheLoad,
+		providerMetadataCacheLoad,
 		modelsDisplayCacheLoad,
 		modesCacheLoad,
 		sessionModelsLoad,
@@ -420,6 +500,19 @@ function persistDefaults(): void {
 		.set<Record<string, AgentDefaultModels>>(AGENT_DEFAULT_MODELS_KEY, defaults)
 		.mapErr((err) => {
 			logger_instance.error("Failed to persist default models", { error: err.message });
+		});
+}
+
+function persistProviderMetadataCache(): void {
+	tauriClient.settings
+		.set<Record<string, ProviderMetadataProjection>>(
+			AGENT_PROVIDER_METADATA_CACHE_KEY,
+			availableProviderMetadataCache
+		)
+		.mapErr((err) => {
+			logger_instance.error("Failed to persist provider metadata cache", {
+				error: err.message,
+			});
 		});
 }
 

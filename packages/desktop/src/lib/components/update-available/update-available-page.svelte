@@ -1,16 +1,7 @@
 <script lang="ts">
-	import { TextShimmer } from "@acepe/ui";
-	import {
-		GrainGradientShapes,
-		type GrainGradientUniforms,
-		getShaderColorFromString,
-		getShaderNoiseTexture,
-		grainGradientFragmentShader,
-		ShaderFitOptions,
-		ShaderMount,
-	} from "@paper-design/shaders";
+	import { BrandLockup, BrandShaderBackground, TextShimmer } from "@acepe/ui";
 	import RefreshCw from "@lucide/svelte/icons/refresh-cw";
-	import { onDestroy, onMount } from "svelte";
+	import { onMount } from "svelte";
 	import {
 		isUpdaterInstallInProgress,
 		type UpdaterBannerState,
@@ -19,7 +10,6 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Spinner } from "$lib/components/ui/spinner/index.js";
 	import * as m from "$lib/paraglide/messages.js";
-	import splashLogo from "../../../../../../assets/logo.svg?url";
 
 	const UPDATE_PROGRESS_SEGMENT_COUNT = 96;
 
@@ -30,9 +20,6 @@
 	}
 
 	let { updaterState, onRetry, onDismiss }: Props = $props();
-
-	let shaderContainer: HTMLDivElement | null = $state(null);
-	let shaderMountRef: ShaderMount | null = null;
 
 	const downloadPercent = $derived(
 		updaterState.kind === "installing"
@@ -56,7 +43,6 @@
 	}
 
 	onMount(() => {
-		void initShader();
 		if (onDismiss) {
 			const handleKeydown = (event: KeyboardEvent) => {
 				if (event.key === "Escape") {
@@ -69,62 +55,10 @@
 		}
 	});
 
-	async function initShader() {
-		if (!shaderContainer) return;
-
-		const noiseTexture = getShaderNoiseTexture();
-
-		if (noiseTexture && !noiseTexture.complete) {
-			await new Promise<void>((resolve, reject) => {
-				noiseTexture.onload = () => resolve();
-				noiseTexture.onerror = () => reject(new Error("Failed to load noise texture"));
-			});
-		}
-
-		const containerWidth = shaderContainer.offsetWidth;
-		const containerHeight = shaderContainer.offsetHeight;
-
-		shaderMountRef = new ShaderMount(
-			shaderContainer,
-			grainGradientFragmentShader,
-			{
-				u_colorBack: getShaderColorFromString("#1a1a1a"),
-				u_colors: [
-					getShaderColorFromString("#99FFE4"),
-					getShaderColorFromString("#FFC799"),
-					getShaderColorFromString("#99FFE4"),
-					getShaderColorFromString("#FFC799"),
-				],
-				u_colorsCount: 4,
-				u_softness: 0.3,
-				u_intensity: 0.8,
-				u_noise: 0.15,
-				u_shape: GrainGradientShapes.corners,
-				u_noiseTexture: noiseTexture,
-				u_fit: ShaderFitOptions.cover,
-				u_scale: 1,
-				u_rotation: 0,
-				u_originX: 0.5,
-				u_originY: 0.5,
-				u_offsetX: 0,
-				u_offsetY: 0,
-				u_worldWidth: containerWidth,
-				u_worldHeight: containerHeight,
-			} satisfies Partial<GrainGradientUniforms>,
-			{ alpha: false, premultipliedAlpha: false },
-			0.5
-		);
-	}
-
-	onDestroy(() => {
-		shaderMountRef?.dispose();
-	});
 </script>
 
 <!-- Shader background layer -->
-<div class="absolute inset-0 bg-[#1a1a1a]">
-	<div bind:this={shaderContainer} class="absolute inset-0"></div>
-</div>
+<BrandShaderBackground />
 
 <!-- Content layer -->
 <div
@@ -136,10 +70,11 @@
 		<div class="flex flex-col gap-2 p-4 pb-3">
 			<!-- Logo + version -->
 			<div class="flex items-center justify-between">
-				<div class="flex items-center gap-2.5">
-					<img src={splashLogo} alt="" aria-hidden="true" class="h-7 w-7 object-contain" />
-					<span class="text-[15px] font-semibold tracking-[0.18em] text-foreground">ACEPE</span>
-				</div>
+				<BrandLockup
+					class="gap-2.5"
+					markClass="h-7 w-7"
+					wordmarkClass="text-[15px] text-foreground"
+				/>
 				{#if updaterState.kind === "available" || updaterState.kind === "downloading" || updaterState.kind === "installing"}
 					<span class="rounded-full bg-muted/40 px-2 py-0.5 font-mono text-[10px] text-muted-foreground/50">
 						v{updaterState.version}

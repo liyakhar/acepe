@@ -1,7 +1,6 @@
 <script lang="ts">
+import { BrandLockup } from "@acepe/ui";
 import * as m from "$lib/paraglide/messages.js";
-import AppName from "$lib/components/app-name.svelte";
-import Logo from "$lib/components/logo.svelte";
 import { browser } from "$app/environment";
 import { page } from "$app/stores";
 import { Download, Menu, Moon, Sun } from "@lucide/svelte";
@@ -69,8 +68,7 @@ const mobileNavLinkClass =
 				href="/"
 				class="flex items-center gap-2 rounded-full px-2 py-1 transition-colors hover:bg-card/70"
 			>
-				<Logo class="h-6 w-6" />
-				<AppName />
+				<BrandLockup class="gap-2" markClass="h-6 w-6" wordmarkClass="text-sm text-foreground" />
 			</a>
 		</div>
 
@@ -177,8 +175,11 @@ const mobileNavLinkClass =
 								class="flex items-center gap-2 rounded-full px-2 py-1 transition-colors hover:bg-card/70"
 								onclick={() => (drawerOpen = false)}
 							>
-							<Logo class="h-6 w-6" />
-								<AppName />
+								<BrandLockup
+									class="gap-2"
+									markClass="h-6 w-6"
+									wordmarkClass="text-sm text-foreground"
+								/>
 							</a>
 							<div class="flex items-center gap-2">
 							<a

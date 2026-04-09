@@ -1,9 +1,18 @@
-use super::super::provider::{command_exists, AgentProvider, ModelFallbackCandidate, SpawnConfig};
+use super::super::provider::{
+    command_exists, AgentProvider, ModelFallbackCandidate, ProjectDiscoveryCompleteness,
+    ProjectPathListing, SpawnConfig,
+};
 use super::claude_code_settings::resolve_claude_runtime_mode_id;
 use crate::acp::client_trait::CommunicationMode;
+use crate::acp::session_descriptor::SessionReplayContext;
 use crate::acp::task_reconciler::TaskReconciliationPolicy;
 use crate::acp::{agent_installer, types::CanonicalAgentId};
+use crate::history::session_context::SessionContext;
+use crate::session_jsonl::types::ConvertedSession;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use tauri::AppHandle;
 
 const CLAUDE_OPUS_MODEL_ID: &str = "claude-opus-4-6";
 const CLAUDE_SONNET_MODEL_ID: &str = "claude-sonnet-4-6";
@@ -137,6 +146,77 @@ impl AgentProvider for ClaudeCodeProvider {
     fn task_reconciliation_policy(&self) -> TaskReconciliationPolicy {
         TaskReconciliationPolicy::ExplicitParentIds
     }
+
+    fn load_provider_owned_session<'a>(
+        &'a self,
+        _app: &'a AppHandle,
+        context: &'a SessionContext,
+        _replay_context: &'a SessionReplayContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ConvertedSession>, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let session_id = &context.local_session_id;
+
+            match crate::session_jsonl::parser::parse_full_session(
+                &context.history_session_id,
+                &context.effective_project_path,
+            )
+            .await
+            {
+                Ok(full_session) => Ok(Some(
+                    crate::session_converter::convert_claude_full_session_to_entries(&full_session),
+                )),
+                Err(_) if context.effective_project_path != context.project_path => {
+                    match crate::session_jsonl::parser::parse_full_session(
+                        &context.history_session_id,
+                        &context.project_path,
+                    )
+                    .await
+                    {
+                        Ok(full_session) => Ok(Some(
+                            crate::session_converter::convert_claude_full_session_to_entries(
+                                &full_session,
+                            ),
+                        )),
+                        Err(error) => {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                error = %error,
+                                "Claude session parse failed (both worktree and project paths)"
+                            );
+                            Ok(None)
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %error,
+                        "Claude session parse failed"
+                    );
+                    Ok(None)
+                }
+            }
+        })
+    }
+
+    fn list_project_paths<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProjectPathListing, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let paths = list_claude_project_paths().await?;
+            Ok(ProjectPathListing {
+                paths,
+                completeness: ProjectDiscoveryCompleteness::Complete,
+            })
+        })
+    }
+
+    fn count_sessions_for_project<'a>(
+        &'a self,
+        project_path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<u32, String>> + Send + 'a>> {
+        Box::pin(async move { count_claude_sessions_for_project(project_path).await })
+    }
 }
 
 fn resolve_claude_spawn_configs() -> Vec<SpawnConfig> {
@@ -194,6 +274,124 @@ fn resolve_claude_spawn_configs() -> Vec<SpawnConfig> {
 
 fn claude_env() -> std::collections::HashMap<String, String> {
     crate::shell_env::build_env(crate::shell_env::EnvStrategy::FullInherit)
+}
+
+async fn read_cwd_from_project_dir(project_dir: &std::path::Path) -> Option<String> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let mut read_dir = tokio::fs::read_dir(project_dir).await.ok()?;
+
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.ends_with(".jsonl") {
+            continue;
+        }
+
+        let file = match tokio::fs::File::open(entry.path()).await {
+            Ok(file) => file,
+            Err(_) => continue,
+        };
+
+        let mut lines = BufReader::new(file).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                if let Some(cwd) = json.get("cwd").and_then(|value| value.as_str()) {
+                    if !cwd.is_empty() {
+                        return Some(cwd.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+async fn list_claude_project_paths() -> Result<Vec<String>, String> {
+    use crate::session_jsonl::parser::get_session_jsonl_root;
+
+    let jsonl_root = get_session_jsonl_root()
+        .map_err(|error| format!("Failed to get session jsonl root: {error}"))?;
+    let projects_dir = jsonl_root.join("projects");
+
+    if !projects_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut project_paths = Vec::new();
+    let mut read_dir = tokio::fs::read_dir(&projects_dir)
+        .await
+        .map_err(|error| format!("Failed to read projects directory: {error}"))?;
+
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .map_err(|error| format!("Failed to read directory entry: {error}"))?
+    {
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if file_name_str.starts_with('.') || file_name_str == "global" {
+            continue;
+        }
+
+        if !entry
+            .file_type()
+            .await
+            .map_err(|error| format!("Failed to get file type: {error}"))?
+            .is_dir()
+        {
+            continue;
+        }
+
+        if let Some(cwd) = read_cwd_from_project_dir(&entry.path()).await {
+            project_paths.push(cwd);
+        }
+    }
+
+    Ok(project_paths)
+}
+
+async fn count_claude_sessions_for_project(project_path: &str) -> Result<u32, String> {
+    use crate::session_jsonl::parser::{get_session_jsonl_root, path_to_slug};
+
+    let jsonl_root = get_session_jsonl_root()
+        .map_err(|error| format!("Failed to get session jsonl root: {error}"))?;
+    let project_dir = jsonl_root.join("projects").join(path_to_slug(project_path));
+
+    if !project_dir.exists() || !project_dir.is_dir() {
+        return Ok(0);
+    }
+
+    let mut count = 0u32;
+    let mut read_dir = tokio::fs::read_dir(&project_dir)
+        .await
+        .map_err(|error| format!("Failed to read project directory {project_path}: {error}"))?;
+
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .map_err(|error| format!("Failed to read directory entry: {error}"))?
+    {
+        if !entry
+            .file_type()
+            .await
+            .map_err(|error| format!("Failed to get file type: {error}"))?
+            .is_file()
+        {
+            continue;
+        }
+
+        if entry.file_name().to_string_lossy().ends_with(".jsonl") {
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }
 
 fn push_unique_spawn_config(configs: &mut Vec<SpawnConfig>, candidate: SpawnConfig) {
