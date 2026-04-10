@@ -404,7 +404,7 @@ fn tool_arguments_detail_score(arguments: &ToolArguments) -> usize {
             file_path,
             file_paths,
         } => usize::from(
-            file_path.is_some() || file_paths.as_ref().is_some_and(|paths| !paths.is_empty())
+            file_path.is_some() || file_paths.as_ref().is_some_and(|paths| !paths.is_empty()),
         ),
         ToolArguments::PlanMode { mode } => usize::from(mode.is_some()),
         ToolArguments::ToolSearch { query, max_results } => {

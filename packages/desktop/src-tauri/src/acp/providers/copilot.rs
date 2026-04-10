@@ -107,23 +107,29 @@ impl AgentProvider for CopilotProvider {
             let agents_root = cwd.join(".agents");
             let skills_root = agents_root.join("skills");
             let nested_skill_commands =
-                crate::acp::preconnection_slash::load_preconnection_commands_from_root(&skills_root)
-                    .await?;
+                crate::acp::preconnection_slash::load_preconnection_commands_from_root(
+                    &skills_root,
+                )
+                .await?;
             let nested_agent_commands =
-                crate::acp::preconnection_slash::load_preconnection_commands_from_root(&agents_root)
-                    .await?;
+                crate::acp::preconnection_slash::load_preconnection_commands_from_root(
+                    &agents_root,
+                )
+                .await?;
             let flat_agent_commands =
                 crate::acp::preconnection_slash::load_preconnection_commands_from_flat_markdown_root(
                     &agents_root,
                 )
                 .await?;
 
-            Ok(crate::acp::preconnection_slash::dedupe_preconnection_commands(
-                nested_skill_commands
-                    .into_iter()
-                    .chain(nested_agent_commands)
-                    .chain(flat_agent_commands),
-            ))
+            Ok(
+                crate::acp::preconnection_slash::dedupe_preconnection_commands(
+                    nested_skill_commands
+                        .into_iter()
+                        .chain(nested_agent_commands)
+                        .chain(flat_agent_commands),
+                ),
+            )
         })
     }
 

@@ -3,7 +3,7 @@
    * SqlStudioSidebar — Connections list + schema tree sidebar.
    * Matches the git panel's dense, monospace design language.
    */
-  import { CaretRight, FolderSimple, Table as TableIcon, Trash, Plus, Key } from "phosphor-svelte";
+  import { CaretRight, Table as TableIcon, Trash, Plus, Key } from "phosphor-svelte";
   import { TAG_COLORS } from "../../lib/colors.js";
   import { cn } from "../../lib/utils.js";
   import type { SqlConnection, SqlSchemaInfo } from "./types.js";
@@ -14,14 +14,10 @@
     schema: SqlSchemaInfo[];
     selectedSchemaName: string | null;
     selectedTableName: string | null;
-    mode?: "sql" | "s3";
-    s3Buckets?: readonly { name: string; creationDate: string | null }[];
-    selectedS3Bucket?: string | null;
     onConnectionSelect: (id: string) => void;
     onConnectionCreate: () => void;
     onConnectionDelete: (id: string) => void;
     onTableSelect: (schemaName: string, tableName: string) => void;
-    onS3BucketSelect?: (bucketName: string) => void;
     class?: string;
   }
 
@@ -31,14 +27,10 @@
     schema,
     selectedSchemaName,
     selectedTableName,
-    mode = "sql",
-    s3Buckets = [],
-    selectedS3Bucket = null,
     onConnectionSelect,
     onConnectionCreate,
     onConnectionDelete,
     onTableSelect,
-    onS3BucketSelect,
     class: className,
   }: Props = $props();
 
@@ -138,7 +130,7 @@
     </div>
 
     <!-- SQL Schema tree -->
-    {#if mode === "sql" && schema.length > 0}
+    {#if schema.length > 0}
       <div class="space-y-1 pt-2 border-t border-border/30">
         <span
           class="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground px-1"
@@ -230,49 +222,5 @@
       </div>
     {/if}
 
-    <!-- S3 Buckets -->
-    {#if mode === "s3"}
-      <div class="space-y-1 pt-2 border-t border-border/30">
-        <span
-          class="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground px-1"
-        >
-          Buckets
-        </span>
-        {#if s3Buckets.length === 0}
-          <div class="px-2 py-2 text-[0.6875rem] text-muted-foreground">
-            No buckets found.
-          </div>
-        {:else}
-          {#each s3Buckets as bucket (bucket.name)}
-            <button
-              type="button"
-              class={cn(
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors",
-                selectedS3Bucket === bucket.name
-                  ? "bg-muted/60"
-                  : "hover:bg-muted/40",
-              )}
-              onclick={() => onS3BucketSelect?.(bucket.name)}
-            >
-              <FolderSimple
-                size={12}
-                weight="bold"
-                class="shrink-0 text-primary"
-              />
-              <div class="min-w-0 flex-1">
-                <p class="font-mono text-[0.6875rem] truncate">{bucket.name}</p>
-                {#if bucket.creationDate}
-                  <p
-                    class="font-mono text-[0.5625rem] text-muted-foreground truncate mt-0.5"
-                  >
-                    {bucket.creationDate}
-                  </p>
-                {/if}
-              </div>
-            </button>
-          {/each}
-        {/if}
-      </div>
-    {/if}
   </div>
 </div>

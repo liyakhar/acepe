@@ -30,7 +30,10 @@ pub async fn acp_list_preconnection_commands(
         return Ok(Vec::new());
     };
 
-    let cwd = resolve_preconnection_cwd(provider.frontend_projection().preconnection_slash_mode, &cwd)?;
+    let cwd = resolve_preconnection_cwd(
+        provider.frontend_projection().preconnection_slash_mode,
+        &cwd,
+    )?;
     let commands = provider
         .list_preconnection_commands(&app, cwd.as_deref())
         .await

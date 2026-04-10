@@ -608,7 +608,12 @@ export class SessionRepository {
 					// (earlyPreloadPanelSessions doesn't have worktreePath in panel state).
 					// Preserve any existing value; fall back to what the scan found.
 					// Matches the pattern in refreshSessionsFromScan (line 194).
+					sourcePath: historySession.sourcePath ?? existingSession.sourcePath,
+					sessionLifecycleState:
+						historySession.sessionLifecycleState ?? existingSession.sessionLifecycleState,
+					parentId: historySession.parentId ?? existingSession.parentId,
 					worktreePath: existingSession.worktreePath ?? historySession.worktreePath,
+					prNumber: historySession.prNumber ?? existingSession.prNumber,
 					sequenceId: existingSession.sequenceId ?? historySession.sequenceId,
 					title,
 					updatedAt: historySession.updatedAt,

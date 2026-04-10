@@ -13,7 +13,7 @@ use crate::acp::session_update::{
     UsageTelemetryTokens,
 };
 use crate::acp::types::ContentBlock;
-use cc_sdk::Message;
+use crate::cc_sdk::{self as cc_sdk, Message};
 
 #[derive(Debug, Clone, Default)]
 pub struct CcSdkTurnStreamState {
@@ -802,7 +802,7 @@ mod tests {
         ToolCallStatus, ToolKind,
     };
     use crate::acp::types::ContentBlock;
-    use cc_sdk::{
+    use crate::cc_sdk::{
         AssistantMessage, ContentBlock as CcContentBlock, Message, TextContent, ThinkingContent,
     };
 
@@ -1841,11 +1841,13 @@ mod tests {
 
         // The bridge should synthesize a Completed update, not Failed.
         // The CLI handled the tool — the bridge should not second-guess it.
-        let synthetic_update = updates.iter().find(|update| matches!(
-            update,
-            SessionUpdate::ToolCallUpdate { update, .. }
-                if update.tool_call_id == "toolu_auto_bash"
-        ));
+        let synthetic_update = updates.iter().find(|update| {
+            matches!(
+                update,
+                SessionUpdate::ToolCallUpdate { update, .. }
+                    if update.tool_call_id == "toolu_auto_bash"
+            )
+        });
 
         assert!(
             synthetic_update.is_some(),

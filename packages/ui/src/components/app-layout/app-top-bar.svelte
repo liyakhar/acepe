@@ -30,6 +30,8 @@
 		showAddProject?: boolean;
 		/** Toggle the leading border on the right action rail */
 		showRightSectionLeadingBorder?: boolean;
+		/** Toggle the center search/command palette button */
+		showSearch?: boolean;
 	}
 
 	const ICON = "size-4";
@@ -49,6 +51,7 @@
 		showSidebarToggle = true,
 		showAddProject = true,
 		showRightSectionLeadingBorder = true,
+		showSearch = true,
 	}: Props = $props();
 </script>
 
@@ -104,7 +107,9 @@
 		class="flex-1 flex justify-center"
 		data-tauri-drag-region={windowDraggable || undefined}
 	>
-		<AppSearchButton label={searchLabel} onclick={onSearch} />
+		{#if showSearch}
+			<AppSearchButton label={searchLabel} onclick={onSearch} />
+		{/if}
 	</div>
 
 	<!-- Right: extra actions + settings + avatar -->

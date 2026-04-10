@@ -13,11 +13,7 @@ import {
 } from "@acepe/ui/panel-header";
 import type { SqlConnection, SqlFilterOperator, SqlSchemaInfo } from "@acepe/ui/sql-studio";
 import { SqlStudioLayout } from "@acepe/ui/sql-studio";
-import { ArrowCounterClockwise } from "phosphor-svelte";
-import { ArrowUp } from "phosphor-svelte";
 import { Database } from "phosphor-svelte";
-import { DownloadSimple } from "phosphor-svelte";
-import { Eye } from "phosphor-svelte";
 import { FloppyDisk } from "phosphor-svelte";
 import { FolderOpen } from "phosphor-svelte";
 import { Lightning } from "phosphor-svelte";
@@ -69,13 +65,6 @@ let connectionUsername = $state("");
 let connectionPassword = $state("");
 let connectionFilePath = $state("");
 let connectionSslMode = $state("");
-let connectionS3Region = $state("");
-let connectionS3EndpointUrl = $state("");
-let connectionS3AccessKeyId = $state("");
-let connectionS3SecretAccessKey = $state("");
-let connectionS3SessionToken = $state("");
-let connectionS3DefaultPrefix = $state("");
-let connectionS3ForcePathStyle = $state(false);
 
 onMount(() => {
 	store.queryText = sql;
@@ -190,11 +179,6 @@ function handleTableSelect(schemaName: string, tableName: string): void {
 	workspaceStore.persist();
 }
 
-function handleS3BucketSelect(bucketName: string): void {
-	store.selectTable("buckets", bucketName).mapErr(() => {});
-	workspaceStore.persist();
-}
-
 function handleCellClick(rowIndex: number, columnName: string): void {
 	if (store.explorerReadOnlyReason !== null) return;
 	const dataType = selectedTableColumns.find((c) => c.name === columnName)?.dataType ?? "";
@@ -256,13 +240,7 @@ function handleRunQuery(): void {
 const canSaveConnection = $derived(
 	connectionName.trim().length > 0 &&
 		((connectionEngine === "sqlite" && connectionFilePath.trim().length > 0) ||
-			(connectionEngine === "s3" &&
-				connectionS3Region.trim().length > 0 &&
-				connectionS3AccessKeyId.trim().length > 0 &&
-				connectionS3SecretAccessKey.trim().length > 0) ||
-			(connectionEngine !== "sqlite" &&
-				connectionEngine !== "s3" &&
-				connectionHost.trim().length > 0))
+			(connectionEngine !== "sqlite" && connectionHost.trim().length > 0))
 );
 
 function resetConnectionForm(): void {
@@ -277,13 +255,6 @@ function resetConnectionForm(): void {
 	connectionPassword = "";
 	connectionFilePath = "";
 	connectionSslMode = "";
-	connectionS3Region = "";
-	connectionS3EndpointUrl = "";
-	connectionS3AccessKeyId = "";
-	connectionS3SecretAccessKey = "";
-	connectionS3SessionToken = "";
-	connectionS3DefaultPrefix = "";
-	connectionS3ForcePathStyle = false;
 }
 
 function extractFileName(filePath: string): string {
@@ -335,8 +306,7 @@ function applyConnectionString(): void {
 				: null;
 
 	if (parsedEngine === null) {
-		connectionStringError =
-			"Only sqlite, postgres, mysql, and manual s3 connection setup are supported.";
+		connectionStringError = "Only sqlite, postgres, and mysql connection strings are supported.";
 		return;
 	}
 
@@ -352,13 +322,6 @@ function applyConnectionString(): void {
 		parsed.searchParams.get("ssl_mode") ??
 		parsed.searchParams.get("ssl") ??
 		"";
-	connectionS3Region = "";
-	connectionS3EndpointUrl = "";
-	connectionS3AccessKeyId = "";
-	connectionS3SecretAccessKey = "";
-	connectionS3SessionToken = "";
-	connectionS3DefaultPrefix = "";
-	connectionS3ForcePathStyle = false;
 
 	if (connectionName.trim().length === 0) {
 		const hostName = connectionHost.length > 0 ? connectionHost : parsedEngine;
@@ -383,29 +346,6 @@ function browseSqliteFile(): void {
 }
 
 function createConnectionInput(): ConnectionFormInput {
-	if (connectionEngine === "s3") {
-		return {
-			kind: "s3",
-			id: null,
-			name: connectionName.trim(),
-			engine: "s3",
-			host: null,
-			port: null,
-			databaseName: null,
-			username: null,
-			password: null,
-			filePath: null,
-			sslMode: null,
-			s3Region: connectionS3Region.trim(),
-			s3EndpointUrl: connectionS3EndpointUrl.trim() || null,
-			s3ForcePathStyle: connectionS3ForcePathStyle,
-			s3DefaultPrefix: connectionS3DefaultPrefix.trim() || null,
-			s3AccessKeyId: connectionS3AccessKeyId.trim(),
-			s3SecretAccessKey: connectionS3SecretAccessKey.trim(),
-			s3SessionToken: connectionS3SessionToken.trim() || null,
-		};
-	}
-
 	const normalizedPort = connectionPort.trim();
 	const parsedPort = normalizedPort.length > 0 ? Number.parseInt(normalizedPort, 10) : null;
 	const safePort = Number.isFinite(parsedPort) ? parsedPort : null;
@@ -421,13 +361,6 @@ function createConnectionInput(): ConnectionFormInput {
 		password: connectionPassword.trim() || null,
 		filePath: connectionFilePath.trim() || null,
 		sslMode: connectionSslMode.trim() || null,
-		s3Region: null,
-		s3EndpointUrl: null,
-		s3ForcePathStyle: null,
-		s3DefaultPrefix: null,
-		s3AccessKeyId: null,
-		s3SecretAccessKey: null,
-		s3SessionToken: null,
 	};
 }
 
@@ -465,203 +398,11 @@ function saveCellEdit(rowIndex: number, columnName: string, value: string): void
 	editingCell = null;
 }
 
-const s3BreadcrumbSegments = $derived.by(() => {
-	const prefix = store.s3Prefix;
-	if (prefix.length === 0) return [];
-	const trimmed = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
-	const parts = trimmed.split("/").filter((part) => part.length > 0);
-	return parts.map((part, index) => ({
-		label: part,
-		prefix: `${parts.slice(0, index + 1).join("/")}/`,
-	}));
-});
 </script>
 
 <!-- SQL Editor snippet (desktop-only: CodeMirror) -->
 {#snippet sqlEditorContent()}
 	<CodeMirrorEditor value={sql} language="sql" class="h-full" onChange={(value) => (sql = value)} />
-{/snippet}
-
-{#snippet s3ExplorerContent()}
-	<div class="flex-1 min-h-0 flex flex-col">
-		<div
-			class="shrink-0 border-b border-border/30 px-2 py-1 flex items-center justify-between gap-2"
-		>
-			<div class="flex items-center gap-1 text-[0.6875rem] font-mono min-w-0">
-				{#if store.selectedS3Bucket}
-					<FolderOpen size={12} weight="bold" class="shrink-0 text-muted-foreground" />
-					<span class="font-medium truncate">{store.selectedS3Bucket}</span>
-					{#if s3BreadcrumbSegments.length > 0}
-						<span class="text-muted-foreground">/</span>
-					{/if}
-					{#each s3BreadcrumbSegments as segment, index}
-						<button
-							type="button"
-							class="text-primary hover:underline cursor-pointer"
-							onclick={() => store.openS3Prefix(segment.prefix).mapErr(() => {})}
-						>
-							{segment.label}
-						</button>
-						{#if index < s3BreadcrumbSegments.length - 1}
-							<span class="text-muted-foreground">/</span>
-						{/if}
-					{/each}
-				{:else}
-					<span class="text-muted-foreground">Select a bucket from the sidebar</span>
-				{/if}
-			</div>
-			<div class="flex items-center gap-1 shrink-0">
-				<button
-					type="button"
-					class="h-6 px-2 rounded-md text-[0.6875rem] inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-					onclick={() => store.goToS3ParentPrefix().mapErr(() => {})}
-					disabled={!store.selectedS3Bucket || store.s3Prefix.length === 0}
-				>
-					<ArrowUp size={10} weight="bold" />
-					Up
-				</button>
-				<button
-					type="button"
-					class="h-6 px-2 rounded-md text-[0.6875rem] inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-					onclick={() => store.refreshS3Objects().mapErr(() => {})}
-					disabled={!store.selectedS3Bucket}
-				>
-					<ArrowCounterClockwise size={10} weight="bold" />
-					Refresh
-				</button>
-			</div>
-		</div>
-		<div class="flex-1 min-h-0 overflow-auto">
-			{#if store.isLoadingS3Objects || store.isLoadingS3Buckets}
-				<div class="h-full flex items-center justify-center text-[0.8125rem] text-muted-foreground">
-					Loading S3 data...
-				</div>
-			{:else if !store.selectedS3Bucket}
-				<div class="h-full flex items-center justify-center text-[0.8125rem] text-muted-foreground">
-					Choose a bucket from the left sidebar.
-				</div>
-			{:else}
-				<table class="w-full min-w-max border-collapse">
-					<thead>
-						<tr class="sticky top-0 z-10 bg-muted/95">
-							<th
-								class="px-2 py-0.5 text-left text-[0.625rem] font-semibold uppercase text-muted-foreground font-mono"
-								>Key</th
-							>
-							<th
-								class="px-2 py-0.5 text-left text-[0.625rem] font-semibold uppercase text-muted-foreground font-mono"
-								>Size</th
-							>
-							<th
-								class="px-2 py-0.5 text-left text-[0.625rem] font-semibold uppercase text-muted-foreground font-mono"
-								>Modified</th
-							>
-							<th
-								class="px-2 py-0.5 text-left text-[0.625rem] font-semibold uppercase text-muted-foreground font-mono"
-								>Storage</th
-							>
-							<th
-								class="px-2 py-0.5 text-left text-[0.625rem] font-semibold uppercase text-muted-foreground font-mono"
-								>Actions</th
-							>
-						</tr>
-					</thead>
-					<tbody>
-						{#each store.s3Objects as object}
-							<tr class="hover:bg-muted/40 transition-colors">
-								<td class="px-2 py-0.5 font-mono text-[0.6875rem]">
-									{#if object.isPrefix}
-										<button
-											type="button"
-											class="text-primary hover:underline cursor-pointer"
-											onclick={() => store.openS3Prefix(object.key).mapErr(() => {})}
-										>
-											{object.key}
-										</button>
-									{:else}
-										{object.key}
-									{/if}
-								</td>
-								<td class="px-2 py-0.5 font-mono text-[0.6875rem]"
-									>{object.isPrefix ? "-" : object.size}</td
-								>
-								<td class="px-2 py-0.5 font-mono text-[0.6875rem]">{object.lastModified ?? "-"}</td>
-								<td class="px-2 py-0.5 font-mono text-[0.6875rem]">{object.storageClass ?? "-"}</td>
-								<td class="px-2 py-0.5">
-									{#if !object.isPrefix}
-										<div class="flex items-center gap-1">
-											<button
-												type="button"
-												class="h-5 px-1.5 rounded text-[0.625rem] inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
-												onclick={() => store.previewS3Key(object.key).mapErr(() => {})}
-											>
-												<Eye size={10} weight="bold" />
-												Preview
-											</button>
-											<button
-												type="button"
-												class="h-5 px-1.5 rounded text-[0.625rem] inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
-												onclick={() =>
-													store
-														.downloadS3Key(object.key)
-														.map((path) => {
-															if (path) toast.success(`Saved to ${path}`);
-														})
-														.mapErr(() => {})}
-											>
-												<DownloadSimple size={10} weight="bold" />
-												Download
-											</button>
-										</div>
-									{/if}
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			{/if}
-		</div>
-		{#if store.s3NextContinuationToken && !store.isLoadingS3Objects}
-			<div class="shrink-0 border-t border-border/30 px-2 py-1">
-				<button
-					type="button"
-					class="text-[0.6875rem] text-muted-foreground hover:text-foreground hover:bg-muted/50 px-2 py-0.5 rounded-md transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-					onclick={() => store.loadMoreS3Objects().mapErr(() => {})}
-					disabled={store.isLoadingS3ObjectsMore}
-				>
-					{store.isLoadingS3ObjectsMore ? "Loading..." : "Load more objects"}
-				</button>
-			</div>
-		{/if}
-		{#if store.s3PreviewKey}
-			<div class="shrink-0 border-t border-border/30 px-2 py-1">
-				<div class="flex items-center justify-between gap-2 mb-1">
-					<span class="text-[0.6875rem] font-medium font-mono truncate"
-						>Preview: {store.s3PreviewKey}</span
-					>
-					<button
-						type="button"
-						class="h-5 px-1.5 rounded text-[0.625rem] inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors cursor-pointer"
-						onclick={() => (store.s3PreviewKey = null)}
-					>
-						<X size={10} weight="bold" />
-						Close
-					</button>
-				</div>
-				{#if store.isLoadingS3Preview}
-					<div class="text-[0.6875rem] text-muted-foreground">Loading preview...</div>
-				{:else if store.s3Preview?.previewable && store.s3Preview.content}
-					<pre
-						class="max-h-56 overflow-auto rounded-md bg-muted/20 p-2 text-[11px] font-mono">{store
-							.s3Preview.content}</pre>
-				{:else if store.s3Preview}
-					<div class="text-[0.6875rem] text-muted-foreground">
-						{store.s3Preview.reason ?? "No preview available."}
-					</div>
-				{/if}
-			</div>
-		{/if}
-	</div>
 {/snippet}
 
 <SqlStudioLayout
@@ -670,16 +411,12 @@ const s3BreadcrumbSegments = $derived.by(() => {
 	schema={uiSchema}
 	selectedSchemaName={store.selectedSchemaName}
 	selectedTableName={store.selectedTableName}
-	s3Buckets={store.s3Buckets}
-	selectedS3Bucket={store.selectedS3Bucket}
-	columns={store.isS3Mode ? [] : [...store.explorerColumns]}
-	rows={store.isS3Mode ? [] : processedRows}
-	isLoading={store.isS3Mode ? false : store.isLoadingExplorer}
-	rowCount={store.isS3Mode ? store.s3Objects.length : processedRows.length}
-	hasMore={store.isS3Mode
-		? store.s3NextContinuationToken !== null
-		: store.explorerNextOffset !== null}
-	isLoadingMore={store.isS3Mode ? store.isLoadingS3ObjectsMore : store.isLoadingExplorerMore}
+	columns={[...store.explorerColumns]}
+	rows={processedRows}
+	isLoading={store.isLoadingExplorer}
+	rowCount={processedRows.length}
+	hasMore={store.explorerNextOffset !== null}
+	isLoadingMore={store.isLoadingExplorerMore}
 	sortColumn={store.sortColumn}
 	sortDirection={store.sortDirection}
 	filterColumn={store.filterColumn}
@@ -687,7 +424,7 @@ const s3BreadcrumbSegments = $derived.by(() => {
 	filterValue={store.filterValue}
 	pendingEditCount={store.pendingExplorerEditCount}
 	isSaving={store.isSavingExplorerEdits}
-	readOnlyReason={store.isS3Mode ? null : store.explorerReadOnlyReason}
+	readOnlyReason={store.explorerReadOnlyReason}
 	isCellDirty={(rowIndex, columnName) => store.isExplorerCellDirty(rowIndex, columnName)}
 	getCellValue={(rowIndex, columnName) => store.getExplorerCellValue(rowIndex, columnName)}
 	lastError={store.lastError}
@@ -698,7 +435,6 @@ const s3BreadcrumbSegments = $derived.by(() => {
 	onConnectionCreate={handleConnectionCreate}
 	onConnectionDelete={handleConnectionDelete}
 	onTableSelect={handleTableSelect}
-	onS3BucketSelect={handleS3BucketSelect}
 	onCellClick={handleCellClick}
 	onSortChange={handleSortChange}
 	onFilterColumnChange={handleFilterColumnChange}
@@ -712,8 +448,6 @@ const s3BreadcrumbSegments = $derived.by(() => {
 	onRunQuery={handleRunQuery}
 	{onClose}
 	{sqlEditorContent}
-	explorerContent={store.isS3Mode ? s3ExplorerContent : undefined}
-	mode={store.isS3Mode ? "s3" : "sql"}
 />
 
 <!-- Cell Edit Dialog -->
@@ -787,7 +521,7 @@ const s3BreadcrumbSegments = $derived.by(() => {
 					value={connectionEngine}
 					onchange={(e) => {
 						const v = (e.currentTarget as HTMLSelectElement).value;
-						if (v === "sqlite" || v === "postgres" || v === "mysql" || v === "s3") {
+						if (v === "sqlite" || v === "postgres" || v === "mysql") {
 							connectionEngine = v;
 						}
 					}}
@@ -796,7 +530,6 @@ const s3BreadcrumbSegments = $derived.by(() => {
 					<option value="sqlite">sqlite</option>
 					<option value="postgres">postgres</option>
 					<option value="mysql">mysql</option>
-					<option value="s3">s3</option>
 				</select>
 			</div>
 
@@ -820,7 +553,7 @@ const s3BreadcrumbSegments = $derived.by(() => {
 						</button>
 					</div>
 				</div>
-			{:else if connectionEngine !== "s3"}
+			{:else}
 				<div class="grid gap-1">
 					<label for="connection-host" class="text-[0.625rem] font-medium text-muted-foreground uppercase tracking-wider">Host</label>
 					<input id="connection-host" bind:value={connectionHost} placeholder="localhost" class="h-7 w-full rounded-md border border-border/40 bg-muted/30 px-2 text-[0.6875rem] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40" />
@@ -848,45 +581,6 @@ const s3BreadcrumbSegments = $derived.by(() => {
 				<div class="grid gap-1">
 					<label for="connection-ssl" class="text-[0.625rem] font-medium text-muted-foreground uppercase tracking-wider">SSL mode (optional)</label>
 					<input id="connection-ssl" bind:value={connectionSslMode} placeholder="require" class="h-7 w-full rounded-md border border-border/40 bg-muted/30 px-2 text-[0.6875rem] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40" />
-				</div>
-			{:else}
-				<div class="grid gap-1">
-					<label for="connection-s3-region" class="text-[0.625rem] font-medium text-muted-foreground uppercase tracking-wider">Region</label>
-					<input id="connection-s3-region" bind:value={connectionS3Region} placeholder="us-east-1" class="h-7 w-full rounded-md border border-border/40 bg-muted/30 px-2 text-[0.6875rem] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40" />
-				</div>
-				<div class="grid gap-1">
-					<label for="connection-s3-endpoint" class="text-[0.625rem] font-medium text-muted-foreground uppercase tracking-wider">Endpoint URL (optional)</label>
-					<input id="connection-s3-endpoint" bind:value={connectionS3EndpointUrl} placeholder="https://s3.amazonaws.com" class="h-7 w-full rounded-md border border-border/40 bg-muted/30 px-2 text-[0.6875rem] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40" />
-				</div>
-				<div class="grid grid-cols-2 gap-2">
-					<div class="grid gap-1">
-						<label for="connection-s3-access-key" class="text-[0.625rem] font-medium text-muted-foreground uppercase tracking-wider">Access key ID</label>
-						<input id="connection-s3-access-key" bind:value={connectionS3AccessKeyId} class="h-7 w-full rounded-md border border-border/40 bg-muted/30 px-2 text-[0.6875rem] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40" />
-					</div>
-					<div class="grid gap-1">
-						<label for="connection-s3-secret-key" class="text-[0.625rem] font-medium text-muted-foreground uppercase tracking-wider">Secret access key</label>
-						<input id="connection-s3-secret-key" type="password" bind:value={connectionS3SecretAccessKey} class="h-7 w-full rounded-md border border-border/40 bg-muted/30 px-2 text-[0.6875rem] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40" />
-					</div>
-				</div>
-				<div class="grid gap-1">
-					<label for="connection-s3-session-token" class="text-[0.625rem] font-medium text-muted-foreground uppercase tracking-wider">Session token (optional)</label>
-					<input id="connection-s3-session-token" bind:value={connectionS3SessionToken} class="h-7 w-full rounded-md border border-border/40 bg-muted/30 px-2 text-[0.6875rem] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40" />
-				</div>
-				<div class="grid gap-1">
-					<label for="connection-s3-default-prefix" class="text-[0.625rem] font-medium text-muted-foreground uppercase tracking-wider">Default prefix (optional)</label>
-					<input id="connection-s3-default-prefix" bind:value={connectionS3DefaultPrefix} class="h-7 w-full rounded-md border border-border/40 bg-muted/30 px-2 text-[0.6875rem] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40" />
-				</div>
-				<div class="flex items-center gap-1.5">
-					<input
-						id="connection-s3-path-style"
-						type="checkbox"
-						checked={connectionS3ForcePathStyle}
-						onchange={(event) => {
-							connectionS3ForcePathStyle = (event.currentTarget as HTMLInputElement).checked;
-						}}
-						class="size-3.5 rounded border border-border/40 accent-primary"
-					/>
-					<label for="connection-s3-path-style" class="text-[0.6875rem] text-muted-foreground cursor-pointer">Force path-style URLs</label>
 				</div>
 			{/if}
 		</div>

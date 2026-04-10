@@ -124,10 +124,10 @@ impl AgentProvider for CursorProvider {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<AvailableCommand>, String>> + Send + 'a>> {
         Box::pin(async move {
             match cursor_skills_root() {
-                Some(root) => crate::acp::preconnection_slash::load_preconnection_commands_from_root(
-                    &root,
-                )
-                .await,
+                Some(root) => {
+                    crate::acp::preconnection_slash::load_preconnection_commands_from_root(&root)
+                        .await
+                }
                 None => Ok(Vec::new()),
             }
         })

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use cc_sdk::{ClaudeCodeOptions, ClaudeSDKClient, Message, Result};
+use acepe_lib::cc_sdk::{ClaudeCodeOptions, ClaudeSDKClient, Message, Result};
 use futures::StreamExt;
 
 #[tokio::main]

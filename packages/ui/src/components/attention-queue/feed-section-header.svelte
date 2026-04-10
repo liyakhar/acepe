@@ -17,8 +17,8 @@
 	let { sectionId, label, count, color }: Props = $props();
 </script>
 
-<div class="flex h-7 items-center justify-between border-b border-border/50 px-2">
-	<span class="inline-flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+<div class="flex h-7 items-center justify-between px-2">
+	<span class="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide text-muted-foreground/70">
 		{#if sectionId === "answer_needed"}
 			<Keyboard class="size-3 shrink-0" weight="fill" style="color: {color}" />
 		{:else if sectionId === "working"}

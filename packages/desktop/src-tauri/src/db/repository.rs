@@ -1036,6 +1036,10 @@ impl SessionMetadataRepository {
         file_path.starts_with("__session_registry__/") || file_path.starts_with("__worktree__/")
     }
 
+    fn is_explicit_missing_transcript_marker(file_path: &str) -> bool {
+        file_path.starts_with("__session_registry__/copilot_missing/")
+    }
+
     fn git_main_repo_from_worktree_path(
         worktree_path: &std::path::Path,
     ) -> Option<std::path::PathBuf> {
@@ -1110,6 +1114,7 @@ impl SessionMetadataRepository {
     ) -> bool {
         Self::normalized_source_path(&existing_model.file_path).is_some()
             && Self::is_non_persisted_session_file_path(incoming_file_path)
+            && !Self::is_explicit_missing_transcript_marker(incoming_file_path)
             && incoming_file_mtime == 0
             && incoming_file_size == 0
     }

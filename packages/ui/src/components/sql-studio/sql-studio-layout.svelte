@@ -27,9 +27,6 @@
     schema: SqlSchemaInfo[];
     selectedSchemaName: string | null;
     selectedTableName: string | null;
-    s3Buckets?: readonly { name: string; creationDate: string | null }[];
-    selectedS3Bucket?: string | null;
-
     // Grid data
     columns: readonly string[];
     rows: readonly { originalIndex: number; cells: readonly string[] }[];
@@ -65,7 +62,6 @@
     onConnectionCreate: () => void;
     onConnectionDelete: (id: string) => void;
     onTableSelect: (schemaName: string, tableName: string) => void;
-    onS3BucketSelect?: (bucketName: string) => void;
     onCellClick: (rowIndex: number, columnName: string) => void;
     onSortChange: (column: string) => void;
     onFilterColumnChange: (column: string | null) => void;
@@ -81,9 +77,6 @@
 
     /** Snippet for rendering the SQL editor (desktop provides CodeMirror, blog provides textarea) */
     sqlEditorContent?: Snippet;
-    /** Optional snippet for non-SQL explorer views that still use the same shell layout. */
-    explorerContent?: Snippet;
-    mode?: "sql" | "s3";
     class?: string;
   }
 
@@ -93,8 +86,6 @@
     schema,
     selectedSchemaName,
     selectedTableName,
-    s3Buckets = [],
-    selectedS3Bucket = null,
     columns,
     rows,
     isLoading,
@@ -119,7 +110,6 @@
     onConnectionCreate,
     onConnectionDelete,
     onTableSelect,
-    onS3BucketSelect,
     onCellClick,
     onSortChange,
     onFilterColumnChange,
@@ -133,8 +123,6 @@
     onRunQuery,
     onClose,
     sqlEditorContent,
-    explorerContent,
-    mode = "sql",
     class: className,
   }: Props = $props();
 
@@ -145,8 +133,7 @@
   );
 
   const showFilterBar = $derived(
-    mode === "sql" &&
-      selectedSchemaName !== null &&
+    selectedSchemaName !== null &&
       selectedTableName !== null &&
       columns.length > 0,
   );
@@ -162,88 +149,80 @@
       {schema}
       {selectedSchemaName}
       {selectedTableName}
-      {mode}
-      {s3Buckets}
-      {selectedS3Bucket}
       {onConnectionSelect}
       {onConnectionCreate}
       {onConnectionDelete}
       {onTableSelect}
-      {onS3BucketSelect}
     />
 
     <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
-      {#if mode === "s3" && explorerContent}
-        {@render explorerContent()}
-      {:else}
-        <SqlStudioToolbar
-          {selectedTableLabel}
-          {pendingEditCount}
-          {isSaving}
-          {sqlEditorOpen}
-          {isExecutingQuery}
-          hasConnection={selectedConnectionId !== null}
-          {lastInfo}
-          {onSaveEdits}
-          {onDiscardEdits}
-          {onToggleSqlEditor}
-          {onRunQuery}
+      <SqlStudioToolbar
+        {selectedTableLabel}
+        {pendingEditCount}
+        {isSaving}
+        {sqlEditorOpen}
+        {isExecutingQuery}
+        hasConnection={selectedConnectionId !== null}
+        {lastInfo}
+        {onSaveEdits}
+        {onDiscardEdits}
+        {onToggleSqlEditor}
+        {onRunQuery}
+      />
+
+      {#if sqlEditorOpen && sqlEditorContent}
+        <div
+          class="shrink-0 h-[200px] border-b border-border/30 bg-background/50 overflow-hidden"
+        >
+          {@render sqlEditorContent()}
+        </div>
+      {/if}
+
+      {#if showFilterBar}
+        <SqlStudioFilterBar
+          {columns}
+          {filterColumn}
+          {filterOperator}
+          {filterValue}
+          onColumnChange={onFilterColumnChange}
+          onOperatorChange={onFilterOperatorChange}
+          onValueChange={onFilterValueChange}
+          onClear={onFilterClear}
         />
+      {/if}
 
-        {#if sqlEditorOpen && sqlEditorContent}
-          <div
-            class="shrink-0 h-[200px] border-b border-border/30 bg-background/50 overflow-hidden"
+      <SqlStudioMessageBar error={lastError} warning={readOnlyReason} />
+
+      {#if isLoading}
+        <div class="flex-1 flex items-center justify-center gap-2">
+          <span
+            class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
+          ></span>
+          <span class="text-[0.8125rem] text-muted-foreground"
+            >Loading rows...</span
           >
-            {@render sqlEditorContent()}
-          </div>
-        {/if}
+        </div>
+      {:else}
+        <SqlStudioDataGrid
+          {columns}
+          {rows}
+          {sortColumn}
+          {sortDirection}
+          readOnly={readOnlyReason !== null}
+          {isCellDirty}
+          {getCellValue}
+          {onSortChange}
+          {onCellClick}
+        />
+      {/if}
 
-        {#if showFilterBar}
-          <SqlStudioFilterBar
-            {columns}
-            {filterColumn}
-            {filterOperator}
-            {filterValue}
-            onColumnChange={onFilterColumnChange}
-            onOperatorChange={onFilterOperatorChange}
-            onValueChange={onFilterValueChange}
-            onClear={onFilterClear}
-          />
-        {/if}
-
-        <SqlStudioMessageBar error={lastError} warning={readOnlyReason} />
-
-        {#if isLoading}
-          <div class="flex-1 flex items-center justify-center gap-2">
-            <span
-              class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
-            ></span>
-            <span class="text-[0.8125rem] text-muted-foreground"
-              >Loading rows...</span
-            >
-          </div>
-        {:else}
-          <SqlStudioDataGrid
-            {columns}
-            {rows}
-            {sortColumn}
-            {sortDirection}
-            readOnly={readOnlyReason !== null}
-            {isCellDirty}
-            {getCellValue}
-            {onSortChange}
-            {onCellClick}
-          />
-        {/if}
-
-        {#if columns.length > 0 && !isLoading}
-          <SqlStudioStatusBar
-            {rowCount}
-            {hasMore}
-            {isLoadingMore}
-            {onLoadMore}
-          />
-        {/if}
+      {#if columns.length > 0 && !isLoading}
+        <SqlStudioStatusBar
+          {rowCount}
+          {hasMore}
+          {isLoadingMore}
+          {onLoadMore}
+        />
       {/if}
     </div>
   </div>

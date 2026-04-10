@@ -138,7 +138,10 @@ fn parse_delete_sections(sections: &[PatchSection]) -> Option<ToolArguments> {
         return None;
     }
 
-    let file_paths: Vec<String> = sections.iter().map(|section| section.file_path.clone()).collect();
+    let file_paths: Vec<String> = sections
+        .iter()
+        .map(|section| section.file_path.clone())
+        .collect();
 
     Some(ToolArguments::Delete {
         file_path: file_paths.first().cloned(),

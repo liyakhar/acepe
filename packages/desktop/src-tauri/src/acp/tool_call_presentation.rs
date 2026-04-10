@@ -39,7 +39,8 @@ pub(crate) fn synthesize_title(arguments: &ToolArguments) -> Option<String> {
 
 pub(crate) fn synthesize_locations(arguments: &ToolArguments) -> Option<Vec<ToolCallLocation>> {
     extract_paths(arguments).map(|paths| {
-        paths.into_iter()
+        paths
+            .into_iter()
             .map(|path| ToolCallLocation { path })
             .collect()
     })

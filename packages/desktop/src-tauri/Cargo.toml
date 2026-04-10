@@ -37,15 +37,20 @@ sea-orm-migration = { version = "0.12", features = ["sqlx-sqlite"] }
 # SQL Studio connects to remote Postgres/MySQL databases via sqlx, so those drivers stay enabled.
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "postgres", "mysql", "json", "chrono"] }
 async-trait = "0.1"
+async-stream = "0.3"
+bytes = "1"
+crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+pin-project-lite = "0.2"
 # TypeScript type generation (specta v2 for Tauri v2)
-specta = { version = "=2.0.0-rc.22", features = ["export", "function", "serde", "serde_json"] }
+specta = { version = "=2.0.0-rc.22", features = ["derive", "export", "function", "serde", "serde_json"] }
 specta-typescript = "0.0.9"
 dotenv = "0.15"
 dirs = "5"
 tokio = { version = "1", features = ["fs", "io-util", "rt-multi-thread", "macros", "sync", "process", "signal", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 axum = { version = "0.7", features = ["http1", "tokio"] }
 # HTTP client for OpenCode REST API
@@ -84,9 +89,9 @@ tar = "0.4"
 flate2 = "1.0"
 zip = "2"
 partial-json-fixer = "0.5"
-cc-sdk = { path = "cc-sdk-local", default-features = false }
 tauri-plugin-mcp-bridge = "0.9"
 tauri-plugin-clipboard-manager = "2.3.2"
+which = "6"
 # Unix signal handling for graceful shutdown
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.28", features = ["signal", "process"] }
@@ -97,7 +102,9 @@ objc2 = { version = "0.6", features = ["catch-all"] }
 
 [features]
 default = ["whisper-metal"]
+auto-download = []
 manual-test-targets = []
+websocket = []
 # PINNED exact version: audit whisper-rs-sys/build.rs before any bump.
 # Metal stays opt-in at the package level so release builds can disable it
 # with `--no-default-features` while keeping whisper available elsewhere.

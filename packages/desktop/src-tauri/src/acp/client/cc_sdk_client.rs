@@ -49,6 +49,7 @@ use crate::acp::task_reconciler::TaskReconciler;
 use crate::acp::tool_classification::{classify_raw_tool_call, ToolClassificationHints};
 use crate::acp::types::{ContentBlock, PromptRequest};
 use crate::acp::ui_event_dispatcher::{AcpUiEvent, AcpUiEventDispatcher, DispatchPolicy};
+use crate::cc_sdk;
 
 mod permissions;
 

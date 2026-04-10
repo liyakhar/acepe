@@ -14,8 +14,7 @@
 </script>
 
 <div
-	class="flex min-w-[200px] flex-1 flex-col overflow-hidden rounded-lg border border-border/50 bg-card/20"
-	style="border-top-color: {sectionColor(group.id)}; border-top-width: 2px;"
+	class="flex min-w-[200px] flex-1 flex-col overflow-hidden rounded-lg bg-card/50"
 	data-testid="kanban-column-{group.id}"
 >
 	<FeedSectionHeader

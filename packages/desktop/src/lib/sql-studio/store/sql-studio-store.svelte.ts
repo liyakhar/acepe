@@ -1,14 +1,10 @@
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
 	deleteConnection,
-	downloadS3Object,
 	executeQuery,
 	exploreTable,
 	listConnections,
-	listS3Buckets,
-	listS3Objects,
 	listSchema,
-	previewS3Object,
 	saveConnection,
 	testConnection,
 	updateTableCell,
@@ -16,9 +12,6 @@ import {
 import type {
 	ConnectionFormInput,
 	QueryExecutionResult,
-	S3BucketNode,
-	S3ObjectNode,
-	S3PreviewResponse,
 	SavedConnectionSummary,
 	SchemaNode,
 	TableNode,
@@ -65,18 +58,6 @@ export class SqlStudioStore {
 		"equals"
 	);
 	filterValue = $state("");
-	s3Buckets = $state<readonly S3BucketNode[]>([]);
-	selectedS3Bucket = $state<string | null>(null);
-	s3Prefix = $state("");
-	s3Objects = $state<readonly S3ObjectNode[]>([]);
-	s3NextContinuationToken = $state<string | null>(null);
-	s3Preview = $state<S3PreviewResponse | null>(null);
-	s3PreviewKey = $state<string | null>(null);
-	isLoadingS3Buckets = $state(false);
-	isLoadingS3Objects = $state(false);
-	isLoadingS3ObjectsMore = $state(false);
-	isLoadingS3Preview = $state(false);
-	isDownloadingS3Object = $state(false);
 
 	open(): void {
 		this.overlayOpen = true;
@@ -100,27 +81,6 @@ export class SqlStudioStore {
 		this.filterColumn = null;
 		this.filterOperator = "equals";
 		this.filterValue = "";
-		this.s3Buckets = [];
-		this.selectedS3Bucket = null;
-		this.s3Prefix = "";
-		this.s3Objects = [];
-		this.s3NextContinuationToken = null;
-		this.s3Preview = null;
-		this.s3PreviewKey = null;
-	}
-
-	get selectedConnectionEngine(): SavedConnectionSummary["engine"] | null {
-		if (this.selectedConnectionId === null) {
-			return null;
-		}
-		const selected = this.connections.find(
-			(connection) => connection.id === this.selectedConnectionId
-		);
-		return selected?.engine ?? null;
-	}
-
-	get isS3Mode(): boolean {
-		return this.selectedConnectionEngine === "s3";
 	}
 
 	setSortColumn(column: string): void {
@@ -198,10 +158,6 @@ export class SqlStudioStore {
 		this.result = null;
 		this.lastError = null;
 		this.resetExplorerState();
-		const connection = this.connections.find((candidate) => candidate.id === id);
-		if (connection?.engine === "s3") {
-			return this.loadS3Buckets().andThen(() => okAsync(undefined));
-		}
 		return listSchema(id)
 			.map((schema) => {
 				this.schema = schema;
@@ -213,9 +169,6 @@ export class SqlStudioStore {
 	runQuery(): ResultAsync<void, Error> {
 		if (this.selectedConnectionId === null) {
 			return errAsync(new Error("No connection selected"));
-		}
-		if (this.isS3Mode) {
-			return errAsync(new Error("SQL query execution is not available for S3 connections"));
 		}
 
 		this.isExecutingQuery = true;
@@ -240,16 +193,6 @@ export class SqlStudioStore {
 	}
 
 	selectTable(schemaName: string, tableName: string): ResultAsync<void, Error> {
-		if (this.isS3Mode) {
-			this.selectedSchemaName = schemaName;
-			this.selectedTableName = tableName;
-			this.selectedS3Bucket = tableName;
-			this.s3Prefix = "";
-			this.s3Preview = null;
-			this.s3PreviewKey = null;
-			return this.loadS3Objects({ resetRows: true });
-		}
-
 		const schemaNode = this.schema.find((schema) => schema.name === schemaName);
 		const tableNode = schemaNode?.tables.find((table) => table.name === tableName) ?? null;
 		if (!tableNode) {
@@ -268,143 +211,6 @@ export class SqlStudioStore {
 		this.explorerNextOffset = null;
 		this.pendingExplorerEdits = {};
 		return this.loadExplorerPage(0, true);
-	}
-
-	loadS3Buckets(): ResultAsync<void, Error> {
-		if (this.selectedConnectionId === null) {
-			return errAsync(new Error("No connection selected"));
-		}
-		this.isLoadingS3Buckets = true;
-		this.lastError = null;
-		return listS3Buckets(this.selectedConnectionId)
-			.map((buckets) => {
-				this.s3Buckets = buckets;
-				this.schema = [
-					{
-						name: "buckets",
-						tables: buckets.map((bucket) => ({
-							name: bucket.name,
-							schema: "buckets",
-							columns: [],
-							primaryKeyColumns: [],
-						})),
-					},
-				];
-				this.lastInfo = `Loaded ${buckets.length} bucket${buckets.length === 1 ? "" : "s"}`;
-			})
-			.andThen(() => okAsync(undefined))
-			.andTee(() => {
-				this.isLoadingS3Buckets = false;
-			})
-			.orTee((error) => {
-				this.isLoadingS3Buckets = false;
-				this.lastError = error.message;
-			});
-	}
-
-	loadS3Objects(options: { resetRows: boolean }): ResultAsync<void, Error> {
-		if (this.selectedConnectionId === null || this.selectedS3Bucket === null) {
-			return errAsync(new Error("No bucket selected"));
-		}
-		if (options.resetRows) {
-			this.isLoadingS3Objects = true;
-		} else {
-			this.isLoadingS3ObjectsMore = true;
-		}
-		this.lastError = null;
-
-		return listS3Objects({
-			connectionId: this.selectedConnectionId,
-			bucket: this.selectedS3Bucket,
-			prefix: this.s3Prefix.length > 0 ? this.s3Prefix : null,
-			continuationToken: options.resetRows ? null : this.s3NextContinuationToken,
-			limit: 200,
-		})
-			.map((response) => {
-				this.s3Objects = options.resetRows
-					? response.objects
-					: [...this.s3Objects, ...response.objects];
-				this.s3NextContinuationToken = response.nextContinuationToken;
-				this.lastInfo = `Loaded ${this.s3Objects.length} object${this.s3Objects.length === 1 ? "" : "s"}`;
-			})
-			.andThen(() => okAsync(undefined))
-			.andTee(() => {
-				this.isLoadingS3Objects = false;
-				this.isLoadingS3ObjectsMore = false;
-			})
-			.orTee((error) => {
-				this.isLoadingS3Objects = false;
-				this.isLoadingS3ObjectsMore = false;
-				this.lastError = error.message;
-			});
-	}
-
-	refreshS3Objects(): ResultAsync<void, Error> {
-		return this.loadS3Objects({ resetRows: true });
-	}
-
-	loadMoreS3Objects(): ResultAsync<void, Error> {
-		if (this.s3NextContinuationToken === null) {
-			return errAsync(new Error("No more objects to load"));
-		}
-		return this.loadS3Objects({ resetRows: false });
-	}
-
-	openS3Prefix(prefix: string): ResultAsync<void, Error> {
-		this.s3Prefix = prefix;
-		return this.loadS3Objects({ resetRows: true });
-	}
-
-	goToS3ParentPrefix(): ResultAsync<void, Error> {
-		const normalized = this.s3Prefix.endsWith("/") ? this.s3Prefix.slice(0, -1) : this.s3Prefix;
-		const parent = normalized.includes("/")
-			? `${normalized.split("/").slice(0, -1).join("/")}/`
-			: "";
-		this.s3Prefix = parent;
-		return this.loadS3Objects({ resetRows: true });
-	}
-
-	previewS3Key(key: string): ResultAsync<S3PreviewResponse, Error> {
-		if (this.selectedConnectionId === null || this.selectedS3Bucket === null) {
-			return errAsync(new Error("No bucket selected"));
-		}
-		this.isLoadingS3Preview = true;
-		this.s3PreviewKey = key;
-		return previewS3Object({
-			connectionId: this.selectedConnectionId,
-			bucket: this.selectedS3Bucket,
-			key,
-		})
-			.map((preview) => {
-				this.s3Preview = preview;
-				return preview;
-			})
-			.andTee(() => {
-				this.isLoadingS3Preview = false;
-			})
-			.orTee((error) => {
-				this.isLoadingS3Preview = false;
-				this.lastError = error.message;
-			});
-	}
-
-	downloadS3Key(key: string): ResultAsync<string | null, Error> {
-		if (this.selectedConnectionId === null || this.selectedS3Bucket === null) {
-			return errAsync(new Error("No bucket selected"));
-		}
-		this.isDownloadingS3Object = true;
-		return downloadS3Object({
-			connectionId: this.selectedConnectionId,
-			bucket: this.selectedS3Bucket,
-			key,
-		})
-			.andTee(() => {
-				this.isDownloadingS3Object = false;
-			})
-			.orTee((error) => {
-				this.isDownloadingS3Object = false;
-				this.lastError = error.message;
-			});
 	}
 
 	private loadExplorerPage(offset: number, resetRows: boolean): ResultAsync<void, Error> {

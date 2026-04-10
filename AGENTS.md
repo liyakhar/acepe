@@ -129,7 +129,8 @@ Acepe uses the Compounding Engineering workflow as its engineering operating sys
 ### TDD Protocol
 
 - Red-green-refactor: prove the bug/behavior with one failing test → smallest fix to turn green → clean up while green.
-- Choose the narrowest valuable test seam. Behavior-focused over implementation-detail. Structural contract tests only for wiring/ownership invariants.
+- Choose the narrowest valuable test seam. Behavior-focused over implementation-detail.
+- NEVER write structural contract tests that `readFileSync` source code and assert on string contents. These break on every refactor and test structure, not behavior. If you need to verify wiring, write a test that exercises the behavior instead.
 - For legacy or unclear behavior, write a characterization test first. Do not “improve” behavior without capturing what exists.
 - Keep tests single-purpose. One failure = one diagnosis.
 

@@ -175,6 +175,33 @@ describe("SessionRepository merge placeholder titles", () => {
 		expect(sessions[0]?.title).toBe("Real Restored Title");
 	});
 
+	it("refreshes sourcePath metadata for preloaded sessions", () => {
+		const state: SessionStoreState = {
+			sessions: [createSession({ sourcePath: undefined })],
+			preloadedSessionIds: new Set(["session-12345678"]),
+		};
+
+		const repository = new SessionRepository(
+			createStateReader(state),
+			createStateWriter(state),
+			createEntryManager(state.preloadedSessionIds),
+			connectionManager
+		);
+
+		const mergeHistoryWithExisting = (
+			repository as unknown as {
+				mergeHistoryWithExisting: (
+					entries: HistoryEntry[],
+					existingSessions: SessionCold[]
+				) => SessionCold[];
+			}
+		).mergeHistoryWithExisting.bind(repository);
+
+		const sessions = mergeHistoryWithExisting([createHistoryEntry()], state.sessions);
+
+		expect(sessions[0]?.sourcePath).toBe("/opencode/storage/session/session-12345678.json");
+	});
+
 	it("keeps the derived first user message when scan still reports a generated session title", () => {
 		const state: SessionStoreState = {
 			sessions: [createSession({ title: "Session 24745d00" })],

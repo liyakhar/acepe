@@ -20,7 +20,7 @@ import type {
 } from "@acepe/ui/attention-queue";
 import AgentIconsRow from "$lib/components/agent-icons-row.svelte";
 import Header from "$lib/components/header.svelte";
-import LandingKanbanDemo from "$lib/components/landing-kanban-demo.svelte";
+import FeatureShowcase from "$lib/components/feature-showcase.svelte";
 import { websiteThemeStore } from "$lib/theme/theme.js";
 import {
 	Stack,
@@ -423,16 +423,9 @@ const features = [
 			</div>
 		</section>
 
-		<!-- Demo Screenshot Section -->
+		<!-- Feature Showcase Section -->
 		<section class="mx-auto max-w-6xl px-4 pb-24 md:px-6 md:pb-32">
-			<div class="relative overflow-hidden rounded-md bg-card/10">
-				<BrandShaderBackground class="rounded-xl" fallback="gradient" />
-				<div class="relative p-4 md:p-6">
-					<div class="shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
-						<LandingKanbanDemo />
-					</div>
-				</div>
-			</div>
+			<FeatureShowcase />
 		</section>
 
 		<!-- What is an ADE? -->

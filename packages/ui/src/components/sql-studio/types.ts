@@ -1,5 +1,5 @@
 /** Supported database engine types. */
-export type SqlDbEngine = "postgres" | "mysql" | "sqlite" | "s3";
+export type SqlDbEngine = "postgres" | "mysql" | "sqlite";
 
 /** Filter comparison operators for the data grid. */
 export type SqlFilterOperator = "equals" | "contains" | "starts with" | "greater than" | "less than";

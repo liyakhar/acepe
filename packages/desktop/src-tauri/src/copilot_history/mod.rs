@@ -1,4 +1,9 @@
-use crate::acp::client::{AcpClient, SessionInfo};
+mod parser;
+pub(crate) use parser::{
+    events_jsonl_path_for_session, missing_transcript_marker, resolve_copilot_session_state_root,
+};
+
+use crate::acp::client::AcpClient;
 use crate::acp::event_hub::{AcpEventEnvelope, AcpEventHubState};
 use crate::acp::parsers::AgentType;
 use crate::acp::provider::AgentProvider;
@@ -6,16 +11,15 @@ use crate::acp::providers::copilot::CopilotProvider;
 use crate::acp::session_descriptor::SessionReplayContext;
 use crate::acp::session_update::{SessionUpdate, ToolArguments, ToolCallData};
 use crate::acp::types::ContentBlock;
-use crate::db::repository::SessionMetadataRepository;
-use crate::db::DbConn;
-use crate::history::constants::MAX_SESSIONS_PER_PROJECT;
+use crate::db::repository::SessionJournalEventRepository;
 use crate::session_converter::{calculate_todo_timing, merge_tool_call_update};
 use crate::session_jsonl::types::{
     ConvertedSession, SessionStats, StoredAssistantChunk, StoredAssistantMessage,
     StoredContentBlock, StoredEntry, StoredUserMessage,
 };
 use chrono::{TimeZone, Utc};
-use std::collections::{HashMap, HashSet};
+use sea_orm::DbConn;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,8 +27,6 @@ use tauri::{AppHandle, Manager};
 
 const REPLAY_IDLE_TIMEOUT: Duration = Duration::from_millis(500);
 const REPLAY_MAX_WAIT: Duration = Duration::from_secs(5);
-const COPILOT_CACHE_DIR: &str = "history/copilot";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopilotListedSession {
     pub session_id: String,
@@ -38,85 +40,8 @@ pub struct CopilotListedSession {
 pub async fn list_workspace_sessions(
     project_paths: &[String],
 ) -> Result<Vec<CopilotListedSession>, String> {
-    if project_paths.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let provider = Arc::new(CopilotProvider);
-    if !provider.is_available() {
-        return Ok(Vec::new());
-    }
-
-    let workspace_projects = canonical_workspace_projects(project_paths);
-    if workspace_projects.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let spawn_cwd = PathBuf::from(
-        workspace_projects
-            .iter()
-            .next()
-            .cloned()
-            .unwrap_or_else(|| project_paths[0].clone()),
-    );
-
-    let mut client = AcpClient::new_with_provider(provider, None, spawn_cwd)
-        .map_err(|error| format!("Failed to create Copilot history client: {error}"))?;
-
-    client
-        .start()
-        .await
-        .map_err(|error| format!("Failed to start Copilot history client: {error}"))?;
-    client
-        .initialize()
-        .await
-        .map_err(|error| format!("Failed to initialize Copilot history client: {error}"))?;
-
-    let mut cursor: Option<String> = None;
-    let mut discovered = Vec::new();
-    let mut seen_session_ids = HashSet::new();
-
-    loop {
-        let response = client
-            .list_sessions_page(None, cursor.clone())
-            .await
-            .map_err(|error| format!("Failed to list Copilot sessions: {error}"))?;
-
-        for session in response.sessions {
-            let Some(listed) = normalize_copilot_session_info(session, &workspace_projects) else {
-                continue;
-            };
-
-            if seen_session_ids.insert(listed.session_id.clone()) {
-                discovered.push(listed);
-            }
-        }
-
-        let next_cursor = response.next_cursor;
-        if next_cursor.is_none() || next_cursor == cursor {
-            break;
-        }
-        cursor = next_cursor;
-    }
-
-    client.stop();
-
-    discovered.sort_by(|left, right| right.updated_at_ms.cmp(&left.updated_at_ms));
-
-    let mut limited = Vec::new();
-    let mut per_project_counts: HashMap<String, usize> = HashMap::new();
-    for session in discovered {
-        let count = per_project_counts
-            .entry(session.project_path.clone())
-            .or_insert(0);
-        if *count >= MAX_SESSIONS_PER_PROJECT {
-            continue;
-        }
-        *count += 1;
-        limited.push(session);
-    }
-
-    Ok(limited)
+    let session_state_root = parser::resolve_copilot_session_state_root()?;
+    parser::scan_copilot_sessions_at_root(&session_state_root, project_paths).await
 }
 
 pub async fn load_session(
@@ -125,21 +50,114 @@ pub async fn load_session(
     cwd: &str,
     title: &str,
 ) -> Result<Option<ConvertedSession>, String> {
+    // Fast path: load from session journal (events persisted during live session).
+    if let Some(converted) =
+        load_session_from_journal(app, &replay_context.local_session_id, title).await
+    {
+        return Ok(Some(converted));
+    }
+
     if let Some(source_path) = replay_context.source_path.as_deref() {
-        match load_cached_session_from_source(Path::new(source_path)).await {
-            Ok(Some(converted)) => return Ok(Some(converted)),
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!(
-                    session_id = %replay_context.local_session_id,
-                    source_path = %source_path,
-                    error = %error,
-                    "Failed to load cached Copilot transcript; falling back to ACP replay"
-                );
+        if !source_path.is_empty() && !parser::is_missing_transcript_marker(source_path) {
+            let session_state_root = parser::resolve_copilot_session_state_root()?;
+            match parser::parse_copilot_session_at_root(
+                &session_state_root,
+                Path::new(source_path),
+                title,
+            )
+            .await
+            {
+                Ok(converted) => return Ok(Some(converted)),
+                Err(error) => {
+                    tracing::info!(
+                        session_id = %replay_context.local_session_id,
+                        source_path = %source_path,
+                        error = %error,
+                        "Falling back to ACP replay for Copilot session"
+                    );
+                }
             }
         }
     }
 
+    // Slow path: ACP replay fallback for sessions without journal entries
+    // (e.g., sessions created before journal was introduced, or external Copilot sessions).
+    load_session_via_acp_replay(app, replay_context, cwd, title).await
+}
+
+/// Load a Copilot session by replaying persisted journal events from the database.
+/// Returns `None` if no journal events exist for this session.
+async fn load_session_from_journal(
+    app: &AppHandle,
+    session_id: &str,
+    title: &str,
+) -> Option<ConvertedSession> {
+    let db = app
+        .try_state::<DbConn>()
+        .map(|state| state.inner().clone())?;
+
+    let rows = SessionJournalEventRepository::list_serialized(&db, session_id)
+        .await
+        .ok()?;
+
+    if rows.is_empty() {
+        return None;
+    }
+
+    let replay_context = crate::acp::session_descriptor::SessionReplayContext {
+        local_session_id: session_id.to_string(),
+        history_session_id: session_id.to_string(),
+        agent_id: crate::acp::types::CanonicalAgentId::Copilot,
+        parser_agent_type: AgentType::Copilot,
+        project_path: String::new(),
+        worktree_path: None,
+        effective_cwd: String::new(),
+        source_path: None,
+        compatibility: crate::acp::session_descriptor::SessionDescriptorCompatibility::Canonical,
+    };
+
+    let events =
+        crate::acp::session_journal::decode_serialized_events(&replay_context, rows).ok()?;
+
+    let updates: Vec<(u64, SessionUpdate)> = events
+        .into_iter()
+        .filter_map(|event| {
+            if let crate::acp::session_journal::SessionJournalEventPayload::ProjectionUpdate {
+                update,
+            } = event.payload
+            {
+                Some((
+                    event.created_at_ms.max(0) as u64,
+                    update.into_session_update(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if updates.is_empty() {
+        return None;
+    }
+
+    tracing::info!(
+        session_id = %session_id,
+        journal_events = updates.len(),
+        "Loaded Copilot session from journal"
+    );
+
+    Some(convert_replay_updates_to_session(
+        session_id, title, &updates,
+    ))
+}
+
+/// Fallback: load a Copilot session by spawning a Copilot process and replaying via ACP.
+async fn load_session_via_acp_replay(
+    app: &AppHandle,
+    replay_context: &SessionReplayContext,
+    cwd: &str,
+    title: &str,
+) -> Result<Option<ConvertedSession>, String> {
     let provider = Arc::new(CopilotProvider);
     if !provider.is_available() {
         return Ok(None);
@@ -171,124 +189,14 @@ pub async fn load_session(
     client.stop();
 
     match load_result {
-        Ok(_) => {
-            let converted = convert_replay_updates_to_session(
-                &replay_context.local_session_id,
-                title,
-                &replay_updates,
-            );
-
-            if let Err(error) = persist_cached_session_snapshot(app, replay_context, &converted).await
-            {
-                tracing::warn!(
-                    session_id = %replay_context.local_session_id,
-                    error = %error,
-                    "Failed to persist cached Copilot transcript"
-                );
-            }
-
-            Ok(Some(converted))
-        }
+        Ok(_) => Ok(Some(convert_replay_updates_to_session(
+            &replay_context.local_session_id,
+            title,
+            &replay_updates,
+        ))),
         Err(crate::acp::error::AcpError::SessionNotFound(_)) => Ok(None),
         Err(error) => Err(format!("Failed to load Copilot session: {error}")),
     }
-}
-
-async fn load_cached_session_from_source(path: &Path) -> Result<Option<ConvertedSession>, String> {
-    let exists = tokio::fs::try_exists(path)
-        .await
-        .map_err(|error| format!("Failed to check Copilot cache existence: {error}"))?;
-
-    if !exists {
-        return Ok(None);
-    }
-
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|error| format!("Failed to read Copilot cache: {error}"))?;
-
-    let converted = serde_json::from_slice::<ConvertedSession>(&bytes)
-        .map_err(|error| format!("Failed to parse Copilot cache: {error}"))?;
-
-    Ok(Some(converted))
-}
-
-fn cached_session_snapshot_path(app: &AppHandle, session_id: &str) -> Result<PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("Failed to resolve app data dir for Copilot cache: {error}"))?;
-
-    Ok(app_data_dir
-        .join(COPILOT_CACHE_DIR)
-        .join(format!("{session_id}.json")))
-}
-
-async fn persist_cached_session_snapshot(
-    app: &AppHandle,
-    replay_context: &SessionReplayContext,
-    converted: &ConvertedSession,
-) -> Result<(), String> {
-    let path = cached_session_snapshot_path(app, &replay_context.local_session_id)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| "Copilot cache path has no parent directory".to_string())?;
-
-    tokio::fs::create_dir_all(parent)
-        .await
-        .map_err(|error| format!("Failed to create Copilot cache directory: {error}"))?;
-
-    let payload = serde_json::to_vec(converted)
-        .map_err(|error| format!("Failed to serialize Copilot cache: {error}"))?;
-    tokio::fs::write(&path, payload)
-        .await
-        .map_err(|error| format!("Failed to write Copilot cache: {error}"))?;
-
-    let metadata = tokio::fs::metadata(&path)
-        .await
-        .map_err(|error| format!("Failed to stat Copilot cache: {error}"))?;
-    let modified_at = metadata
-        .modified()
-        .map_err(|error| format!("Failed to read Copilot cache mtime: {error}"))?;
-    let modified_at_ms = modified_at
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| format!("Invalid Copilot cache mtime: {error}"))?
-        .as_millis() as i64;
-
-    if let Some(db) = app.try_state::<DbConn>().map(|state| state.inner().clone()) {
-        let existing = SessionMetadataRepository::get_by_id(&db, &replay_context.local_session_id)
-            .await
-            .map_err(|error| format!("Failed to load session metadata for Copilot cache: {error}"))?;
-
-        let display = existing
-            .as_ref()
-            .map(|row| row.display.clone())
-            .unwrap_or_else(|| converted.title.clone());
-        let timestamp = existing
-            .as_ref()
-            .map(|row| row.timestamp)
-            .unwrap_or_else(|| Utc::now().timestamp_millis());
-        let project_path = existing
-            .as_ref()
-            .map(|row| row.project_path.clone())
-            .unwrap_or_else(|| replay_context.project_path.clone());
-
-        SessionMetadataRepository::upsert(
-            &db,
-            replay_context.local_session_id.clone(),
-            display,
-            timestamp,
-            project_path,
-            "copilot".to_string(),
-            path.to_string_lossy().into_owned(),
-            modified_at_ms,
-            metadata.len() as i64,
-        )
-        .await
-        .map_err(|error| format!("Failed to persist Copilot cache metadata: {error}"))?;
-    }
-
-    Ok(())
 }
 
 pub fn convert_replay_updates_to_session(
@@ -303,39 +211,6 @@ pub fn convert_replay_updates_to_session(
     }
 
     accumulator.finish(session_id, title)
-}
-
-fn canonical_workspace_projects(project_paths: &[String]) -> HashSet<String> {
-    project_paths
-        .iter()
-        .filter_map(|path| canonicalize_path_string(Path::new(path)))
-        .collect()
-}
-
-fn normalize_copilot_session_info(
-    session: SessionInfo,
-    workspace_projects: &HashSet<String>,
-) -> Option<CopilotListedSession> {
-    let cwd_path = PathBuf::from(&session.cwd);
-    let (project_path, worktree_path) =
-        crate::acp::commands::session_metadata_context_from_cwd(&cwd_path);
-
-    if !workspace_projects.contains(&project_path) {
-        return None;
-    }
-
-    Some(CopilotListedSession {
-        session_id: session.session_id.clone(),
-        title: session
-            .title
-            .filter(|title| !title.trim().is_empty())
-            .unwrap_or_else(|| fallback_title(&session.session_id)),
-        updated_at_ms: parse_updated_at_ms(session.updated_at.as_deref())
-            .unwrap_or_else(|| Utc::now().timestamp_millis()),
-        project_path,
-        worktree_path,
-        cwd: session.cwd,
-    })
 }
 
 async fn collect_replay_updates(
@@ -396,28 +271,6 @@ async fn collect_replay_updates(
 fn fallback_title(session_id: &str) -> String {
     let short_id = &session_id[..8.min(session_id.len())];
     format!("Session {short_id}")
-}
-
-fn parse_updated_at_ms(updated_at: Option<&str>) -> Option<i64> {
-    let value = updated_at?.trim();
-    if value.is_empty() {
-        return None;
-    }
-
-    chrono::DateTime::parse_from_rfc3339(value)
-        .map(|timestamp| timestamp.timestamp_millis())
-        .ok()
-        .or_else(|| {
-            chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f")
-                .ok()
-                .map(|timestamp| timestamp.and_utc().timestamp_millis())
-        })
-}
-
-fn canonicalize_path_string(path: &Path) -> Option<String> {
-    path.canonicalize()
-        .ok()
-        .map(|canonical| canonical.to_string_lossy().into_owned())
 }
 
 fn timestamp_ms_to_rfc3339(timestamp_ms: u64) -> String {
@@ -756,9 +609,7 @@ fn build_stats(entries: &[StoredEntry]) -> SessionStats {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        collect_replay_updates, convert_replay_updates_to_session, load_cached_session_from_source,
-    };
+    use super::{collect_replay_updates, convert_replay_updates_to_session};
     use crate::acp::agent_context::with_agent;
     use crate::acp::event_hub::AcpEventEnvelope;
     use crate::acp::parsers::AgentType;
@@ -767,7 +618,6 @@ mod tests {
     };
     use crate::acp::types::ContentBlock;
     use crate::session_jsonl::types::StoredEntry;
-    use std::path::PathBuf;
 
     #[test]
     fn converts_replay_updates_into_thread_entries() {
@@ -1038,40 +888,5 @@ mod tests {
             }
             other => panic!("expected replayed tool call, got {:?}", other),
         }
-    }
-
-    #[tokio::test]
-    async fn load_cached_session_from_source_reads_converted_session_snapshot() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let source_path = temp.path().join("copilot-session.json");
-        let converted = convert_replay_updates_to_session(
-            "copilot-session-3",
-            "Cached Copilot Session",
-            &[(
-                1_710_000_020_000,
-                crate::acp::session_update::SessionUpdate::UserMessageChunk {
-                    chunk: ContentChunk {
-                        content: ContentBlock::Text {
-                            text: "Explain the parser".to_string(),
-                        },
-                        aggregation_hint: None,
-                    },
-                    session_id: Some("copilot-session-3".to_string()),
-                },
-            )],
-        );
-
-        let json = serde_json::to_string(&converted).expect("serialize converted session");
-        tokio::fs::write(&source_path, json)
-            .await
-            .expect("write cached session");
-
-        let loaded = load_cached_session_from_source(PathBuf::from(&source_path).as_path())
-            .await
-            .expect("load cached session")
-            .expect("cached session present");
-
-        assert_eq!(loaded.title, "Cached Copilot Session");
-        assert_eq!(loaded.entries.len(), 1);
     }
 }

@@ -271,12 +271,20 @@ impl SessionMetadataSource for CopilotSource {
         previous_state: Option<&SourceSyncState>,
     ) -> Result<SourceDelta> {
         let started = std::time::Instant::now();
+        let session_state_root = copilot_history::resolve_copilot_session_state_root()
+            .map_err(|error| anyhow!(error))?;
         let sessions = copilot_history::list_workspace_sessions(project_paths)
             .await
             .map_err(|error| anyhow!(error))?;
+        let indexed_entries = SessionMetadataRepository::get_all_file_index_entries(db).await?;
+        let indexed_map: HashMap<String, (String, i64, i64)> = indexed_entries
+            .into_iter()
+            .map(|(session_id, path, mtime, size)| (session_id, (path, mtime, size)))
+            .collect();
 
         let mut records: Vec<SessionMetadataRecord> = Vec::with_capacity(sessions.len());
         let mut live_session_ids: HashSet<String> = HashSet::with_capacity(sessions.len());
+        let mut unchanged_count = 0usize;
 
         for session in sessions {
             let session_id = session.session_id.clone();
@@ -293,15 +301,49 @@ impl SessionMetadataSource for CopilotSource {
                 .await?;
             }
 
+            let events_path =
+                copilot_history::events_jsonl_path_for_session(&session_state_root, &session_id);
+            let (file_path, file_mtime, file_size) = match tokio::fs::metadata(&events_path).await {
+                Ok(metadata) => {
+                    let modified = metadata
+                        .modified()
+                        .unwrap_or(SystemTime::UNIX_EPOCH)
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+                    (
+                        events_path.to_string_lossy().into_owned(),
+                        modified,
+                        metadata.len() as i64,
+                    )
+                }
+                Err(_) => (
+                    copilot_history::missing_transcript_marker(&session_id),
+                    0,
+                    0,
+                ),
+            };
+
+            if let Some((indexed_path, indexed_mtime, indexed_size)) = indexed_map.get(&session_id)
+            {
+                if indexed_path == &file_path
+                    && indexed_mtime == &file_mtime
+                    && indexed_size == &file_size
+                {
+                    unchanged_count += 1;
+                    continue;
+                }
+            }
+
             records.push((
                 session_id.clone(),
                 session.title,
                 session.updated_at_ms,
                 session.project_path,
                 self.agent_id().to_string(),
-                format!("__session_registry__/copilot/{session_id}"),
-                0,
-                0,
+                file_path,
+                file_mtime,
+                file_size,
             ));
         }
 
@@ -314,7 +356,7 @@ impl SessionMetadataSource for CopilotSource {
             },
             records,
             live_session_ids,
-            unchanged_count: 0,
+            unchanged_count,
         })
     }
 }

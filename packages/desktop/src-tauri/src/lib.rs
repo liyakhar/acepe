@@ -1,5 +1,6 @@
 pub mod acp;
 pub mod browser_webview;
+pub mod cc_sdk;
 pub mod checkpoint;
 pub mod codex_history;
 mod commands;
@@ -128,8 +129,8 @@ use skills::SkillsService;
 use sql_studio::commands::{
     sql_studio_delete_connection, sql_studio_execute_query, sql_studio_explore_table,
     sql_studio_get_connection, sql_studio_list_connections, sql_studio_list_schema,
-    sql_studio_pick_sqlite_file, sql_studio_save_connection, sql_studio_test_connection,
-    sql_studio_test_connection_input, sql_studio_update_table_cell,
+    sql_studio_pick_sqlite_file, sql_studio_save_connection, sql_studio_test_connection_input,
+    sql_studio_update_table_cell,
 };
 use std::sync::Arc;
 use storage::commands::{
@@ -1085,7 +1086,6 @@ pub fn run() {
             sql_studio_save_connection,
             sql_studio_delete_connection,
             sql_studio_pick_sqlite_file,
-            sql_studio_test_connection,
             sql_studio_test_connection_input,
             sql_studio_list_schema,
             sql_studio_execute_query,

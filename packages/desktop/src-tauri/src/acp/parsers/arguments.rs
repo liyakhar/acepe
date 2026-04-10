@@ -329,7 +329,10 @@ pub(crate) fn parse_tool_kind_arguments(
                     extract_parser_string_list(raw_arguments, &["file_paths", "filePaths", "paths"])
                         .and_then(|paths| paths.first().cloned())
                 }),
-            file_paths: extract_parser_string_list(raw_arguments, &["file_paths", "filePaths", "paths"]),
+            file_paths: extract_parser_string_list(
+                raw_arguments,
+                &["file_paths", "filePaths", "paths"],
+            ),
         },
         ToolKind::EnterPlanMode | ToolKind::ExitPlanMode | ToolKind::CreatePlan => {
             ToolArguments::PlanMode {

@@ -159,7 +159,9 @@ async fn load_skill_entries_from_root(root: &Path) -> Result<Vec<SkillEntry>, St
     Ok(skill_entries)
 }
 
-async fn load_flat_markdown_entries_from_root(root: &Path) -> Result<Vec<AvailableCommand>, String> {
+async fn load_flat_markdown_entries_from_root(
+    root: &Path,
+) -> Result<Vec<AvailableCommand>, String> {
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -453,7 +455,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_preconnection_commands_from_flat_markdown_root_falls_back_to_filename_when_name_missing() {
+    async fn load_preconnection_commands_from_flat_markdown_root_falls_back_to_filename_when_name_missing(
+    ) {
         let temp = tempdir().expect("temp dir");
         let agent_path = temp.path().join("security-auditor.agent.md");
 

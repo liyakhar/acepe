@@ -7,6 +7,7 @@
 
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::types::CanonicalAgentId;
+use crate::cc_sdk;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

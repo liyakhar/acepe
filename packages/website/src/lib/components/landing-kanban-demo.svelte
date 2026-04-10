@@ -10,6 +10,7 @@
 		type KanbanTaskCardData,
 		type KanbanToolData,
 	} from "@acepe/ui";
+	import { AppTopBar } from "@acepe/ui/app-layout";
 
 	import type { AgentToolEntry } from "@acepe/ui";
 
@@ -122,12 +123,12 @@
 		};
 	}
 
-	const groups = $derived.by((): readonly KanbanSceneColumnGroup[] => {
-		const claudeIcon = `/svgs/agents/claude/claude-icon-${theme}.svg`;
-		const codexIcon = `/svgs/agents/codex/codex-icon-${theme}.svg`;
-		const cursorIcon = `/svgs/agents/cursor/cursor-icon-${theme}.svg`;
-		const opencodeIcon = `/svgs/agents/opencode/opencode-logo-${theme}.svg`;
+	const claudeIcon = $derived(`/svgs/agents/claude/claude-icon-${theme}.svg`);
+	const codexIcon = $derived(`/svgs/agents/codex/codex-icon-${theme}.svg`);
+	const cursorIcon = $derived(`/svgs/agents/cursor/cursor-icon-${theme}.svg`);
+	const opencodeIcon = $derived(`/svgs/agents/opencode/opencode-logo-${theme}.svg`);
 
+	const groups = $derived.by((): readonly KanbanSceneColumnGroup[] => {
 		return [
 			{
 				id: "answer_needed",
@@ -284,10 +285,21 @@
 
 <div
 	inert
-	class="relative overflow-hidden rounded-lg border border-white/10 bg-background/80 shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-[2px]"
+	class="relative overflow-hidden rounded-xl border border-white/10 bg-background shadow-[0_24px_80px_rgba(0,0,0,0.42)]"
 >
-	<div class="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_48%)]"></div>
-	<div class="relative h-[430px] p-2 md:h-[470px] md:p-3">
-		<KanbanSceneBoard {groups} emptyHint="No agents" />
+	<div class="flex aspect-[16/10] flex-col pt-0.5 pb-0.5">
+		<div class="shrink-0">
+			<AppTopBar
+				showTrafficLights={true}
+				showSidebarToggle={true}
+				showAddProject={true}
+				showAvatar={false}
+				showRightSectionLeadingBorder={false}
+				showSearch={false}
+			/>
+		</div>
+		<div class="flex min-h-0 flex-1 overflow-hidden">
+			<KanbanSceneBoard {groups} emptyHint="No agents" />
+		</div>
 	</div>
 </div>
