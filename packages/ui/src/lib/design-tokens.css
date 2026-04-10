@@ -5,14 +5,17 @@
  * Keep colors.ts GREEN in sync with --token-build-icon-dark (dark build / shared green accent).
  */
 :root {
-  --token-success-light: #17803D;
-  /** Reference green for dark success-adjacent UIs not tied to build token */
-  --token-success-dark: #16db95;
-  /** Build accent + dark --success (same as Colors.green) */
-  --token-build-icon-dark: #99ffe4;
-  /** Plan / pencil-ruler icon — light: same as Colors.orange */
-  --token-plan-icon-light: #ff8d20;
-  --token-plan-icon-dark: #ffc799;
-  /** Default floating surface layer. Desktop overrides this above app-shell overlays. */
-  --overlay-z: 50;
+	/** Shared brand primary accent used for action surfaces. */
+	--token-brand-primary: #d97757;
+	--token-brand-primary-foreground: #191c22;
+	--token-success-light: #17803d;
+	/** Reference green for dark success-adjacent UIs not tied to build token */
+	--token-success-dark: #16db95;
+	/** Build accent + dark --success (same as Colors.green) */
+	--token-build-icon-dark: #99ffe4;
+	/** Plan / pencil-ruler icon — light: same as Colors.orange */
+	--token-plan-icon-light: #ff8d20;
+	--token-plan-icon-dark: #ffc799;
+	/** Default floating surface layer. Desktop overrides this above app-shell overlays. */
+	--overlay-z: 50;
 }

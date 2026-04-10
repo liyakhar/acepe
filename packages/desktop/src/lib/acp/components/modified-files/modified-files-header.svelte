@@ -270,7 +270,7 @@ function handleCreatePrClick(): void {
 		prPrefs.agentId,
 		prPrefs.modelId,
 		resolveCustomPrompt(),
-		reactiveModels,
+		reactiveModels
 	);
 	onCreatePr(config);
 }
@@ -313,8 +313,8 @@ function handleAgentPickerChange(value: string): void {
 			value,
 			prPrefs.modelId,
 			normalizeCustomShipInstructions(prPrefs.customPrompt),
-			nextModels,
-		),
+			nextModels
+		)
 	);
 }
 
@@ -712,15 +712,15 @@ function handlePromptResetClick(): void {
 							{m.review_applied()}
 						</Button>
 					{:else}
-						<button
-							type="button"
+						<Button
+							variant="invert"
+							size="headerAction"
 							disabled={!canKeepAll}
 							onclick={handleKeepAllClick}
-							class="flex items-center gap-1 rounded border border-[#E5A96D] bg-[#FFC799] px-2 py-0.5 text-[0.6875rem] font-medium text-[#5B3818] transition-colors hover:bg-[#FFB86B] disabled:cursor-not-allowed disabled:opacity-50"
 						>
 							<Check size={11} weight="bold" class="shrink-0" />
 							{m.review_keep()}
-						</button>
+						</Button>
 					{/if}
 				</div>
 

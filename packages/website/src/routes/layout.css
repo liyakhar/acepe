@@ -1,21 +1,21 @@
-@import '@acepe/ui/design-tokens.css';
-@import 'tailwindcss';
-@import 'tw-animate-css';
+@import "@acepe/ui/design-tokens.css";
+@import "tailwindcss";
+@import "tw-animate-css";
 
-@custom-variant dark (&:is([data-theme='dark'] *));
+@custom-variant dark (&:is([data-theme="dark"] *));
 
 /* Acepe custom font - font files in static/fonts/ */
 @font-face {
-	font-family: 'Acepe';
+	font-family: "Acepe";
 	font-style: normal;
 	font-weight: 400;
-	src: url('/fonts/acepe.woff2') format('woff2');
+	src: url("/fonts/acepe.woff2") format("woff2");
 	font-display: swap;
 }
 
-@source '../**/*.{html,js,svelte,ts}';
-@source '../../../ui/src/**/*.{html,js,svelte,ts}';
-@source inline('text-success');
+@source "../**/*.{html,js,svelte,ts}";
+@source "../../../ui/src/**/*.{html,js,svelte,ts}";
+@source inline("text-success");
 
 :root {
 	--radius: 0.625rem;
@@ -27,8 +27,8 @@
 	--card-foreground: #ffffff;
 	--popover: #272727;
 	--popover-foreground: #ffffff;
-	--primary: #ffc799;
-	--primary-foreground: #191c22;
+	--primary: var(--token-brand-primary);
+	--primary-foreground: var(--token-brand-primary-foreground);
 	--secondary: #565656;
 	--secondary-foreground: #ececec;
 	--muted: #3a3a3a;
@@ -39,7 +39,7 @@
 	--destructive-foreground: #ffffff;
 	--border: #2a2a2a;
 	--input: #313131;
-	--ring: #30373a;
+	--ring: var(--token-brand-primary);
 	--success: var(--token-build-icon-dark);
 	--success-reference: var(--token-success-dark);
 	--success-foreground: #ffffff;
@@ -52,12 +52,12 @@
 	--chart-5: #b48ead;
 	--sidebar: #141414;
 	--sidebar-foreground: #cccccc;
-	--sidebar-primary: #ffc799;
-	--sidebar-primary-foreground: #191c22;
+	--sidebar-primary: var(--token-brand-primary);
+	--sidebar-primary-foreground: var(--token-brand-primary-foreground);
 	--sidebar-accent: #2a2a2a;
 	--sidebar-accent-foreground: #ffffff;
 	--sidebar-border: rgba(255, 255, 255, 0.05);
-	--sidebar-ring: #30373a;
+	--sidebar-ring: var(--token-brand-primary);
 
 	/* Font families */
 	--font-sans: Acepe, system-ui, sans-serif;
@@ -85,33 +85,33 @@
 	--spacing: 0.25rem;
 }
 
-:root[data-theme='light'] {
-	--background: #F0EEE6;
+:root[data-theme="light"] {
+	--background: #f0eee6;
 	--foreground: #141413;
-	--card: #E3DACC;
+	--card: #e3dacc;
 	--card-foreground: #141413;
 	--success: var(--token-success-light);
 	--success-reference: var(--token-success-light);
 	--success-foreground: #ffffff;
 	--build-icon: var(--success);
 	--plan-icon: var(--token-plan-icon-light);
-	--popover: #FFFFFF;
-	--popover-foreground: #0A0A09;
-	--secondary: #E5E0D5;
-	--secondary-foreground: #1A1A1A;
-	--muted: #E8E3D8;
+	--popover: #ffffff;
+	--popover-foreground: #0a0a09;
+	--secondary: #e5e0d5;
+	--secondary-foreground: #1a1a1a;
+	--muted: #e8e3d8;
 	--muted-foreground: #525252;
-	--accent: #DDD8CC;
-	--accent-foreground: #1A1A1A;
-	--border: #BDB6A6;
-	--input: #E0DBD0;
-	--ring: #D97757;
-	--sidebar: #DDD8CC;
+	--accent: #ddd8cc;
+	--accent-foreground: #1a1a1a;
+	--border: #bdb6a6;
+	--input: #e0dbd0;
+	--ring: var(--token-brand-primary);
+	--sidebar: #ddd8cc;
 	--sidebar-foreground: #141413;
-	--sidebar-accent: #D0CBC0;
+	--sidebar-accent: #d0cbc0;
 	--sidebar-accent-foreground: #141413;
-	--sidebar-border: #D0CBC0;
-	--sidebar-ring: #D97757;
+	--sidebar-border: #d0cbc0;
+	--sidebar-ring: var(--token-brand-primary);
 }
 
 @theme inline {
@@ -192,25 +192,25 @@
 	color: #ffffff;
 }
 
-:root[data-theme='light'] .theme-invert-btn {
+:root[data-theme="light"] .theme-invert-btn {
 	background: #2f2f2f;
 	color: #f0eee6;
 }
 
-:root[data-theme='light'] .theme-invert-btn:hover {
+:root[data-theme="light"] .theme-invert-btn:hover {
 	background: #5a5a5a;
 	color: #f0eee6;
 }
 
-:root[data-theme='light'] .theme-invert-btn-icon {
+:root[data-theme="light"] .theme-invert-btn-icon {
 	background: rgba(240, 238, 230, 0.12);
 }
 
-:root[data-theme='light'] .theme-invert-btn:hover .theme-invert-btn-icon {
+:root[data-theme="light"] .theme-invert-btn:hover .theme-invert-btn-icon {
 	background: rgba(255, 255, 255, 0.1);
 }
 
-:root[data-theme='light'] .theme-invert-btn-icon-svg {
+:root[data-theme="light"] .theme-invert-btn-icon-svg {
 	color: #f0eee6;
 }
 
@@ -221,7 +221,7 @@
 	background-color: transparent !important;
 }
 
-:root[data-theme='light'] .shiki,
-:root[data-theme='light'] .shiki span {
+:root[data-theme="light"] .shiki,
+:root[data-theme="light"] .shiki span {
 	color: var(--shiki-light);
 }

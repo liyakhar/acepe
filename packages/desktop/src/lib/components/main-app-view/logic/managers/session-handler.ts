@@ -124,9 +124,12 @@ export class SessionHandler {
 
 		// Already cached - connect immediately.
 		if (session) {
-			this.sessionStore.connectSession(sessionId).mapErr(() => {
-				// Error state will be shown via status indicator.
-			});
+			this.projectionHydrator
+				.hydrateSession(sessionId)
+				.andThen(() => this.sessionStore.connectSession(sessionId).map(() => undefined))
+				.mapErr(() => {
+					// Error state will be shown via status indicator.
+				});
 		}
 
 		return okAsync(undefined);

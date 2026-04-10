@@ -54,10 +54,6 @@
 	] as const;
 
 	const workflowSteps = ['Launch', 'Monitor', 'Unblock', 'Review', 'Ship'] as const;
-
-	function handleExportPdf(): void {
-		window.print();
-	}
 </script>
 
 <svelte:head>
@@ -151,13 +147,12 @@
 				</a>
 			{/each}
 			<div class="ml-auto">
-				<button
-					type="button"
-					onclick={handleExportPdf}
-					class="bg-foreground text-background hover:opacity-90 rounded-full px-4 py-2 text-xs font-semibold tracking-[0.16em] uppercase transition-opacity"
+				<a
+					href="/pitch/export"
+					class="bg-foreground text-background hover:opacity-90 inline-flex rounded-full px-4 py-2 text-xs font-semibold tracking-[0.16em] uppercase transition-opacity"
 				>
 					Export PDF
-				</button>
+				</a>
 			</div>
 		</nav>
 

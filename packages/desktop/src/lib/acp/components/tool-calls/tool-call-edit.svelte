@@ -23,6 +23,7 @@ interface ToolCallEditProps {
 	projectPath?: string;
 	elapsedLabel?: string | null;
 	pendingPermission?: PermissionRequest | null;
+	defaultExpanded?: boolean;
 }
 
 let {
@@ -31,6 +32,7 @@ let {
 	projectPath,
 	elapsedLabel,
 	pendingPermission = null,
+	defaultExpanded = true,
 }: ToolCallEditProps = $props();
 
 const sessionStore = getSessionStore();
@@ -150,4 +152,5 @@ const themeNames = { dark: "Cursor Dark", light: "pierre-light" };
 	preparingLabel={m.tool_edit_preparing_label()}
 	ariaCollapseDiff={m.aria_collapse_diff()}
 	ariaExpandDiff={m.aria_expand_diff()}
+	{defaultExpanded}
 />

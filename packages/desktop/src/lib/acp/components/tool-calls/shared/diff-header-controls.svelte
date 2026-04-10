@@ -53,11 +53,7 @@ const accentText = $derived(
 		: "hsl(33.3333 5.4545% 32.3529%)" // --accent-foreground from :root
 );
 
-const primaryColor = $derived(
-	themeType === "dark"
-		? "#ffc799" // --primary from .dark
-		: "hsl(32 52% 50%)" // --primary from :root
-);
+const primaryColor = $derived("var(--primary)");
 </script>
 
 <div class="flex items-center gap-2 ml-auto">

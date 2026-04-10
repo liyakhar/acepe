@@ -346,26 +346,33 @@ function removePlanApprovalsForSession(sessionId: string): void {
 sessionStore.setCallbacks({
 	onPermissionRequest: (permission) => {
 		hydrateInteractionProjection(permission.sessionId, "session-update-permission", () => {
+			const currentPermission = permissionStore.getForToolCall(
+				permission.sessionId,
+				permission.tool?.callID ?? permission.id
+			);
+			if (!currentPermission || currentPermission.id !== permission.id) {
+				return;
+			}
 			showNotification(
 				{
-					id: permission.id,
+					id: currentPermission.id,
 					type: "permission",
-					title: permission.permission,
-					body: permission.patterns.join(", "),
+					title: currentPermission.permission,
+					body: currentPermission.patterns.join(", "),
 					actions: PERMISSION_ACTIONS,
-					sessionId: permission.sessionId,
-					sourceId: permission.id,
+					sessionId: currentPermission.sessionId,
+					sourceId: currentPermission.id,
 				},
 				(actionId) => {
-					if (!interactionStore.permissionsPending.has(permission.id)) return;
+					if (!interactionStore.permissionsPending.has(currentPermission.id)) return;
 					if (actionId === "allow") {
-						permissionStore.reply(permission.id, "once");
+						permissionStore.reply(currentPermission.id, "once");
 					} else if (actionId === "allow-always") {
-						permissionStore.reply(permission.id, "always");
+						permissionStore.reply(currentPermission.id, "always");
 					} else if (actionId === "deny") {
-						permissionStore.reply(permission.id, "reject");
+						permissionStore.reply(currentPermission.id, "reject");
 					} else if (actionId === "view") {
-						focusOrOpenSessionPanel(permission.sessionId);
+						focusOrOpenSessionPanel(currentPermission.sessionId);
 					}
 				},
 				{

@@ -96,9 +96,13 @@ describe("PermissionStore", () => {
 			store.add(firstPermission);
 			store.add(secondPermission);
 
-			expect(store.pending.size).toBe(2);
+			expect(store.pending.size).toBe(1);
 			expect(store.pending.has(firstPermission.id)).toBe(true);
-			expect(store.pending.has(secondPermission.id)).toBe(true);
+			expect(store.pending.has(secondPermission.id)).toBe(false);
+			expect(store.pending.get(firstPermission.id)?.members?.map((member) => member.id)).toEqual([
+				firstPermission.id,
+				secondPermission.id,
+			]);
 		});
 
 		it("should resolve permission by session-scoped tool call id", () => {
@@ -107,8 +111,9 @@ describe("PermissionStore", () => {
 
 			const permission = store.getForToolCall("session-1", "tool-1");
 
-			expect(permission?.jsonRpcRequestId).toBe(101);
-			expect(permission?.id).toBe(buildAcpPermissionId("session-1", "tool-1", 101));
+			expect(permission?.jsonRpcRequestId).toBe(100);
+			expect(permission?.id).toBe(buildAcpPermissionId("session-1", "tool-1", 100));
+			expect(permission?.members?.length).toBe(2);
 		});
 
 		it("should isolate permissions with the same tool call id across sessions", () => {
@@ -122,7 +127,7 @@ describe("PermissionStore", () => {
 			expect(store.getForToolCall("session-2", "tool-1")?.id).toBe(sessionTwoPermission.id);
 		});
 
-		it("should prefer the highest jsonRpcRequestId for same-session ACP siblings", () => {
+		it("keeps the first grouped permission id stable for the tool call", () => {
 			const newerPermission = createAcpPermission("session-1", "tool-1", 101);
 			const olderPermission = createAcpPermission("session-1", "tool-1", 100);
 
@@ -131,8 +136,12 @@ describe("PermissionStore", () => {
 
 			const permission = store.getForToolCall("session-1", "tool-1");
 
-			expect(permission?.id).toBe(olderPermission.id);
-			expect(permission?.jsonRpcRequestId).toBe(100);
+			expect(permission?.id).toBe(newerPermission.id);
+			expect(permission?.jsonRpcRequestId).toBe(101);
+			expect(permission?.members?.map((member) => member.id)).toEqual([
+				newerPermission.id,
+				olderPermission.id,
+			]);
 		});
 
 		it("matches execute permissions by command when the permission anchor id differs", () => {
@@ -168,7 +177,7 @@ describe("PermissionStore", () => {
 			expect(matched?.tool?.callID).toBe("shell-permission");
 		});
 
-		it("returns the latest pending permission for a canonical operation", () => {
+		it("returns the grouped permission for a canonical operation", () => {
 			const operationStore = new OperationStore();
 			const entryStore = new SessionEntryStore(operationStore);
 			entryStore.createToolCallEntry("session-1", {
@@ -189,7 +198,11 @@ describe("PermissionStore", () => {
 
 			const matched = operation ? store.getForOperation(operation, operationStore) : undefined;
 
-			expect(matched?.jsonRpcRequestId).toBe(101);
+			expect(matched?.jsonRpcRequestId).toBe(100);
+			expect(matched?.members?.map((member) => member.id)).toEqual([
+				buildAcpPermissionId("session-1", "shell-permission", 100),
+				buildAcpPermissionId("session-1", "shell-permission", 101),
+			]);
 		});
 
 		it("fails closed when multiple execute operations share the same command", () => {
@@ -532,6 +545,44 @@ describe("PermissionStore", () => {
 				replyHandler: {
 					kind: "json-rpc",
 					requestId: 456,
+				},
+				payload: {
+					kind: "permission",
+					reply: "once",
+					optionId: "allow",
+				},
+			});
+			expect(store.pending.size).toBe(0);
+		});
+
+		it("replies to every grouped ACP permission for the same tool call", async () => {
+			const firstPermission = createAcpPermission("session-grouped", "tool-grouped", 456);
+			const secondPermission = createAcpPermission("session-grouped", "tool-grouped", 457);
+
+			store.add(firstPermission);
+			store.add(secondPermission);
+			await store.reply(firstPermission.id, "once");
+
+			expect(mockReplyInteraction).toHaveBeenCalledTimes(2);
+			expect(mockReplyInteraction).toHaveBeenNthCalledWith(1, {
+				sessionId: "session-grouped",
+				interactionId: firstPermission.id,
+				replyHandler: {
+					kind: "json-rpc",
+					requestId: 456,
+				},
+				payload: {
+					kind: "permission",
+					reply: "once",
+					optionId: "allow",
+				},
+			});
+			expect(mockReplyInteraction).toHaveBeenNthCalledWith(2, {
+				sessionId: "session-grouped",
+				interactionId: secondPermission.id,
+				replyHandler: {
+					kind: "json-rpc",
+					requestId: 457,
 				},
 				payload: {
 					kind: "permission",

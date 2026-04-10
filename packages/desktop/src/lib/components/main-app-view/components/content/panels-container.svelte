@@ -233,7 +233,7 @@ const terminalTabsPanelStore = $derived.by(() => ({
 	<div
 		class="flex flex-row items-stretch gap-0.5 flex-1 min-h-0 {viewModeState.isFullscreenMode
 			? 'overflow-hidden'
-			: 'overflow-x-auto'}"
+			: 'overflow-x-auto overflow-y-hidden'}"
 	>
 		<!-- Fullscreen top-level panel -->
 		{#if viewModeState.isFullscreenMode && fullscreenTopLevelPanel}

@@ -42,8 +42,8 @@
 	--card-foreground: #0A0A09;
 	--popover: #FFFFFF;
 	--popover-foreground: #0A0A09;
-	--primary: #D97757;
-	--primary-foreground: hsl(0 0% 100%);
+	--primary: var(--token-brand-primary);
+	--primary-foreground: var(--token-brand-primary-foreground);
 	--secondary: #E5E0D5;
 	--secondary-foreground: #1A1A1A;
 	--muted: #E8E3D8;
@@ -59,20 +59,20 @@
 	--plan-icon: var(--token-plan-icon-light);
 	--border: #BDB6A6;
 	--input: #E0DBD0;
-	--ring: #D97757;
-	--chart-1: #D97757;
+	--ring: var(--token-brand-primary);
+	--chart-1: var(--token-brand-primary);
 	--chart-2: #6B6B6B;
-	--chart-3: #D97757;
+	--chart-3: var(--token-brand-primary);
 	--chart-4: #6B6B6B;
 	--chart-5: #A78BFA;
 	--sidebar: #DDD8CC;
 	--sidebar-foreground: #141413;
-	--sidebar-primary: #D97757;
-	--sidebar-primary-foreground: hsl(0 0% 100%);
+	--sidebar-primary: var(--token-brand-primary);
+	--sidebar-primary-foreground: var(--token-brand-primary-foreground);
 	--sidebar-accent: #D0CBC0;
 	--sidebar-accent-foreground: #141413;
 	--sidebar-border: #D0CBC0;
-	--sidebar-ring: #D97757;
+	--sidebar-ring: var(--token-brand-primary);
 
 	/* Font families */
 	--font-sans: Acepe, system-ui, sans-serif;
@@ -115,8 +115,8 @@
 	--card-foreground: #ffffff; /* editorSuggestWidget.foreground */
 	--popover: #1E1E1E; /* dropdown background */
 	--popover-foreground: #ffffff; /* editorSuggestWidget.foreground */
-	--primary: #ffc799; /* button.background */
-	--primary-foreground: #191c22; /* button.foreground */
+	--primary: var(--token-brand-primary); /* brand primary */
+	--primary-foreground: var(--token-brand-primary-foreground);
 	--secondary: #565656; /* button.secondaryBackground */
 	--secondary-foreground: #ececec; /* button.secondaryForeground */
 	--muted: #2A2A2A; /* input.border */
@@ -132,7 +132,7 @@
 	--plan-icon: var(--token-plan-icon-dark);
 	--border: #222222; /* input.border, dropdown.border */
 	--input: #313131; /* input.background */
-	--ring: #30373a; /* focusBorder */
+	--ring: var(--token-brand-primary);
 	--chart-1: #88c0d0; /* badge.background */
 	--chart-2: #a3be8c; /* gitDecoration.addedResourceForeground */
 	--chart-3: #ebcb8b; /* editorWarning.foreground */
@@ -140,12 +140,12 @@
 	--chart-5: #b48ead; /* terminal.ansiMagenta */
 	--sidebar: #0E0E0E; /* sideBar.background */
 	--sidebar-foreground: #cccccc; /* sideBar.foreground */
-	--sidebar-primary: #ffc799; /* button.background */
-	--sidebar-primary-foreground: #191c22; /* button.foreground */
+	--sidebar-primary: var(--token-brand-primary);
+	--sidebar-primary-foreground: var(--token-brand-primary-foreground);
 	--sidebar-accent: #1A1A1A; /* list.hoverBackground */
 	--sidebar-accent-foreground: #ffffff; /* list.hoverForeground */
 	--sidebar-border: rgba(255, 255, 255, 0.05); /* editorGroupHeader.tabsBorder */
-	--sidebar-ring: #30373a; /* focusBorder */
+	--sidebar-ring: var(--token-brand-primary);
 }
 
 @theme inline {

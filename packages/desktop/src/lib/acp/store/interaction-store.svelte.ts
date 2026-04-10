@@ -11,7 +11,12 @@ import type {
 	ToolReference,
 } from "../../services/acp-types.js";
 import type { PlanApprovalInteraction } from "../types/interaction.js";
-import { createPermissionRequest, type PermissionRequest } from "../types/permission.js";
+import {
+	buildPermissionGroupKey,
+	createPermissionRequest,
+	mergePermissionRequests,
+	type PermissionRequest,
+} from "../types/permission.js";
 import type { AnsweredQuestion, QuestionRequest } from "../types/question.js";
 import {
 	createLegacyInteractionReplyHandler,
@@ -114,8 +119,7 @@ export class InteractionStore {
 		if (interaction.state !== "Pending") {
 			return;
 		}
-		this.permissionsPending.set(
-			interaction.id,
+		this.upsertPendingPermission(
 			createPermissionRequest({
 				id: payload.id,
 				sessionId: payload.sessionId,
@@ -131,6 +135,23 @@ export class InteractionStore {
 				tool: payload.tool,
 			})
 		);
+	}
+
+	private upsertPendingPermission(permission: PermissionRequest): void {
+		const groupKey = buildPermissionGroupKey(permission);
+		for (const [interactionId, existingPermission] of this.permissionsPending) {
+			if (buildPermissionGroupKey(existingPermission) !== groupKey) {
+				continue;
+			}
+
+			this.permissionsPending.set(
+				interactionId,
+				mergePermissionRequests(existingPermission, permission)
+			);
+			return;
+		}
+
+		this.permissionsPending.set(permission.id, permission);
 	}
 
 	private applyQuestionInteraction(interaction: InteractionSnapshot, payload: QuestionData): void {

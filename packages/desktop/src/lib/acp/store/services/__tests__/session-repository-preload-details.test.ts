@@ -128,20 +128,31 @@ function createStateWriter(state: SessionStoreState): ISessionStateWriter {
 }
 
 const storedEntries: SessionEntry[][] = [];
+const entriesBySession = new Map<string, SessionEntry[]>();
+const preloadedSessionIds = new Set<string>();
 
 const entryManager: IEntryManager = {
-	getEntries: () => [],
+	getEntries: (sessionId) => entriesBySession.get(sessionId) ?? [],
 	hasEntries: () => false,
-	isPreloaded: () => false,
-	markPreloaded: () => {},
-	unmarkPreloaded: () => {},
-	storeEntriesAndBuildIndex: (_sessionId, entries) => {
+	isPreloaded: (sessionId) => preloadedSessionIds.has(sessionId),
+	markPreloaded: (sessionId) => {
+		preloadedSessionIds.add(sessionId);
+	},
+	unmarkPreloaded: (sessionId) => {
+		preloadedSessionIds.delete(sessionId);
+	},
+	storeEntriesAndBuildIndex: (sessionId, entries) => {
+		entriesBySession.set(sessionId, entries);
+		preloadedSessionIds.add(sessionId);
 		storedEntries.push(entries);
 	},
 	addEntry: () => {},
 	removeEntry: () => {},
 	updateEntry: () => {},
-	clearEntries: () => {},
+	clearEntries: (sessionId) => {
+		entriesBySession.delete(sessionId);
+		preloadedSessionIds.delete(sessionId);
+	},
 	createToolCallEntry: () => {},
 	updateToolCallEntry: () => {},
 	aggregateAssistantChunk: () => {
@@ -180,6 +191,8 @@ describe("SessionRepository.preloadSessionDetails", () => {
 		getSessionMock.mockReset();
 		getSessionMock.mockImplementation(() => okAsync(createConvertedSession()));
 		storedEntries.length = 0;
+		entriesBySession.clear();
+		preloadedSessionIds.clear();
 	});
 
 	it("does not read currentModeId from cold-loaded sessions", async () => {
@@ -208,6 +221,76 @@ describe("SessionRepository.preloadSessionDetails", () => {
 		);
 
 		expect(result.isOk()).toBe(true);
+		expect(storedEntries).toHaveLength(1);
+		expect(storedEntries[0]?.[0]?.type).toBe("user");
+	});
+
+	it("reuses preloaded entries when the requested sourcePath matches the cached source", async () => {
+		const state: SessionStoreState = { sessions: [] };
+		const repository = new SessionRepository(
+			createStateReader(state),
+			createStateWriter(state),
+			entryManager,
+			connectionManager
+		);
+
+		const first = await repository.preloadSessionDetails(
+			"session-1",
+			"/projects/acepe",
+			"copilot",
+			"/history/events.jsonl"
+		);
+		const second = await repository.preloadSessionDetails(
+			"session-1",
+			"/projects/acepe",
+			"copilot",
+			"/history/events.jsonl"
+		);
+
+		expect(first.isOk()).toBe(true);
+		expect(second.isOk()).toBe(true);
+		expect(getSessionMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("reloads a preloaded session when a sourcePath appears after an older preload", async () => {
+		const state: SessionStoreState = { sessions: [] };
+		const repository = new SessionRepository(
+			createStateReader(state),
+			createStateWriter(state),
+			entryManager,
+			connectionManager
+		);
+
+		preloadedSessionIds.add("session-1");
+		entriesBySession.set("session-1", [
+			{
+				id: "assistant-stale",
+				type: "assistant",
+				message: {
+					chunks: [
+						{
+							type: "message",
+							block: {
+								type: "text",
+								text: "Stale ACP replay content",
+							},
+						},
+					],
+					receivedAt: new Date("2026-04-08T00:00:00Z"),
+				},
+				timestamp: new Date("2026-04-08T00:00:00Z"),
+			},
+		]);
+
+		const result = await repository.preloadSessionDetails(
+			"session-1",
+			"/projects/acepe",
+			"copilot",
+			"/history/events.jsonl"
+		);
+
+		expect(result.isOk()).toBe(true);
+		expect(getSessionMock).toHaveBeenCalledTimes(1);
 		expect(storedEntries).toHaveLength(1);
 		expect(storedEntries[0]?.[0]?.type).toBe("user");
 	});

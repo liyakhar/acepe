@@ -64,6 +64,8 @@ interface Props {
 	onBeforeRender?: () => Promise<void>;
 	/** Optional CSS injected into the Pierre diffs shadow DOM. */
 	unsafeCSS?: string;
+	/** Whether the diff should start expanded. */
+	defaultExpanded?: boolean;
 	editingLabel?: string;
 	editedLabel?: string;
 	awaitingApprovalLabel?: string;
@@ -96,6 +98,7 @@ let {
 	workerPool,
 	onBeforeRender,
 	unsafeCSS,
+	defaultExpanded = true,
 	editingLabel = "Editing",
 	editedLabel = "Edited",
 	awaitingApprovalLabel = "Awaiting Approval",
@@ -107,7 +110,9 @@ let {
 	ariaExpandDiff = "Expand diff",
 }: Props = $props();
 
-let isExpanded = $state(true);
+const getInitialExpanded = (): boolean => defaultExpanded;
+
+let isExpanded = $state(getInitialExpanded());
 
 const isPending = $derived(isEditInProgress(status));
 const headerState = $derived(resolveEditHeaderState(status, applied, awaitingApproval));

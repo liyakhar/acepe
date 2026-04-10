@@ -101,6 +101,8 @@ function resolveSessionTitle(
  * Repository for session persistence and loading operations.
  */
 export class SessionRepository {
+	private readonly preloadedSourcePaths = new Map<string, string | undefined>();
+
 	constructor(
 		private readonly stateReader: ISessionStateReader,
 		private readonly stateWriter: ISessionStateWriter,
@@ -406,8 +408,17 @@ export class SessionRepository {
 		sourcePath?: string
 	): ResultAsync<{ entries: SessionEntry[]; title?: string }, AppError> {
 		if (this.entryManager.isPreloaded(sessionId)) {
-			const existing = this.entryManager.getEntries(sessionId);
-			return okAsync({ entries: existing });
+			const existingSourcePath = this.preloadedSourcePaths.get(sessionId);
+			if (existingSourcePath === sourcePath) {
+				const existing = this.entryManager.getEntries(sessionId);
+				return okAsync({ entries: existing });
+			}
+
+			logger.info("Reloading preloaded session because sourcePath changed", {
+				sessionId,
+				existingSourcePath,
+				sourcePath,
+			});
 		}
 
 		return api
@@ -423,6 +434,7 @@ export class SessionRepository {
 					});
 
 					this.entryManager.storeEntriesAndBuildIndex(sessionId, entries);
+					this.preloadedSourcePaths.set(sessionId, sourcePath);
 
 					return okAsync({ entries, title });
 				}
@@ -439,6 +451,7 @@ export class SessionRepository {
 					)
 				).map((entries) => {
 					this.entryManager.storeEntriesAndBuildIndex(sessionId, entries);
+					this.preloadedSourcePaths.set(sessionId, sourcePath);
 
 					return { entries, title };
 				});

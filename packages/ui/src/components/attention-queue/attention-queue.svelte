@@ -1,49 +1,49 @@
 <script lang="ts">
-	import type { Snippet } from "svelte";
-	import type { SectionedFeedGroup, SectionedFeedItemData } from "./types.js";
+import type { Snippet } from "svelte";
+import type { SectionedFeedGroup, SectionedFeedItemData } from "./types.js";
 
-	import { BellSimple } from "phosphor-svelte";
-	import { CaretDown } from "phosphor-svelte";
-	import { CaretRight } from "phosphor-svelte";
+import { BellSimple } from "phosphor-svelte";
+import { CaretDown } from "phosphor-svelte";
+import { CaretRight } from "phosphor-svelte";
 
-	import FeedSectionHeader from "./feed-section-header.svelte";
-	import { sectionColor } from "./section-color.js";
+import FeedSectionHeader from "./feed-section-header.svelte";
+import { sectionColor } from "./section-color.js";
 
-	interface Props {
-		groups: readonly SectionedFeedGroup<SectionedFeedItemData>[];
-		totalCount: number;
-		emptyHint?: string;
-		itemRenderer: Snippet<[SectionedFeedItemData]>;
-		collapsed?: boolean;
-		expanded?: boolean;
-		onExpandedChange?: (expanded: boolean) => void;
-		onActivateCollapsed?: () => void;
+interface Props {
+	groups: readonly SectionedFeedGroup<SectionedFeedItemData>[];
+	totalCount: number;
+	emptyHint?: string;
+	itemRenderer: Snippet<[SectionedFeedItemData]>;
+	collapsed?: boolean;
+	expanded?: boolean;
+	onExpandedChange?: (expanded: boolean) => void;
+	onActivateCollapsed?: () => void;
+}
+
+let {
+	groups,
+	totalCount,
+	emptyHint = "",
+	itemRenderer,
+	collapsed = false,
+	expanded: expandedProp,
+	onExpandedChange,
+	onActivateCollapsed,
+}: Props = $props();
+
+let expandedInternal = $state(true);
+
+// Sync from prop
+$effect(() => {
+	if (expandedProp !== undefined) {
+		expandedInternal = expandedProp;
 	}
+});
 
-	let {
-		groups,
-		totalCount,
-		emptyHint = "",
-		itemRenderer,
-		collapsed = false,
-		expanded: expandedProp,
-		onExpandedChange,
-		onActivateCollapsed,
-	}: Props = $props();
-
-	let expandedInternal = $state(true);
-
-	// Sync from prop
-	$effect(() => {
-		if (expandedProp !== undefined) {
-			expandedInternal = expandedProp;
-		}
-	});
-
-	function toggleExpanded() {
-		expandedInternal = !expandedInternal;
-		onExpandedChange?.(expandedInternal);
-	}
+function toggleExpanded() {
+	expandedInternal = !expandedInternal;
+	onExpandedChange?.(expandedInternal);
+}
 </script>
 
 {#if totalCount > 0}
@@ -93,7 +93,13 @@
 
 								<!-- Section content -->
 								<div class="flex min-w-0 flex-1 flex-col">
-									<FeedSectionHeader sectionId={group.id} label={group.label} count={group.items.length} color={sectionColor(group.id)} />
+									<FeedSectionHeader
+										sectionId={group.id}
+										label={group.label}
+										count={group.items.length}
+										color={sectionColor(group.id)}
+										needsReviewIcon="file-code"
+									/>
 
 									{#if group.items.length === 0 && emptyHint}
 										<div class="px-2 py-1 text-[10px] text-muted-foreground/70">{emptyHint}</div>

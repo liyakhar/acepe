@@ -9,27 +9,245 @@ import type { LoggerId } from "../constants/logger-ids.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
+export type LogTiming = {
+	sinceStartMs: number;
+	sinceLastLogMs: number | null;
+	sinceLoggerLogMs: number | null;
+};
+
 export type LogEntry = {
 	id: string;
 	loggerId: string;
 	level: LogLevel;
 	message: string;
 	timestamp: number;
+	timing: LogTiming;
 	data?: unknown;
 };
 
 export type LoggerConfig = {
-	id: LoggerId | string; // Accept LoggerId from constants or any string for flexibility
+	id: LoggerId | string;
 	name: string;
 	enabled?: boolean;
-	level?: LogLevel; // Minimum log level to output
+	level?: LogLevel;
 };
+
+type ConsoleApi = {
+	debug: (...data: unknown[]) => void;
+	info: (...data: unknown[]) => void;
+	warn: (...data: unknown[]) => void;
+	error: (...data: unknown[]) => void;
+};
+
+type LoggerRuntime = {
+	wallClockNow: () => number;
+	monotonicNow: () => number;
+	consoleApi: ConsoleApi;
+	shouldUseStyledConsole: () => boolean;
+};
+
+type LoggerRuntimeOverrides = {
+	wallClockNow?: () => number;
+	monotonicNow?: () => number;
+	consoleApi?: ConsoleApi;
+	shouldUseStyledConsole?: () => boolean;
+};
+
+const MONOSPACE_FONT_STACK =
+	"ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace";
+const LOG_LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
 
 function isDevEnvironment(): boolean {
 	return typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
 }
 
+function getMonotonicNow(): number {
+	if (typeof performance !== "undefined" && typeof performance.now === "function") {
+		return performance.now();
+	}
+
+	return Date.now();
+}
+
+const defaultLoggerRuntime: LoggerRuntime = {
+	wallClockNow: () => Date.now(),
+	monotonicNow: () => getMonotonicNow(),
+	consoleApi: console,
+	shouldUseStyledConsole: () => isDevEnvironment() && typeof window !== "undefined",
+};
+
+const loggerRuntime: LoggerRuntime = {
+	wallClockNow: defaultLoggerRuntime.wallClockNow,
+	monotonicNow: defaultLoggerRuntime.monotonicNow,
+	consoleApi: defaultLoggerRuntime.consoleApi,
+	shouldUseStyledConsole: defaultLoggerRuntime.shouldUseStyledConsole,
+};
+
 const DEFAULT_LOG_LEVEL: LogLevel = isDevEnvironment() ? "debug" : "warn";
+
+function restoreLoggerRuntimeDefaults(): void {
+	loggerRuntime.wallClockNow = defaultLoggerRuntime.wallClockNow;
+	loggerRuntime.monotonicNow = defaultLoggerRuntime.monotonicNow;
+	loggerRuntime.consoleApi = defaultLoggerRuntime.consoleApi;
+	loggerRuntime.shouldUseStyledConsole = defaultLoggerRuntime.shouldUseStyledConsole;
+}
+
+function getLevelIndex(level: LogLevel): number {
+	return LOG_LEVELS.indexOf(level);
+}
+
+function createLogDataValue(data: readonly unknown[]): unknown {
+	if (data.length === 0) {
+		return undefined;
+	}
+
+	if (data.length === 1) {
+		return data[0];
+	}
+
+	return data.slice();
+}
+
+function appendLogData(args: unknown[], data: readonly unknown[]): void {
+	for (const item of data) {
+		args.push(item);
+	}
+}
+
+function padNumber(value: number, length: number): string {
+	return value.toString().padStart(length, "0");
+}
+
+function formatClockTime(timestamp: number): string {
+	const date = new Date(timestamp);
+	return `${padNumber(date.getHours(), 2)}:${padNumber(date.getMinutes(), 2)}:${padNumber(date.getSeconds(), 2)}.${padNumber(date.getMilliseconds(), 3)}`;
+}
+
+function formatDuration(durationMs: number): string {
+	const roundedDurationMs = Math.max(0, Math.round(durationMs));
+
+	if (roundedDurationMs < 1000) {
+		return `${roundedDurationMs}ms`;
+	}
+
+	if (roundedDurationMs < 60_000) {
+		const seconds = roundedDurationMs / 1000;
+		return seconds < 10 ? `${seconds.toFixed(2)}s` : `${seconds.toFixed(1)}s`;
+	}
+
+	const totalSeconds = Math.round(roundedDurationMs / 1000);
+	if (totalSeconds < 3600) {
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${minutes}m${padNumber(seconds, 2)}s`;
+	}
+
+	const totalMinutes = Math.floor(totalSeconds / 60);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	return `${hours}h${padNumber(minutes, 2)}m`;
+}
+
+function formatDeltaLabel(durationMs: number | null): string {
+	if (durationMs === null) {
+		return "start";
+	}
+
+	return `+${formatDuration(durationMs)}`;
+}
+
+function formatTotalLabel(durationMs: number): string {
+	return `T+${formatDuration(durationMs)}`;
+}
+
+function getLevelBadgeStyle(level: LogLevel): string {
+	switch (level) {
+		case "debug":
+			return "background:#334155;color:#e2e8f0;padding:2px 8px;border-radius:999px;font-weight:700;";
+		case "info":
+			return "background:#0f766e;color:#ecfeff;padding:2px 8px;border-radius:999px;font-weight:700;";
+		case "warn":
+			return "background:#d97706;color:#fff7ed;padding:2px 8px;border-radius:999px;font-weight:700;";
+		case "error":
+			return "background:#dc2626;color:#fef2f2;padding:2px 8px;border-radius:999px;font-weight:700;";
+	}
+}
+
+function stringToHue(value: string): number {
+	let hash = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		hash = (hash * 31 + value.charCodeAt(index)) % 360;
+	}
+
+	return hash;
+}
+
+function getLoggerBadgeStyle(loggerId: string): string {
+	const hue = stringToHue(loggerId);
+	return `background:hsla(${hue}, 80%, 45%, 0.18);color:hsl(${hue}, 90%, 70%);padding:2px 8px;border-radius:999px;font-weight:700;`;
+}
+
+function createStyledConsoleArguments(
+	level: LogLevel,
+	loggerId: string,
+	loggerName: string,
+	message: string,
+	timestamp: number,
+	timing: LogTiming,
+	data: readonly unknown[]
+): unknown[] {
+	const formattedMessage =
+		`%c${level.toUpperCase()}%c ` +
+		`%c${formatClockTime(timestamp)}%c ` +
+		`%c${formatDeltaLabel(timing.sinceLastLogMs)}%c ` +
+		`%c${formatTotalLabel(timing.sinceStartMs)}%c ` +
+		`%c${loggerName}%c ` +
+		message;
+	const args: unknown[] = [
+		formattedMessage,
+		getLevelBadgeStyle(level),
+		"",
+		`color:#94a3b8;font-family:${MONOSPACE_FONT_STACK};font-weight:600;`,
+		"",
+		`color:#22c55e;font-family:${MONOSPACE_FONT_STACK};font-weight:700;`,
+		"",
+		`color:#c084fc;font-family:${MONOSPACE_FONT_STACK};font-weight:700;`,
+		"",
+		getLoggerBadgeStyle(loggerId),
+		"",
+	];
+
+	appendLogData(args, data);
+	return args;
+}
+
+function createPlainConsoleArguments(
+	level: LogLevel,
+	loggerName: string,
+	message: string,
+	timestamp: number,
+	timing: LogTiming,
+	data: readonly unknown[]
+): unknown[] {
+	const prefix =
+		`[${level.toUpperCase()} ` +
+		`${formatClockTime(timestamp)} ` +
+		`${formatDeltaLabel(timing.sinceLastLogMs)} ` +
+		`${formatTotalLabel(timing.sinceStartMs)} ` +
+		`${loggerName}]`;
+	const args: unknown[] = [prefix, message];
+	appendLogData(args, data);
+	return args;
+}
+
+function createLoggerConfig(config: LoggerConfig): LoggerConfig {
+	return {
+		id: config.id,
+		name: config.name,
+		enabled: config.enabled ?? true,
+		level: config.level ?? DEFAULT_LOG_LEVEL,
+	};
+}
 
 /**
  * Logger instance for a specific component or feature.
@@ -39,136 +257,113 @@ export class Logger {
 	private readonly logManager: LogManager;
 
 	constructor(config: LoggerConfig, logManager: LogManager) {
-		this.config = { enabled: true, level: DEFAULT_LOG_LEVEL, ...config };
+		this.config = createLoggerConfig(config);
 		this.logManager = logManager;
 	}
 
-	/**
-	 * Log a debug message.
-	 */
 	debug(message: string, ...data: unknown[]): void {
 		this.log("debug", message, data);
 	}
 
-	/**
-	 * Log an info message.
-	 */
 	info(message: string, ...data: unknown[]): void {
 		this.log("info", message, data);
 	}
 
-	/**
-	 * Log a warning message.
-	 */
 	warn(message: string, ...data: unknown[]): void {
 		this.log("warn", message, data);
 	}
 
-	/**
-	 * Log an error message.
-	 */
 	error(message: string, ...data: unknown[]): void {
 		this.log("error", message, data);
 	}
 
-	private log(level: LogLevel, message: string, data: unknown[]): void {
+	private log(level: LogLevel, message: string, data: readonly unknown[]): void {
 		if (!this.config.enabled) {
 			return;
 		}
 
-		// Skip debug logging work unless there is an active log subscriber
-		// (e.g. debug panel). This prevents high-volume debug logs from
-		// saturating the renderer during streaming.
 		if (level === "debug" && !this.logManager.hasSubscribers()) {
 			return;
 		}
 
-		// Check if level is high enough
-		const levels: LogLevel[] = ["debug", "info", "warn", "error"];
-		const minLevelIndex = levels.indexOf(this.config.level || "debug");
-		const currentLevelIndex = levels.indexOf(level);
-		if (currentLevelIndex < minLevelIndex) {
+		const minLevel = this.config.level ?? DEFAULT_LOG_LEVEL;
+		if (getLevelIndex(level) < getLevelIndex(minLevel)) {
 			return;
 		}
 
+		const timestamp = loggerRuntime.wallClockNow();
+		const timing = this.logManager.captureTiming(this.config.id);
 		const entry: LogEntry = {
-			id: `${this.config.id}-${Date.now()}-${Math.random()}`,
+			id: `${this.config.id}-${timestamp}-${Math.random()}`,
 			loggerId: this.config.id,
 			level,
 			message,
-			timestamp: Date.now(),
-			data: data.length > 0 ? (data.length === 1 ? data[0] : data) : undefined,
+			timestamp,
+			timing,
+			data: createLogDataValue(data),
 		};
 
 		this.logManager.addLog(entry);
-
-		// Output to console with appropriate method
-		const prefix = `[${this.config.name}]`;
-		const args = data.length > 0 ? [prefix, message, ...data] : [prefix, message];
-
-		switch (level) {
-			case "debug":
-				console.debug(...args);
-				break;
-			case "info":
-				console.info(...args);
-				break;
-			case "warn":
-				console.warn(...args);
-				break;
-			case "error":
-				console.error(...args);
-				break;
-		}
+		this.writeToConsole(level, entry, data);
 	}
 
-	/**
-	 * Check if this logger is enabled.
-	 */
+	private writeToConsole(level: LogLevel, entry: LogEntry, data: readonly unknown[]): void {
+		const consoleMethod = loggerRuntime.consoleApi[level];
+		const consoleArguments = loggerRuntime.shouldUseStyledConsole()
+			? createStyledConsoleArguments(
+					level,
+					entry.loggerId,
+					this.config.name,
+					entry.message,
+					entry.timestamp,
+					entry.timing,
+					data
+				)
+			: createPlainConsoleArguments(
+					level,
+					this.config.name,
+					entry.message,
+					entry.timestamp,
+					entry.timing,
+					data
+				);
+
+		consoleMethod.apply(loggerRuntime.consoleApi, consoleArguments);
+	}
+
 	get enabled(): boolean {
 		return this.config.enabled ?? true;
 	}
 
-	/**
-	 * Check if a specific log level is enabled.
-	 * Useful for avoiding expensive argument construction when logging is disabled.
-	 *
-	 * @example
-	 * ```typescript
-	 * if (logger.isLevelEnabled('debug')) {
-	 *   logger.debug('Items:', items.map(i => ({ id: i.id, name: i.name })));
-	 * }
-	 * ```
-	 */
 	isLevelEnabled(level: LogLevel): boolean {
 		if (!this.config.enabled) {
 			return false;
 		}
-		const levels: LogLevel[] = ["debug", "info", "warn", "error"];
-		const minLevelIndex = levels.indexOf(this.config.level || "debug");
-		const currentLevelIndex = levels.indexOf(level);
-		return currentLevelIndex >= minLevelIndex;
+
+		const minLevel = this.config.level ?? DEFAULT_LOG_LEVEL;
+		return getLevelIndex(level) >= getLevelIndex(minLevel);
 	}
 
-	/**
-	 * Set whether this logger is enabled.
-	 */
 	set enabled(value: boolean) {
 		this.config.enabled = value;
 	}
 
-	/**
-	 * Get the logger configuration.
-	 */
 	getConfig(): LoggerConfig {
-		return { ...this.config };
+		return {
+			id: this.config.id,
+			name: this.config.name,
+			enabled: this.config.enabled,
+			level: this.config.level,
+		};
 	}
 
-	/**
-	 * Update the logger configuration.
-	 */
 	updateConfig(updates: Partial<LoggerConfig>): void {
-		this.config = { ...this.config, ...updates };
+		this.config = {
+			id: updates.id ?? this.config.id,
+			name: updates.name ?? this.config.name,
+			enabled: updates.enabled ?? this.config.enabled,
+			level: updates.level ?? this.config.level,
+		};
 	}
 }
 
@@ -178,35 +373,26 @@ export class Logger {
 class LogManager {
 	private readonly loggers = new Map<string, Logger>();
 	private logs: LogEntry[] = [];
-	private readonly maxLogs = 1000; // Keep last 1000 logs
+	private readonly maxLogs = 1000;
 	private readonly listeners = new Set<(logs: LogEntry[]) => void>();
+	private sessionStartMonotonicMs = loggerRuntime.monotonicNow();
+	private lastLogMonotonicMs: number | null = null;
+	private readonly loggerLastLogMonotonicMs = new Map<string, number>();
 
-	/**
-	 * Create a new logger.
-	 */
 	createLogger(config: LoggerConfig): Logger {
 		const logger = new Logger(config, this);
 		this.loggers.set(config.id, logger);
 		return logger;
 	}
 
-	/**
-	 * Get a logger by ID.
-	 */
 	getLogger(id: string): Logger | undefined {
 		return this.loggers.get(id);
 	}
 
-	/**
-	 * Get all loggers.
-	 */
 	getAllLoggers(): Logger[] {
 		return Array.from(this.loggers.values());
 	}
 
-	/**
-	 * Toggle a logger's enabled state.
-	 */
 	toggleLogger(id: string, enabled: boolean): void {
 		const logger = this.loggers.get(id);
 		if (logger) {
@@ -214,9 +400,6 @@ class LogManager {
 		}
 	}
 
-	/**
-	 * Add a log entry.
-	 */
 	addLog(entry: LogEntry): void {
 		this.logs.push(entry);
 		if (this.logs.length > this.maxLogs) {
@@ -225,31 +408,36 @@ class LogManager {
 		this.notifyListeners();
 	}
 
-	/**
-	 * Get all logs.
-	 */
-	getLogs(): LogEntry[] {
-		return [...this.logs];
+	captureTiming(loggerId: string): LogTiming {
+		const now = loggerRuntime.monotonicNow();
+		const previousGlobalLog = this.lastLogMonotonicMs;
+		const previousLoggerLog = this.loggerLastLogMonotonicMs.get(loggerId);
+
+		this.lastLogMonotonicMs = now;
+		this.loggerLastLogMonotonicMs.set(loggerId, now);
+
+		return {
+			sinceStartMs: Math.max(0, now - this.sessionStartMonotonicMs),
+			sinceLastLogMs:
+				previousGlobalLog === null ? null : Math.max(0, now - previousGlobalLog),
+			sinceLoggerLogMs:
+				previousLoggerLog === undefined ? null : Math.max(0, now - previousLoggerLog),
+		};
 	}
 
-	/**
-	 * Get logs for a specific logger.
-	 */
+	getLogs(): LogEntry[] {
+		return this.logs.slice();
+	}
+
 	getLogsForLogger(loggerId: string): LogEntry[] {
 		return this.logs.filter((log) => log.loggerId === loggerId);
 	}
 
-	/**
-	 * Clear all logs.
-	 */
 	clearLogs(): void {
 		this.logs = [];
 		this.notifyListeners();
 	}
 
-	/**
-	 * Subscribe to log updates.
-	 */
 	subscribe(listener: (logs: LogEntry[]) => void): () => void {
 		this.listeners.add(listener);
 		return () => {
@@ -261,79 +449,79 @@ class LogManager {
 		return this.listeners.size > 0;
 	}
 
+	resetForTests(): void {
+		this.loggers.clear();
+		this.logs = [];
+		this.listeners.clear();
+		this.lastLogMonotonicMs = null;
+		this.loggerLastLogMonotonicMs.clear();
+		this.sessionStartMonotonicMs = loggerRuntime.monotonicNow();
+	}
+
 	private notifyListeners(): void {
-		this.listeners.forEach((listener) => listener(this.logs));
+		for (const listener of this.listeners) {
+			listener(this.logs);
+		}
 	}
 }
 
-// Singleton instance
 const logManager = new LogManager();
 
-/**
- * Create a new logger.
- *
- * @param config - Logger configuration
- * @returns A new Logger instance
- *
- * @example
- * ```typescript
- * const logger = createLogger({
- *   id: 'model-selector',
- *   name: 'Model Selector'
- * });
- *
- * logger.debug('Model changed', { modelId: 'claude-3.5-sonnet' });
- * ```
- */
 export function createLogger(config: LoggerConfig): Logger {
 	return logManager.createLogger(config);
 }
 
-/**
- * Get a logger by ID.
- */
 export function getLogger(id: string): Logger | undefined {
 	return logManager.getLogger(id);
 }
 
-/**
- * Get all loggers.
- */
 export function getAllLoggers(): Logger[] {
 	return logManager.getAllLoggers();
 }
 
-/**
- * Toggle a logger's enabled state.
- */
 export function toggleLogger(id: string, enabled: boolean): void {
 	logManager.toggleLogger(id, enabled);
 }
 
-/**
- * Get all logs.
- */
 export function getLogs(): LogEntry[] {
 	return logManager.getLogs();
 }
 
-/**
- * Get logs for a specific logger.
- */
 export function getLogsForLogger(loggerId: string): LogEntry[] {
 	return logManager.getLogsForLogger(loggerId);
 }
 
-/**
- * Clear all logs.
- */
 export function clearLogs(): void {
 	logManager.clearLogs();
 }
 
-/**
- * Subscribe to log updates.
- */
 export function subscribeToLogs(listener: (logs: LogEntry[]) => void): () => void {
 	return logManager.subscribe(listener);
+}
+
+export function __configureLoggerRuntimeForTests(overrides: LoggerRuntimeOverrides): void {
+	if (overrides.wallClockNow) {
+		loggerRuntime.wallClockNow = overrides.wallClockNow;
+	}
+
+	if (overrides.monotonicNow) {
+		loggerRuntime.monotonicNow = overrides.monotonicNow;
+	}
+
+	if (overrides.consoleApi) {
+		loggerRuntime.consoleApi = overrides.consoleApi;
+	}
+
+	if (overrides.shouldUseStyledConsole) {
+		loggerRuntime.shouldUseStyledConsole = overrides.shouldUseStyledConsole;
+	}
+}
+
+export function __resetLoggerStateForTests(): void {
+	logManager.resetForTests();
+}
+
+export function __restoreLoggerRuntimeDefaultsForTests(): void {
+	restoreLoggerRuntimeDefaults();
+	logManager.resetForTests();
 }

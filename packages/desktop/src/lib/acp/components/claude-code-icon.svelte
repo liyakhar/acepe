@@ -12,7 +12,7 @@ let { class: className = "" }: Props = $props();
 	width="1em"
 	viewBox="0 0 24 24"
 	xmlns="http://www.w3.org/2000/svg"
-	fill="#D97757"
+	fill="var(--primary)"
 	aria-hidden="true"
 >
 	<path

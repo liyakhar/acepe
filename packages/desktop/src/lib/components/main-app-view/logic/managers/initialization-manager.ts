@@ -582,14 +582,21 @@ export class InitializationManager {
 	}
 
 	/**
-	 * Pre-loads panel session content in parallel with the sidebar scan.
+	 * Pre-loads restored panel session content in parallel with the sidebar scan.
+	 * Startup restore intentionally does not reconnect ACP for historical sessions:
+	 * the transcript is restored, but runtime interaction state (permissions/questions)
+	 * is cleared because those requests die when the app process exits.
+	 *
 	 * Prefer canonical session metadata loaded from the backend; persisted panel fields
 	 * are only fallback hints for sessions that have not been hydrated yet.
 	 */
 	private earlyPreloadPanelSessions(): void {
 		for (const panel of this.panelStore.panels) {
 			if (!panel.sessionId) continue;
-			if (this.sessionStore.isPreloaded(panel.sessionId)) continue;
+			if (this.sessionStore.isPreloaded(panel.sessionId)) {
+				this.projectionHydrator.clearSession(panel.sessionId);
+				continue;
+			}
 
 			const session = this.sessionStore.getSessionCold(panel.sessionId);
 			const projectPath = session?.projectPath ?? panel.projectPath;
@@ -612,13 +619,11 @@ export class InitializationManager {
 					sessionTitle ?? undefined
 				)
 				.andThen(() => {
-					return this.projectionHydrator.hydrateSession(sessionId);
-				})
-				.andThen(() => {
-					return this.sessionStore.connectSession(sessionId).map(() => undefined);
+					this.projectionHydrator.clearSession(sessionId);
+					return okAsync(undefined);
 				})
 				.mapErr((error) => {
-					logger.warn("Early panel preload/connect failed, clearing session reference", {
+					logger.warn("Early panel preload failed, clearing session reference", {
 						panelId,
 						sessionId,
 						error,

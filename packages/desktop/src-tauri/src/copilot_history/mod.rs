@@ -50,13 +50,6 @@ pub async fn load_session(
     cwd: &str,
     title: &str,
 ) -> Result<Option<ConvertedSession>, String> {
-    // Fast path: load from session journal (events persisted during live session).
-    if let Some(converted) =
-        load_session_from_journal(app, &replay_context.local_session_id, title).await
-    {
-        return Ok(Some(converted));
-    }
-
     if let Some(source_path) = replay_context.source_path.as_deref() {
         if !source_path.is_empty() && !parser::is_missing_transcript_marker(source_path) {
             let session_state_root = parser::resolve_copilot_session_state_root()?;
@@ -80,7 +73,14 @@ pub async fn load_session(
         }
     }
 
-    // Slow path: ACP replay fallback for sessions without journal entries
+    // Next fallback: load from session journal (events persisted during live session).
+    if let Some(converted) =
+        load_session_from_journal(app, &replay_context.local_session_id, title).await
+    {
+        return Ok(Some(converted));
+    }
+
+    // Slow path: ACP replay fallback for sessions without a usable transcript or journal
     // (e.g., sessions created before journal was introduced, or external Copilot sessions).
     load_session_via_acp_replay(app, replay_context, cwd, title).await
 }

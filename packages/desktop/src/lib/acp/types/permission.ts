@@ -37,6 +37,14 @@ export interface PermissionMetadata {
 	options?: PermissionOptionMetadata[];
 }
 
+export interface PermissionRequestBatchMember {
+	id: string;
+	jsonRpcRequestId?: number;
+	replyHandler?: InteractionReplyHandler;
+	metadata: PermissionMetadata;
+	always: string[];
+}
+
 /**
  * ACP permission metadata always carries the original tool payload and options.
  */
@@ -104,6 +112,14 @@ export interface PermissionRequest {
 	 * the originating tool call in the UI.
 	 */
 	tool?: PermissionToolReference;
+
+	/**
+	 * Underlying backend permission requests grouped into this single UI prompt.
+	 *
+	 * When multiple ACP permission requests arrive for the same tool call,
+	 * Acepe exposes one grouped permission and replies to every member together.
+	 */
+	members?: PermissionRequestBatchMember[];
 }
 
 /**
@@ -175,6 +191,115 @@ export function createPermissionRequest(input: PermissionRequestBuilderInput): P
 		metadata: normalizePermissionMetadata(input.metadata),
 		always: input.always,
 		tool: normalizePermissionToolReference(input.tool),
+	};
+}
+
+function createBatchMemberFromPermission(
+	permission: PermissionRequest
+): PermissionRequestBatchMember {
+	return {
+		id: permission.id,
+		jsonRpcRequestId: permission.jsonRpcRequestId,
+		replyHandler: permission.replyHandler,
+		metadata: permission.metadata,
+		always: permission.always,
+	};
+}
+
+function appendUniqueStrings(target: string[], values: readonly string[]): void {
+	for (const value of values) {
+		if (!target.includes(value)) {
+			target.push(value);
+		}
+	}
+}
+
+function intersectStrings(left: readonly string[], right: readonly string[]): string[] {
+	const intersection: string[] = [];
+	for (const value of left) {
+		if (right.includes(value) && !intersection.includes(value)) {
+			intersection.push(value);
+		}
+	}
+	return intersection;
+}
+
+function collectBatchMembers(permission: PermissionRequest): PermissionRequestBatchMember[] {
+	if (permission.members !== undefined && permission.members.length > 0) {
+		return permission.members;
+	}
+
+	return [createBatchMemberFromPermission(permission)];
+}
+
+function selectPreferredMetadata(
+	existing: PermissionMetadata,
+	incoming: PermissionMetadata
+): PermissionMetadata {
+	if (existing.parsedArguments === undefined && incoming.parsedArguments !== undefined) {
+		return incoming;
+	}
+
+	if (existing.rawInput === undefined && incoming.rawInput !== undefined) {
+		return incoming;
+	}
+
+	if (existing.options === undefined && incoming.options !== undefined) {
+		return incoming;
+	}
+
+	return existing;
+}
+
+export function buildPermissionGroupKey(permission: PermissionRequest): string {
+	const toolCallId = permission.tool?.callID;
+	return toolCallId ? `${permission.sessionId}\u0000${toolCallId}` : permission.id;
+}
+
+export function getPermissionRequestMembers(
+	permission: PermissionRequest
+): PermissionRequestBatchMember[] {
+	return collectBatchMembers(permission);
+}
+
+export function mergePermissionRequests(
+	existing: PermissionRequest,
+	incoming: PermissionRequest
+): PermissionRequest {
+	const mergedPatterns: string[] = [];
+	appendUniqueStrings(mergedPatterns, existing.patterns);
+	appendUniqueStrings(mergedPatterns, incoming.patterns);
+
+	const existingMembers = collectBatchMembers(existing);
+	const incomingMembers = collectBatchMembers(incoming);
+	const mergedMembers: PermissionRequestBatchMember[] = [];
+	const seenMemberIds: string[] = [];
+
+	for (const member of existingMembers) {
+		if (!seenMemberIds.includes(member.id)) {
+			seenMemberIds.push(member.id);
+			mergedMembers.push(member);
+		}
+	}
+
+	for (const member of incomingMembers) {
+		if (!seenMemberIds.includes(member.id)) {
+			seenMemberIds.push(member.id);
+			mergedMembers.push(member);
+		}
+	}
+
+	return {
+		id: existing.id,
+		sessionId: existing.sessionId,
+		jsonRpcRequestId: existing.jsonRpcRequestId,
+		replyHandler: existing.replyHandler,
+		permission: existing.permission.length > 0 ? existing.permission : incoming.permission,
+		patterns: mergedPatterns,
+		metadata: selectPreferredMetadata(existing.metadata, incoming.metadata),
+		always: intersectStrings(existing.always, incoming.always),
+		tool: existing.tool ?? incoming.tool,
+		members: mergedMembers,
 	};
 }
 

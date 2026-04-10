@@ -61,19 +61,24 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("getQueueItemTaskDisplay");
 		expect(source).toContain("taskCard: KanbanTaskCardData | null");
 		expect(source).toContain("projectPath={item.projectPath}");
-		expect(source).toContain('import PermissionBar from "$lib/acp/components/tool-calls/permission-bar.svelte"');
+		expect(source).toContain(
+			'import PermissionBar from "$lib/acp/components/tool-calls/permission-bar.svelte"'
+		);
 		expect(source).toContain("buildQueueItemQuestionUiState");
 		expect(source).toContain("questionIndexBySession = $state(new SvelteMap");
 		expect(source).toContain("function getCurrentQuestionIndex(item: ThreadBoardItem): number");
-		expect(source).toContain("function handlePrevQuestion(sessionId: string, currentQuestionIndex: number): void");
+		expect(source).toContain(
+			"function handlePrevQuestion(sessionId: string, currentQuestionIndex: number): void"
+		);
 		expect(source).toContain("function handleNextQuestion(");
 		expect(source).toContain("<PermissionBar");
 		expect(source).toContain("sessionId={item.sessionId}");
-		expect(source).toContain("permission={permission}");
 		expect(source).toContain("projectPath={item.projectPath}");
 		expect(source).toContain("<AttentionQueueQuestionCard");
 		expect(source).toContain("{currentQuestionIndex}");
-		expect(source).toContain("onPrevQuestion={() => handlePrevQuestion(card.id, currentQuestionIndex)}");
+		expect(source).toContain(
+			"onPrevQuestion={() => handlePrevQuestion(card.id, currentQuestionIndex)}"
+		);
 		expect(source).toContain(
 			"onNextQuestion={() => handleNextQuestion(card.id, currentQuestionIndex, questionUiState.totalQuestions)}"
 		);
@@ -93,13 +98,13 @@ describe("kanban empty-column contract", () => {
 			"{@const hotState = item ? sessionStore.getHotState(item.sessionId) : null}"
 		);
 		expect(source).toContain(
-			"{@const showFooter =\n\t\t\t\t\tpermission !== null ||\n\t\t\t\t\tquestionUiState !== null ||\n\t\t\t\t\titem.state.pendingInput.kind === \"plan_approval\"}"
+			'{@const showFooter =\n\t\t\t\t\tpermission !== null ||\n\t\t\t\t\tquestionUiState !== null ||\n\t\t\t\t\titem.state.pendingInput.kind === "plan_approval"}'
 		);
-		expect(source).toContain('{#if item}');
-		expect(source).toContain('<KanbanCard {card} onclick={() => handleCardClick(card.id)}');
-		expect(source).toContain('showFooter={showFooter}');
-		expect(source).not.toContain('flushFooter={showComposer}');
-		expect(source).not.toContain('{#snippet footer()}\n\t\t\t\t\t\t{#if item}');
+		expect(source).toContain("{#if item}");
+		expect(source).toContain("<KanbanCard {card} onclick={() => handleCardClick(card.id)}");
+		expect(source).toContain("showFooter={showFooter}");
+		expect(source).not.toContain("flushFooter={showComposer}");
+		expect(source).not.toContain("{#snippet footer()}\n\t\t\t\t\t\t{#if item}");
 	});
 
 	it("falls back to a bare kanban card when there is no context or action footer content", () => {
@@ -108,7 +113,9 @@ describe("kanban empty-column contract", () => {
 
 		const source = readFileSync(kanbanViewPath, "utf8");
 
-		expect(source).toContain('{:else}\n\t\t\t\t\t<KanbanCard {card} onclick={() => handleCardClick(card.id)} />');
+		expect(source).toContain(
+			"{:else}\n\t\t\t\t\t<KanbanCard {card} onclick={() => handleCardClick(card.id)} />"
+		);
 	});
 
 	it("renders the compact composer in an embedded voice layout with a smaller submit button", () => {
@@ -131,14 +138,18 @@ describe("kanban empty-column contract", () => {
 
 		const source = readFileSync(kanbanViewPath, "utf8");
 
-		expect(source).toContain('import CopyButton from "$lib/acp/components/messages/copy-button.svelte"');
+		expect(source).toContain(
+			'import CopyButton from "$lib/acp/components/messages/copy-button.svelte"'
+		);
 		expect(source).toContain(
 			'import { copySessionToClipboard, copyTextToClipboard } from "$lib/acp/components/agent-panel/logic/clipboard-manager.js"'
 		);
 		expect(source).toContain(
 			'import { getOpenInFinderTarget } from "$lib/acp/components/agent-panel/logic/open-in-finder-target.js"'
 		);
-		expect(source).toContain('import { openFileInEditor, revealInFinder, tauriClient } from "$lib/utils/tauri-client.js"');
+		expect(source).toContain(
+			'import { openFileInEditor, revealInFinder, tauriClient } from "$lib/utils/tauri-client.js"'
+		);
 		expect(source).toContain('import { IconDotsVertical } from "@tabler/icons-svelte"');
 		expect(source).toContain("function handleCloseSession(item: ThreadBoardItem)");
 		expect(source).toContain('let activeDialogMode = $state<KanbanThreadDialogMode>("inspect");');
@@ -147,15 +158,17 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("function handleDialogClosePanel(panelId: string): void {");
 		expect(source).toContain("panelStore.closePanel(panelId);");
 		expect(source).toContain("{#snippet menu()}");
-		expect(source).not.toContain('import { OverflowMenuTriggerAction } from "@acepe/ui/panel-header"');
-		expect(source).toContain('<DropdownMenu.Trigger');
+		expect(source).not.toContain(
+			'import { OverflowMenuTriggerAction } from "@acepe/ui/panel-header"'
+		);
+		expect(source).toContain("<DropdownMenu.Trigger");
 		expect(source).toContain('aria-label="More actions"');
 		expect(source).toContain(
 			'class="shrink-0 inline-flex h-5 w-5 items-center justify-center p-1 text-muted-foreground/55 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"'
 		);
 		expect(source).toContain('<IconDotsVertical class="h-2.5 w-2.5" aria-hidden="true" />');
-		expect(source).not.toContain('hover:bg-accent');
-		expect(source).toContain('label={m.session_menu_copy_id()}');
+		expect(source).not.toContain("hover:bg-accent");
+		expect(source).toContain("label={m.session_menu_copy_id()}");
 		expect(source).toContain("{m.thread_open_in_finder()}");
 		expect(source).toContain("{m.session_menu_export()}");
 		expect(source).not.toContain("{m.common_close()}");
@@ -187,8 +200,8 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain(
 			'const isWorking = item.state.activity.kind === "streaming" || item.state.activity.kind === "thinking";'
 		);
-		expect(source).toContain("lastToolCall: null,");
-		expect(source).toContain("lastToolKind: null,");
+		expect(source).toContain("lastToolCall: isWorking ? null : item.lastToolCall,");
+		expect(source).toContain("lastToolKind: isWorking ? null : item.lastToolKind,");
 		expect(source).toContain('currentToolDisplay.toolKind === "think"');
 		expect(source).toContain("if (!isWorking) return null;");
 		expect(source).toContain("if (toolDisplay) return null;");
@@ -204,7 +217,7 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("label: item.todoProgress.label");
 	});
 
-	it("ignores stale completed tool history when mapping kanban card activity", () => {
+	it("shows the latest completed tool history once active work stops", () => {
 		expect(existsSync(kanbanViewPath)).toBe(true);
 		if (!existsSync(kanbanViewPath)) return;
 
@@ -212,8 +225,8 @@ describe("kanban empty-column contract", () => {
 
 		expect(source).toContain("currentStreamingToolCall: item.currentStreamingToolCall,");
 		expect(source).toContain("currentToolKind: item.currentToolKind,");
-		expect(source).toContain("lastToolCall: null,");
-		expect(source).toContain("lastToolKind: null,");
+		expect(source).toContain("lastToolCall: isWorking ? null : item.lastToolCall,");
+		expect(source).toContain("lastToolKind: isWorking ? null : item.lastToolKind,");
 		expect(source).not.toContain("showHistoricalActivity");
 	});
 
@@ -223,7 +236,9 @@ describe("kanban empty-column contract", () => {
 
 		const source = readFileSync(kanbanViewPath, "utf8");
 
-		expect(source).toContain('const hasUnseenCompletion = item.status === "needs_review" ? false : item.state.attention.hasUnseenCompletion;');
+		expect(source).toContain(
+			'const hasUnseenCompletion = item.status === "needs_review" ? false : item.state.attention.hasUnseenCompletion;'
+		);
 		expect(source).toContain("hasUnseenCompletion,");
 	});
 

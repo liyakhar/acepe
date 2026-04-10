@@ -193,6 +193,8 @@ export type ProviderVariantGroup = "plain" | "reasoningEffort";
 
 export type AutonomousApplyStrategy = "postConnect" | "launchProfile";
 
+export type PreconnectionSlashMode = "unsupported" | "startupGlobal" | "projectScoped";
+
 export type ProviderMetadataProjection = {
 	providerBrand: ProviderBrand;
 	displayName: string;
@@ -202,6 +204,7 @@ export type ProviderMetadataProjection = {
 	defaultAlias?: string;
 	reasoningEffortSupport: boolean;
 	autonomousApplyStrategy: AutonomousApplyStrategy;
+	preconnectionSlashMode: PreconnectionSlashMode;
 };
 
 export type ModelsForDisplayWithProvider = ModelsForDisplay;
@@ -216,6 +219,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: "default",
 		reasoningEffortSupport: false,
 		autonomousApplyStrategy: "launchProfile",
+		preconnectionSlashMode: "startupGlobal",
 	},
 	copilot: {
 		providerBrand: "copilot",
@@ -226,6 +230,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "projectScoped",
 	},
 	cursor: {
 		providerBrand: "cursor",
@@ -236,6 +241,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: "auto",
 		reasoningEffortSupport: false,
 		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "startupGlobal",
 	},
 	opencode: {
 		providerBrand: "opencode",
@@ -246,6 +252,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "projectScoped",
 	},
 	codex: {
 		providerBrand: "codex",
@@ -256,6 +263,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: true,
 		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "startupGlobal",
 	},
 };
 
@@ -271,6 +279,7 @@ function cloneProviderMetadataProjection(
 		defaultAlias: providerMetadata.defaultAlias,
 		reasoningEffortSupport: providerMetadata.reasoningEffortSupport,
 		autonomousApplyStrategy: providerMetadata.autonomousApplyStrategy,
+		preconnectionSlashMode: providerMetadata.preconnectionSlashMode,
 	};
 }
 
@@ -297,6 +306,7 @@ export function resolveProviderMetadataProjection(
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "unsupported",
 	};
 }
 
@@ -337,4 +347,3 @@ export function normalizeModelsForDisplay(
 		},
 	};
 }
-

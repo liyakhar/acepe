@@ -1,29 +1,31 @@
 <script lang="ts">
-	import type { Snippet } from "svelte";
-	import { sectionColor } from "../attention-queue/section-color.js";
-	import FeedSectionHeader from "../attention-queue/feed-section-header.svelte";
-	import type { KanbanCardData, KanbanColumnGroup } from "./types.js";
+import { Colors } from "../../lib/colors.js";
+import type { Snippet } from "svelte";
+import { sectionColor } from "../attention-queue/section-color.js";
+import FeedSectionHeader from "../attention-queue/feed-section-header.svelte";
+import type { KanbanCardData, KanbanColumnGroup } from "./types.js";
 
-	interface Props {
-		group: KanbanColumnGroup;
-		cardRenderer: Snippet<[KanbanCardData]>;
-		emptyHint?: string;
-	}
+interface Props {
+	group: KanbanColumnGroup;
+	cardRenderer: Snippet<[KanbanCardData]>;
+	emptyHint?: string;
+}
 
-	let { group, cardRenderer, emptyHint }: Props = $props();
+let { group, cardRenderer, emptyHint }: Props = $props();
 </script>
 
 <div
-	class="flex min-w-[200px] flex-1 flex-col overflow-hidden rounded-lg bg-card/50"
+	class="flex min-h-0 min-w-[200px] flex-1 flex-col overflow-hidden rounded-lg bg-card/50"
 	data-testid="kanban-column-{group.id}"
 >
 	<FeedSectionHeader
 		sectionId={group.id}
 		label={group.label}
 		count={group.items.length}
-		color={sectionColor(group.id)}
+		color={group.id === "needs_review" ? Colors.purple : sectionColor(group.id)}
+		needsReviewIcon="file-code"
 	/>
-	<div class="flex flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
+	<div class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-y-contain p-0.5">
 		{#if group.items.length === 0}
 			{#if emptyHint}
 				<div class="py-4 text-center text-[10px] text-muted-foreground/50">{emptyHint}</div>

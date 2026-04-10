@@ -1,77 +1,111 @@
 <script lang="ts">
-	import { FilePathBadge } from "@acepe/ui/file-path-badge";
-	import {
-		ArrowsLeftRight,
-		File,
-		GlobeHemisphereWest,
-		MagnifyingGlass,
-		PencilSimple,
-		ShieldWarning,
-		Terminal,
-		Trash,
-	} from "phosphor-svelte";
-	import { getPermissionStore } from "../../store/permission-store.svelte.js";
-	import { getSessionStore } from "../../store/session-store.svelte.js";
-	import type { PermissionRequest } from "../../types/permission.js";
-	import { Colors, COLOR_NAMES } from "../../utils/colors.js";
-	import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
-	import PermissionActionBar from "./permission-action-bar.svelte";
-	import { extractCompactPermissionDisplay } from "./permission-display.js";
-	import { isPermissionRepresentedByToolCall, visiblePermissionsForSessionBar } from "./permission-visibility.js";
+import { FilePathBadge } from "@acepe/ui/file-path-badge";
+import {
+	ArrowsLeftRight,
+	File,
+	GlobeHemisphereWest,
+	MagnifyingGlass,
+	PencilSimple,
+	ShieldWarning,
+	Terminal,
+	Trash,
+} from "phosphor-svelte";
+import { getPermissionStore } from "../../store/permission-store.svelte.js";
+import { getSessionStore } from "../../store/session-store.svelte.js";
+import type { ToolCall } from "../../types/tool-call.js";
+import type { PermissionRequest } from "../../types/permission.js";
+import { Colors, COLOR_NAMES } from "../../utils/colors.js";
+import VoiceDownloadProgress from "$lib/components/voice-download-progress.svelte";
+import PermissionActionBar from "./permission-action-bar.svelte";
+import ToolCallEdit from "./tool-call-edit.svelte";
+import { extractCompactPermissionDisplay } from "./permission-display.js";
+import {
+	isPermissionRepresentedByToolCall,
+	visiblePermissionsForSessionBar,
+} from "./permission-visibility.js";
 
- 	interface Props {
-		sessionId: string;
-		permission?: PermissionRequest | null;
-		isFullscreen?: boolean;
-		projectPath?: string | null;
+interface Props {
+	sessionId: string;
+	permission?: PermissionRequest | null;
+	isFullscreen?: boolean;
+	projectPath?: string | null;
+	showCommandWhenRepresented?: boolean;
+	showCompactEditPreview?: boolean;
+}
+
+let {
+	sessionId,
+	permission = null,
+	isFullscreen = false,
+	projectPath = null,
+	showCommandWhenRepresented = false,
+	showCompactEditPreview = false,
+}: Props = $props();
+
+const permissionStore = getPermissionStore();
+const sessionStore = getSessionStore();
+
+const pendingPermissions = $derived.by(() => {
+	if (permission) {
+		return [permission];
 	}
 
-	let { sessionId, permission = null, isFullscreen = false, projectPath = null }: Props = $props();
-
-	const permissionStore = getPermissionStore();
-	const sessionStore = getSessionStore();
-
-	const pendingPermissions = $derived.by(() => {
-		if (permission) {
-			return [permission];
-		}
-
-		const entries = sessionStore.getEntries(sessionId);
-		return visiblePermissionsForSessionBar(permissionStore.getForSession(sessionId), entries);
-	});
-	const currentPermission = $derived(pendingPermissions.length > 0 ? pendingPermissions[0] : null);
-	const isRepresentedByToolCall = $derived.by(() => {
-		if (!currentPermission) {
+	const entries = sessionStore.getEntries(sessionId);
+	return visiblePermissionsForSessionBar(permissionStore.getForSession(sessionId), entries);
+});
+const currentPermission = $derived(pendingPermissions.length > 0 ? pendingPermissions[0] : null);
+const isRepresentedByToolCall = $derived.by(() => {
+	if (!currentPermission) {
 		return false;
+	}
+
+	return isPermissionRepresentedByToolCall(
+		currentPermission,
+		sessionId,
+		sessionStore.getOperationStore(),
+		sessionStore.getEntries(sessionId)
+	);
+});
+const sessionProgress = $derived(permissionStore.getSessionProgress(sessionId));
+const hotState = $derived(sessionStore.getHotState(sessionId));
+const progressLabel = $derived.by(() => {
+	if (!sessionProgress) {
+		return "";
+	}
+
+	const currentStep =
+		sessionProgress.completed + 1 <= sessionProgress.total
+			? sessionProgress.completed + 1
+			: sessionProgress.total;
+	return `Permission ${currentStep} of ${sessionProgress.total}`;
+});
+const currentToolCall = $derived.by((): ToolCall | null => {
+	const toolCallId = currentPermission?.tool?.callID;
+	if (!toolCallId) {
+		return null;
+	}
+
+	const entries = sessionStore.getEntries(sessionId);
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (entry.type === "tool_call" && entry.message.id === toolCallId) {
+			return entry.message;
 		}
+	}
 
-		return isPermissionRepresentedByToolCall(
-			currentPermission,
-			sessionId,
-			sessionStore.getOperationStore(),
-			sessionStore.getEntries(sessionId)
-		);
-	});
-	const sessionProgress = $derived(permissionStore.getSessionProgress(sessionId));
-	const progressLabel = $derived.by(() => {
-		if (!sessionProgress) {
-			return "";
-		}
-
-		const currentStep =
-			sessionProgress.completed + 1 <= sessionProgress.total
-				? sessionProgress.completed + 1
-				: sessionProgress.total;
-		return `Permission ${currentStep} of ${sessionProgress.total}`;
-	});
-
+	return null;
+});
+const showEditPreview = $derived(
+	showCompactEditPreview && currentToolCall !== null && currentToolCall.kind === "edit"
+);
 </script>
 
 
 {#if currentPermission}
 	{@const compactDisplay = extractCompactPermissionDisplay(currentPermission, projectPath)}
 	{@const kind = compactDisplay.kind}
-	{@const command = isRepresentedByToolCall ? null : compactDisplay.command}
+	{@const command =
+		showCommandWhenRepresented || !isRepresentedByToolCall ? compactDisplay.command : null}
 	{@const filePath = compactDisplay.filePath}
 	{@const verb = compactDisplay.label}
 	{@const purpleColor = Colors[COLOR_NAMES.PURPLE]}
@@ -105,7 +139,7 @@
 						{/if}
 					</span>
 					<span class="shrink-0 text-[10px] font-medium text-muted-foreground">{verb}</span>
-					{#if filePath}
+					{#if filePath && !showEditPreview}
 						<div class="min-w-0 flex-1 cursor-pointer">
 							<FilePathBadge {filePath} interactive={false} />
 						</div>
@@ -129,6 +163,17 @@
 			<div class="flex w-full items-center">
 				<PermissionActionBar permission={currentPermission} hideHeader />
 			</div>
+			{#if showEditPreview && currentToolCall}
+				<div class="overflow-hidden rounded-md border border-border/60 bg-background/60">
+					<ToolCallEdit
+						toolCall={currentToolCall}
+						turnState={hotState ? hotState.turnState : undefined}
+						projectPath={projectPath ?? undefined}
+						pendingPermission={currentPermission}
+						defaultExpanded={false}
+					/>
+				</div>
+			{/if}
 		</div>
 
 			<!-- Command display for execute permissions -->

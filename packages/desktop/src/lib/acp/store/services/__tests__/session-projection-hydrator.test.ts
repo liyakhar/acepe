@@ -155,6 +155,101 @@ describe("SessionProjectionHydrator", () => {
 			status: "pending",
 		});
 	});
+
+	it("groups multiple pending permissions for the same tool call into one interaction", async () => {
+		getSessionProjectionMock.mockImplementation(() =>
+			okAsync({
+				session: {
+					session_id: "session-1",
+					agent_id: "copilot",
+					last_event_seq: 2,
+					turn_state: "Idle",
+					message_count: 0,
+					last_agent_message_id: null,
+					active_tool_call_ids: [],
+					completed_tool_call_ids: [],
+				},
+				operations: [],
+				interactions: [
+					{
+						id: "permission-1",
+						session_id: "session-1",
+						kind: "Permission",
+						state: "Pending",
+						json_rpc_request_id: 55,
+						reply_handler: {
+							kind: "json_rpc",
+							requestId: "55",
+						},
+						tool_reference: {
+							messageId: "message-permission",
+							callId: "tool-permission",
+						},
+						responded_at_event_seq: null,
+						response: null,
+						payload: {
+							Permission: {
+								id: "permission-1",
+								sessionId: "session-1",
+								jsonRpcRequestId: 55,
+								permission: "Edit",
+								patterns: ["README.md"],
+								metadata: {},
+								always: ["allow_always"],
+								tool: {
+									messageId: "message-permission",
+									callId: "tool-permission",
+								},
+							},
+						},
+					},
+					{
+						id: "permission-2",
+						session_id: "session-1",
+						kind: "Permission",
+						state: "Pending",
+						json_rpc_request_id: 56,
+						reply_handler: {
+							kind: "json_rpc",
+							requestId: "56",
+						},
+						tool_reference: {
+							messageId: "message-permission",
+							callId: "tool-permission",
+						},
+						responded_at_event_seq: null,
+						response: null,
+						payload: {
+							Permission: {
+								id: "permission-2",
+								sessionId: "session-1",
+								jsonRpcRequestId: 56,
+								permission: "Edit",
+								patterns: ["AGENTS.md"],
+								metadata: {},
+								always: ["allow_always"],
+								tool: {
+									messageId: "message-permission",
+									callId: "tool-permission",
+								},
+							},
+						},
+					},
+				],
+			})
+		);
+		const interactions = new InteractionStore();
+		const hydrator = new SessionProjectionHydrator(interactions);
+
+		const result = await hydrator.hydrateSession("session-1");
+
+		expect(result.isOk()).toBe(true);
+		expect(interactions.permissionsPending.size).toBe(1);
+		expect(interactions.permissionsPending.get("permission-1")?.members?.map((member) => member.id)).toEqual([
+			"permission-1",
+			"permission-2",
+		]);
+	});
 });
 
 function createProjectionSnapshot(): SessionProjectionSnapshot {

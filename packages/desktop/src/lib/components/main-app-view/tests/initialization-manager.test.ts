@@ -305,13 +305,8 @@ describe("InitializationManager", () => {
 				callOrder.push("preload");
 				return okAsync(restoredSession);
 			}) as SessionStore["loadSessionById"];
-			mockSessionStore.connectSession = mock(() => {
-				callOrder.push("connect");
-				return okAsync(restoredSession);
-			}) as SessionStore["connectSession"];
-			mockProjectionHydrator.hydrateSession = mock(() => {
-				callOrder.push("hydrate");
-				return okAsync(undefined);
+			mockProjectionHydrator.clearSession = mock(() => {
+				callOrder.push("clear");
 			});
 			mockSessionStore.scanSessions = mock((projectPaths: string[]) => {
 				callOrder.push(`scan:${projectPaths.join(",")}`);
@@ -326,8 +321,7 @@ describe("InitializationManager", () => {
 				"startup",
 				"preload",
 				"scan:/project1,/project2",
-				"hydrate",
-				"connect",
+				"clear",
 			]);
 		});
 
@@ -513,7 +507,8 @@ describe("InitializationManager", () => {
 				undefined,
 				"Recovered session"
 			);
-			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("session-1");
+			expect(mockSessionStore.connectSession).not.toHaveBeenCalled();
+			expect(mockProjectionHydrator.clearSession).toHaveBeenCalledWith("session-1");
 		});
 
 		it("preloads restored sessions with persisted worktree context", async () => {
@@ -565,7 +560,8 @@ describe("InitializationManager", () => {
 				"/project1/.git/worktrees/feature-a",
 				"Feature thread"
 			);
-			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("session-1");
+			expect(mockSessionStore.connectSession).not.toHaveBeenCalled();
+			expect(mockProjectionHydrator.clearSession).toHaveBeenCalledWith("session-1");
 		});
 
 		it("preloads restored sessions from canonical session metadata before stale panel cache", async () => {
@@ -615,7 +611,8 @@ describe("InitializationManager", () => {
 				"/project1/.git/worktrees/feature-b",
 				"Canonical title"
 			);
-			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("session-1");
+			expect(mockSessionStore.connectSession).not.toHaveBeenCalled();
+			expect(mockProjectionHydrator.clearSession).toHaveBeenCalledWith("session-1");
 		});
 
 		it("does not clear a restored worktree session when history contains it", async () => {
@@ -713,7 +710,8 @@ describe("InitializationManager", () => {
 				"/Users/example/.acepe/worktrees/worktree-123456/feature-branch",
 				"Feature thread"
 			);
-			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("session-1");
+			expect(mockSessionStore.connectSession).not.toHaveBeenCalled();
+			expect(mockProjectionHydrator.clearSession).toHaveBeenCalledWith("session-1");
 		});
 
 		it("remaps aliased panel session ids before validation", async () => {
@@ -780,10 +778,6 @@ describe("InitializationManager", () => {
 			mockSessionStore.loadSessionById = mock(() =>
 				okAsync(canonicalSession)
 			) as SessionStore["loadSessionById"];
-			mockSessionStore.connectSession = mock(() =>
-				okAsync(canonicalSession)
-			) as SessionStore["connectSession"];
-
 			await manager.initialize();
 
 			// Panel should be remapped from alias to canonical ID
@@ -799,7 +793,8 @@ describe("InitializationManager", () => {
 				undefined,
 				"Aliased Session"
 			);
-			expect(mockSessionStore.connectSession).toHaveBeenCalledWith("acepe-uuid");
+			expect(mockSessionStore.connectSession).not.toHaveBeenCalled();
+			expect(mockProjectionHydrator.clearSession).toHaveBeenCalledWith("acepe-uuid");
 		});
 
 		it("should handle initialization errors", async () => {

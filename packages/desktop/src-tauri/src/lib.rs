@@ -132,7 +132,7 @@ use sql_studio::commands::{
     sql_studio_pick_sqlite_file, sql_studio_save_connection, sql_studio_test_connection_input,
     sql_studio_update_table_cell,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use storage::commands::{
     add_project, browse_project, delete_api_key, delete_session_review_state, get_api_key,
     get_custom_keybindings, get_missing_project_paths, get_project_count, get_projects,
@@ -158,6 +158,92 @@ use voice::{
 
 struct NoSpanEventFormatter;
 
+struct PrettyDevEventFormatter {
+    started_at: std::time::Instant,
+    last_event_at: Mutex<Option<std::time::Instant>>,
+}
+
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_DIM: &str = "\x1b[2m";
+const ANSI_RED: &str = "\x1b[31m";
+const ANSI_GREEN: &str = "\x1b[32m";
+const ANSI_YELLOW: &str = "\x1b[33m";
+const ANSI_BLUE: &str = "\x1b[34m";
+const ANSI_MAGENTA: &str = "\x1b[35m";
+const ANSI_CYAN: &str = "\x1b[36m";
+const ANSI_BRIGHT_BLACK: &str = "\x1b[90m";
+
+impl PrettyDevEventFormatter {
+    fn new() -> Self {
+        Self {
+            started_at: std::time::Instant::now(),
+            last_event_at: Mutex::new(None),
+        }
+    }
+}
+
+fn level_style(level: &tracing::Level) -> &'static str {
+    match *level {
+        tracing::Level::TRACE => ANSI_BRIGHT_BLACK,
+        tracing::Level::DEBUG => ANSI_BLUE,
+        tracing::Level::INFO => ANSI_CYAN,
+        tracing::Level::WARN => ANSI_YELLOW,
+        tracing::Level::ERROR => ANSI_RED,
+    }
+}
+
+fn format_elapsed_label(duration: std::time::Duration) -> String {
+    let total_millis = duration.as_millis();
+
+    if total_millis < 1000 {
+        return format!("{}ms", total_millis);
+    }
+
+    if total_millis < 60_000 {
+        let seconds = total_millis as f64 / 1000.0;
+        if total_millis < 10_000 {
+            return format!("{seconds:.2}s");
+        }
+
+        return format!("{seconds:.1}s");
+    }
+
+    let total_seconds = duration.as_secs();
+    if total_seconds < 3600 {
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        return format!("{minutes}m{seconds:02}s");
+    }
+
+    let total_minutes = total_seconds / 60;
+    let hours = total_minutes / 60;
+    let minutes = total_minutes % 60;
+    format!("{hours}h{minutes:02}m")
+}
+
+fn format_delta_label(delta: Option<std::time::Duration>) -> String {
+    match delta {
+        Some(value) => format!("+{}", format_elapsed_label(value)),
+        None => "start".to_string(),
+    }
+}
+
+fn format_total_label(elapsed: std::time::Duration) -> String {
+    format!("T+{}", format_elapsed_label(elapsed))
+}
+
+fn format_location(metadata: &tracing::Metadata<'_>) -> Option<String> {
+    match (metadata.file(), metadata.line()) {
+        (Some(file), Some(line)) => Some(format!("{file}:{line}")),
+        _ => None,
+    }
+}
+
+fn write_ansi(writer: &mut Writer<'_>, style: &str, text: &str) -> std::fmt::Result {
+    write!(writer, "{style}{text}{ANSI_RESET}")
+}
+
 impl<S, N> FormatEvent<S, N> for NoSpanEventFormatter
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -178,6 +264,53 @@ where
             }
         }
 
+        ctx.field_format().format_fields(writer.by_ref(), event)?;
+        writeln!(&mut writer)
+    }
+}
+
+impl<S, N> FormatEvent<S, N> for PrettyDevEventFormatter
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> std::fmt::Result {
+        let metadata = event.metadata();
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.started_at);
+        let delta = {
+            let mut last_event_at = self.last_event_at.lock().expect("last_event_at poisoned");
+            let previous = *last_event_at;
+            *last_event_at = Some(now);
+            previous.map(|previous_event| now.duration_since(previous_event))
+        };
+
+        let level_text = format!("{ANSI_BOLD}{:<5}", metadata.level());
+        write_ansi(&mut writer, level_style(metadata.level()), &level_text)?;
+        write!(&mut writer, " ")?;
+        write_ansi(
+            &mut writer,
+            ANSI_DIM,
+            &chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+        )?;
+        write!(&mut writer, " ")?;
+        write_ansi(&mut writer, ANSI_GREEN, &format_delta_label(delta))?;
+        write!(&mut writer, " ")?;
+        write_ansi(&mut writer, ANSI_MAGENTA, &format_total_label(elapsed))?;
+        write!(&mut writer, " ")?;
+        write_ansi(&mut writer, ANSI_BLUE, metadata.target())?;
+
+        if let Some(location) = format_location(metadata) {
+            write!(&mut writer, " ")?;
+            write_ansi(&mut writer, ANSI_BRIGHT_BLACK, &location)?;
+        }
+
+        write!(&mut writer, " ")?;
         ctx.field_format().format_fields(writer.by_ref(), event)?;
         writeln!(&mut writer)
     }
@@ -273,7 +406,7 @@ fn init_logging() {
     #[cfg(debug_assertions)]
     {
         let console_layer = fmt::layer()
-            .event_format(NoSpanEventFormatter)
+            .event_format(PrettyDevEventFormatter::new())
             .with_ansi(true);
 
         tracing_subscriber::registry()
@@ -1146,10 +1279,13 @@ pub fn run() {
 
 #[cfg(test)]
 mod lib_tests {
+    use super::format_delta_label;
+    use super::format_elapsed_label;
     use super::orphaned_acp_process_patterns;
     use super::should_attempt_claude_model_discovery;
     use crate::acp::provider::AgentProvider;
     use std::path::Path;
+    use std::time::Duration;
 
     #[test]
     fn claude_defaults_skip_model_discovery_probe() {
@@ -1171,6 +1307,19 @@ mod lib_tests {
         assert!(
             patterns.contains(&"/tmp/agents/opencode/opencode".to_string()),
             "startup orphan sweep should include the bundled opencode binary"
+        );
+    }
+
+    #[test]
+    fn logging_duration_labels_stay_compact() {
+        assert_eq!(format_elapsed_label(Duration::from_millis(125)), "125ms");
+        assert_eq!(format_elapsed_label(Duration::from_millis(1_550)), "1.55s");
+        assert_eq!(format_elapsed_label(Duration::from_secs(75)), "1m15s");
+        assert_eq!(format_elapsed_label(Duration::from_secs(3_900)), "1h05m");
+        assert_eq!(format_delta_label(None), "start");
+        assert_eq!(
+            format_delta_label(Some(Duration::from_millis(85))),
+            "+85ms"
         );
     }
 }

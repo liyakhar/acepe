@@ -1,77 +1,81 @@
 <script lang="ts">
-	import type { Snippet } from "svelte";
-	import { X } from "phosphor-svelte";
-	import AgentToolTask from "../agent-panel/agent-tool-task.svelte";
-	import AgentToolRow from "../agent-panel/agent-tool-row.svelte";
-	import { DiffPill } from "../diff-pill/index.js";
-	import { capitalizeLeadingCharacter } from "../../lib/utils.js";
-	import {
-		EmbeddedIconButton,
-		EmbeddedPanelHeader,
-		HeaderActionCell,
-		HeaderCell,
-		HeaderTitleCell,
-	} from "../panel-header/index.js";
-	import { ProjectLetterBadge } from "../project-letter-badge/index.js";
-	import { SegmentedProgress } from "../segmented-progress/index.js";
-	import { TextShimmer } from "../text-shimmer/index.js";
-	import type { KanbanCardData } from "./types.js";
+import type { Snippet } from "svelte";
+import { X } from "phosphor-svelte";
+import AgentToolTask from "../agent-panel/agent-tool-task.svelte";
+import AgentToolRow from "../agent-panel/agent-tool-row.svelte";
+import { DiffPill } from "../diff-pill/index.js";
+import { capitalizeLeadingCharacter } from "../../lib/utils.js";
+import {
+	EmbeddedIconButton,
+	EmbeddedPanelHeader,
+	HeaderActionCell,
+	HeaderCell,
+	HeaderTitleCell,
+} from "../panel-header/index.js";
+import { ProjectLetterBadge } from "../project-letter-badge/index.js";
+import { SegmentedProgress } from "../segmented-progress/index.js";
+import { TextShimmer } from "../text-shimmer/index.js";
+import type { KanbanCardData } from "./types.js";
 
-	interface Props {
-		card: KanbanCardData;
-		children?: Snippet;
-		onclick?: () => void;
-		/** Close button callback. When provided, renders a compact X button in the header. */
-		onClose?: () => void;
-		footer?: Snippet;
-		tally?: Snippet;
-		/** Renders a todo header section at the bottom of the card body. When provided, inline todoProgress in the tally is hidden. */
-		todoSection?: Snippet;
-		showFooter?: boolean;
-		showTally?: boolean;
-		/** When true the footer renders without padding so embedded composers sit flush. */
-		flushFooter?: boolean;
-		/** When true, hide the body content (tool calls, activity text). Used when a permission request is shown instead. */
-		hideBody?: boolean;
-		menu?: Snippet;
-	}
+interface Props {
+	card: KanbanCardData;
+	children?: Snippet;
+	onclick?: () => void;
+	/** Close button callback. When provided, renders a compact X button in the header. */
+	onClose?: () => void;
+	footer?: Snippet;
+	tally?: Snippet;
+	/** Renders a todo header section at the bottom of the card body. When provided, inline todoProgress in the tally is hidden. */
+	todoSection?: Snippet;
+	showMenu?: boolean;
+	showFooter?: boolean;
+	showTally?: boolean;
+	/** When true the footer renders without padding so embedded composers sit flush. */
+	flushFooter?: boolean;
+	/** When true, hide the body content (tool calls, activity text). Used when a permission request is shown instead. */
+	hideBody?: boolean;
+	menu?: Snippet;
+}
 
-	let {
-		card,
-		onclick,
-		onClose,
-		footer,
-		tally,
-		todoSection,
-		showFooter = false,
-		showTally = false,
-		flushFooter = false,
-		hideBody = false,
-		menu,
-	}: Props = $props();
+let {
+	card,
+	onclick,
+	onClose,
+	footer,
+	tally,
+	todoSection,
+	showMenu = false,
+	showFooter = false,
+	showTally = false,
+	flushFooter = false,
+	hideBody = false,
+	menu,
+}: Props = $props();
 
-	const title = $derived(card.title ? capitalizeLeadingCharacter(card.title) : "Untitled session");
-	const hasDiff = $derived(card.diffInsertions > 0 || card.diffDeletions > 0);
-	const isInteractive = $derived(Boolean(onclick));
-	const showBody = $derived(!hideBody && Boolean(card.taskCard || card.latestTool || card.activityText || card.errorText));
-	const hasTodoSection = $derived(todoSection !== undefined);
-	const hasFooterContent = $derived(card.todoProgress !== null && !hasTodoSection ? true : showTally);
-	const hasMenu = $derived(menu !== undefined);
-	const hasClose = $derived(Boolean(onClose));
-	const headerDiffDivider = $derived(hasMenu ? true : hasClose);
+const title = $derived(card.title ? capitalizeLeadingCharacter(card.title) : "Untitled session");
+const hasDiff = $derived(card.diffInsertions > 0 || card.diffDeletions > 0);
+const isInteractive = $derived(Boolean(onclick));
+const showBody = $derived(
+	!hideBody && Boolean(card.taskCard || card.latestTool || card.activityText || card.errorText)
+);
+const hasTodoSection = $derived(todoSection !== undefined);
+const hasFooterContent = $derived(card.todoProgress !== null && !hasTodoSection ? true : showTally);
+const hasMenu = $derived(showMenu && menu !== undefined);
+const hasClose = $derived(Boolean(onClose));
+const headerDiffDivider = $derived(hasMenu ? true : hasClose);
 
-	function handleKeydown(event: KeyboardEvent): void {
-		if (!onclick) return;
-		if (event.key !== "Enter" && event.key !== " ") return;
-		if (event.target !== event.currentTarget) return;
-		event.preventDefault();
-		onclick();
-	}
+function handleKeydown(event: KeyboardEvent): void {
+	if (!onclick) return;
+	if (event.key !== "Enter" && event.key !== " ") return;
+	if (event.target !== event.currentTarget) return;
+	event.preventDefault();
+	onclick();
+}
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
-	class="flex flex-col overflow-hidden rounded-sm border border-border/60 bg-accent/30 transition-all duration-150 {isInteractive
+	class="shrink-0 flex flex-col overflow-hidden rounded-sm border border-border/60 bg-accent/30 transition-all duration-150 {isInteractive
 		? 'cursor-pointer hover:border-border hover:bg-accent/45 hover:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.9)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border/80 focus-visible:ring-offset-0'
 		: ''}"
 	onclick={onclick}

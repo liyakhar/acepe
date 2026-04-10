@@ -20,7 +20,13 @@ import { AgentError } from "../errors/app-error.js";
 
 import { replyToPermissionRequest } from "../logic/interaction-reply.js";
 import type { Operation } from "../types/operation.js";
-import type { PermissionRequest } from "../types/permission.js";
+import {
+	buildPermissionGroupKey,
+	createPermissionRequest,
+	getPermissionRequestMembers,
+	mergePermissionRequests,
+	type PermissionRequest,
+} from "../types/permission.js";
 import type { ToolCall } from "../types/tool-call.js";
 import { isExitPlanPermission } from "../utils/exit-plan-permission.js";
 import { createLogger } from "../utils/logger.js";
@@ -134,6 +140,19 @@ export class PermissionStore {
 		return permission.tool?.callID ? permission.tool.callID : permission.id;
 	}
 
+	private findGroupedPermissionEntry(
+		permission: PermissionRequest
+	): { key: string; permission: PermissionRequest } | null {
+		const groupKey = buildPermissionGroupKey(permission);
+		for (const [key, pendingPermission] of this.pending) {
+			if (buildPermissionGroupKey(pendingPermission) === groupKey) {
+				return { key, permission: pendingPermission };
+			}
+		}
+
+		return null;
+	}
+
 	private shouldPreferPermission(
 		candidate: PermissionRequest,
 		current: PermissionRequest | undefined
@@ -160,13 +179,22 @@ export class PermissionStore {
 	 * when an `isChildSession` check is configured via `setChildSessionCheck()`.
 	 */
 	add(permission: PermissionRequest): void {
-		const hadPendingBeforeAdd = this.countPendingForSession(permission.sessionId) > 0;
-		this.pending.set(permission.id, permission);
-		this.notePermissionAdded(permission.sessionId, hadPendingBeforeAdd);
+		const existingGroupedPermission = this.findGroupedPermissionEntry(permission);
+		const storedPermission =
+			existingGroupedPermission === null
+				? permission
+				: mergePermissionRequests(existingGroupedPermission.permission, permission);
+		if (existingGroupedPermission === null) {
+			const hadPendingBeforeAdd = this.countPendingForSession(permission.sessionId) > 0;
+			this.pending.set(permission.id, storedPermission);
+			this.notePermissionAdded(permission.sessionId, hadPendingBeforeAdd);
+		} else {
+			this.pending.set(existingGroupedPermission.key, storedPermission);
+		}
 
 		const autoAcceptDecision =
-			this.shouldAutoAccept !== null && !isExitPlanPermission(permission)
-				? this.shouldAutoAccept(permission)
+			this.shouldAutoAccept !== null && !isExitPlanPermission(storedPermission)
+				? this.shouldAutoAccept(storedPermission)
 				: false;
 		const autoAcceptSource =
 			autoAcceptDecision === true
@@ -177,12 +205,12 @@ export class PermissionStore {
 
 		if (autoAcceptSource) {
 			logger.info("Auto-accepting permission", {
-				permissionId: permission.id,
-				sessionId: permission.sessionId,
-				tool: permission.permission,
+				permissionId: storedPermission.id,
+				sessionId: storedPermission.sessionId,
+				tool: storedPermission.permission,
 				source: autoAcceptSource,
 			});
-			void this.reply(permission.id, "once").match(
+			void this.reply(storedPermission.id, "once").match(
 				() => {},
 				(err) => logger.error("Failed to auto-accept permission", { error: err })
 			);
@@ -190,9 +218,9 @@ export class PermissionStore {
 		}
 
 		logger.debug("Permission request added", {
-			permissionId: permission.id,
-			toolCallId: permission.tool?.callID,
-			jsonRpcRequestId: permission.jsonRpcRequestId,
+			permissionId: storedPermission.id,
+			toolCallId: storedPermission.tool?.callID,
+			jsonRpcRequestId: storedPermission.jsonRpcRequestId,
 		});
 	}
 
@@ -353,19 +381,91 @@ export class PermissionStore {
 		this.notePermissionResolved(permission.sessionId);
 		logger.debug("Permission request removed", { permissionId });
 
-		const optionId = this.resolveOptionId(permission, reply);
+		const replyRequests = getPermissionRequestMembers(permission).map((member) =>
+			createPermissionRequest({
+				id: member.id,
+				sessionId: permission.sessionId,
+				jsonRpcRequestId: member.jsonRpcRequestId,
+				replyHandler: member.replyHandler,
+				permission: permission.permission,
+				patterns: permission.patterns,
+				metadata: member.metadata,
+				always: member.always,
+				tool: permission.tool,
+			})
+		);
 
-		return replyToPermissionRequest(permission, reply, optionId)
+		return ResultAsync.fromPromise(
+			(async () => {
+				for (let index = 0; index < replyRequests.length; index += 1) {
+					const replyRequest = replyRequests[index];
+					const optionId = this.resolveOptionId(replyRequest, reply);
+					const result = await replyToPermissionRequest(replyRequest, reply, optionId);
+					if (result.isErr()) {
+						throw {
+							error: result.error,
+							failedRequests: replyRequests.slice(index),
+						};
+					}
+				}
+			})(),
+			(error) => {
+				if (
+					typeof error === "object" &&
+					error !== null &&
+					"error" in error &&
+					"failedRequests" in error
+				) {
+					return error as {
+						error: AppError;
+						failedRequests: PermissionRequest[];
+					};
+				}
+
+				return {
+					error:
+						error instanceof AgentError
+							? error
+							: new AgentError(
+									"replyPermission",
+									error instanceof Error ? error : new Error(String(error))
+								),
+					failedRequests: replyRequests,
+				};
+			}
+		)
 			.map(() => {
-				logger.debug("Permission reply sent", { permissionId, reply, optionId });
+				logger.debug("Permission reply sent", {
+					permissionId,
+					reply,
+					replyCount: replyRequests.length,
+				});
 			})
 			.mapErr((error) => {
-				this.restorePermissionAfterFailedReply(
-					permission,
-					totalBeforeReply,
-					completedBeforeReply
-				);
-				return error;
+				const failedRequests = error.failedRequests;
+				if (failedRequests.length > 0) {
+					const restoredPermission =
+						failedRequests.length === replyRequests.length
+							? permission
+							: (() => {
+									let mergedPermission = failedRequests[0];
+									for (let index = 1; index < failedRequests.length; index += 1) {
+										const failedRequest = failedRequests[index];
+										mergedPermission = mergePermissionRequests(
+											mergedPermission,
+											failedRequest
+										);
+									}
+									return mergedPermission;
+								})();
+
+					this.restorePermissionAfterFailedReply(
+						restoredPermission,
+						totalBeforeReply,
+						completedBeforeReply
+					);
+				}
+				return error.error;
 			});
 	}
 

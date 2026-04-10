@@ -103,7 +103,7 @@ export function countPdfPages(source) {
 	return [...source.matchAll(/\/Type\s*\/Page\b/g)].length;
 }
 
-async function exportPitchPdf(pitchUrl, outputPath) {
+export async function exportPitchPdf(pitchUrl, outputPath) {
 	const browserScript = `
 const { chromium } = require("playwright");
 (async () => {

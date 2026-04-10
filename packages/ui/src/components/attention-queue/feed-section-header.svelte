@@ -1,20 +1,22 @@
 <script lang="ts">
-	import { CheckCircle } from "phosphor-svelte";
-	import { Eye } from "phosphor-svelte";
-	import { Keyboard } from "phosphor-svelte";
-	import { Warning } from "phosphor-svelte";
-	import type { SectionedFeedSectionId } from "./types.js";
+import { CheckCircle } from "phosphor-svelte";
+import { Eye } from "phosphor-svelte";
+import { FileCode } from "phosphor-svelte";
+import { Keyboard } from "phosphor-svelte";
+import { Warning } from "phosphor-svelte";
+import type { SectionedFeedSectionId } from "./types.js";
 
-	import { BuildIcon, PlanIcon } from "../icons/index.js";
+import { BuildIcon, PlanIcon } from "../icons/index.js";
 
-	interface Props {
-		sectionId: SectionedFeedSectionId;
-		label: string;
-		count: number;
-		color?: string;
-	}
+interface Props {
+	sectionId: SectionedFeedSectionId;
+	label: string;
+	count: number;
+	color?: string;
+	needsReviewIcon?: "eye" | "file-code";
+}
 
-	let { sectionId, label, count, color }: Props = $props();
+let { sectionId, label, count, color, needsReviewIcon = "eye" }: Props = $props();
 </script>
 
 <div class="flex h-7 items-center justify-between px-2">
@@ -26,7 +28,11 @@
 		{:else if sectionId === "planning"}
 			<PlanIcon size="sm" />
 		{:else if sectionId === "needs_review"}
-			<Eye class="size-3 shrink-0" weight="fill" style="color: {color}" />
+			{#if needsReviewIcon === "file-code"}
+				<FileCode class="size-3 shrink-0" weight="fill" style="color: {color}" />
+			{:else}
+				<Eye class="size-3 shrink-0" weight="fill" style="color: {color}" />
+			{/if}
 		{:else if sectionId === "idle"}
 			<CheckCircle class="size-3 shrink-0" weight="fill" style="color: {color}" />
 		{:else if sectionId === "error"}

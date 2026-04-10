@@ -1,4 +1,4 @@
-import { tauriClient } from "$lib/utils/tauri-client.js";
+import { notifications } from "$lib/utils/tauri-client/notifications.js";
 import type { ResultAsync } from "neverthrow";
 import type { AppError } from "$lib/acp/errors/app-error.js";
 
@@ -8,7 +8,7 @@ export interface NativeNotificationPayload {
 }
 
 export async function getNotificationPermission(): Promise<boolean> {
-	return tauriClient.notifications.getPermission().match(
+	return notifications.getPermission().match(
 		(permissionGranted) => permissionGranted ?? false,
 		(error) => {
 			throw error;
@@ -17,7 +17,7 @@ export async function getNotificationPermission(): Promise<boolean> {
 }
 
 export async function requestNotificationPermission(): Promise<"default" | "denied" | "granted"> {
-	return tauriClient.notifications.requestPermission().match(
+	return notifications.requestPermission().match(
 		(permission) => {
 			if (permission === "prompt" || permission === "prompt-with-rationale") {
 				return "default";
@@ -33,5 +33,5 @@ export async function requestNotificationPermission(): Promise<"default" | "deni
 export function sendNativeNotification(
 	payload: NativeNotificationPayload
 ): ResultAsync<void, AppError> {
-	return tauriClient.notifications.send(payload);
+	return notifications.send(payload);
 }
