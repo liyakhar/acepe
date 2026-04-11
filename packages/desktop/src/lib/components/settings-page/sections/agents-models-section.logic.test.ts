@@ -1,15 +1,14 @@
 import { describe, expect, it } from "bun:test";
-
+import type { Agent } from "$lib/acp/store/types.js";
 import type {
 	ModelsForDisplay,
 	ProviderMetadataProjection,
 } from "$lib/services/acp-provider-metadata.js";
-import type { Agent } from "$lib/acp/store/types.js";
 
 import {
 	applyAgentSelectionChange,
-	getAgentsByProviderOrder,
 	getAgentModelDefaultsEntries,
+	getAgentsByProviderOrder,
 	getProviderDefaultLabel,
 } from "./agents-models-section.logic.js";
 
@@ -65,7 +64,6 @@ describe("getAgentModelDefaultsEntries", () => {
 		variantGroup: "plain",
 		defaultAlias: "default",
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "launchProfile",
 		preconnectionSlashMode: "startupGlobal",
 	};
 
@@ -77,7 +75,6 @@ describe("getAgentModelDefaultsEntries", () => {
 		variantGroup: "plain",
 		defaultAlias: "auto",
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
 		preconnectionSlashMode: "startupGlobal",
 	};
 
@@ -89,7 +86,6 @@ describe("getAgentModelDefaultsEntries", () => {
 		variantGroup: "plain",
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
 		preconnectionSlashMode: "projectScoped",
 	};
 
@@ -146,7 +142,6 @@ describe("getAgentModelDefaultsEntries", () => {
 					variantGroup: "plain",
 					defaultAlias: "auto",
 					reasoningEffortSupport: false,
-					autonomousApplyStrategy: "postConnect",
 					preconnectionSlashMode: "startupGlobal",
 				},
 			},
@@ -189,7 +184,6 @@ describe("getAgentsByProviderOrder", () => {
 						variantGroup: "plain",
 						defaultAlias: "auto",
 						reasoningEffortSupport: false,
-						autonomousApplyStrategy: "postConnect",
 						preconnectionSlashMode: "startupGlobal",
 					},
 				},
@@ -209,7 +203,6 @@ describe("getAgentsByProviderOrder", () => {
 						variantGroup: "plain",
 						defaultAlias: "default",
 						reasoningEffortSupport: false,
-						autonomousApplyStrategy: "launchProfile",
 						preconnectionSlashMode: "startupGlobal",
 					},
 				},
@@ -232,7 +225,6 @@ describe("getProviderDefaultLabel", () => {
 				variantGroup: "plain",
 				defaultAlias: "auto",
 				reasoningEffortSupport: false,
-				autonomousApplyStrategy: "postConnect",
 				preconnectionSlashMode: "startupGlobal",
 			})
 		).toBe("Auto");
@@ -248,7 +240,6 @@ describe("getProviderDefaultLabel", () => {
 				variantGroup: "plain",
 				defaultAlias: undefined,
 				reasoningEffortSupport: false,
-				autonomousApplyStrategy: "postConnect",
 				preconnectionSlashMode: "projectScoped",
 			})
 		).toBe("Agent default");

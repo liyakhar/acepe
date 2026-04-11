@@ -193,8 +193,12 @@ describe("PermissionStore", () => {
 				awaitingPlanApproval: false,
 			});
 			const operation = operationStore.getByToolCallId("session-1", "tool-1");
-			store.add(createExecutePermissionWithCommand("session-1", "shell-permission", 100, "git status"));
-			store.add(createExecutePermissionWithCommand("session-1", "shell-permission", 101, "git status"));
+			store.add(
+				createExecutePermissionWithCommand("session-1", "shell-permission", 100, "git status")
+			);
+			store.add(
+				createExecutePermissionWithCommand("session-1", "shell-permission", 101, "git status")
+			);
 
 			const matched = operation ? store.getForOperation(operation, operationStore) : undefined;
 
@@ -232,12 +236,16 @@ describe("PermissionStore", () => {
 				skillMeta: null,
 				awaitingPlanApproval: false,
 			});
-			store.add(createExecutePermissionWithCommand("session-1", "shell-permission", 101, "git status"));
+			store.add(
+				createExecutePermissionWithCommand("session-1", "shell-permission", 101, "git status")
+			);
 
 			const firstOperation = operationStore.getByToolCallId("session-1", "tool-1");
 			const secondOperation = operationStore.getByToolCallId("session-1", "tool-2");
 
-			expect(firstOperation ? store.getForOperation(firstOperation, operationStore) : undefined).toBeUndefined();
+			expect(
+				firstOperation ? store.getForOperation(firstOperation, operationStore) : undefined
+			).toBeUndefined();
 			expect(
 				secondOperation ? store.getForOperation(secondOperation, operationStore) : undefined
 			).toBeUndefined();
@@ -326,179 +334,6 @@ describe("PermissionStore", () => {
 			expect(store.pending.has(sessionOneFirst.id)).toBe(false);
 			expect(store.pending.has(sessionOneSecond.id)).toBe(false);
 			expect(store.pending.has(sessionTwoPermission.id)).toBe(true);
-		});
-	});
-
-	describe("auto-accept", () => {
-		it("should add normally when no auto-accept is configured", () => {
-			const permission: PermissionRequest = {
-				id: "perm-1",
-				sessionId: "child-session",
-				permission: "ReadFile",
-				patterns: [],
-				metadata: {},
-				always: [],
-			};
-
-			store.add(permission);
-
-			expect(store.pending.size).toBe(1);
-			expect(store.pending.get("perm-1")).toEqual(permission);
-		});
-
-		it("should add normally when predicate returns false", () => {
-			store.setAutoAccept(() => false);
-
-			const permission: PermissionRequest = {
-				id: "perm-1",
-				sessionId: "root-session",
-				permission: "ReadFile",
-				patterns: [],
-				metadata: {},
-				always: [],
-			};
-
-			store.add(permission);
-
-			expect(store.pending.size).toBe(1);
-		});
-
-		it("should auto-accept and remove from pending (ACP mode)", async () => {
-			store.setAutoAccept((p) => p.sessionId === "child-session");
-
-			const permission = createAcpPermission("child-session", "tool-child", 200);
-
-			store.add(permission);
-
-			expect(store.pending.size).toBe(0);
-			expect(mockReplyInteraction).toHaveBeenCalledWith({
-				sessionId: "child-session",
-				interactionId: permission.id,
-				replyHandler: {
-					kind: "json-rpc",
-					requestId: 200,
-				},
-				payload: {
-					kind: "permission",
-					reply: "once",
-					optionId: "allow",
-				},
-			});
-		});
-
-		it("should auto-accept and remove from pending (OpenCode HTTP mode)", () => {
-			store.setAutoAccept((p) => p.sessionId === "child-session");
-
-			const permission: PermissionRequest = {
-				id: "perm-child-http",
-				sessionId: "child-session",
-				permission: "ReadFile",
-				patterns: [],
-				metadata: {},
-				always: [],
-			};
-
-			store.add(permission);
-
-			expect(store.pending.size).toBe(0);
-			expect(mockReplyInteraction).toHaveBeenCalledWith({
-				sessionId: "child-session",
-				interactionId: "perm-child-http",
-				replyHandler: {
-					kind: "http",
-					requestId: "perm-child-http",
-				},
-				payload: {
-					kind: "permission",
-					reply: "once",
-					optionId: "allow",
-				},
-			});
-		});
-
-		it("should resolve allow_once optionId from options when auto-accepting", async () => {
-			store.setAutoAccept(() => true);
-
-			const permission: PermissionRequest = {
-				id: buildAcpPermissionId("child-session", "tool-opts", 300),
-				sessionId: "child-session",
-				jsonRpcRequestId: 300,
-				permission: "Bash",
-				patterns: [],
-				metadata: {
-					options: [
-						{ kind: "allow_once", optionId: "custom_allow", name: "Allow" },
-						{ kind: "reject_once", optionId: "custom_reject", name: "Reject" },
-					],
-				},
-				always: [],
-				tool: { messageID: "", callID: "tool-opts" },
-			};
-
-			store.add(permission);
-
-			expect(mockReplyInteraction).toHaveBeenCalledWith({
-				sessionId: "child-session",
-				interactionId: permission.id,
-				replyHandler: {
-					kind: "json-rpc",
-					requestId: 300,
-				},
-				payload: {
-					kind: "permission",
-					reply: "once",
-					optionId: "custom_allow",
-				},
-			});
-		});
-
-		it("should stop auto-accepting after dispose is called", () => {
-			const dispose = store.setAutoAccept(() => true);
-
-			dispose();
-
-			const permission: PermissionRequest = {
-				id: "perm-1",
-				sessionId: "child-session",
-				permission: "ReadFile",
-				patterns: [],
-				metadata: {},
-				always: [],
-			};
-
-			store.add(permission);
-
-			expect(store.pending.size).toBe(1);
-		});
-
-		it("does not auto-accept exit-plan approvals even when autonomous auto-accept is enabled", async () => {
-			store.setAutoAccept(() => "autonomous-live");
-
-			const permission: PermissionRequest = {
-				id: buildAcpPermissionId("session-plan", "tool-plan", 901),
-				sessionId: "session-plan",
-				jsonRpcRequestId: 901,
-				permission: "Plan",
-				patterns: [],
-				metadata: {
-					rawInput: {
-						plan: "# Plan\n\n- [ ] Ship the fix",
-						planFilePath: "docs/plans/example.md",
-					},
-					parsedArguments: {
-						kind: "planMode",
-						mode: "default",
-					},
-					options: [{ kind: "allow_once", optionId: "allow", name: "Allow" }],
-				},
-				always: [],
-				tool: { messageID: "", callID: "tool-plan" },
-			};
-
-			store.add(permission);
-
-			expect(store.pending.get(permission.id)).toEqual(permission);
-			expect(mockReplyInteraction).not.toHaveBeenCalled();
 		});
 	});
 
@@ -671,26 +506,26 @@ describe("PermissionStore", () => {
 			expect(store.pending.get(permission.id)).toEqual(permission);
 		});
 
-			it("should keep session batch progress while later permissions remain pending", async () => {
-				const firstPermission = createAcpPermission("session-batch", "tool-1", 100);
-				const secondPermission = createAcpPermission("session-batch", "tool-2", 101);
+		it("should keep session batch progress while later permissions remain pending", async () => {
+			const firstPermission = createAcpPermission("session-batch", "tool-1", 100);
+			const secondPermission = createAcpPermission("session-batch", "tool-2", 101);
 
-				store.add(firstPermission);
-				store.add(secondPermission);
+			store.add(firstPermission);
+			store.add(secondPermission);
 
-				expect(store.getForSession("session-batch").map((permission) => permission.id)).toEqual([
-					firstPermission.id,
-					secondPermission.id,
-				]);
-				expect(store.getSessionProgress("session-batch")).toEqual({ total: 2, completed: 0 });
+			expect(store.getForSession("session-batch").map((permission) => permission.id)).toEqual([
+				firstPermission.id,
+				secondPermission.id,
+			]);
+			expect(store.getSessionProgress("session-batch")).toEqual({ total: 2, completed: 0 });
 
-				await store.reply(firstPermission.id, "once");
+			await store.reply(firstPermission.id, "once");
 
-				expect(store.getForSession("session-batch").map((permission) => permission.id)).toEqual([
-					secondPermission.id,
-				]);
-				expect(store.getSessionProgress("session-batch")).toEqual({ total: 2, completed: 1 });
-			});
+			expect(store.getForSession("session-batch").map((permission) => permission.id)).toEqual([
+				secondPermission.id,
+			]);
+			expect(store.getSessionProgress("session-batch")).toEqual({ total: 2, completed: 1 });
+		});
 	});
 
 	describe("drainPendingForSession", () => {

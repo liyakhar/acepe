@@ -1,7 +1,4 @@
-import type {
-	ModelsForDisplay,
-	ProviderMetadataProjection,
-} from "./acp-types.js";
+import type { ModelsForDisplay, ProviderMetadataProjection } from "./acp-types.js";
 
 export type { ModelsForDisplay, ProviderMetadataProjection } from "./acp-types.js";
 
@@ -14,7 +11,6 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "plain",
 		defaultAlias: "default",
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "launchProfile",
 		preconnectionSlashMode: "startupGlobal",
 	},
 	copilot: {
@@ -25,7 +21,6 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "plain",
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
 		preconnectionSlashMode: "projectScoped",
 	},
 	cursor: {
@@ -36,7 +31,6 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "plain",
 		defaultAlias: "auto",
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
 		preconnectionSlashMode: "startupGlobal",
 	},
 	opencode: {
@@ -47,7 +41,6 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "plain",
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
 		preconnectionSlashMode: "projectScoped",
 	},
 	codex: {
@@ -58,13 +51,12 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "reasoningEffort",
 		defaultAlias: undefined,
 		reasoningEffortSupport: true,
-		autonomousApplyStrategy: "postConnect",
 		preconnectionSlashMode: "startupGlobal",
 	},
 };
 
 function cloneProviderMetadataProjection(
-	providerMetadata: ProviderMetadataProjection,
+	providerMetadata: ProviderMetadataProjection
 ): ProviderMetadataProjection {
 	return {
 		providerBrand: providerMetadata.providerBrand,
@@ -74,7 +66,6 @@ function cloneProviderMetadataProjection(
 		variantGroup: providerMetadata.variantGroup,
 		defaultAlias: providerMetadata.defaultAlias,
 		reasoningEffortSupport: providerMetadata.reasoningEffortSupport,
-		autonomousApplyStrategy: providerMetadata.autonomousApplyStrategy,
 		preconnectionSlashMode: providerMetadata.preconnectionSlashMode,
 	};
 }
@@ -82,7 +73,7 @@ function cloneProviderMetadataProjection(
 export function resolveProviderMetadataProjection(
 	agentId: string,
 	providerMetadata: ProviderMetadataProjection | null | undefined,
-	fallbackDisplayName?: string,
+	fallbackDisplayName?: string
 ): ProviderMetadataProjection {
 	if (providerMetadata) {
 		return cloneProviderMetadataProjection(providerMetadata);
@@ -101,13 +92,12 @@ export function resolveProviderMetadataProjection(
 		variantGroup: "plain",
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
 		preconnectionSlashMode: "unsupported",
 	};
 }
 
 export function getProviderMetadataFromModelsDisplay(
-	modelsDisplay: ModelsForDisplay | null | undefined,
+	modelsDisplay: ModelsForDisplay | null | undefined
 ): ProviderMetadataProjection | null {
 	return modelsDisplay?.presentation?.provider ?? null;
 }
@@ -116,7 +106,7 @@ export function normalizeModelsForDisplay(
 	agentId: string,
 	modelsDisplay: ModelsForDisplay | null | undefined,
 	fallbackDisplayName?: string,
-	providerMetadataOverride?: ProviderMetadataProjection | null,
+	providerMetadataOverride?: ProviderMetadataProjection | null
 ): ModelsForDisplay | null {
 	if (!modelsDisplay) {
 		return null;
@@ -125,7 +115,7 @@ export function normalizeModelsForDisplay(
 	const providerMetadata = resolveProviderMetadataProjection(
 		agentId,
 		providerMetadataOverride ?? getProviderMetadataFromModelsDisplay(modelsDisplay),
-		fallbackDisplayName,
+		fallbackDisplayName
 	);
 	const presentation = modelsDisplay.presentation;
 	const displayFamily =

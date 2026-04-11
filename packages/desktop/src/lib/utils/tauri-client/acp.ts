@@ -1,17 +1,12 @@
 import type { ResultAsync } from "neverthrow";
 import type { AppError } from "../../acp/errors/app-error.js";
-import type { InteractionReplyRequest } from "../../acp/types/interaction-reply-request.js";
-import type { SessionProjectionSnapshot } from "../../services/acp-types.js";
 import type { AgentInfo } from "../../acp/store/api.js";
 import type { ResumeSessionResult } from "../../acp/store/types.js";
+import type { InteractionReplyRequest } from "../../acp/types/interaction-reply-request.js";
+import type { SessionProjectionSnapshot } from "../../services/acp-types.js";
 import { ACP_PREFIX, CMD } from "./commands.js";
 import { invokeAsync } from "./invoke.js";
 import type { CustomAgentConfig } from "./types.js";
-
-export interface ExecutionProfileRequest {
-	modeId: string;
-	autonomousEnabled: boolean;
-}
 
 export const acp = {
 	initialize: (): ResultAsync<unknown, AppError> => {
@@ -35,10 +30,9 @@ export const acp = {
 	resumeSession: (
 		sessionId: string,
 		cwd: string,
-		agentId?: string,
-		executionProfile?: ExecutionProfileRequest
+		agentId?: string
 	): ResultAsync<ResumeSessionResult, AppError> => {
-		return invokeAsync(CMD.acp.resume_session, { sessionId, cwd, agentId, executionProfile });
+		return invokeAsync(CMD.acp.resume_session, { sessionId, cwd, agentId });
 	},
 
 	forkSession: (
@@ -57,16 +51,8 @@ export const acp = {
 		return invokeAsync(CMD.acp.set_mode, { sessionId, modeId });
 	},
 
-	setExecutionProfile: (
-		sessionId: string,
-		modeId: string,
-		autonomousEnabled: boolean
-	): ResultAsync<void, AppError> => {
-		return invokeAsync(CMD.acp.set_execution_profile, {
-			sessionId,
-			modeId,
-			autonomousEnabled,
-		});
+	setSessionAutonomous: (sessionId: string, enabled: boolean): ResultAsync<void, AppError> => {
+		return invokeAsync(CMD.acp.set_session_autonomous, { sessionId, enabled });
 	},
 
 	setConfigOption: (
@@ -104,9 +90,7 @@ export const acp = {
 		return invokeAsync(CMD.acp.reply_question, { sessionId, questionId, answers });
 	},
 
-	replyInteraction: (
-		request: InteractionReplyRequest
-	): ResultAsync<void, AppError> => {
+	replyInteraction: (request: InteractionReplyRequest): ResultAsync<void, AppError> => {
 		return invokeAsync(CMD.acp.reply_interaction, {
 			request: {
 				sessionId: request.sessionId,
@@ -145,16 +129,11 @@ export const acp = {
 		return invokeAsync(CMD.acp.register_custom_agent, { config });
 	},
 
-	getEventBridgeInfo: (): ResultAsync<
-		{ eventsUrl: string },
-		AppError
-	> => {
+	getEventBridgeInfo: (): ResultAsync<{ eventsUrl: string }, AppError> => {
 		return invokeAsync(CMD.acp.get_event_bridge_info);
 	},
 
-	getSessionProjection: (
-		sessionId: string
-	): ResultAsync<SessionProjectionSnapshot, AppError> => {
+	getSessionProjection: (sessionId: string): ResultAsync<SessionProjectionSnapshot, AppError> => {
 		return invokeAsync(CMD.acp.get_session_projection, { sessionId });
 	},
 

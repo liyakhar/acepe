@@ -6,7 +6,9 @@ import type { ProviderMetadataProjection } from "../../services/acp-types.js";
 let PreconnectionAgentSkillsStore: typeof import("./preconnection-agent-skills-store.svelte.js").PreconnectionAgentSkillsStore;
 let normalizePreconnectionCommands: typeof import("./preconnection-agent-skills-store.svelte.js").normalizePreconnectionCommands;
 
-function providerMetadata(preconnectionSlashMode: ProviderMetadataProjection["preconnectionSlashMode"]): ProviderMetadataProjection {
+function providerMetadata(
+	preconnectionSlashMode: ProviderMetadataProjection["preconnectionSlashMode"]
+): ProviderMetadataProjection {
 	return {
 		providerBrand: "custom",
 		displayName: "Test",
@@ -15,7 +17,6 @@ function providerMetadata(preconnectionSlashMode: ProviderMetadataProjection["pr
 		variantGroup: "plain",
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
 		preconnectionSlashMode,
 	};
 }

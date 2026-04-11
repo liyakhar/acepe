@@ -1,12 +1,16 @@
 <script lang="ts">
+import {
+	AgentPanelBrowserHeader as SharedAgentPanelBrowserHeader,
+	AgentPanelBrowserPanel as SharedAgentPanelBrowserPanel,
+} from "@acepe/ui/agent-panel";
 import { ResultAsync } from "neverthrow";
 import { onDestroy, onMount } from "svelte";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import * as m from "$lib/paraglide/messages.js";
 import { browserWebview } from "$lib/utils/tauri-client/browser-webview.js";
 import { getZoomService } from "$lib/services/zoom.svelte.js";
-	import { resolveBrowserPanelBounds } from "./logic/browser-panel-bounds.js";
-	import { createLogger } from "../../utils/logger.js";
-	import BrowserPanelHeader from "./browser-panel-header.svelte";
+import { resolveBrowserPanelBounds } from "./logic/browser-panel-bounds.js";
+import { createLogger } from "../../utils/logger.js";
 import { observeScrollParents } from "./logic/scroll-sync.js";
 
 const logger = createLogger({ id: "browser-panel", name: "BrowserPanel" });
@@ -18,6 +22,7 @@ interface Props {
 	width: number;
 	isFullscreenEmbedded?: boolean;
 	isFillContainer?: boolean;
+	zoomLevel?: number;
 	onClose: () => void;
 	onResize: (panelId: string, delta: number) => void;
 }
@@ -45,8 +50,8 @@ const widthStyle = $derived(
 );
 
 const webviewLabel = $derived(`browser-${props.panelId}`);
-const zoomService = getZoomService();
-const zoomLevel = $derived(zoomService.zoomLevel);
+const zoomFallback = getZoomService();
+const effectiveZoomLevel = $derived(props.zoomLevel ?? zoomFallback.zoomLevel);
 
 function openInSystemBrowser() {
 	openUrl(currentUrl).catch((error) => {
@@ -87,7 +92,7 @@ function resolveNativeBounds() {
 			getWindowInnerPosition: async () => ({ x: 0, y: 0 }),
 			getWebviewPosition: async () => ({ x: 0, y: 0 }),
 			getScaleFactor: async () => 1,
-			getZoomLevel: () => zoomService.zoomLevel,
+			getZoomLevel: () => effectiveZoomLevel,
 		}),
 		(error) => new Error(`Failed to resolve browser panel bounds: ${String(error)}`)
 	);
@@ -99,8 +104,7 @@ function navigateToUrl(nextUrl: string) {
 	if (webviewCreated) {
 		browserWebview.navigate(webviewLabel, nextUrl).match(
 			() => undefined,
-			(error) =>
-				logger.error("navigate failed", { panelId: props.panelId, nextUrl, error })
+			(error) => logger.error("navigate failed", { panelId: props.panelId, nextUrl, error })
 		);
 	}
 }
@@ -113,45 +117,47 @@ function createWebview() {
 	const label = webviewLabel;
 	const requestedUrl = currentUrl;
 	openPending = true;
-	resolveNativeBounds().andThen((bounds) => {
-		return browserWebview.open(
-			label,
-			requestedUrl,
-			bounds.x,
-			bounds.y,
-			bounds.width,
-			bounds.height
+	resolveNativeBounds()
+		.andThen((bounds) => {
+			return browserWebview.open(
+				label,
+				requestedUrl,
+				bounds.x,
+				bounds.y,
+				bounds.width,
+				bounds.height
+			);
+		})
+		.match(
+			() => {
+				openPending = false;
+				if (isDestroyed || closeRequested) {
+					browserWebview.close(label);
+					webviewCreated = false;
+					return;
+				}
+				webviewCreated = true;
+				// Re-sync bounds after creation in case a ResizeObserver event
+				// fired while webviewCreated was still false (race with async open).
+				requestAnimationFrame(() => {
+					requestAnimationFrame(() => syncWebviewBounds());
+				});
+				if (currentUrl !== requestedUrl) {
+					browserWebview.navigate(label, currentUrl).match(
+						() => undefined,
+						(error) =>
+							logger.error("post-open navigate failed", {
+								panelId: props.panelId,
+								error,
+							})
+					);
+				}
+			},
+			(error) => {
+				openPending = false;
+				logger.error("createWebview failed", { label, error });
+			}
 		);
-	}).match(
-		() => {
-			openPending = false;
-			if (isDestroyed || closeRequested) {
-				browserWebview.close(label);
-				webviewCreated = false;
-				return;
-			}
-			webviewCreated = true;
-			// Re-sync bounds after creation in case a ResizeObserver event
-			// fired while webviewCreated was still false (race with async open).
-			requestAnimationFrame(() => {
-				requestAnimationFrame(() => syncWebviewBounds());
-			});
-			if (currentUrl !== requestedUrl) {
-				browserWebview.navigate(label, currentUrl).match(
-					() => undefined,
-					(error) =>
-						logger.error("post-open navigate failed", {
-							panelId: props.panelId,
-							error,
-						})
-				);
-			}
-		},
-		(error) => {
-			openPending = false;
-			logger.error("createWebview failed", { label, error });
-		}
-	);
 }
 
 function syncWebviewBounds() {
@@ -159,25 +165,21 @@ function syncWebviewBounds() {
 		return;
 	}
 
-	resolveNativeBounds().andThen((bounds) => {
-		if (bounds.width <= 0 || bounds.height <= 0) {
-			return ResultAsync.fromPromise(
-				Promise.resolve(undefined),
-				() => new Error("Skipped zero-sized browser panel bounds")
-			);
-		}
+	resolveNativeBounds()
+		.andThen((bounds) => {
+			if (bounds.width <= 0 || bounds.height <= 0) {
+				return ResultAsync.fromPromise(
+					Promise.resolve(undefined),
+					() => new Error("Skipped zero-sized browser panel bounds")
+				);
+			}
 
-		return browserWebview.resize(
-			webviewLabel,
-			bounds.x,
-			bounds.y,
-			bounds.width,
-			bounds.height
+			return browserWebview.resize(webviewLabel, bounds.x, bounds.y, bounds.width, bounds.height);
+		})
+		.match(
+			() => undefined,
+			(error) => logger.error("syncWebviewBounds failed", { panelId: props.panelId, error })
 		);
-	}).match(
-		() => undefined,
-		(error) => logger.error("syncWebviewBounds failed", { panelId: props.panelId, error })
-	);
 }
 
 function destroyWebview() {
@@ -287,7 +289,7 @@ $effect(() => {
 $effect(() => {
 	// When app zoom changes, re-sync bounds because the CSS-to-logical
 	// coordinate mapping changes (resolveBrowserPanelBounds scales by zoom).
-	zoomLevel;
+	effectiveZoomLevel;
 	requestAnimationFrame(() => {
 		requestAnimationFrame(() => {
 			syncWebviewBounds();
@@ -296,15 +298,19 @@ $effect(() => {
 });
 </script>
 
-<div
-	class="flex flex-col h-full min-h-0 bg-background border border-border overflow-hidden relative {isDragging
-		? 'select-none'
-		: ''} {props.isFillContainer ? 'flex-1 min-w-0' : 'shrink-0 grow-0'}"
-	style={widthStyle}
+<SharedAgentPanelBrowserPanel
+	{widthStyle}
+	{isDragging}
+	isFillContainer={Boolean(props.isFillContainer)}
 >
-	<div class="shrink-0">
-		<BrowserPanelHeader
+	{#snippet header()}
+		<SharedAgentPanelBrowserHeader
 			url={currentUrl}
+			backLabel={m.link_preview_back()}
+			forwardLabel={m.link_preview_forward()}
+			reloadLabel={m.link_preview_refresh()}
+			openExternalLabel={m.link_preview_open_browser()}
+			closeLabel={m.common_close()}
 			onBack={goBack}
 			onForward={goForward}
 			onReload={reload}
@@ -312,20 +318,24 @@ $effect(() => {
 			onOpenExternal={openInSystemBrowser}
 			onClose={handleClose}
 		/>
-	</div>
+	{/snippet}
 
-	<div bind:this={webviewAreaRef} class="flex-1 min-h-0 bg-white"></div>
+	{#snippet body()}
+		<div bind:this={webviewAreaRef} class="flex-1 min-h-0 bg-white"></div>
+	{/snippet}
 
 	{#if !props.isFullscreenEmbedded}
-		<div
-			class="absolute top-0 right-0 w-1 h-full cursor-ew-resize hover:bg-primary/20 active:bg-primary/40 transition-colors"
-			role="separator"
-			aria-orientation="vertical"
-			tabindex="-1"
-			onpointerdown={handlePointerDown}
-			onpointermove={handlePointerMove}
-			onpointerup={handlePointerUp}
-			onpointercancel={handlePointerUp}
-		></div>
+		{#snippet resizeEdge()}
+			<div
+				class="absolute top-0 right-0 w-1 h-full cursor-ew-resize hover:bg-primary/20 active:bg-primary/40 transition-colors"
+				role="separator"
+				aria-orientation="vertical"
+				tabindex="-1"
+				onpointerdown={handlePointerDown}
+				onpointermove={handlePointerMove}
+				onpointerup={handlePointerUp}
+				onpointercancel={handlePointerUp}
+			></div>
+		{/snippet}
 	{/if}
-</div>
+</SharedAgentPanelBrowserPanel>

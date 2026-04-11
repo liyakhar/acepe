@@ -161,6 +161,7 @@ vi.mock("../../../tool-calls/index.js", async () => ({
 }));
 
 vi.mock("@acepe/ui", async () => ({
+	AgentPanelSceneEntry: (await import("./fixtures/user-message-stub.svelte")).default,
 	setIconConfig: vi.fn(),
 	TextShimmer: (await import("./fixtures/user-message-stub.svelte")).default,
 }));
@@ -421,10 +422,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [
-				createAssistantEntry("assistant-1", "latest"),
-				createToolCallEntry("tool-1", null),
-			],
+			entries: [createAssistantEntry("assistant-1", "latest"), createToolCallEntry("tool-1", null)],
 			turnState: "idle",
 			isWaitingForResponse: true,
 			projectPath: undefined,

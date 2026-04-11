@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-
-import type { Model } from "../../application/dto/model.js";
 import type { ModelsForDisplay } from "../../../services/acp-provider-metadata.js";
+import type { Model } from "../../application/dto/model.js";
 import { AGENT_IDS } from "../../types/agent-id.js";
 import {
 	CODEX_REASONING_EFFORTS,
@@ -9,14 +8,14 @@ import {
 	getCodexCurrentVariant,
 	getModelDisplayFamily,
 	getModelDisplayName,
-	getProviderMetadata,
 	getProviderFromModelId,
+	getProviderMetadata,
 	getUsageMetricsPresentation,
-	isContextWindowOnlyMetrics,
 	groupCodexModelsByBase,
 	groupModelsByProvider,
-	isSplitSelectorOpen,
+	isContextWindowOnlyMetrics,
 	isDefaultModel,
+	isSplitSelectorOpen,
 	parseCodexModelVariant,
 	setPrimarySelectorOpen,
 	setVariantSelectorOpen,
@@ -507,7 +506,6 @@ describe("model-selector-logic", () => {
 						variantGroup: "reasoningEffort",
 						defaultAlias: undefined,
 						reasoningEffortSupport: true,
-						autonomousApplyStrategy: "postConnect",
 						preconnectionSlashMode: "startupGlobal",
 					},
 				},
@@ -531,7 +529,6 @@ describe("model-selector-logic", () => {
 					variantGroup: "plain",
 					defaultAlias: "default",
 					reasoningEffortSupport: false,
-					autonomousApplyStrategy: "launchProfile",
 					preconnectionSlashMode: "startupGlobal",
 				},
 			},
@@ -555,7 +552,6 @@ describe("model-selector-logic", () => {
 				variantGroup: "plain",
 				defaultAlias: "default",
 				reasoningEffortSupport: false,
-				autonomousApplyStrategy: "launchProfile",
 				preconnectionSlashMode: "startupGlobal",
 			});
 		});

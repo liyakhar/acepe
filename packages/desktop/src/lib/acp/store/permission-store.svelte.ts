@@ -31,8 +31,8 @@ import type { ToolCall } from "../types/tool-call.js";
 import { isExitPlanPermission } from "../utils/exit-plan-permission.js";
 import { createLogger } from "../utils/logger.js";
 import { permissionMatchesToolCall } from "../utils/permission-tool-match.js";
-import { findOperationForPermission, permissionMatchesOperation } from "./operation-association.js";
 import { InteractionStore } from "./interaction-store.svelte.js";
+import { findOperationForPermission, permissionMatchesOperation } from "./operation-association.js";
 import type { OperationStore } from "./operation-store.svelte.js";
 
 const PERMISSION_STORE_KEY = Symbol("permission-store");
@@ -52,11 +52,6 @@ export class PermissionStore {
 	get pending(): SvelteMap<string, PermissionRequest> {
 		return this.interactions.permissionsPending;
 	}
-
-	/** Callback to check if a permission should be auto-accepted (e.g. child sessions or Autonomous). */
-	private shouldAutoAccept:
-		| ((permission: PermissionRequest) => boolean | "child-session" | "autonomous-live")
-		| null = null;
 
 	private countPendingForSession(sessionId: string): number {
 		let count = 0;
@@ -104,16 +99,6 @@ export class PermissionStore {
 		if (this.countPendingForSession(sessionId) === 0) {
 			this.clearSessionProgress(sessionId);
 		}
-	}
-
-	/** Configure auto-accept predicate. Returns a dispose function. */
-	setAutoAccept(
-		fn: (permission: PermissionRequest) => boolean | "child-session" | "autonomous-live"
-	): () => void {
-		this.shouldAutoAccept = fn;
-		return () => {
-			this.shouldAutoAccept = null;
-		};
 	}
 
 	private restorePermissionAfterFailedReply(
@@ -192,31 +177,6 @@ export class PermissionStore {
 			this.pending.set(existingGroupedPermission.key, storedPermission);
 		}
 
-		const autoAcceptDecision =
-			this.shouldAutoAccept !== null && !isExitPlanPermission(storedPermission)
-				? this.shouldAutoAccept(storedPermission)
-				: false;
-		const autoAcceptSource =
-			autoAcceptDecision === true
-				? "auto"
-				: autoAcceptDecision === false
-					? null
-					: autoAcceptDecision;
-
-		if (autoAcceptSource) {
-			logger.info("Auto-accepting permission", {
-				permissionId: storedPermission.id,
-				sessionId: storedPermission.sessionId,
-				tool: storedPermission.permission,
-				source: autoAcceptSource,
-			});
-			void this.reply(storedPermission.id, "once").match(
-				() => {},
-				(err) => logger.error("Failed to auto-accept permission", { error: err })
-			);
-			return;
-		}
-
 		logger.debug("Permission request added", {
 			permissionId: storedPermission.id,
 			toolCallId: storedPermission.tool?.callID,
@@ -267,7 +227,10 @@ export class PermissionStore {
 		return permissions;
 	}
 
-	getForOperation(operation: Operation, operationStore: OperationStore): PermissionRequest | undefined {
+	getForOperation(
+		operation: Operation,
+		operationStore: OperationStore
+	): PermissionRequest | undefined {
 		let latest: PermissionRequest | undefined;
 		for (const permission of this.pending.values()) {
 			if (permission.sessionId !== operation.sessionId) {
@@ -451,10 +414,7 @@ export class PermissionStore {
 									let mergedPermission = failedRequests[0];
 									for (let index = 1; index < failedRequests.length; index += 1) {
 										const failedRequest = failedRequests[index];
-										mergedPermission = mergePermissionRequests(
-											mergedPermission,
-											failedRequest
-										);
+										mergedPermission = mergePermissionRequests(mergedPermission, failedRequest);
 									}
 									return mergedPermission;
 								})();

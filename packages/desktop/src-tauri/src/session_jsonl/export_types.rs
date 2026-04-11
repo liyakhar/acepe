@@ -2,8 +2,8 @@
 // Run: cargo test --lib session_jsonl::export_types::tests::export_types
 
 use crate::acp::client::{
-    AvailableMode, AvailableModel, ExecutionProfileRequest, NewSessionResponse,
-    ResumeSessionResponse, SessionModelState, SessionModes,
+    AvailableMode, AvailableModel, NewSessionResponse, ResumeSessionResponse, SessionModelState,
+    SessionModes,
 };
 use crate::acp::domain_events::{SessionDomainEvent, SessionDomainEventKind};
 use crate::acp::model_display::{
@@ -49,7 +49,7 @@ export type ProviderBrand = "claude-code" | "copilot" | "cursor" | "opencode" | 
 
 export type ProviderVariantGroup = "plain" | "reasoningEffort";
 
-export type AutonomousApplyStrategy = "postConnect" | "launchProfile";
+export type PreconnectionSlashMode = "startupGlobal" | "projectScoped" | "unsupported";
 
 export type ProviderMetadataProjection = {
 	providerBrand: ProviderBrand;
@@ -59,7 +59,7 @@ export type ProviderMetadataProjection = {
 	variantGroup: ProviderVariantGroup;
 	defaultAlias?: string;
 	reasoningEffortSupport: boolean;
-	autonomousApplyStrategy: AutonomousApplyStrategy;
+	preconnectionSlashMode: PreconnectionSlashMode;
 };
 
 export type ModelsForDisplayWithProvider = ModelsForDisplay;
@@ -73,7 +73,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "plain",
 		defaultAlias: "default",
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "launchProfile",
+		preconnectionSlashMode: "startupGlobal",
 	},
 	copilot: {
 		providerBrand: "copilot",
@@ -83,7 +83,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "plain",
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "projectScoped",
 	},
 	cursor: {
 		providerBrand: "cursor",
@@ -93,7 +93,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "plain",
 		defaultAlias: "auto",
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "startupGlobal",
 	},
 	opencode: {
 		providerBrand: "opencode",
@@ -103,7 +103,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "plain",
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "projectScoped",
 	},
 	codex: {
 		providerBrand: "codex",
@@ -113,7 +113,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		variantGroup: "reasoningEffort",
 		defaultAlias: undefined,
 		reasoningEffortSupport: true,
-		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "startupGlobal",
 	},
 };
 
@@ -128,7 +128,7 @@ function cloneProviderMetadataProjection(
 		variantGroup: providerMetadata.variantGroup,
 		defaultAlias: providerMetadata.defaultAlias,
 		reasoningEffortSupport: providerMetadata.reasoningEffortSupport,
-		autonomousApplyStrategy: providerMetadata.autonomousApplyStrategy,
+		preconnectionSlashMode: providerMetadata.preconnectionSlashMode,
 	};
 }
 
@@ -154,7 +154,7 @@ export function resolveProviderMetadataProjection(
 		variantGroup: "plain",
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
-		autonomousApplyStrategy: "postConnect",
+		preconnectionSlashMode: "unsupported",
 	};
 }
 
@@ -348,7 +348,6 @@ pub fn export_all_types() {
     export_acp_type!(SessionModes);
     export_acp_type!(ConfigOptionValue);
     export_acp_type!(ConfigOptionData);
-    export_acp_type!(ExecutionProfileRequest);
     export_acp_type!(NewSessionResponse);
     export_acp_type!(ResumeSessionResponse);
     export_acp_type!(CanonicalAgentId);
