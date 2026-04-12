@@ -415,7 +415,11 @@ pub async fn acp_resume_session(
     let resume_descriptor = resume_target.descriptor.clone();
 
     // --- Spawn the async task for heavy work ---
-    tokio::spawn(async move {
+    // We capture the JoinHandle and spawn a follow-up task to catch panics,
+    // guaranteeing a lifecycle event is always emitted.
+    let session_id_panic = session_id.clone();
+    let app_panic = app.clone();
+    let handle = tokio::spawn(async move {
         let result = timeout(
             RESUME_SESSION_TIMEOUT,
             async_resume_session_work(
@@ -486,6 +490,28 @@ pub async fn acp_resume_session(
                     "Async resume timed out"
                 );
             }
+        }
+    });
+
+    // Panic guard: if the spawned task panics, emit ConnectionFailed so the
+    // frontend watchdog never fires.
+    tokio::spawn(async move {
+        if let Err(join_error) = handle.await {
+            tracing::error!(
+                session_id = %session_id_panic,
+                attempt_id,
+                error = %join_error,
+                "Resume session task panicked"
+            );
+            let hub = app_panic
+                .try_state::<Arc<AcpEventHubState>>()
+                .map(|s| s.inner().clone());
+            let update = crate::acp::session_update::SessionUpdate::ConnectionFailed {
+                session_id: session_id_panic.clone(),
+                attempt_id,
+                error: format!("Internal error: resume task panicked: {join_error}"),
+            };
+            emit_lifecycle_event(&hub, update, &session_id_panic);
         }
     });
 

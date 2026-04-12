@@ -647,7 +647,81 @@ export class SessionConnectionManager {
 			reconnectHotState.currentMode ? reconnectHotState.currentMode.id : undefined
 		);
 
-		// Fire-and-forget: send resume invoke, which returns after validation only
+		// Install lifecycle callbacks BEFORE firing the invoke to prevent a race
+		// where Rust's tokio::spawn completes (fast path — existing client) and the
+		// SSE event arrives before the .andThen() callback installs listeners.
+		const lifecyclePromise = new Promise<SessionCold>((resolve, reject) => {
+			const watchdog = setTimeout(() => {
+				logger.error(
+					"Watchdog: no lifecycle event received within timeout",
+					{ sessionId, attemptId, watchdogMs: WATCHDOG_TIMEOUT_MS }
+				);
+				cleanupCallbacks();
+				reject(
+					new ConnectionError(
+						`Watchdog timeout: no response from Rust within ${WATCHDOG_TIMEOUT_MS / 1000}s`
+					)
+				);
+			}, WATCHDOG_TIMEOUT_MS);
+
+			const cleanupCallbacks = () => {
+				clearTimeout(watchdog);
+				this.eventService.setCallbacks({
+					...this.currentCallbacks(),
+					onConnectionComplete: this.savedCallbacks?.onConnectionComplete,
+					onConnectionFailed: this.savedCallbacks?.onConnectionFailed,
+				});
+			};
+
+			// Save existing callbacks and install our listeners
+			this.savedCallbacks = {
+				onConnectionComplete: this.currentCallbacks().onConnectionComplete,
+				onConnectionFailed: this.currentCallbacks().onConnectionFailed,
+			};
+
+			this.eventService.setCallbacks({
+				...this.currentCallbacks(),
+				onConnectionComplete: (sid, aid, data) => {
+					this.savedCallbacks?.onConnectionComplete?.(sid, aid, data);
+					if (sid !== sessionId || aid !== attemptId) {
+						logger.debug("Ignoring stale connectionComplete", {
+							sessionId: sid,
+							attemptId: aid,
+							expectedAttemptId: attemptId,
+						});
+						return;
+					}
+					cleanupCallbacks();
+					this.handleConnectionComplete(
+						sessionId,
+						effectiveAgentId,
+						data,
+						eventHandler
+					);
+					const cold = this.stateReader.getSessionCold(sessionId);
+					if (cold) {
+						resolve(cold);
+					} else {
+						reject(new SessionNotFoundError(sessionId));
+					}
+				},
+				onConnectionFailed: (sid, aid, error) => {
+					this.savedCallbacks?.onConnectionFailed?.(sid, aid, error);
+					if (sid !== sessionId || aid !== attemptId) {
+						logger.debug("Ignoring stale connectionFailed", {
+							sessionId: sid,
+							attemptId: aid,
+							expectedAttemptId: attemptId,
+						});
+						return;
+					}
+					cleanupCallbacks();
+					reject(new ConnectionError(error));
+				},
+			});
+		});
+
+		// Fire-and-forget: send resume invoke, then wait for lifecycle event
 		const connection = preferencesStore
 			.ensureLoaded()
 			.orElse((error) => {
@@ -667,84 +741,9 @@ export class SessionConnectionManager {
 					resumeLaunchModeId ?? undefined
 				)
 			)
-			.andThen(() => {
-				// Wait for the lifecycle event from the SSE bridge
-				return ResultAsync.fromPromise(
-					new Promise<SessionCold>((resolve, reject) => {
-						const watchdog = setTimeout(() => {
-							logger.error(
-								"Watchdog: no lifecycle event received within timeout",
-								{ sessionId, attemptId, watchdogMs: WATCHDOG_TIMEOUT_MS }
-							);
-							cleanup();
-							reject(
-								new ConnectionError(
-									`Watchdog timeout: no response from Rust within ${WATCHDOG_TIMEOUT_MS / 1000}s`
-								)
-							);
-						}, WATCHDOG_TIMEOUT_MS);
-
-						const cleanup = () => {
-							clearTimeout(watchdog);
-							this.eventService.setCallbacks({
-								...this.currentCallbacks(),
-								onConnectionComplete: this.savedCallbacks?.onConnectionComplete,
-								onConnectionFailed: this.savedCallbacks?.onConnectionFailed,
-							});
-						};
-
-						// Save existing callbacks and install our listeners
-						this.savedCallbacks = {
-							onConnectionComplete: this.currentCallbacks().onConnectionComplete,
-							onConnectionFailed: this.currentCallbacks().onConnectionFailed,
-						};
-
-						this.eventService.setCallbacks({
-							...this.currentCallbacks(),
-							onConnectionComplete: (sid, aid, data) => {
-								// Forward to any previously-registered handler
-								this.savedCallbacks?.onConnectionComplete?.(sid, aid, data);
-								if (sid !== sessionId || aid !== attemptId) {
-									logger.debug("Ignoring stale connectionComplete", {
-										sessionId: sid,
-										attemptId: aid,
-										expectedAttemptId: attemptId,
-									});
-									return;
-								}
-								cleanup();
-								this.handleConnectionComplete(
-									sessionId,
-									effectiveAgentId,
-									data,
-									eventHandler
-								);
-								const cold = this.stateReader.getSessionCold(sessionId);
-								if (cold) {
-									resolve(cold);
-								} else {
-									reject(new SessionNotFoundError(sessionId));
-								}
-							},
-							onConnectionFailed: (sid, aid, error) => {
-								// Forward to any previously-registered handler
-								this.savedCallbacks?.onConnectionFailed?.(sid, aid, error);
-								if (sid !== sessionId || aid !== attemptId) {
-									logger.debug("Ignoring stale connectionFailed", {
-										sessionId: sid,
-										attemptId: aid,
-										expectedAttemptId: attemptId,
-									});
-									return;
-								}
-								cleanup();
-								reject(new ConnectionError(error));
-							},
-						});
-					}),
-					(err) => err as AppError
-				);
-			})
+			.andThen(() =>
+				ResultAsync.fromPromise(lifecyclePromise, (err) => err as AppError)
+			)
 			.map((cold) => {
 				this.pendingConnections.delete(sessionId);
 				return cold;
