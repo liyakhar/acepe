@@ -52,7 +52,7 @@
 					toggleExpanded();
 				}
 			}}
-			class="w-full flex items-center justify-between px-3 py-1 rounded-lg bg-accent hover:brightness-110 transition-colors cursor-pointer {isExpanded
+			class="w-full flex items-center justify-between px-3 py-1 rounded-lg bg-accent/50 hover:bg-accent/90 transition-colors cursor-pointer {isExpanded
 				? 'rounded-t-none'
 				: ''}"
 			aria-expanded={isExpanded}
