@@ -12,7 +12,9 @@
 		AgentPanelDeck,
 		AgentPanelComposer,
 		AgentPanelComposerFrame,
+		AgentPanelErrorCard,
 		AgentPanelFooter,
+		AgentPanelInstallCard,
 		AgentPanelModifiedFileRow,
 		AgentPanelModifiedFilesHeader,
 		AgentPanelModifiedFilesTrailingControls,
@@ -21,6 +23,8 @@
 		AgentPanelPermissionBarIcon,
 		AgentPanelPermissionBarProgress,
 		AgentPanelPlanHeader,
+		AgentPanelPrStatusCard,
+		AgentPanelQueueCardStrip,
 		AgentPanelScene,
 		AgentPanelTodoHeader,
 		AgentPanelWorktreeSetupCard,
@@ -28,6 +32,7 @@
 	import type {
 		AgentPanelModifiedFileItem,
 		AgentPanelModifiedFilesTrailingModel,
+		AgentPanelQueuedMessage,
 		AgentPanelSceneModel,
 		AgentTodoItem,
 	} from "@acepe/ui/agent-panel";
@@ -418,6 +423,11 @@
 	];
 
 	const demoCurrentTask: AgentTodoItem = demoTodoItems[2];
+
+	const demoQueueMessages: readonly AgentPanelQueuedMessage[] = [
+		{ id: "q1", content: "Also update the README with the new API docs", attachmentCount: 0 },
+		{ id: "q2", content: "Run the test suite after those changes", attachmentCount: 1 },
+	];
 
 	function buildScene(panel: DemoPanel, currentTheme: string): AgentPanelSceneModel {
 		return {
@@ -840,6 +850,12 @@
 										details="Cloning to ../acepe-panel-parity on branch fix/panel-parity"
 										tone="running"
 									/>
+									<AgentPanelInstallCard
+										title="Installing"
+										summary="Claude Code v1.2.3"
+										details="Downloading binary…"
+										progressPercent={42}
+									/>
 								{:else if panel.id === "composer-verify"}
 									<AgentPanelModifiedFilesHeader visible={true}>
 										{#snippet leadingContent()}
@@ -854,6 +870,36 @@
 											{/each}
 										{/snippet}
 									</AgentPanelModifiedFilesHeader>
+									<AgentPanelPrStatusCard
+										visible={true}
+										hasExpandedContent={true}
+									>
+										{#snippet headerMain()}
+											<span class="font-medium text-foreground shrink-0">PR #128</span>
+											<span class="truncate text-muted-foreground">fix: agent panel shell layout</span>
+										{/snippet}
+										{#snippet headerActions(isExpanded)}
+											<span class="text-[10px] text-emerald-400 font-medium shrink-0">
+												{isExpanded ? "▾" : "▸"} Checks passed
+											</span>
+										{/snippet}
+										{#snippet expandedContent()}
+											<div class="px-3 py-2 text-[0.6875rem] text-muted-foreground space-y-1">
+												<div class="flex items-center gap-1.5">
+													<span class="text-emerald-400">✓</span>
+													<span>CI / build (3m 12s)</span>
+												</div>
+												<div class="flex items-center gap-1.5">
+													<span class="text-emerald-400">✓</span>
+													<span>CI / test (1m 48s)</span>
+												</div>
+												<div class="flex items-center gap-1.5">
+													<span class="text-emerald-400">✓</span>
+													<span>CI / lint (42s)</span>
+												</div>
+											</div>
+										{/snippet}
+									</AgentPanelPrStatusCard>
 									<AgentPanelTodoHeader
 										items={demoTodoItems}
 										currentTask={demoCurrentTask}
@@ -862,6 +908,31 @@
 										isLive={true}
 										allCompletedLabel="All tasks completed"
 										pausedLabel="Tasks paused"
+									/>
+								{:else if panel.id === "composer-polish"}
+									<AgentPanelErrorCard
+										title="Connection error"
+										summary="Failed to connect to agent"
+										details="ECONNREFUSED 127.0.0.1:3000 — the agent process may have crashed. Check logs for details."
+										onRetry={() => {}}
+										onDismiss={() => {}}
+									/>
+									<AgentPanelQueueCardStrip
+										messages={demoQueueMessages}
+										isPaused={false}
+										queueLabel="Queued"
+										pausedLabel="Paused"
+										resumeLabel="Resume"
+										clearLabel="Clear"
+										editLabel="Edit"
+										deleteLabel="Delete"
+										sendLabel="Send"
+										saveLabel="Save"
+										cancelLabel="Cancel"
+										onSaveEdit={() => {}}
+										onRemove={() => {}}
+										onClear={() => {}}
+										onSendNow={() => {}}
 									/>
 								{/if}
 							</div>
