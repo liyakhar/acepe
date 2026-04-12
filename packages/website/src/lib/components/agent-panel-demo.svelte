@@ -23,7 +23,7 @@
 		AgentPanelPermissionBarIcon,
 		AgentPanelPermissionBarProgress,
 		AgentPanelPlanHeader,
-		AgentPanelPrStatusCard,
+		AgentPanelPrCard,
 		AgentPanelQueueCardStrip,
 		AgentPanelScene,
 		AgentPanelTodoHeader,
@@ -32,6 +32,7 @@
 	import type {
 		AgentPanelModifiedFileItem,
 		AgentPanelModifiedFilesTrailingModel,
+		AgentPanelPrCardModel,
 		AgentPanelQueuedMessage,
 		AgentPanelSceneModel,
 		AgentTodoItem,
@@ -428,6 +429,20 @@
 		{ id: "q1", content: "Also update the README with the new API docs", attachmentCount: 0 },
 		{ id: "q2", content: "Run the test suite after those changes", attachmentCount: 1 },
 	];
+
+	const demoPrCardModel: AgentPanelPrCardModel = {
+		mode: "pr",
+		number: 128,
+		title: "fix: agent panel shell layout",
+		state: "OPEN",
+		additions: 54,
+		deletions: 63,
+		descriptionHtml: "<p>Makes card backgrounds opaque and uses preComposer slot for card placement.</p>",
+		commits: [
+			{ sha: "e965d5c", message: "style(ui): make card backgrounds opaque", insertions: 12, deletions: 8 },
+			{ sha: "d079f81", message: "feat(website): wire remaining components into demo", insertions: 42, deletions: 55 },
+		],
+	};
 
 	function buildScene(panel: DemoPanel, currentTheme: string): AgentPanelSceneModel {
 		return {
@@ -870,36 +885,10 @@
 											{/each}
 										{/snippet}
 									</AgentPanelModifiedFilesHeader>
-									<AgentPanelPrStatusCard
+									<AgentPanelPrCard
 										visible={true}
-										hasExpandedContent={true}
-									>
-										{#snippet headerMain()}
-											<span class="font-medium text-foreground shrink-0">PR #128</span>
-											<span class="truncate text-muted-foreground">fix: agent panel shell layout</span>
-										{/snippet}
-										{#snippet headerActions(isExpanded)}
-											<span class="text-[10px] text-emerald-400 font-medium shrink-0">
-												{isExpanded ? "▾" : "▸"} Checks passed
-											</span>
-										{/snippet}
-										{#snippet expandedContent()}
-											<div class="px-3 py-2 text-[0.6875rem] text-muted-foreground space-y-1">
-												<div class="flex items-center gap-1.5">
-													<span class="text-emerald-400">✓</span>
-													<span>CI / build (3m 12s)</span>
-												</div>
-												<div class="flex items-center gap-1.5">
-													<span class="text-emerald-400">✓</span>
-													<span>CI / test (1m 48s)</span>
-												</div>
-												<div class="flex items-center gap-1.5">
-													<span class="text-emerald-400">✓</span>
-													<span>CI / lint (42s)</span>
-												</div>
-											</div>
-										{/snippet}
-									</AgentPanelPrStatusCard>
+										model={demoPrCardModel}
+									/>
 									<AgentPanelTodoHeader
 										items={demoTodoItems}
 										currentTask={demoCurrentTask}
