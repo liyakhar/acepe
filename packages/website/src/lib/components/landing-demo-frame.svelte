@@ -1,14 +1,14 @@
 <script lang="ts">
-	import type { Snippet } from "svelte";
+import type { Snippet } from "svelte";
 
-	import { AppTopBar } from "@acepe/ui/app-layout";
+import { AppTopBar } from "@acepe/ui/app-layout";
 
-	interface Props {
-		children?: Snippet;
-		interactive?: boolean;
-	}
+interface Props {
+	children?: Snippet;
+	interactive?: boolean;
+}
 
-	let { children, interactive = false }: Props = $props();
+let { children, interactive = false }: Props = $props();
 </script>
 
 <div
