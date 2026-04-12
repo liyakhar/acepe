@@ -1,8 +1,8 @@
 import type { Handle } from "@sveltejs/kit";
 import { sequence } from "@sveltejs/kit/hooks";
 import { paraglideMiddleware } from "$lib/paraglide/server";
-import { runMigrations } from "$lib/server/db/migrate";
 import { maybeGetDatabaseUrl } from "$lib/server/db/database-url";
+import { runMigrations } from "$lib/server/db/migrate";
 import { logger } from "$lib/server/logger";
 
 // Run migrations on startup

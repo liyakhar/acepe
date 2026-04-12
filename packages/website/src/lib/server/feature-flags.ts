@@ -1,5 +1,5 @@
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
 import { ResultAsync } from "neverthrow";
 import postgres from "postgres";
 import { getDatabaseUrl } from "./db/database-url";
@@ -18,7 +18,9 @@ const FLAG_DEFAULTS: Record<FeatureFlagName, boolean> = {
 	roadmap_enabled: false,
 };
 
-function withFeatureFlagDb<T>(operation: (db: ReturnType<typeof drizzle<typeof schema>>) => Promise<T>): ResultAsync<T, Error> {
+function withFeatureFlagDb<T>(
+	operation: (db: ReturnType<typeof drizzle<typeof schema>>) => Promise<T>
+): ResultAsync<T, Error> {
 	return ResultAsync.fromPromise(
 		(async () => {
 			const client = postgres(getDatabaseUrl(), { max: 1 });
@@ -34,20 +36,20 @@ function withFeatureFlagDb<T>(operation: (db: ReturnType<typeof drizzle<typeof s
 
 function getOrCreateFlag(name: FeatureFlagName): ResultAsync<boolean, Error> {
 	return withFeatureFlagDb(async (db) => {
-			const rows = await db.select().from(featureFlags).where(eq(featureFlags.name, name));
+		const rows = await db.select().from(featureFlags).where(eq(featureFlags.name, name));
 
-			if (rows.length > 0) {
-				return rows[0].enabled;
-			}
+		if (rows.length > 0) {
+			return rows[0].enabled;
+		}
 
-			// Auto-seed with default value
-			const defaultValue = FLAG_DEFAULTS[name];
-			await db
-				.insert(featureFlags)
-				.values({ name, enabled: defaultValue, updatedAt: new Date() })
-				.onConflictDoNothing();
+		// Auto-seed with default value
+		const defaultValue = FLAG_DEFAULTS[name];
+		await db
+			.insert(featureFlags)
+			.values({ name, enabled: defaultValue, updatedAt: new Date() })
+			.onConflictDoNothing();
 
-			return defaultValue;
+		return defaultValue;
 	}).mapErr((error) => new Error(`Failed to get feature flag ${name}: ${error}`));
 }
 
