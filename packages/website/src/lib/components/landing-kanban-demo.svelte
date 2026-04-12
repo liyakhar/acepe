@@ -10,8 +10,6 @@ import {
 	type KanbanTaskCardData,
 	type KanbanToolData,
 } from "@acepe/ui";
-import { Terminal } from "phosphor-svelte";
-
 import type { AgentToolEntry } from "@acepe/ui";
 
 import LandingDemoFrame from "./landing-demo-frame.svelte";
@@ -307,40 +305,6 @@ const groups = $derived.by((): readonly KanbanSceneColumnGroup[] => {
 
 <LandingDemoFrame>
 	{#snippet children()}
-		<KanbanSceneBoard {groups} emptyHint="No agents">
-			{#snippet permissionFooterRenderer(_card: KanbanSceneCardData, permissionFooterData)}
-				<div class="rounded-md border border-border/50 bg-muted/25 px-2 py-1.5">
-					<div class="flex items-center justify-between gap-2">
-						<div class="flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
-							<Terminal size={11} class="shrink-0 text-[#9858FF]" weight="fill" />
-							<span class="truncate">{permissionFooterData.label}</span>
-						</div>
-						{#if permissionFooterData.progress}
-							<span class="shrink-0 text-[10px] text-muted-foreground/80">
-								{permissionFooterData.progress.current}/{permissionFooterData.progress.total}
-							</span>
-						{/if}
-					</div>
-					{#if permissionFooterData.command}
-						<div class="mt-1 rounded bg-background/60 px-2 py-1">
-							<code class="block whitespace-pre-wrap break-words font-mono text-[10px] text-foreground/75">
-								$ {permissionFooterData.command}
-							</code>
-						</div>
-					{/if}
-					<div class="mt-1.5 flex items-center gap-1">
-						<span class="rounded bg-emerald-500/12 px-2 py-1 text-[10px] font-medium text-emerald-300">
-							{permissionFooterData.approveLabel}
-						</span>
-						<span class="rounded bg-amber-500/12 px-2 py-1 text-[10px] font-medium text-amber-200">
-							{permissionFooterData.allowAlwaysLabel}
-						</span>
-						<span class="rounded bg-rose-500/12 px-2 py-1 text-[10px] font-medium text-rose-300">
-							{permissionFooterData.rejectLabel}
-						</span>
-					</div>
-				</div>
-			{/snippet}
-		</KanbanSceneBoard>
+		<KanbanSceneBoard {groups} emptyHint="No agents" />
 	{/snippet}
 </LandingDemoFrame>

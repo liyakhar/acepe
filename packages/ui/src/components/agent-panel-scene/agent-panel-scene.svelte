@@ -3,8 +3,9 @@
 	import type { AgentPanelActionCallbacks, AgentPanelSceneModel } from "../agent-panel/types.js";
 
 	import AgentPanelShell from "../agent-panel/agent-panel-shell.svelte";
-	import AgentPanelComposer from "../agent-panel/agent-panel-composer.svelte";
-	import AgentPanelFooter from "../agent-panel/agent-panel-footer.svelte";
+import AgentPanelComposer from "../agent-panel/agent-panel-composer.svelte";
+import AgentPanelComposerFrame from "../agent-panel/agent-panel-composer-frame.svelte";
+import AgentPanelFooter from "../agent-panel/agent-panel-footer.svelte";
 	import AgentPanelSceneConversation from "./agent-panel-scene-conversation.svelte";
 	import AgentPanelSceneHeader from "./agent-panel-scene-header.svelte";
 	import AgentPanelSceneReviewCard from "./agent-panel-scene-review-card.svelte";
@@ -76,17 +77,15 @@
 		{/snippet}
 	{/if}
 
-	{#if topBarOverride || planStrips.length > 0}
-		{#snippet topBar()}
-			{#if topBarOverride}
-				{@render topBarOverride()}
-			{:else}
-				{#each planStrips as strip (strip.id)}
-					<AgentPanelSceneStatusStrip {strip} {actionCallbacks} />
-				{/each}
-			{/if}
-		{/snippet}
-	{/if}
+	{#snippet topBar()}
+		{#if topBarOverride}
+			{@render topBarOverride()}
+		{:else if planStrips.length > 0}
+			{#each planStrips as strip (strip.id)}
+				<AgentPanelSceneStatusStrip {strip} {actionCallbacks} />
+			{/each}
+		{/if}
+	{/snippet}
 
 	{#snippet body()}
 		{#if conversationBody}
@@ -96,32 +95,32 @@
 		{/if}
 	{/snippet}
 
-	{#if preComposerOverride || hasPreComposerContent}
-		{#snippet preComposer()}
-			{#if preComposerOverride}
-				{@render preComposerOverride()}
-			{:else}
-				<div class="shrink-0 space-y-2 px-3 py-2">
-					{#each nonPlanStrips as strip (strip.id)}
-						<AgentPanelSceneStatusStrip {strip} {actionCallbacks} />
-					{/each}
-					{#each cards as card (card.id)}
-						<AgentPanelSceneReviewCard {card} {actionCallbacks} />
-					{/each}
-				</div>
-			{/if}
-		{/snippet}
-	{/if}
+	{#snippet preComposer()}
+		{#if preComposerOverride}
+			{@render preComposerOverride()}
+		{:else if hasPreComposerContent}
+			<div class="shrink-0 space-y-2 px-3 py-2">
+				{#each nonPlanStrips as strip (strip.id)}
+					<AgentPanelSceneStatusStrip {strip} {actionCallbacks} />
+				{/each}
+				{#each cards as card (card.id)}
+					<AgentPanelSceneReviewCard {card} {actionCallbacks} />
+				{/each}
+			</div>
+		{/if}
+	{/snippet}
 
 	{#snippet composer()}
 		{#if composerOverride}
 			{@render composerOverride()}
 		{:else if scene.composer}
-			<AgentPanelComposer
-				composer={scene.composer}
-				{actionCallbacks}
-				onDraftTextChange={onComposerDraftTextChange}
-			/>
+			<AgentPanelComposerFrame>
+				<AgentPanelComposer
+					composer={scene.composer}
+					{actionCallbacks}
+					onDraftTextChange={onComposerDraftTextChange}
+				/>
+			</AgentPanelComposerFrame>
 		{/if}
 	{/snippet}
 

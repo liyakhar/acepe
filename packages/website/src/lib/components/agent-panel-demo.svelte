@@ -9,16 +9,35 @@
 		AgentInputModelSelector,
 		AgentInputModeSelector,
 		AgentInputToolbar,
+		AgentPanelDeck,
 		AgentPanelComposer,
+		AgentPanelComposerFrame,
+		AgentPanelFooter,
+		AgentPanelModifiedFileRow,
+		AgentPanelModifiedFilesHeader,
+		AgentPanelModifiedFilesTrailingControls,
+		AgentPanelPermissionBar,
+		AgentPanelPermissionBarActions,
+		AgentPanelPermissionBarIcon,
+		AgentPanelPermissionBarProgress,
+		AgentPanelPlanHeader,
 		AgentPanelScene,
+		AgentPanelTodoHeader,
+		AgentPanelWorktreeSetupCard,
 	} from "@acepe/ui";
-	import type { AgentPanelSceneModel } from "@acepe/ui/agent-panel";
+	import type {
+		AgentPanelModifiedFileItem,
+		AgentPanelModifiedFilesTrailingModel,
+		AgentPanelSceneModel,
+		AgentTodoItem,
+	} from "@acepe/ui/agent-panel";
 
 	import LandingDemoFrame from "./landing-demo-frame.svelte";
 	import { websiteThemeStore } from "$lib/theme/theme.js";
 
 	type DemoModeId = "plan" | "build";
 	type DemoAgentKey = "claude" | "codex" | "cursor";
+	type DemoConversationEntry = AgentPanelSceneModel["conversation"]["entries"][number];
 
 	type DemoConfigOption = {
 		id: string;
@@ -62,6 +81,9 @@
 		metricsLabel: string;
 		metricsPercent: number;
 		micTitle: string;
+		browserActive: boolean;
+		terminalActive: boolean;
+		conversationEntries: DemoConversationEntry[];
 		draftText: string;
 		editorRef: HTMLDivElement | null;
 	};
@@ -70,6 +92,7 @@
 		{ id: "plan" },
 		{ id: "build" },
 	] as const;
+	const composerPlaceholder = "Plan, @ for context, / for commands";
 
 	const theme = $derived($websiteThemeStore);
 
@@ -143,6 +166,259 @@
 		return favorites;
 	}
 
+	function createUserEntry(id: string, text: string): DemoConversationEntry {
+		return {
+			id,
+			type: "user",
+			text,
+		};
+	}
+
+	function createAssistantEntry(
+		id: string,
+		markdown: string,
+		isStreaming = false
+	): DemoConversationEntry {
+		return {
+			id,
+			type: "assistant",
+			markdown,
+			isStreaming,
+		};
+	}
+
+	function createTaskEntry(params: {
+		id: string;
+		description: string;
+		prompt: string;
+		resultText: string;
+		status: "pending" | "running" | "done" | "error";
+		children: DemoConversationEntry[];
+	}): DemoConversationEntry {
+		return {
+			id: params.id,
+			type: "tool_call",
+			kind: "task",
+			title: "Task",
+			taskDescription: params.description,
+			taskPrompt: params.prompt,
+			taskResultText: params.resultText,
+			taskChildren: params.children,
+			status: params.status,
+		};
+	}
+
+	function createReviewQueueConversation(): DemoConversationEntry[] {
+		return [
+			createUserEntry(
+				"composer-primary-user",
+				"Tighten the review queue so the shared agent panel stops drifting between desktop and website."
+			),
+			{
+				id: "composer-primary-todos",
+				type: "tool_call",
+				title: "Todo",
+				status: "running",
+				todos: [
+					{
+						content: "Trace shared footer and deck ownership",
+						activeForm: "Tracing shared footer and deck ownership",
+						status: "completed",
+					},
+					{
+						content: "Move layout parity into @acepe/ui",
+						activeForm: "Moving layout parity into @acepe/ui",
+						status: "completed",
+					},
+					{
+						content: "Verify homepage showcase spacing",
+						activeForm: "Verifying homepage showcase spacing",
+						status: "in_progress",
+					},
+				],
+			},
+			{
+				id: "composer-primary-search",
+				type: "tool_call",
+				kind: "search",
+				title: "Search",
+				subtitle: "shared panel surfaces",
+				query: "AgentPanelDeck AgentPanelFooter AgentPanelComposerFrame",
+				searchPath: "packages",
+				searchFiles: [
+					"packages/ui/src/components/agent-panel/agent-panel-deck.svelte",
+					"packages/ui/src/components/agent-panel/agent-panel-footer.svelte",
+					"packages/website/src/lib/components/agent-panel-demo.svelte",
+				],
+				searchResultCount: 3,
+				status: "done",
+			},
+			{
+				id: "composer-primary-web-search",
+				type: "tool_call",
+				kind: "web_search",
+				title: "Web search",
+				subtitle: "homepage panel parity examples",
+				query: "agent panel parity extraction shared ui",
+				webSearchSummary:
+					"Found references to the extracted panel deck, composer frame, and footer parity work across the project documentation.",
+				webSearchLinks: [
+					{
+						title: "Acepe docs",
+						url: "https://acepe.dev/docs/panel-parity",
+						domain: "acepe.dev",
+					},
+					{
+						title: "Shared panel extraction notes",
+						url: "https://acepe.dev/changelog/shared-panel-extraction",
+						domain: "acepe.dev",
+					},
+				],
+				status: "done",
+			},
+			{
+				id: "composer-primary-execute",
+				type: "tool_call",
+				kind: "execute",
+				title: "Run",
+				command: "cd packages/website && bun run check",
+				stdout: "svelte-check found 0 errors and 0 warnings",
+				exitCode: 0,
+				status: "done",
+			},
+			createAssistantEntry(
+				"composer-primary-assistant",
+				"Pulled the shared panel rail and composer frame into `@acepe/ui`, then removed the website-only footer drift.\n\nNow I’m checking the remaining spacing deltas before we call the extraction complete.",
+				true
+			),
+		];
+	}
+
+	function createAuditConversation(): DemoConversationEntry[] {
+		return [
+			createUserEntry(
+				"composer-verify-user",
+				"Trace the remaining parity gaps before we ship the homepage showcase."
+			),
+			createTaskEntry({
+				id: "composer-verify-task",
+				description: "Run parity review subagent",
+				prompt:
+					"Review the shared panel extraction and surface only the remaining parity regressions between desktop and website.",
+				resultText:
+					"Flagged two issues: the shared shell still removed the right border outside fullscreen, and the website composer placeholder drifted from desktop copy.",
+				status: "done",
+				children: [
+					{
+						id: "composer-verify-task-search",
+						type: "tool_call",
+						kind: "search",
+						title: "Search",
+						subtitle: "panel parity regression",
+						query: "border-r-0 placeholder panel composer",
+						searchPath: "packages",
+						searchFiles: [
+							"packages/ui/src/components/agent-panel/agent-panel-shell.svelte",
+							"packages/website/src/lib/components/agent-panel-demo.svelte",
+						],
+						searchResultCount: 2,
+						status: "done",
+					},
+					{
+						id: "composer-verify-task-read",
+						type: "tool_call",
+						kind: "read",
+						title: "Read",
+						filePath: "packages/ui/src/components/agent-panel/agent-panel-shell.svelte",
+						status: "done",
+					},
+					{
+						id: "composer-verify-task-edit",
+						type: "tool_call",
+						kind: "edit",
+						title: "Edit",
+						filePath: "packages/website/src/lib/components/agent-panel-demo.svelte",
+						status: "done",
+					},
+				],
+			}),
+			{
+				id: "composer-verify-lints",
+				type: "tool_call",
+				title: "Read lints",
+				status: "done",
+				lintDiagnostics: [
+					{
+						filePath: "packages/ui/src/components/agent-panel/agent-panel-shell.svelte",
+						line: 52,
+						message: "right border is suppressed outside fullscreen mode",
+						severity: "warning",
+					},
+					{
+						filePath: "packages/website/src/lib/components/agent-panel-demo.svelte",
+						line: 78,
+						message: "placeholder copy diverges from the desktop composer",
+						severity: "warning",
+					},
+				],
+			},
+			createAssistantEntry(
+				"composer-verify-assistant",
+				"Found the last two regressions:\n\n1. the shared shell was still removing the right border in non-fullscreen mode\n2. the website composer placeholder was drifting from desktop copy\n\nBoth are now mapped back to the shared panel surfaces."
+			),
+		];
+	}
+
+	function createReleaseNotesConversation(): DemoConversationEntry[] {
+		return [
+			createUserEntry(
+				"composer-polish-user",
+				"Draft tighter release notes for the extracted panel primitives."
+			),
+			{
+				id: "composer-polish-fetch",
+				type: "tool_call",
+				kind: "fetch",
+				title: "Fetch",
+				subtitle: "acepe.dev",
+				url: "https://acepe.dev/changelog",
+				resultText:
+					"Current notes mention composer extraction but omit the shared deck, footer parity fixes, and homepage showcase alignment.",
+				status: "done",
+			},
+			createAssistantEntry(
+				"composer-polish-assistant",
+				"### Agent panel extraction\n- moved the shared panel deck into `@acepe/ui`\n- restored footer parity between desktop and website\n- aligned composer framing, placeholder copy, and shell chrome across both surfaces"
+			),
+		];
+	}
+
+	// --- Demo data for real desktop components ---
+
+	const demoModifiedFiles: readonly AgentPanelModifiedFileItem[] = [
+		{ id: "f1", filePath: "packages/ui/src/components/agent-panel/agent-panel-shell.svelte", additions: 12, deletions: 3, reviewStatus: "accepted" },
+		{ id: "f2", filePath: "packages/ui/src/components/agent-panel/agent-panel-footer.svelte", additions: 28, deletions: 2, reviewStatus: "partial" },
+		{ id: "f3", filePath: "packages/website/src/lib/components/agent-panel-demo.svelte", additions: 8, deletions: 1 },
+	];
+
+	const demoModifiedFilesTrailing: AgentPanelModifiedFilesTrailingModel = {
+		reviewLabel: "Review",
+		reviewOptions: [],
+		keepState: "enabled",
+		keepLabel: "Keep",
+		reviewedCount: 1,
+		totalCount: 3,
+	};
+
+	const demoTodoItems: readonly AgentTodoItem[] = [
+		{ content: "Trace shared footer and deck ownership", activeForm: "Tracing footer ownership", status: "completed", duration: 4200 },
+		{ content: "Move layout parity into @acepe/ui", activeForm: "Moving layout parity", status: "completed", duration: 8100 },
+		{ content: "Verify homepage showcase spacing", activeForm: "Verifying showcase spacing", status: "in_progress" },
+		{ content: "Run final type check", activeForm: "Running type check", status: "pending" },
+	];
+
+	const demoCurrentTask: AgentTodoItem = demoTodoItems[2];
+
 	function buildScene(panel: DemoPanel, currentTheme: string): AgentPanelSceneModel {
 		return {
 			panelId: panel.id,
@@ -159,8 +435,8 @@
 				actions: [],
 			},
 			conversation: {
-				entries: [],
-				isStreaming: false,
+				entries: panel.conversationEntries,
+				isStreaming: panel.status === "running",
 			},
 		};
 	}
@@ -176,7 +452,7 @@
 			projectLabel: "acepe.dev",
 			projectColor: "#9858FF",
 			sequenceId: 12,
-			placeholder: "Trace the blocked review queue and prepare a safe fix",
+			placeholder: composerPlaceholder,
 			currentModeId: "build",
 			autonomousActive: false,
 			configOption: createConfigOption("false"),
@@ -204,6 +480,9 @@
 			metricsLabel: "12/200k",
 			metricsPercent: 6,
 			micTitle: "Record with Claude",
+			browserActive: false,
+			terminalActive: false,
+			conversationEntries: createReviewQueueConversation(),
 			draftText: "",
 			editorRef: null,
 		},
@@ -217,7 +496,7 @@
 			projectLabel: "desktop",
 			projectColor: "#4AD0FF",
 			sequenceId: 4,
-			placeholder: "Check panel states and confirm the desktop fix",
+			placeholder: composerPlaceholder,
 			currentModeId: "plan",
 			autonomousActive: true,
 			configOption: createConfigOption("true"),
@@ -245,6 +524,9 @@
 			metricsLabel: "8/128k",
 			metricsPercent: 7,
 			micTitle: "Record with Codex",
+			browserActive: true,
+			terminalActive: false,
+			conversationEntries: createAuditConversation(),
 			draftText: "",
 			editorRef: null,
 		},
@@ -258,7 +540,7 @@
 			projectLabel: "website",
 			projectColor: "#FF8D20",
 			sequenceId: 9,
-			placeholder: "Tighten the launch copy and reviewer handoff",
+			placeholder: composerPlaceholder,
 			currentModeId: "build",
 			autonomousActive: false,
 			configOption: createConfigOption("false"),
@@ -286,6 +568,9 @@
 			metricsLabel: "3/200k",
 			metricsPercent: 2,
 			micTitle: "Record with Cursor",
+			browserActive: false,
+			terminalActive: true,
+			conversationEntries: createReleaseNotesConversation(),
 			draftText: "",
 			editorRef: null,
 		},
@@ -387,6 +672,24 @@
 		panel.draftText = currentTarget.textContent ?? "";
 	}
 
+	function handleBrowserToggle(panelId: string): void {
+		const panel = findPanel(panelId);
+		if (!panel) {
+			return;
+		}
+
+		panel.browserActive = !panel.browserActive;
+	}
+
+	function handleTerminalToggle(panelId: string): void {
+		const panel = findPanel(panelId);
+		if (!panel) {
+			return;
+		}
+
+		panel.terminalActive = !panel.terminalActive;
+	}
+
 	function handleSubmit(panel: DemoPanel): void {
 		if (panel.draftText.trim().length === 0) {
 			return;
@@ -405,82 +708,173 @@
 	{#snippet children()}
 		{#snippet panelComposer(panel: DemoPanel)}
 			{@const currentModel = getCurrentModel(panel)}
-			<AgentPanelComposer
-				class="border-t-0 p-0"
-				inputClass="flex-shrink-0 border border-border bg-input/30"
-				contentClass="p-2"
-			>
-				{#snippet content()}
-					<AgentInputEditor
-						bind:editorRef={panel.editorRef}
-						placeholder={panel.placeholder}
-						isEmpty={panel.draftText.trim().length === 0}
-						submitIntent="send"
-						submitDisabled={panel.draftText.trim().length === 0}
-						submitAriaLabel="Send message"
-						onSubmit={() => handleSubmit(panel)}
-						oninput={(event) => handleDraftInput(panel, event)}
-					/>
-				{/snippet}
-				{#snippet footer()}
-					<AgentInputToolbar>
-						{#snippet items()}
-							<AgentInputModeSelector
-								{availableModes}
-								currentModeId={panel.currentModeId}
-								onModeChange={(modeId) => handleModeChange(panel.id, modeId)}
+			<div class="shrink-0">
+				<AgentPanelComposerFrame>
+					<AgentPanelComposer
+						class="border-t-0 p-0"
+						inputClass="flex-shrink-0 border border-border bg-input/30"
+						contentClass="p-2"
+					>
+						{#snippet content()}
+							<AgentInputEditor
+								bind:editorRef={panel.editorRef}
+								placeholder={panel.placeholder}
+								isEmpty={panel.draftText.trim().length === 0}
+								submitIntent="send"
+								submitDisabled={panel.draftText.trim().length === 0}
+								submitAriaLabel="Send message"
+								onSubmit={() => handleSubmit(panel)}
+								oninput={(event) => handleDraftInput(panel, event)}
 							/>
-							<AgentInputDivider />
-							<AgentInputAutonomousToggle
-								active={panel.autonomousActive}
-								title="Autonomous mode"
-								onToggle={() => handleAutonomousToggle(panel.id)}
-							/>
-							<AgentInputDivider />
-							<AgentInputConfigOptionSelector
-								configOption={panel.configOption}
-								onValueChange={(configId, value) =>
-									handleConfigValueChange(panel.id, configId, value)}
-							/>
-							<AgentInputDivider />
-							<AgentInputModelSelector
-								triggerLabel={currentModel?.name ?? "Select model"}
-								triggerProviderSource={currentModel?.providerSource ?? ""}
-								currentModelId={panel.currentModelId}
-								modelGroups={panel.modelGroups}
-								favoriteModels={getFavoriteModels(panel)}
-								onModelChange={(modelId) => handleModelChange(panel.id, modelId)}
-								onSetBuildDefault={(modelId) =>
-									handleSetModeDefault(panel.id, modelId, "build")}
-								onSetPlanDefault={(modelId) =>
-									handleSetModeDefault(panel.id, modelId, "plan")}
-								onToggleFavorite={(modelId) => handleToggleFavorite(panel.id, modelId)}
-							/>
-							<AgentInputDivider />
 						{/snippet}
-						{#snippet trailing()}
-							<AgentInputMetricsChip
-								label={panel.metricsLabel}
-								percent={panel.metricsPercent}
-								hideLabel={true}
-							/>
-							<AgentInputMicButton visualState="mic" title={panel.micTitle} />
+						{#snippet footer()}
+							<AgentInputToolbar>
+								{#snippet items()}
+									<AgentInputModeSelector
+										{availableModes}
+										currentModeId={panel.currentModeId}
+										onModeChange={(modeId) => handleModeChange(panel.id, modeId)}
+									/>
+									<AgentInputDivider />
+									<AgentInputAutonomousToggle
+										active={panel.autonomousActive}
+										title="Autonomous mode"
+										onToggle={() => handleAutonomousToggle(panel.id)}
+									/>
+									<AgentInputDivider />
+									<AgentInputConfigOptionSelector
+										configOption={panel.configOption}
+										onValueChange={(configId, value) =>
+											handleConfigValueChange(panel.id, configId, value)}
+									/>
+									<AgentInputDivider />
+									<AgentInputModelSelector
+										triggerLabel={currentModel?.name ?? "Select model"}
+										triggerProviderSource={currentModel?.providerSource ?? ""}
+										currentModelId={panel.currentModelId}
+										modelGroups={panel.modelGroups}
+										favoriteModels={getFavoriteModels(panel)}
+										onModelChange={(modelId) => handleModelChange(panel.id, modelId)}
+										onSetBuildDefault={(modelId) =>
+											handleSetModeDefault(panel.id, modelId, "build")}
+										onSetPlanDefault={(modelId) =>
+											handleSetModeDefault(panel.id, modelId, "plan")}
+										onToggleFavorite={(modelId) => handleToggleFavorite(panel.id, modelId)}
+									/>
+									<AgentInputDivider />
+								{/snippet}
+								{#snippet trailing()}
+									<AgentInputMetricsChip
+										label={panel.metricsLabel}
+										percent={panel.metricsPercent}
+										hideLabel={true}
+									/>
+									<AgentInputMicButton visualState="mic" title={panel.micTitle} />
+								{/snippet}
+							</AgentInputToolbar>
 						{/snippet}
-					</AgentInputToolbar>
-				{/snippet}
-			</AgentPanelComposer>
+					</AgentPanelComposer>
+				</AgentPanelComposerFrame>
+			</div>
 		{/snippet}
 
-		<div class="grid h-full min-h-0 grid-cols-3 gap-3 bg-background/15 p-3">
+		{#snippet panelFooter(panel: DemoPanel)}
+			<AgentPanelFooter
+				browserActive={panel.browserActive}
+				browserTitle="Toggle browser"
+				browserAriaLabel="Toggle browser"
+				onToggleBrowser={() => handleBrowserToggle(panel.id)}
+				terminalActive={panel.terminalActive}
+				terminalDisabled={false}
+				terminalTitle="Toggle terminal"
+				terminalAriaLabel="Toggle terminal"
+				onToggleTerminal={() => handleTerminalToggle(panel.id)}
+			/>
+		{/snippet}
+
+		<AgentPanelDeck rowClass="bg-background/15">
 			{#each panels as panel (panel.id)}
-				<div class="min-w-0 min-h-0">
-					<AgentPanelScene scene={buildScene(panel, theme)} iconBasePath="/svgs/icons">
+				<div class="min-w-0 min-h-0 w-0 basis-0 flex-1 overflow-hidden">
+					<AgentPanelScene
+						scene={buildScene(panel, theme)}
+						iconBasePath="/svgs/icons"
+						widthStyle="min-width: 0; width: 100%; max-width: 100%;"
+					>
+						{#snippet topBarOverride()}
+							{#if panel.id === "composer-polish"}
+								<AgentPanelPlanHeader
+									title="Release notes plan"
+									isExpanded={false}
+									expandLabel="Show plan"
+									collapseLabel="Hide plan"
+									onToggleSidebar={() => {}}
+								/>
+							{/if}
+						{/snippet}
+						{#snippet preComposerOverride()}
+							<div class="shrink-0 flex flex-col gap-0.5 px-5">
+								{#if panel.id === "composer-primary"}
+									<AgentPanelPermissionBar
+										verb="Edit"
+										filePath="packages/ui/src/components/agent-panel/agent-panel-shell.svelte"
+									>
+										{#snippet leading()}
+											<AgentPanelPermissionBarIcon kind="edit" />
+										{/snippet}
+										{#snippet progress()}
+											<AgentPanelPermissionBarProgress completed={1} total={3} />
+										{/snippet}
+										{#snippet actionBar()}
+											<AgentPanelPermissionBarActions
+												onAllow={() => {}}
+												onDeny={() => {}}
+												onAlwaysAllow={() => {}}
+												showAlwaysAllow={true}
+											/>
+										{/snippet}
+									</AgentPanelPermissionBar>
+									<AgentPanelWorktreeSetupCard
+										visible={true}
+										title="Worktree"
+										summary="Setting up review worktree"
+										details="Cloning to ../acepe-panel-parity on branch fix/panel-parity"
+										tone="running"
+									/>
+								{:else if panel.id === "composer-verify"}
+									<AgentPanelModifiedFilesHeader visible={true}>
+										{#snippet leadingContent()}
+											<span class="pl-2 text-[10px] font-medium text-muted-foreground">3 files changed</span>
+										{/snippet}
+										{#snippet trailingContent(isExpanded)}
+											<AgentPanelModifiedFilesTrailingControls model={demoModifiedFilesTrailing} {isExpanded} />
+										{/snippet}
+										{#snippet fileList()}
+											{#each demoModifiedFiles as file (file.id)}
+												<AgentPanelModifiedFileRow {file} />
+											{/each}
+										{/snippet}
+									</AgentPanelModifiedFilesHeader>
+									<AgentPanelTodoHeader
+										items={demoTodoItems}
+										currentTask={demoCurrentTask}
+										completedCount={2}
+										totalCount={4}
+										isLive={true}
+										allCompletedLabel="All tasks completed"
+										pausedLabel="Tasks paused"
+									/>
+								{/if}
+							</div>
+						{/snippet}
 						{#snippet composerOverride()}
 							{@render panelComposer(panel)}
+						{/snippet}
+						{#snippet footerOverride()}
+							{@render panelFooter(panel)}
 						{/snippet}
 					</AgentPanelScene>
 				</div>
 			{/each}
-		</div>
+		</AgentPanelDeck>
 	{/snippet}
 </LandingDemoFrame>
