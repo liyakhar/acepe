@@ -45,8 +45,13 @@ const logger = createLogger({ id: "session-connection-manager", name: "SessionCo
  * Frontend connection timeout (ms).
  * Defense-in-depth: the Rust side has SESSION_CLIENT_OPERATION_TIMEOUT (30s),
  * but if that fails to fire, this ensures the UI doesn't hang forever.
+ *
+ * Must be *above* the Rust timeout — cold resume of Copilot sessions
+ * (subprocess spawn + initialize + history replay) routinely takes 19-21s,
+ * well within the 30s backend budget. A 15s frontend timeout caused spurious
+ * "Session connection timed out" errors on every app/HMR restart.
  */
-const CONNECTION_TIMEOUT_MS = 15_000;
+const CONNECTION_TIMEOUT_MS = 45_000;
 
 interface ConnectSessionOptions {
 	agentOverrideId?: string;
