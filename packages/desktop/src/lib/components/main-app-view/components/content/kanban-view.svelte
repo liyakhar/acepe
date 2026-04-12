@@ -350,6 +350,18 @@ const threadBoardSources = $derived.by((): readonly ThreadBoardSource[] => {
 
 const threadBoard = $derived.by(() => buildThreadBoard(threadBoardSources));
 
+$effect(() => {
+	for (const group of threadBoard) {
+		if (group.status !== "needs_review") {
+			continue;
+		}
+
+		for (const item of group.items) {
+			unseenStore.markSeen(item.panelId);
+		}
+	}
+});
+
 function mapItemToCard(item: ThreadBoardItem): KanbanCardData {
 	const isWorking = isActiveCompactActivityKind(item.state.activity.kind);
 	const todoProgress = item.todoProgress
@@ -577,7 +589,7 @@ function buildOptimisticKanbanCards(): readonly OptimisticKanbanCard[] {
 				title,
 				agentIconSrc: getAgentIcon(panel.selectedAgentId, themeState.effectiveTheme),
 				agentLabel: panel.selectedAgentId,
-				isAutoMode: false,
+				isAutoMode: hotState.provisionalAutonomousEnabled,
 				projectName: project ? project.name : m.project_unknown(),
 				projectColor: project ? project.color : Colors[COLOR_NAMES.PINK],
 				activityText,

@@ -81,6 +81,16 @@ describe("kanban empty-column contract", () => {
 		expect(source).not.toContain("<PendingPermissionCard permission={permission} />");
 	});
 
+	it("mirrors provisional autonomous state onto optimistic kanban cards", () => {
+		expect(existsSync(kanbanViewPath)).toBe(true);
+		if (!existsSync(kanbanViewPath)) return;
+
+		const source = readFileSync(kanbanViewPath, "utf8");
+
+		expect(source).toContain("const hotState = panelStore.getHotState(panel.id);");
+		expect(source).toContain("isAutoMode: hotState.provisionalAutonomousEnabled");
+	});
+
 	it("omits the kanban footer wrapper when there is no footer content", () => {
 		expect(existsSync(kanbanViewPath)).toBe(true);
 		if (!existsSync(kanbanViewPath)) return;
@@ -215,6 +225,18 @@ describe("kanban empty-column contract", () => {
 		expect(source).toContain("const hasUnseenCompletion =");
 		expect(source).toContain('item.status === "needs_review" ? false : item.state.attention.hasUnseenCompletion;');
 		expect(source).toContain("hasUnseenCompletion,");
+	});
+
+	it("marks needs-review items seen when kanban is already surfacing them", () => {
+		expect(existsSync(kanbanViewPath)).toBe(true);
+		if (!existsSync(kanbanViewPath)) return;
+
+		const source = readFileSync(kanbanViewPath, "utf8");
+
+		expect(source).toContain("const unseenStore = getUnseenStore();");
+		expect(source).toContain("$effect(() => {");
+		expect(source).toContain('if (group.status !== "needs_review") {');
+		expect(source).toContain("unseenStore.markSeen(item.panelId);");
 	});
 
 	it("maps live kanban tool rows to a simple verb plus optional file chip", () => {
