@@ -41,72 +41,74 @@
 </script>
 
 {#if shouldShow}
-	<div class="flex h-7 w-7 shrink-0 items-center justify-center">
-		{#if isConnecting || status === "warming"}
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					<div class="animate-in fade-in duration-150">
-						<LoadingIcon style="width: {size}px; height: {size}px;" />
-					</div>
-				</Tooltip.Trigger>
-				<Tooltip.Portal>
-					<Tooltip.Content
-						class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
-						sideOffset={4}
-					>
-						{warmingLabel}
-					</Tooltip.Content>
-				</Tooltip.Portal>
-			</Tooltip.Root>
-		{:else if status === "connected"}
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					<div class="animate-in zoom-in-50 duration-300 text-success">
-						<IconCircleCheckFilled {size} />
-					</div>
-				</Tooltip.Trigger>
-				<Tooltip.Portal>
-					<Tooltip.Content
-						class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
-						sideOffset={4}
-					>
-						<div class="space-y-1.5">
-							<div class="font-medium">{connectedLabel}</div>
-							{#if agentId}
-								<table class="text-xs">
-									<tbody>
-										<tr>
-											<td class="pr-3 text-muted-foreground">Agent ID:</td>
-											<td class="font-mono">{agentId}</td>
-										</tr>
-									</tbody>
-								</table>
-							{/if}
+	<Tooltip.Provider delayDuration={0}>
+		<div class="flex h-7 w-7 shrink-0 items-center justify-center">
+			{#if isConnecting || status === "warming"}
+				<Tooltip.Root>
+					<Tooltip.Trigger>
+						<div class="animate-in fade-in duration-150">
+							<LoadingIcon style="width: {size}px; height: {size}px;" />
 						</div>
-					</Tooltip.Content>
-				</Tooltip.Portal>
-			</Tooltip.Root>
-		{:else if status === "error"}
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					<button
-						type="button"
-						class="hover:opacity-80 transition-opacity animate-in fade-in duration-150"
-						style="color: {Colors.red};"
-						onclick={() => onRetry?.()}
-					>
-						<IconAlertCircle {size} />
-					</button>
-				</Tooltip.Trigger>
-				<Tooltip.Portal>
-					<Tooltip.Content
-						class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
-						sideOffset={4}
-					>
-						{errorLabel}
-					</Tooltip.Content>
-				</Tooltip.Portal>
-			</Tooltip.Root>
-		{/if}
-	</div>
+					</Tooltip.Trigger>
+					<Tooltip.Portal>
+						<Tooltip.Content
+							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+							sideOffset={4}
+						>
+							{warmingLabel}
+						</Tooltip.Content>
+					</Tooltip.Portal>
+				</Tooltip.Root>
+			{:else if status === "connected"}
+				<Tooltip.Root>
+					<Tooltip.Trigger>
+						<div class="animate-in zoom-in-50 duration-300 text-success">
+							<IconCircleCheckFilled {size} />
+						</div>
+					</Tooltip.Trigger>
+					<Tooltip.Portal>
+						<Tooltip.Content
+							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+							sideOffset={4}
+						>
+							<div class="space-y-1.5">
+								<div class="font-medium">{connectedLabel}</div>
+								{#if agentId}
+									<table class="text-xs">
+										<tbody>
+											<tr>
+												<td class="pr-3 text-muted-foreground">Agent ID:</td>
+												<td class="font-mono">{agentId}</td>
+											</tr>
+										</tbody>
+									</table>
+								{/if}
+							</div>
+						</Tooltip.Content>
+					</Tooltip.Portal>
+				</Tooltip.Root>
+			{:else if status === "error"}
+				<Tooltip.Root>
+					<Tooltip.Trigger>
+						<button
+							type="button"
+							class="hover:opacity-80 transition-opacity animate-in fade-in duration-150"
+							style="color: {Colors.red};"
+							onclick={() => onRetry?.()}
+						>
+							<IconAlertCircle {size} />
+						</button>
+					</Tooltip.Trigger>
+					<Tooltip.Portal>
+						<Tooltip.Content
+							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+							sideOffset={4}
+						>
+							{errorLabel}
+						</Tooltip.Content>
+					</Tooltip.Portal>
+				</Tooltip.Root>
+			{/if}
+		</div>
+	</Tooltip.Provider>
 {/if}
