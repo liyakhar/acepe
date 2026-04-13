@@ -3,12 +3,20 @@
  */
 
 import type { SessionEntry } from "../application/dto/session-entry.js";
+import type { SessionRuntimeState } from "../logic/session-ui-state.js";
+import {
+	deriveLiveSessionState,
+	deriveLiveSessionWorkProjection,
+	type LiveSessionWorkInput,
+} from "./live-session-work.js";
 import type { PlanApprovalInteraction } from "../types/interaction.js";
 import type { PermissionRequest } from "../types/permission.js";
 import type { QuestionRequest } from "../types/question.js";
+import type { ToolCall } from "../types/tool-call.js";
 import type { ToolKind } from "../types/tool-kind.js";
 import type { SessionState } from "./session-state.js";
-import { deriveSessionState, statusToConnectionState } from "./session-state.js";
+import { deriveSessionState } from "./session-state.js";
+import { selectSessionWorkBucket, type SessionWorkBucket } from "./session-work-projection.js";
 import { stripArtifactsFromTitle } from "./session-title-policy.js";
 import type {
 	BrowserWorkspacePanel,
@@ -37,6 +45,7 @@ export interface PanelToTabInput {
 	readonly agentId: string | null;
 	readonly title: string | null;
 	readonly hotState: SessionHotState | null;
+	readonly runtimeState: SessionRuntimeState | null;
 	readonly entries: ReadonlyArray<SessionEntry>;
 	readonly pendingQuestion: QuestionRequest | null;
 	readonly pendingPlanApproval: PlanApprovalInteraction | null;
@@ -76,6 +85,7 @@ export interface TabBarTab {
 	readonly currentModeId: string | null;
 	readonly isUnseen: boolean;
 	readonly currentToolKind: ToolKind | null;
+	readonly workBucket: SessionWorkBucket;
 	/** Project name for badge (null when no project selected) */
 	readonly projectName: string | null;
 	/** Project color for badge */
@@ -103,6 +113,16 @@ export function getCurrentToolKind(entries: ReadonlyArray<SessionEntry>): ToolKi
 		const entry = entries[i];
 		if (entry.type === "tool_call" && entry.isStreaming) {
 			return entry.message.kind ?? "other";
+		}
+	}
+	return null;
+}
+
+function getCurrentStreamingToolCall(entries: ReadonlyArray<SessionEntry>): ToolCall | null {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (entry.type === "tool_call" && entry.isStreaming) {
+			return entry.message;
 		}
 	}
 	return null;
@@ -217,6 +237,7 @@ export function panelToTab(input: PanelToTabInput): TabBarTab {
 		agentId,
 		title,
 		hotState,
+		runtimeState,
 		entries,
 		pendingQuestion,
 		pendingPlanApproval,
@@ -226,19 +247,26 @@ export function panelToTab(input: PanelToTabInput): TabBarTab {
 		projectColor,
 		projectPath,
 	} = input;
-	const status = hotState?.status ?? "idle";
 	const currentToolKind = getCurrentToolKind(entries);
-
-	// Derive unified session state
-	const state = deriveSessionState({
-		connectionState: statusToConnectionState(status),
-		modeId: hotState?.currentMode?.id ?? null,
-		tool: null, // Tab bar doesn't need full tool call
-		pendingQuestion,
-		pendingPlanApproval,
-		pendingPermission,
+	const currentStreamingToolCall = getCurrentStreamingToolCall(entries);
+	const liveSessionInput: LiveSessionWorkInput = {
+		runtimeState,
+		hotState:
+			hotState ?? {
+				status: "idle",
+				currentMode: null,
+				connectionError: null,
+			},
+		currentStreamingToolCall,
+		interactionSnapshot: {
+			pendingQuestion,
+			pendingPlanApproval,
+			pendingPermission,
+		},
 		hasUnseenCompletion: isUnseen,
-	});
+	};
+	const state = deriveLiveSessionState(liveSessionInput);
+	const workProjection = deriveLiveSessionWorkProjection(liveSessionInput);
 
 	return {
 		panelId: panel.id,
@@ -249,6 +277,7 @@ export function panelToTab(input: PanelToTabInput): TabBarTab {
 		currentModeId: hotState?.currentMode?.id ?? null,
 		isUnseen,
 		currentToolKind,
+		workBucket: selectSessionWorkBucket(workProjection),
 		projectName,
 		projectColor,
 		projectPath,
@@ -291,6 +320,7 @@ export function nonAgentPanelToTab(input: NonAgentPanelToTabInput): TabBarTab {
 		currentModeId: null,
 		isUnseen: false,
 		currentToolKind: null,
+		workBucket: "idle",
 		projectName,
 		projectColor,
 		projectPath: panel.projectPath,
