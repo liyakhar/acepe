@@ -6,7 +6,6 @@ import { GitBranch } from "phosphor-svelte";
 import { Kbd, KbdGroup } from "$lib/components/ui/kbd/index.js";
 import { getAgentIcon } from "../constants/thread-list-constants.js";
 import type { AgentInfo } from "../logic/agent-manager.js";
-import { capitalizeName } from "../utils/index.js";
 import type { ProjectCardData } from "./project-card-data.js";
 
 interface Props {
@@ -66,7 +65,7 @@ function handleAgentClick(e: MouseEvent, agentId: string) {
 		<div class="flex items-center gap-2 px-2.5 h-8">
 			<span class="h-2 w-2 rounded-full shrink-0 bg-destructive/40"></span>
 			<span class="text-[11px] font-semibold text-muted-foreground truncate flex-1 line-through">
-				{capitalizeName(data.project.name)}
+				{data.project.name}
 			</span>
 			<span class="text-[10px] text-destructive/70 shrink-0">Missing</span>
 		</div>
@@ -84,12 +83,17 @@ function handleAgentClick(e: MouseEvent, agentId: string) {
 		<div class="flex items-center h-8 shrink-0">
 			<!-- Project letter badge -->
 			<div class="inline-flex items-center justify-center h-8 w-8 shrink-0">
-				<ProjectLetterBadge name={data.project.name} {color} size={18} />
+				<ProjectLetterBadge
+					name={data.project.name}
+					{color}
+					iconSrc={data.project.iconPath ?? null}
+					size={18}
+				/>
 			</div>
 
 			<!-- Project name -->
 			<span class="text-[11px] font-semibold font-mono text-foreground truncate flex-1 min-w-0">
-				{capitalizeName(data.project.name)}
+				{data.project.name}
 			</span>
 
 			<!-- Keyboard shortcut hint -->
@@ -153,7 +157,7 @@ function handleAgentClick(e: MouseEvent, agentId: string) {
 					<button
 						class="inline-flex items-center justify-center h-7 w-7 border-r border-border/30 last:border-r-0
 							text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer"
-						title="{capitalizeName(agent.name)}{agentKey <= 9 ? ` (${modifierSymbol}${agentKey})` : ''}"
+						title="{agent.name}{agentKey <= 9 ? ` (${modifierSymbol}${agentKey})` : ''}"
 						onclick={(e) => handleAgentClick(e, agent.id)}
 					>
 						<img src={iconSrc} alt={agent.name} class="h-4 w-4 shrink-0" />
