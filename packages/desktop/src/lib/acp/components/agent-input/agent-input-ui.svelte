@@ -1176,6 +1176,19 @@ async function handleSend() {
 	let worktreePathForSend: string | undefined = props.worktreePath ?? undefined;
 	let preparedWorktreeLaunch = props.preparedWorktreeLaunch ?? null;
 	if (!worktreePathForSend && props.worktreePending && props.projectPath) {
+		const selectedAgentId = props.selectedAgentId;
+		if (!selectedAgentId) {
+			if (effectivePanelId) {
+				panelStore.clearPendingWorktreeSetup(effectivePanelId);
+				panelStore.clearPendingUserEntry(effectivePanelId);
+			}
+			handleAsyncSendFailure(
+				new SessionCreationError("Select an agent before preparing a worktree session"),
+				restoreSnapshot,
+				shouldClearDraft
+			);
+			return;
+		}
 		if (preparedWorktreeLaunch) {
 			worktreePathForSend = preparedWorktreeLaunch.worktree.directory;
 		} else {
@@ -1194,7 +1207,7 @@ async function handleSend() {
 			});
 			const createResult = await tauriClient.git.prepareWorktreeSessionLaunch(
 				props.projectPath,
-				props.selectedAgentId ?? "claude-code"
+				selectedAgentId
 			);
 			if (createResult.isOk()) {
 				preparedWorktreeLaunch = createResult.value;

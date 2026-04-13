@@ -519,7 +519,17 @@ pub async fn git_prepare_worktree_session_launch(
         .await
         .map_err(|error| format!("Failed to reserve worktree launch: {error}"))?;
 
-    let worktrees_dir = get_project_worktrees_dir(&project_path)?;
+    let worktrees_dir = match get_project_worktrees_dir(&project_path) {
+        Ok(path) => path,
+        Err(error) => {
+            let _ = SessionMetadataRepository::discard_reserved_worktree_launch(
+                db.inner(),
+                &reserved.launch_token,
+            )
+            .await;
+            return Err(error);
+        }
+    };
     if let Err(error) = std::fs::create_dir_all(&worktrees_dir) {
         let _ = SessionMetadataRepository::discard_reserved_worktree_launch(db.inner(), &reserved.launch_token).await;
         return Err(format!("Failed to create worktrees directory: {error}"));

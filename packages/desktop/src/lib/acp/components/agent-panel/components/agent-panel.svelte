@@ -1109,20 +1109,24 @@ function handleRetryWorktree(): void {
 
 function handleStartInProjectRoot(): void {
 	preSessionWorktreeFailure = null;
-	activeWorktreePath = null;
-	activeWorktreeOwnerProjectPath = null;
 	if (panelId && panelPreparedWorktreeLaunch) {
 		void tauriClient.git
 			.discardPreparedWorktreeSessionLaunch(panelPreparedWorktreeLaunch.launchToken, true)
 			.match(
 				() => {
+					activeWorktreePath = null;
+					activeWorktreeOwnerProjectPath = null;
 					panelStore.clearPreparedWorktreeLaunch(panelId);
+					panelStore.setPendingWorktreeEnabled(panelId, false);
 				},
 				(error) => {
 					toast.error(`Failed to discard prepared worktree: ${error.message}`);
 				}
 			);
+		return;
 	}
+	activeWorktreePath = null;
+	activeWorktreeOwnerProjectPath = null;
 	if (panelId) {
 		panelStore.setPendingWorktreeEnabled(panelId, false);
 	}

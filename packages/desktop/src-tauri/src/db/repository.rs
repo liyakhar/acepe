@@ -1413,7 +1413,8 @@ impl SessionMetadataRepository {
         let preview_len = 8usize.min(session_id.len());
         let display = format!("Session {}", &session_id[..preview_len]);
 
-        txn.execute(Statement::from_sql_and_values(
+        let metadata_result = txn
+            .execute(Statement::from_sql_and_values(
             backend,
             "UPDATE session_metadata SET id = ?, display = ?, agent_id = ?, file_path = ?, updated_at = ? WHERE id = ?",
             [
@@ -1425,8 +1426,13 @@ impl SessionMetadataRepository {
                 launch_token.into(),
             ],
         ))
-        .await?;
-        txn.execute(Statement::from_sql_and_values(
+            .await?;
+        if metadata_result.rows_affected() != 1 {
+            anyhow::bail!("Prepared worktree launch was already consumed");
+        }
+
+        let state_result = txn
+            .execute(Statement::from_sql_and_values(
             backend,
             "UPDATE acepe_session_state SET session_id = ?, relationship = ?, updated_at = ? WHERE session_id = ?",
             [
@@ -1436,7 +1442,10 @@ impl SessionMetadataRepository {
                 launch_token.into(),
             ],
         ))
-        .await?;
+            .await?;
+        if state_result.rows_affected() != 1 {
+            anyhow::bail!("Prepared worktree launch state was already consumed");
+        }
         txn.commit().await?;
         Ok(state.sequence_id)
     }
