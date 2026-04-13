@@ -1241,6 +1241,7 @@ pub(crate) fn apply_process_user(cmd: &mut Command, user: &str) -> Result<()> {
 
 #[cfg(unix)]
 fn apply_process_user_inner(cmd: &mut Command, user: &str) -> Result<()> {
+    use nix::libc;
     use std::ffi::CString;
     use std::mem::MaybeUninit;
     use std::os::unix::process::CommandExt;
