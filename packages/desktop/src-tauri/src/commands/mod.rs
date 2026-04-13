@@ -1,4 +1,3 @@
-pub mod locale;
 pub mod names;
 pub mod registry;
 pub mod window;

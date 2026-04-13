@@ -5,7 +5,6 @@ import { TAURI_COMMAND_CLIENT } from "../../services/tauri-command-client.js";
 
 const storageCommands = TAURI_COMMAND_CLIENT.storage;
 const terminalCommands = TAURI_COMMAND_CLIENT.terminal;
-const localeCommands = TAURI_COMMAND_CLIENT.locale;
 
 export const shell = {
 	openInFinder: (sessionId: string, projectPath: string): ResultAsync<void, AppError> => {
@@ -26,9 +25,5 @@ export const shell = {
 
 	getDefaultShell: (): ResultAsync<string, AppError> => {
 		return terminalCommands.get_default_shell.invoke<string>();
-	},
-
-	getSystemLocale: (): ResultAsync<string, AppError> => {
-		return localeCommands.get_system_locale.invoke<string>();
 	},
 };

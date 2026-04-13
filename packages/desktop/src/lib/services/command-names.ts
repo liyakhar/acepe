@@ -254,9 +254,6 @@ export const COMMANDS = {
     "stop_recording": "voice_stop_recording",
     "cancel_recording": "voice_cancel_recording"
   },
-  "locale": {
-    "get_system_locale": "get_system_locale"
-  },
   "window": {
     "activate": "activate_window"
   }
@@ -278,5 +275,4 @@ export type SqlStudioCommands = Commands["sql_studio"];
 export type GitHubCommands = Commands["github"];
 export type BrowserWebviewCommands = Commands["browser_webview"];
 export type VoiceCommands = Commands["voice"];
-export type LocaleCommands = Commands["locale"];
 export type WindowCommands = Commands["window"];

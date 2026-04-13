@@ -13,7 +13,7 @@ import { X } from "phosphor-svelte";
 import { onMount } from "svelte";
 import type { EmbeddedTerminalTab } from "$lib/acp/store/embedded-terminal-store.svelte.js";
 import { EmbeddedTerminalStore } from "$lib/acp/store/embedded-terminal-store.svelte.js";
-import * as m from "$lib/paraglide/messages.js";
+import * as m from "$lib/messages.js";
 import { shell } from "$lib/utils/tauri-client/shell.js";
 
 import { TerminalRenderer } from "../../terminal-panel/index.js";
@@ -50,14 +50,17 @@ let detectedShell: string | null = $state(null);
 let shellError: string | null = $state(null);
 
 onMount(() => {
-	shell.getDefaultShell().mapErr((e) => (e instanceof Error ? e.message : String(e))).match(
-		(s) => {
-			detectedShell = s;
-		},
-		(e) => {
-			shellError = e;
-		}
-	);
+	shell
+		.getDefaultShell()
+		.mapErr((e) => (e instanceof Error ? e.message : String(e)))
+		.match(
+			(s) => {
+				detectedShell = s;
+			},
+			(e) => {
+				shellError = e;
+			}
+		);
 });
 
 // ---- Handlers ----

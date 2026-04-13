@@ -1,19 +1,11 @@
 <script lang="ts">
 import { page } from "$app/state";
-import { baseLocale, getLocale, localizeHref } from "$lib/paraglide/runtime";
+import { canonicalizePathname } from "$lib/locale-routing";
 
 const baseUrl = "https://acepe.dev";
-const locale = getLocale();
+const canonicalPath = $derived(canonicalizePathname(page.url.pathname));
 
-const canonicalPath = $derived(
-	locale === baseLocale
-		? page.url.pathname.replace(/\/$/, "") || "/"
-		: localizeHref(page.url.pathname, { locale })
-);
-
-const canonicalUrl = $derived(
-	`${baseUrl}${canonicalPath === "/" ? "/" : canonicalPath.replace(/\/$/, "")}`
-);
+const canonicalUrl = $derived(`${baseUrl}${canonicalPath}`);
 </script>
 
 <svelte:head>

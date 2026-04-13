@@ -184,17 +184,6 @@ macro_rules! __all_command_entries_after_browser_webview {
 #[macro_export]
 macro_rules! __all_command_entries_after_voice {
     ([$callback:ident $(, $args:tt)*], [$($acc:tt)*], $($entries:tt)*) => {
-        crate::locale_command_entries!(
-            __all_command_entries_after_locale,
-            [$callback $(, $args)*],
-            [$($acc)* $($entries)*,]
-        );
-    };
-}
-
-#[macro_export]
-macro_rules! __all_command_entries_after_locale {
-    ([$callback:ident $(, $args:tt)*], [$($acc:tt)*], $($entries:tt)*) => {
         crate::window_command_entries!(
             __all_command_entries_finish,
             [$callback $(, $args)*],
@@ -554,15 +543,6 @@ macro_rules! voice_command_entries {
 }
 
 #[macro_export]
-macro_rules! locale_command_entries {
-    ($callback:ident $(, $args:tt)*) => {
-        $callback!($($args,)*
-            get_system_locale: get_system_locale
-        );
-    };
-}
-
-#[macro_export]
 macro_rules! window_command_entries {
     ($callback:ident $(, $args:tt)*) => {
         $callback!($($args,)*
@@ -571,4 +551,7 @@ macro_rules! window_command_entries {
     };
 }
 
-crate::all_command_entries!(define_registered_tauri_handlers_macro, registered_tauri_handlers);
+crate::all_command_entries!(
+    define_registered_tauri_handlers_macro,
+    registered_tauri_handlers
+);

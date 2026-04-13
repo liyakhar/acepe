@@ -65,7 +65,6 @@ use checkpoint::commands::{
     checkpoint_create, checkpoint_get_file_content, checkpoint_get_file_diff_content,
     checkpoint_get_file_snapshots, checkpoint_list, checkpoint_revert, checkpoint_revert_file,
 };
-use commands::locale::get_system_locale;
 use commands::window::activate_window;
 use cursor_history::commands::{has_cursor_history, is_cursor_installed};
 use db::repository::{AppSettingsRepository, ProjectRepository};
@@ -86,18 +85,18 @@ use git::operations::{
 };
 use git::watcher::{git_watch_head, GitHeadWatcher};
 use git::worktree::{
-    git_checkout_branch, git_current_branch, git_has_uncommitted_changes, git_init, git_is_repo,
-    git_discard_prepared_worktree_session_launch, git_list_branches,
+    git_checkout_branch, git_current_branch, git_discard_prepared_worktree_session_launch,
+    git_has_uncommitted_changes, git_init, git_is_repo, git_list_branches,
     git_prepare_worktree_session_launch, git_worktree_create, git_worktree_disk_size,
     git_worktree_list, git_worktree_remove, git_worktree_rename, git_worktree_reset,
 };
 use git::worktree_config::{load_worktree_config, run_worktree_setup, save_worktree_config};
-use history::indexer::IndexerActor;
 use history::commands::{
     audit_session_load_timing, count_sessions_for_project, discover_all_projects_with_sessions,
     get_startup_sessions, get_unified_plan, get_unified_session, list_all_project_paths,
     scan_project_sessions, set_session_pr_number, set_session_title, set_session_worktree_path,
 };
+use history::indexer::IndexerActor;
 use opencode_history::commands::{
     get_opencode_converted_session, get_opencode_history, get_opencode_session,
     get_opencode_sessions_for_project,
