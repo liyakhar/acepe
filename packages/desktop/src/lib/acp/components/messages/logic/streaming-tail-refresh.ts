@@ -58,10 +58,10 @@ export function streamingTailRefresh(node: HTMLElement, params: StreamingTailRef
 			}
 
 			if (nextMode === "smooth") {
-				if (currentMode !== "smooth") {
+				if (!isActive || currentMode !== "smooth") {
 					node.classList.remove(LIVE_REFRESH_CLASS);
+					applySmoothFade(node);
 				}
-				applySmoothFade(node);
 			} else {
 				if (currentMode === "smooth") {
 					node.classList.remove(SMOOTH_FADE_CLASS);

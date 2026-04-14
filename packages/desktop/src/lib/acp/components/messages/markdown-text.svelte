@@ -83,6 +83,7 @@ interface Props {
 	 */
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
+	onRevealActivityChange?: (active: boolean) => void;
 }
 
 let {
@@ -91,6 +92,7 @@ let {
 	revealKey,
 	projectPath: propProjectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
+	onRevealActivityChange,
 }: Props = $props();
 
 // Use context projectPath if no prop provided, otherwise use prop (backward compatibility)
@@ -203,7 +205,12 @@ const showStreamingCursor = $derived(
 
 
 $effect(() => {
+	onRevealActivityChange?.(isRenderingReveal);
+});
+
+$effect(() => {
 	return () => {
+		onRevealActivityChange?.(false);
 		reveal.destroy();
 		if (revealKey !== undefined) {
 			seededRevealKeys.delete(revealKey);

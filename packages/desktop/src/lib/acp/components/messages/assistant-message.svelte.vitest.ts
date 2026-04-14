@@ -104,6 +104,16 @@ function createThoughtMessageWithDuration(thinkingDurationMs: number): Assistant
 	};
 }
 
+function createStreamingMessageWithTrailingBlocks(text: string): AssistantMessage {
+	return {
+		chunks: [
+			{ type: "message", block: { type: "text", text } },
+			{ type: "message", block: { type: "resource_link", uri: "app://file", name: "file" } },
+			{ type: "message", block: { type: "image", data: "abc", mimeType: "image/png" } },
+		],
+	};
+}
+
 describe("AssistantMessage thinking auto-scroll", () => {
 	it("shows seconds in the thinking header while streaming and after completion", () => {
 		const streamingView = render(AssistantMessageComponent, {
@@ -246,5 +256,54 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		});
 
 		expect(view.container.querySelector(".group\\/assistant-message")).toBeTruthy();
+	});
+
+	it("keeps trailing non-text blocks hidden while the last text group is still streaming", async () => {
+		const view = render(AssistantMessageComponent, {
+			message: createStreamingMessageWithTrailingBlocks("Answer"),
+			isStreaming: true,
+		});
+
+		await waitFor(() => {
+			expect(view.getByTestId("text-block").textContent).toBe("Answer");
+			expect(view.queryAllByTestId("other-block")).toHaveLength(0);
+		});
+
+		await view.rerender({
+			message: createStreamingMessageWithTrailingBlocks("Answer"),
+			isStreaming: false,
+		});
+
+		await waitFor(() => {
+			expect(view.queryAllByTestId("other-block")).toHaveLength(2);
+		});
+	});
+
+	it("keeps trailing non-text blocks hidden until the text reveal fully settles", async () => {
+		const message = createStreamingMessageWithTrailingBlocks("Answer [reveal-active]");
+		const view = render(AssistantMessageComponent, {
+			message,
+			isStreaming: true,
+		});
+
+		await waitFor(() => {
+			expect(view.getByTestId("text-block").textContent).toBe("Answer");
+			expect(view.queryAllByTestId("other-block")).toHaveLength(0);
+		});
+
+		await view.rerender({
+			message,
+			isStreaming: false,
+		});
+
+		await waitFor(() => {
+			expect(view.queryAllByTestId("other-block")).toHaveLength(0);
+		});
+
+		await fireEvent.click(view.getByTestId("finish-reveal"));
+
+		await waitFor(() => {
+			expect(view.queryAllByTestId("other-block")).toHaveLength(2);
+		});
 	});
 });

@@ -11,6 +11,7 @@ interface Props {
 	revealKey?: string;
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
+	onRevealActivityChange?: (active: boolean) => void;
 }
 
 let {
@@ -19,7 +20,15 @@ let {
 	revealKey,
 	projectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
+	onRevealActivityChange,
 }: Props = $props();
 </script>
 
-<MarkdownText {text} {isStreaming} {revealKey} {projectPath} {streamingAnimationMode} />
+<MarkdownText
+	{text}
+	{isStreaming}
+	{revealKey}
+	{projectPath}
+	{streamingAnimationMode}
+	{onRevealActivityChange}
+/>

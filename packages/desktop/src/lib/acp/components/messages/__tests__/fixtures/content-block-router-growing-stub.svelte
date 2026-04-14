@@ -1,19 +1,54 @@
 <script lang="ts">
 interface TextBlock {
+	type: "text";
 	text: string;
 }
 
-interface Props {
-	block: TextBlock;
-	isStreaming?: boolean;
-	projectPath?: string;
+interface OtherBlock {
+	type: string;
 }
 
-let { block }: Props = $props();
+interface Props {
+	block: TextBlock | OtherBlock;
+	isStreaming?: boolean;
+	projectPath?: string;
+	onRevealActivityChange?: (active: boolean) => void;
+}
+
+let { block, isStreaming = false, onRevealActivityChange }: Props = $props();
 let lineCount = $state(1);
+let revealActive = $state(false);
+let hasInitializedReveal = $state(false);
+
+$effect(() => {
+	const isRevealBlock = block.type === "text" && block.text.includes("[reveal-active]");
+	if (isRevealBlock && !hasInitializedReveal) {
+		revealActive = true;
+		hasInitializedReveal = true;
+		return;
+	}
+
+	if (!isRevealBlock) {
+		revealActive = false;
+		hasInitializedReveal = false;
+	}
+});
+
+$effect(() => {
+	const nextActive =
+		block.type === "text" &&
+		(block.text.includes("[reveal-active]") ? revealActive : isStreaming);
+	onRevealActivityChange?.(nextActive);
+});
+
+$effect(() => {
+	return () => {
+		onRevealActivityChange?.(false);
+	};
+});
 </script>
 
-{#if block.text === "thinking"}
+{#if block.type === "text" && block.text === "thinking"}
 	<button type="button" data-testid="grow-line" onclick={() => {
 		lineCount += 1;
 	}}>
@@ -24,6 +59,21 @@ let lineCount = $state(1);
 			<div class="stub-line">line {index + 1}</div>
 		{/each}
 	</div>
+{:else if block.type === "text" && block.text.includes("[reveal-active]")}
+	<button
+		type="button"
+		data-testid="finish-reveal"
+		onclick={() => {
+			revealActive = false;
+		}}
+	>
+		finish
+	</button>
+	<div data-testid="text-block">{block.text.replace(" [reveal-active]", "")}</div>
 {:else}
-	<div>{block.text}</div>
+	{#if block.type === "text"}
+		<div data-testid="text-block">{block.text}</div>
+	{:else}
+		<div data-testid="other-block">{block.type}</div>
+	{/if}
 {/if}

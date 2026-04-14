@@ -88,19 +88,18 @@ describe("streamingTailRefresh", () => {
 			expect(node.classList.contains(LIVE_REFRESH_CLASS)).toBe(false);
 		});
 
-		it("re-applies smooth fade on content update", () => {
+		it("does not restart smooth fade when the same live section grows", () => {
 			const { node } = createRefreshNode();
 			const action = streamingTailRefresh(node, { active: true, value: "Hello", mode: "smooth" });
 			flushRaf();
 
 			expect(node.classList.contains(SMOOTH_FADE_CLASS)).toBe(true);
-
-			node.classList.remove(SMOOTH_FADE_CLASS);
+			expect(rafCallbacks).toHaveLength(0);
 			action.update({ active: true, value: "Hello world", mode: "smooth" });
-			flushRaf();
 
 			expect(node.classList.contains(SMOOTH_FADE_CLASS)).toBe(true);
 			expect(node.classList.contains(LIVE_REFRESH_CLASS)).toBe(false);
+			expect(rafCallbacks).toHaveLength(0);
 		});
 
 		it("removes both classes when deactivated", () => {

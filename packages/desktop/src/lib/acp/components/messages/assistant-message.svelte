@@ -74,12 +74,38 @@ const textContent = $derived(
 		.map((group) => group.text)
 		.join("")
 );
+const lastThoughtTextGroupIndex = $derived.by(() => {
+	for (let index = filteredThoughtGroups.length - 1; index >= 0; index -= 1) {
+		if (filteredThoughtGroups[index]?.type === "text") {
+			return index;
+		}
+	}
+
+	return -1;
+});
+const lastMessageTextGroupIndex = $derived.by(() => {
+	for (let index = groupedChunks.messageGroups.length - 1; index >= 0; index -= 1) {
+		if (groupedChunks.messageGroups[index]?.type === "text") {
+			return index;
+		}
+	}
+
+	return -1;
+});
 
 const hasThinking = $derived(filteredThoughtGroups.length > 0);
 const hasMessageContent = $derived(groupedChunks.messageGroups.length > 0);
 const hasAnyContent = $derived(hasThinking || hasMessageContent);
 /** Show thinking block only while there is no assistant message content yet; hide once reply text starts. */
 const showThinkingBlock = $derived(hasThinking && !hasMessageContent);
+let isMessageTextRevealActive = $state(false);
+const visibleMessageGroups = $derived.by(() => {
+	if (!isMessageTextRevealActive || lastMessageTextGroupIndex < 0) {
+		return groupedChunks.messageGroups;
+	}
+
+	return groupedChunks.messageGroups.slice(0, lastMessageTextGroupIndex + 1);
+});
 
 /** "Thinking" or "Thinking for Xs" while streaming, "Thought" or "Thought for Xs" when done */
 const thinkingHeaderLabel = $derived.by(() => {
@@ -164,6 +190,14 @@ $effect(() => {
 });
 
 $effect(() => {
+	if (lastMessageTextGroupIndex >= 0) {
+		return;
+	}
+
+	isMessageTextRevealActive = false;
+});
+
+$effect(() => {
 	if (showThinkingBlock && isStreaming && !isCollapsed && thinkingContainerRef) {
 		scheduleThinkingFollow(thinkingContainerRef);
 	}
@@ -221,13 +255,13 @@ $effect(() => {
 					>
 						<div bind:this={thinkingContentRef}>
 							{#each filteredThoughtGroups as group, index (index)}
-								{@const isLastThoughtGroup = index === filteredThoughtGroups.length - 1}
+								{@const isLastThoughtTextGroup = index === lastThoughtTextGroupIndex}
 								{#if group.type === "text"}
 									<ContentBlockRouter
 										block={{ type: "text", text: group.text }}
-										isStreaming={isStreaming && isLastThoughtGroup}
+										isStreaming={isStreaming && isLastThoughtTextGroup}
 										revealKey={
-											isLastThoughtGroup && revealMessageKey
+											isLastThoughtTextGroup && revealMessageKey
 												? `${revealMessageKey}:thought:${index}`
 												: undefined
 										}
@@ -243,20 +277,25 @@ $effect(() => {
 				</AgentToolThinking>
 			{/if}
 
-			{#each groupedChunks.messageGroups as group, index (index)}
-				{@const isLastGroup = index === groupedChunks.messageGroups.length - 1}
+			{#each visibleMessageGroups as group, index (index)}
+				{@const isLastTextGroup = index === lastMessageTextGroupIndex}
 				<div class="space-y-1.5">
 					{#if group.type === "text"}
 						<ContentBlockRouter
 							block={{ type: "text", text: group.text }}
-							isStreaming={isStreaming && isLastGroup}
+							isStreaming={isStreaming && isLastTextGroup}
 							revealKey={
-								isLastGroup && revealMessageKey
+								isLastTextGroup && revealMessageKey
 									? `${revealMessageKey}:message:${index}`
 									: undefined
 							}
 							{projectPath}
 							{streamingAnimationMode}
+							onRevealActivityChange={(active) => {
+								if (isLastTextGroup) {
+									isMessageTextRevealActive = active;
+								}
+							}}
 						/>
 					{:else}
 						<ContentBlockRouter block={group.block} {projectPath} />

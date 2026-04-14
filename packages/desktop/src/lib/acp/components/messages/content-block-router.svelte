@@ -16,6 +16,7 @@ interface Props {
 	/** Project path for opening files in panels */
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
+	onRevealActivityChange?: (active: boolean) => void;
 }
 
 let {
@@ -24,6 +25,7 @@ let {
 	revealKey,
 	projectPath: propProjectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
+	onRevealActivityChange,
 }: Props = $props();
 
 const sessionContext = useSessionContext();
@@ -39,7 +41,14 @@ const validationResult = $derived(validateContentBlock(block));
 		{@const blockProps = (
 			renderer as { getProps: (b: ContentBlock) => Record<string, unknown> }
 		).getProps(validatedBlock)}
-		<Component {...blockProps} {isStreaming} {revealKey} {projectPath} {streamingAnimationMode} />
+		<Component
+			{...blockProps}
+			{isStreaming}
+			{revealKey}
+			{projectPath}
+			{streamingAnimationMode}
+			{onRevealActivityChange}
+		/>
 	{:else}
 		<div class="text-xs text-muted-foreground/70 italic">
 			Unknown block type: {validatedBlock.type}
