@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cargo profiles for faster Tauri dev builds (opt-level 2 for dependencies) and leaner releases (thin LTO, strip, single codegen unit)
 - Biome lint checks added to desktop and website pre-push validation hooks
 - ACP file write path handling now canonicalizes and scope-checks write paths for security
+- Browser tool cards now separate execute-js scripts from results, and queued-message strips can show removable attachment chips
 
 ### Changed
 - ACP frontend interaction handling now routes permissions, questions, and plan approvals through shared builders and reply strategies, and feature-specific agent behavior now reads from capability metadata instead of scattered agent-ID checks
@@ -38,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent setup and kanban activity UI refreshed
 - Design system showcase ownership moved into the desktop package
 - Kanban inline composer removed in favor of thread dialog interaction
+- Main app production chrome now suppresses the native context menu, and kanban-launched session panels open at a wider default width
 
 ### Removed
 - Analytics and Sentry infrastructure removed across desktop, website, and backend — `@acepe/analytics` package deleted, Sentry SDK dependencies dropped, error capture calls stripped, source map uploads disabled
@@ -53,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open PR button stays visible with its loading spinner during PR creation instead of vanishing instantly
 - Website logo dark/light theme assets now display correctly in their respective modes
 - Merge split button moved from PrStatusCard to ModifiedFilesHeader for consistent action placement
+- PR badges now fetch PR details as soon as they render instead of waiting for hover
+- Streaming markdown reuse now preserves settled sections incrementally, avoids refresh reflow churn, and shows elapsed seconds in active thinking headers
+- Codex native thread start/resume requests now keep extended-history flags and surface sanitized runtime diagnostics in connection issue drafts
+- First-send composer clearing now stays visually immediate while sound/logging work is deferred off the critical path
 
 ## [2026.4.4] - 2026-04-03
 
