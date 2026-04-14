@@ -677,6 +677,10 @@ export type UserSettingKey =
  */
 "attention_queue_enabled" | 
 /**
+ * Whether analytics providers should be disabled for this install (boolean)
+ */
+"analytics_opt_out" | 
+/**
  * User's preferred default agent ID for new sessions
  */
 "default_agent_id"
