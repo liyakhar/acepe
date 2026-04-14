@@ -35,19 +35,6 @@ function normalizeError(error: unknown, fallback: string): Error {
 	return new Error(`${fallback}${detail}`);
 }
 
-function scrubPathSegments(value: string): string {
-	return value
-		.replace(/\/Users\/[^/\n]+/g, "/Users/<redacted>")
-		.replace(/[A-Za-z]:\\Users\\[^\\\n]+/g, "C:\\Users\\<redacted>");
-}
-
-function scrubError(error: Error): Error {
-	const next = new Error(scrubPathSegments(error.message));
-	next.name = error.name;
-	next.stack = error.stack ? scrubPathSegments(error.stack) : undefined;
-	return next;
-}
-
 function shouldEnableAnalyticsInThisBuild(): boolean {
 	return !import.meta.env.DEV || import.meta.env.VITE_FORCE_ANALYTICS === "1";
 }
@@ -131,34 +118,10 @@ async function initializeSentry(version: string | null): Promise<void> {
 				dsn,
 				defaultIntegrations: false,
 				sendDefaultPii: false,
+				tracesSampleRate: 0.1,
 				environment: import.meta.env.DEV ? "development" : "production",
 				release: version ? `acepe@${version}` : undefined,
-				beforeSend(event) {
-					if (!analyticsEnabled) {
-						return null;
-					}
-
-					if (event.message) {
-						event.message = scrubPathSegments(event.message);
-					}
-
-					if (event.exception?.values) {
-						for (const value of event.exception.values) {
-							if (value.value) {
-								value.value = scrubPathSegments(value.value);
-							}
-							if (value.stacktrace?.frames) {
-								for (const frame of value.stacktrace.frames) {
-									if (frame.filename) {
-										frame.filename = scrubPathSegments(frame.filename);
-									}
-								}
-							}
-						}
-					}
-
-					return event;
-				},
+				beforeSend: analyticsEnabled ? undefined : () => null,
 			});
 		}),
 		(error) => normalizeError(error, "Failed to initialize Sentry")
@@ -249,12 +212,12 @@ export function captureException(error: unknown, context: Record<string, unknown
 		return;
 	}
 
-	const scrubbedError = scrubError(normalizeError(error, "Unknown analytics exception"));
+	const err = normalizeError(error, "Unknown analytics exception");
 	Sentry.withScope((scope) => {
 		for (const [key, value] of Object.entries(context)) {
 			scope.setExtra(key, value);
 		}
-		Sentry.captureException(scrubbedError);
+		Sentry.captureException(err);
 	});
 }
 
