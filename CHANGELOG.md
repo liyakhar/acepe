@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.4.14] - 2026-04-14
+
 ### Added
 - Codex native client now routes `session/update` JSON-RPC notifications through the session update parser, enabling Codex-originated tool calls to appear in the UI
 - New sessions can start with Autonomous enabled before the first message, including Codex build sessions mapped to a full-access execution profile
 - Config option selector shows a reasoning-effort icon indicator when reasoning level changes
+- Streaming animation settings now offer smooth and instant reveal modes with a live preview in the desktop app
 - Markdown streaming sections split and reveal progressively during agent responses instead of updating the entire block
 - Project badges can append per-project sequence numbers in agent panel and kanban cards
 - Streaming log calls added to Codex native client for debugging event flow
@@ -18,16 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Markdown streaming now keeps settled sections stable while only the live tail refreshes, including open fenced code blocks
 - Kanban board gains a Needs Review column (pink, eye icon) for unseen completions before they move to Done
 - Views can override Cmd+T to show a custom new-session flow such as the kanban new-agent dialog
+- Worktree session setup now supports prepared launches before opening a new session
+- Users can choose a default agent, and browser tool cards plus queued-message previews now surface richer context
 - Cargo profiles for faster Tauri dev builds (opt-level 2 for dependencies) and leaner releases (thin LTO, strip, single codegen unit)
 - Biome lint checks added to desktop and website pre-push validation hooks
 - ACP file write path handling now canonicalizes and scope-checks write paths for security
-- Browser tool cards now separate execute-js scripts from results, and queued-message strips can show removable attachment chips
 
 ### Changed
 - ACP frontend interaction handling now routes permissions, questions, and plan approvals through shared builders and reply strategies, and feature-specific agent behavior now reads from capability metadata instead of scattered agent-ID checks
 - ACP backend now delegates Cursor-specific notification suppression and session-update enrichment through provider hooks, extracts cc-sdk permission bridging into a dedicated module, and threads explicit agent context through session-update, cc-sdk bridge, and streaming parser seams instead of relying on task-local globals
+- ACP runtime plumbing now routes through the canonical operation model, a unified Tauri command surface, and cleaner provider-owned session seams
 - Tool call edit and permission bar components redesigned with a dedicated diff resolution layer
 - Session title formatting extracted to shared `formatSessionTitleForDisplay`, replacing duplicated capitalize-and-fallback logic across agent panel and kanban view
+- Project sidebar metadata and icons now persist across the app, with hardened icon handling and refreshed shell and chrome surfaces
 - Website branding now routes through a shared `Logo` component sourced from `favicon.svg`
 - App chrome refined with accent border and rounded corners on the main window
 - Icon generation now emits website favicon and OG assets from the shared logo source and patches the Android launcher background
@@ -40,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Design system showcase ownership moved into the desktop package
 - Kanban inline composer removed in favor of thread dialog interaction
 - Main app production chrome now suppresses the native context menu, and kanban-launched session panels open at a wider default width
+- GitHub Releases now publish the matching changelog entry directly instead of linking back to `CHANGELOG.md`
 
 ### Removed
 - Analytics and Sentry infrastructure removed across desktop, website, and backend — `@acepe/analytics` package deleted, Sentry SDK dependencies dropped, error capture calls stripped, source map uploads disabled
@@ -59,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Streaming markdown reuse now preserves settled sections incrementally, avoids refresh reflow churn, and shows elapsed seconds in active thinking headers
 - Codex native thread start/resume requests now keep extended-history flags and surface sanitized runtime diagnostics in connection issue drafts
 - First-send composer clearing now stays visually immediate while sound/logging work is deferred off the critical path
+- Copilot replay titles and history hygiene are restored after reconnects and transcript reloads
+- Panel launch behavior, kanban motion overlays, and active-agent filtering are more stable during live session updates
 
 ## [2026.4.4] - 2026-04-03
 
@@ -516,7 +525,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Intel build support from release process
 - Intel download button from website
 
-[Unreleased]: https://github.com/flazouh/acepe/compare/v2026.4.4...HEAD
+[Unreleased]: https://github.com/flazouh/acepe/compare/v2026.4.14...HEAD
+[2026.4.14]: https://github.com/flazouh/acepe/releases/tag/v2026.4.14
 [2026.4.4]: https://github.com/flazouh/acepe/releases/tag/v2026.4.4
 [2026.4.3]: https://github.com/flazouh/acepe/releases/tag/v2026.4.3
 [2026.4.2]: https://github.com/flazouh/acepe/releases/tag/v2026.4.2

@@ -47,6 +47,49 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: "2026.4.14",
+		date: "2026-04-14",
+		highlights:
+			"Streaming reveal modes, prepared worktree launches, and persistent project metadata make active sessions easier to control and browse.",
+		changes: [
+			{
+				type: "feature",
+				description:
+					"Streaming animation settings now offer smooth and instant reveal modes with a live preview in the desktop app.",
+			},
+			{
+				type: "feature",
+				description:
+					"Worktree session setup now supports prepared launches, clearer sidebar and kanban browsing, and animated cross-column card moves.",
+			},
+			{
+				type: "feature",
+				description:
+					"Users can choose a default agent, and browser tool cards plus queued-message previews now surface richer context.",
+			},
+			{
+				type: "improvement",
+				description:
+					"ACP runtime plumbing now routes through the canonical operation model, a unified Tauri command surface, and cleaner provider-owned session seams.",
+			},
+			{
+				type: "improvement",
+				description:
+					"Project sidebar metadata and icons now persist across the app, with hardened icon handling and refreshed shell and chrome surfaces.",
+			},
+			{
+				type: "fix",
+				description:
+					"Copilot replay titles and history hygiene are restored, and Codex reconnects now preserve history flags and sanitized runtime diagnostics.",
+			},
+			{
+				type: "fix",
+				description:
+					"Streaming markdown tail updates, panel launch behavior, and kanban motion overlays are more stable during active sessions.",
+			},
+		],
+	},
+	{
 		version: "2026.4.9",
 		date: "2026-04-06",
 		highlights:
