@@ -9,7 +9,9 @@ import { IconPlus } from "@tabler/icons-svelte";
 import { listen } from "@tauri-apps/api/event";
 import { DropdownMenu } from "bits-ui";
 import { ArrowsClockwise } from "phosphor-svelte";
+import { ArrowDown } from "phosphor-svelte";
 import { ArrowCounterClockwise } from "phosphor-svelte";
+import { ArrowUp } from "phosphor-svelte";
 import { BookOpen } from "phosphor-svelte";
 import { Bug } from "phosphor-svelte";
 import { Check } from "phosphor-svelte";
@@ -21,6 +23,7 @@ import { Sparkle } from "phosphor-svelte";
 import { TestTube } from "phosphor-svelte";
 import { Wrench } from "phosphor-svelte";
 import type { Component } from "svelte";
+import { tick } from "svelte";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { toast } from "svelte-sonner";
 import type { SessionDisplayItem } from "$lib/acp/types/thread-display-item.js";
@@ -41,6 +44,7 @@ import type { FileGitStatus } from "$lib/services/converted-session-types.js";
 import type { GitRemoteStatus } from "$lib/utils/tauri-client/git.js";
 import { revealInFinder, tauriClient } from "$lib/utils/tauri-client.js";
 import type { AgentInfo } from "../../logic/agent-manager.js";
+import { TAG_COLORS } from "../../utils/colors.js";
 import { createFileTree, flattenFileTree } from "../file-list/file-list-logic.js";
 import type { FileTreeNode } from "../file-list/file-list-types.js";
 import FileTreeItem from "../file-list/file-tree-item.svelte";
@@ -54,6 +58,8 @@ import {
 	getSessionListVisibleCount,
 	isSessionListNearBottom,
 } from "./session-list-logic.js";
+import type { SidebarReorderGroupElement } from "./sidebar-reorder-state.svelte.js";
+import { SidebarReorderState } from "./sidebar-reorder-state.svelte.js";
 import type { SessionGroup, SessionListItem } from "./session-list-types.js";
 import VirtualizedSessionList from "./virtualized-session-list.svelte";
 
@@ -111,6 +117,8 @@ interface Props {
 	onExportMarkdown?: (sessionId: string) => void | Promise<void>;
 	/** Called when user exports session as JSON */
 	onExportJson?: (sessionId: string) => void | Promise<void>;
+	/** Called when project order changes from sidebar drag/drop */
+	onReorderProjects?: (orderedPaths: string[]) => void;
 }
 
 let {
@@ -147,7 +155,12 @@ let {
 	onRenameSession,
 	onExportMarkdown,
 	onExportJson,
+	onReorderProjects,
 }: Props = $props();
+
+const REORDER_AUTO_SCROLL_STEP_PX = 14;
+const REORDER_GHOST_OFFSET_X_PX = 10;
+const REORDER_GHOST_FALLBACK_COLOR = TAG_COLORS.length > 0 ? TAG_COLORS[0] : "#FF5D5A";
 
 // Project collapse state (hydrated from persisted state in one-time effect)
 const collapsedProjects = new SvelteSet<string>();
@@ -156,6 +169,14 @@ const expandedProjects = $derived(
 		sessionGroups.map((group) => group.projectPath).filter((path) => !collapsedProjects.has(path))
 	)
 );
+const reorderState = new SidebarReorderState();
+const projectGroupElements = new Map<string, HTMLDivElement>();
+const projectHeaderFocusTargets = new Map<string, HTMLDivElement>();
+let sidebarContainer = $state<HTMLDivElement | null>(null);
+let dragPointerId = $state<number | null>(null);
+let lastDragPointerY = $state<number | null>(null);
+let autoScrollFrame = 0;
+let reorderAnnouncement = $state("");
 
 // Per-project files state
 const filesByProject = new SvelteMap<string, FileTreeNode[]>();
@@ -260,7 +281,174 @@ function toggleProject(projectPath: string) {
 			openBranchPickerProject = null;
 		}
 	}
-	onCollapsedProjectPathsChange?.([...collapsedProjects]);
+	notifyCollapsedProjectPathsChange();
+}
+
+function notifyCollapsedProjectPathsChange(): void {
+	onCollapsedProjectPathsChange?.(Array.from(collapsedProjects));
+}
+
+function registerProjectGroupElement(projectPath: string, node: HTMLDivElement | null): void {
+	if (node === null) {
+		projectGroupElements.delete(projectPath);
+		return;
+	}
+
+	projectGroupElements.set(projectPath, node);
+}
+
+function registerProjectHeaderFocusTarget(projectPath: string, node: HTMLDivElement | null): void {
+	if (node === null) {
+		projectHeaderFocusTargets.delete(projectPath);
+		return;
+	}
+
+	projectHeaderFocusTargets.set(projectPath, node);
+}
+
+function projectGroupElement(
+	node: HTMLDivElement,
+	projectPath: string
+): { update: (nextProjectPath: string) => void; destroy: () => void } {
+	let currentProjectPath = projectPath;
+	registerProjectGroupElement(currentProjectPath, node);
+
+	return {
+		update(nextProjectPath: string): void {
+			if (nextProjectPath === currentProjectPath) {
+				return;
+			}
+
+			projectGroupElements.delete(currentProjectPath);
+			currentProjectPath = nextProjectPath;
+			registerProjectGroupElement(currentProjectPath, node);
+		},
+		destroy(): void {
+			projectGroupElements.delete(currentProjectPath);
+		},
+	};
+}
+
+function projectHeaderFocusTarget(
+	node: HTMLDivElement,
+	projectPath: string
+): { update: (nextProjectPath: string) => void; destroy: () => void } {
+	let currentProjectPath = projectPath;
+	registerProjectHeaderFocusTarget(currentProjectPath, node);
+
+	return {
+		update(nextProjectPath: string): void {
+			if (nextProjectPath === currentProjectPath) {
+				return;
+			}
+
+			projectHeaderFocusTargets.delete(currentProjectPath);
+			currentProjectPath = nextProjectPath;
+			registerProjectHeaderFocusTarget(currentProjectPath, node);
+		},
+		destroy(): void {
+			projectHeaderFocusTargets.delete(currentProjectPath);
+		},
+	};
+}
+
+function getReorderGroupElements(): SidebarReorderGroupElement[] {
+	const elements: SidebarReorderGroupElement[] = [];
+	for (const group of sessionGroups) {
+		const element = projectGroupElements.get(group.projectPath);
+		if (element === undefined) {
+			continue;
+		}
+
+		elements.push({
+			projectPath: group.projectPath,
+			element,
+		});
+	}
+
+	return elements;
+}
+
+function getReorderGroupRects(): { top: number; bottom: number }[] {
+	const rects: { top: number; bottom: number }[] = [];
+	for (const group of getReorderGroupElements()) {
+		rects.push(group.element.getBoundingClientRect());
+	}
+	return rects;
+}
+
+function restoreDraggedProjectExpansion(projectPath: string | null): void {
+	if (projectPath === null) {
+		return;
+	}
+
+	if (reorderState.preCollapsedPaths.has(projectPath)) {
+		collapsedProjects.delete(projectPath);
+	} else {
+		collapsedProjects.add(projectPath);
+	}
+	notifyCollapsedProjectPathsChange();
+}
+
+function updateReorderPointer(clientY: number): void {
+	if (!reorderState.isDragging || sidebarContainer === null) {
+		return;
+	}
+
+	const containerRect = sidebarContainer.getBoundingClientRect();
+	reorderState.updatePointer(
+		clientY,
+		{ top: containerRect.top, bottom: containerRect.bottom },
+		getReorderGroupRects()
+	);
+	syncAutoScrollLoop();
+}
+
+function stopAutoScrollLoop(): void {
+	if (autoScrollFrame === 0) {
+		return;
+	}
+
+	cancelAnimationFrame(autoScrollFrame);
+	autoScrollFrame = 0;
+}
+
+function runAutoScrollStep(): void {
+	autoScrollFrame = 0;
+	if (
+		!reorderState.isDragging ||
+		reorderState.autoScrollDirection === null ||
+		sidebarContainer === null
+	) {
+		return;
+	}
+
+	const nextScrollTop =
+		reorderState.autoScrollDirection === "up"
+			? sidebarContainer.scrollTop - REORDER_AUTO_SCROLL_STEP_PX
+			: sidebarContainer.scrollTop + REORDER_AUTO_SCROLL_STEP_PX;
+	sidebarContainer.scrollTop = nextScrollTop;
+
+	if (lastDragPointerY !== null) {
+		updateReorderPointer(lastDragPointerY);
+	}
+
+	if (reorderState.autoScrollDirection !== null) {
+		autoScrollFrame = requestAnimationFrame(runAutoScrollStep);
+	}
+}
+
+function syncAutoScrollLoop(): void {
+	if (!reorderState.isDragging || reorderState.autoScrollDirection === null) {
+		stopAutoScrollLoop();
+		return;
+	}
+
+	if (autoScrollFrame !== 0) {
+		return;
+	}
+
+	autoScrollFrame = requestAnimationFrame(runAutoScrollStep);
 }
 
 function setProjectViewMode(projectPath: string, mode: ProjectViewMode) {
@@ -725,8 +913,280 @@ function handleOpenGitPanel(event: MouseEvent, projectPath: string) {
 }
 
 function handleProjectHeaderClick(projectPath: string) {
+	if (reorderState.isDragging) {
+		return;
+	}
 	toggleProject(projectPath);
 }
+
+function releaseSidebarPointerCapture(pointerId: number | null): void {
+	if (sidebarContainer === null || pointerId === null) {
+		return;
+	}
+
+	if (sidebarContainer.hasPointerCapture(pointerId)) {
+		sidebarContainer.releasePointerCapture(pointerId);
+	}
+}
+
+function handleProjectGripPointerDown(projectPath: string, event: PointerEvent): void {
+	if (event.button !== 0 || sidebarContainer === null || reorderState.isDragging) {
+		return;
+	}
+
+	const groupElements = getReorderGroupElements();
+	if (groupElements.length === 0) {
+		return;
+	}
+
+	lastDragPointerY = event.clientY;
+	dragPointerId = event.pointerId;
+	reorderState.startDrag(projectPath, groupElements, collapsedProjects);
+	collapsedProjects.add(projectPath);
+	notifyCollapsedProjectPathsChange();
+	sidebarContainer.setPointerCapture(event.pointerId);
+	updateReorderPointer(event.clientY);
+}
+
+function getProjectGroupByPath(projectPath: string): SessionGroup | null {
+	for (const group of sessionGroups) {
+		if (group.projectPath === projectPath) {
+			return group;
+		}
+	}
+
+	return null;
+}
+
+function getCurrentProjectOrder(): string[] {
+	const orderedPaths: string[] = [];
+	for (const group of sessionGroups) {
+		orderedPaths.push(group.projectPath);
+	}
+
+	return orderedPaths;
+}
+
+function isProjectOrderUnchanged(orderedPaths: string[]): boolean {
+	if (orderedPaths.length !== sessionGroups.length) {
+		return false;
+	}
+
+	for (let index = 0; index < orderedPaths.length; index += 1) {
+		if (orderedPaths[index] !== sessionGroups[index]?.projectPath) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+function announceProjectReorder(projectPath: string, orderedPaths: string[]): void {
+	const group = getProjectGroupByPath(projectPath);
+	const position = orderedPaths.indexOf(projectPath);
+
+	if (group === null || position < 0) {
+		return;
+	}
+
+	reorderAnnouncement = "";
+	queueMicrotask(() => {
+		reorderAnnouncement = m.project_reorder_announcement({
+			projectName: group.projectName,
+			position: position + 1,
+			total: orderedPaths.length,
+		});
+	});
+}
+
+function applyProjectOrder(projectPath: string, orderedPaths: string[]): void {
+	if (onReorderProjects === undefined || isProjectOrderUnchanged(orderedPaths)) {
+		return;
+	}
+
+	announceProjectReorder(projectPath, orderedPaths);
+	onReorderProjects(orderedPaths);
+}
+
+function getMovedProjectOrder(projectPath: string, offset: -1 | 1): string[] | null {
+	const orderedPaths = getCurrentProjectOrder();
+	const currentIndex = orderedPaths.indexOf(projectPath);
+	const nextIndex = currentIndex + offset;
+
+	if (currentIndex < 0 || nextIndex < 0 || nextIndex >= orderedPaths.length) {
+		return null;
+	}
+
+	const currentPath = orderedPaths[currentIndex];
+	const nextPath = orderedPaths[nextIndex];
+
+	if (currentPath === undefined || nextPath === undefined) {
+		return null;
+	}
+
+	orderedPaths[currentIndex] = nextPath;
+	orderedPaths[nextIndex] = currentPath;
+
+	return orderedPaths;
+}
+
+async function focusProjectContextTrigger(projectPath: string): Promise<void> {
+	await tick();
+	// V1 intentionally returns focus to the outer header wrapper instead of the bits-ui
+	// ContextMenu.Trigger because the wrapper is reliably focusable and still supports
+	// reopening the context menu with Shift+F10 for consecutive keyboard moves.
+	projectHeaderFocusTargets.get(projectPath)?.focus();
+}
+
+async function handleProjectContextMove(projectPath: string, offset: -1 | 1): Promise<void> {
+	const orderedPaths = getMovedProjectOrder(projectPath, offset);
+
+	if (orderedPaths === null) {
+		return;
+	}
+
+	applyProjectOrder(projectPath, orderedPaths);
+	await focusProjectContextTrigger(projectPath);
+}
+
+function finishProjectReorder(shouldCommit: boolean): void {
+	const draggedProjectPath = reorderState.draggedProjectPath;
+
+	if (shouldCommit) {
+		const orderedPaths = reorderState.commitDrop(sessionGroups);
+		restoreDraggedProjectExpansion(draggedProjectPath);
+		if (draggedProjectPath !== null) {
+			applyProjectOrder(draggedProjectPath, orderedPaths);
+		}
+	} else {
+		reorderState.cancelDrag();
+		restoreDraggedProjectExpansion(draggedProjectPath);
+	}
+
+	stopAutoScrollLoop();
+	lastDragPointerY = null;
+	releaseSidebarPointerCapture(dragPointerId);
+	dragPointerId = null;
+}
+
+function handleSidebarPointerMove(event: PointerEvent): void {
+	if (!reorderState.isDragging) {
+		return;
+	}
+
+	lastDragPointerY = event.clientY;
+	updateReorderPointer(event.clientY);
+}
+
+function handleSidebarPointerUp(event: PointerEvent): void {
+	if (!reorderState.isDragging || sidebarContainer === null) {
+		return;
+	}
+
+	const sidebarRect = sidebarContainer.getBoundingClientRect();
+	const pointerInsideSidebar =
+		event.clientX >= sidebarRect.left &&
+		event.clientX <= sidebarRect.right &&
+		event.clientY >= sidebarRect.top &&
+		event.clientY <= sidebarRect.bottom;
+
+	finishProjectReorder(pointerInsideSidebar && reorderState.insertionIndex !== null);
+}
+
+function handleSidebarPointerCancel(): void {
+	if (!reorderState.isDragging) {
+		return;
+	}
+
+	finishProjectReorder(false);
+}
+
+function handleSidebarKeyDown(event: KeyboardEvent): void {
+	if (event.key !== "Escape" || !reorderState.isDragging) {
+		return;
+	}
+
+	event.preventDefault();
+	finishProjectReorder(false);
+}
+
+const draggedProjectGroup = $derived.by(() => {
+	const draggedProjectPath = reorderState.draggedProjectPath;
+	if (draggedProjectPath === null) {
+		return null;
+	}
+
+	for (const group of sessionGroups) {
+		if (group.projectPath === draggedProjectPath) {
+			return group;
+		}
+	}
+
+	return null;
+});
+
+const insertionLineTop = $derived.by(() => {
+	if (
+		!reorderState.isDragging ||
+		reorderState.insertionIndex === null ||
+		sidebarContainer === null ||
+		draggedProjectGroup === null
+	) {
+		return null;
+	}
+
+	const candidateElements: HTMLDivElement[] = [];
+	for (const group of sessionGroups) {
+		if (group.projectPath === draggedProjectGroup.projectPath) {
+			continue;
+		}
+
+		const element = projectGroupElements.get(group.projectPath);
+		if (element === undefined) {
+			continue;
+		}
+
+		candidateElements.push(element);
+	}
+
+	if (candidateElements.length === 0) {
+		return null;
+	}
+
+	const containerRect = sidebarContainer.getBoundingClientRect();
+	const targetIndex = reorderState.insertionIndex;
+	const edgeRect =
+		targetIndex <= 0
+			? candidateElements[0]?.getBoundingClientRect()
+			: targetIndex >= candidateElements.length
+				? candidateElements[candidateElements.length - 1]?.getBoundingClientRect()
+				: candidateElements[targetIndex]?.getBoundingClientRect();
+
+	if (edgeRect === undefined) {
+		return null;
+	}
+
+	const viewportTop =
+		targetIndex <= 0
+			? edgeRect.top
+			: targetIndex >= candidateElements.length
+				? edgeRect.bottom
+				: edgeRect.top;
+
+	return viewportTop - containerRect.top + sidebarContainer.scrollTop - 1;
+});
+
+const ghostOverlayLeft = $derived.by(() => {
+	if (sidebarContainer === null) {
+		return null;
+	}
+
+	return sidebarContainer.getBoundingClientRect().left + REORDER_GHOST_OFFSET_X_PX;
+});
+
+const ghostOverlayColor = $derived(
+	draggedProjectGroup?.projectColor ? draggedProjectGroup.projectColor : REORDER_GHOST_FALLBACK_COLOR
+);
 
 // ─── Branch picker ───────────────────────────────────────────────
 
@@ -847,17 +1307,27 @@ function openCreateBranchDialog(projectPath: string): void {
 }
 </script>
 
-<div class="flex h-full flex-col gap-2" data-thread-list-scrollable>
+<svelte:window onkeydown={handleSidebarKeyDown} />
+
+<div
+	class="relative flex h-full min-h-0 flex-col gap-2 overflow-y-auto outline-none"
+	data-thread-list-scrollable
+	bind:this={sidebarContainer}
+	onpointermove={handleSidebarPointerMove}
+	onpointerup={handleSidebarPointerUp}
+	onpointercancel={handleSidebarPointerCancel}
+>
 	{#if loading && !scanning && sessionGroups.every((g) => g.sessions.length === 0)}
 		<!-- Initial loading (no sessions cached yet): real project headers + session list skeleton -->
 		{#if sessionGroups.length > 0}
 			<div class="flex flex-col flex-1 min-h-0 gap-0.5">
-				{#each sessionGroups as group (group.projectPath)}
+				{#each sessionGroups as group, projectIndex (group.projectPath)}
 					{@const viewMode = getProjectViewMode(group.projectPath)}
 					<div class="flex min-w-0 flex-col overflow-hidden rounded-md bg-card/75">
 						<!-- Real project header (only sessions are loading) -->
 						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 						<div
+							use:projectHeaderFocusTarget={group.projectPath}
 							class="shrink-0 flex items-center"
 							role={projectPathShowingAgentStrip === group.projectPath ? undefined : "button"}
 							tabindex={projectPathShowingAgentStrip === group.projectPath ? undefined : 0}
@@ -910,6 +1380,8 @@ function openCreateBranchDialog(projectPath: string): void {
 											projectName={group.projectName}
 											projectIconSrc={group.projectIconSrc}
 											expanded={true}
+											draggable={false}
+											onGripPointerDown={(event) => handleProjectGripPointerDown(group.projectPath, event)}
 											class="group min-w-0 flex-1 cursor-pointer transition-colors"
 										>
 											{#snippet actions()}
@@ -974,6 +1446,29 @@ function openCreateBranchDialog(projectPath: string): void {
 										</ProjectHeader>
 									</ContextMenu.Trigger>
 									<ContextMenu.Content class="min-w-[180px] p-1 text-[11px]">
+										<ContextMenu.Item
+											disabled={onReorderProjects === undefined || projectIndex === 0}
+											onSelect={() => {
+												void handleProjectContextMove(group.projectPath, -1);
+											}}
+										>
+											<ArrowUp class="mr-2 h-3.5 w-3.5" weight="bold" />
+											{m.project_move_up()}
+										</ContextMenu.Item>
+										<ContextMenu.Item
+											disabled={
+												onReorderProjects === undefined || projectIndex === sessionGroups.length - 1
+											}
+											onSelect={() => {
+												void handleProjectContextMove(group.projectPath, 1);
+											}}
+										>
+											<ArrowDown class="mr-2 h-3.5 w-3.5" weight="bold" />
+											{m.project_move_down()}
+										</ContextMenu.Item>
+										{#if onChangeProjectIcon || (onResetProjectIcon && group.projectIconSrc)}
+											<ContextMenu.Separator />
+										{/if}
 										{#if onChangeProjectIcon}
 											<ContextMenu.Item onclick={() => onChangeProjectIcon(group.projectPath)}>
 												<ImageSquare class="mr-2 h-3.5 w-3.5" weight="fill" />
@@ -1009,8 +1504,8 @@ function openCreateBranchDialog(projectPath: string): void {
 		<!-- Session groups - expanded sections share available space equally -->
 		{@const expandedCount = expandedProjects.size}
 		{@const maxHeightPercent = expandedCount > 0 ? 100 / expandedCount : 100}
-		<div class="flex flex-col flex-1 min-h-0 gap-0.5">
-			{#each sessionGroups as group (group.projectPath)}
+		<div class="relative flex flex-col flex-1 min-h-0 gap-0.5">
+			{#each sessionGroups as group, projectIndex (group.projectPath)}
 				{@const isExpanded = expandedProjects.has(group.projectPath)}
 				{@const viewMode = getProjectViewMode(group.projectPath)}
 				{@const filesLoading = loadingFilesProjects.has(group.projectPath)}
@@ -1021,10 +1516,12 @@ function openCreateBranchDialog(projectPath: string): void {
 					style={isExpanded
 						? `flex: 0 1 auto; max-height: ${maxHeightPercent}%; min-height: 0;`
 						: "flex: 0 0 auto;"}
+					use:projectGroupElement={group.projectPath}
 				>
 				<!-- Project header -->
 				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 				<div
+					use:projectHeaderFocusTarget={group.projectPath}
 					class="shrink-0 flex items-center"
 					role={projectPathShowingAgentStrip === group.projectPath ? undefined : "button"}
 					tabindex={projectPathShowingAgentStrip === group.projectPath ? undefined : 0}
@@ -1077,6 +1574,8 @@ function openCreateBranchDialog(projectPath: string): void {
 									projectName={group.projectName}
 									projectIconSrc={group.projectIconSrc}
 									expanded={isExpanded}
+									draggable={true}
+									onGripPointerDown={(event) => handleProjectGripPointerDown(group.projectPath, event)}
 									class="group min-w-0 flex-1 cursor-pointer transition-colors"
 								>
 									{#snippet actions()}
@@ -1141,6 +1640,27 @@ function openCreateBranchDialog(projectPath: string): void {
 								</ProjectHeader>
 							</ContextMenu.Trigger>
 							<ContextMenu.Content class="min-w-[180px] p-1 text-[11px]">
+								<ContextMenu.Item
+									disabled={onReorderProjects === undefined || projectIndex === 0}
+									onSelect={() => {
+										void handleProjectContextMove(group.projectPath, -1);
+									}}
+								>
+									<ArrowUp class="mr-2 h-3.5 w-3.5" weight="bold" />
+									{m.project_move_up()}
+								</ContextMenu.Item>
+								<ContextMenu.Item
+									disabled={onReorderProjects === undefined || projectIndex === sessionGroups.length - 1}
+									onSelect={() => {
+										void handleProjectContextMove(group.projectPath, 1);
+									}}
+								>
+									<ArrowDown class="mr-2 h-3.5 w-3.5" weight="bold" />
+									{m.project_move_down()}
+								</ContextMenu.Item>
+								{#if onChangeProjectIcon || (onResetProjectIcon && group.projectIconSrc)}
+									<ContextMenu.Separator />
+								{/if}
 								{#if onChangeProjectIcon}
 									<ContextMenu.Item onclick={() => onChangeProjectIcon(group.projectPath)}>
 										<ImageSquare class="mr-2 h-3.5 w-3.5" weight="fill" />
@@ -1454,6 +1974,14 @@ function openCreateBranchDialog(projectPath: string): void {
 				</div>
 			{/each}
 
+			{#if insertionLineTop !== null}
+				<div
+					aria-hidden="true"
+					class="pointer-events-none absolute left-2 right-2 z-20 h-0.5 rounded-full bg-primary"
+					style={`top: ${insertionLineTop}px;`}
+				></div>
+			{/if}
+
 			<!-- Trailing project card skeletons while scanning -->
 			{#if scanning && sessionGroups.length > 0}
 				<div class="shrink-0 flex flex-col gap-0.5 opacity-50">
@@ -1464,6 +1992,23 @@ function openCreateBranchDialog(projectPath: string): void {
 			{/if}
 		</div>
 	{/if}
+
+	{#if reorderState.isDragging && draggedProjectGroup !== null && reorderState.ghostY !== null && ghostOverlayLeft !== null}
+		<div
+			aria-hidden="true"
+			class="pointer-events-none fixed z-50 flex h-7 w-7 items-center justify-center rounded-md bg-card/60 opacity-50 shadow-lg backdrop-blur-sm"
+			style={`left: ${ghostOverlayLeft}px; top: ${reorderState.ghostY}px; transform: translateY(-50%);`}
+		>
+			<ProjectLetterBadge
+				name={draggedProjectGroup.projectName}
+				color={ghostOverlayColor}
+				iconSrc={draggedProjectGroup.projectIconSrc}
+				size={16}
+				draggable={true}
+			/>
+		</div>
+	{/if}
+	<span class="sr-only" role="status" aria-live="polite">{reorderAnnouncement}</span>
 </div>
 
 <!-- New file dialog -->
