@@ -4,6 +4,7 @@ import { ThemeToggle } from "$lib/components/theme/index.js";
 import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";
 import { Switch } from "$lib/components/ui/switch/index.js";
 import * as m from "$lib/messages.js";
+import { getAnalyticsPreferencesStore } from "$lib/stores/analytics-preferences-store.svelte.js";
 import { getAttentionQueueStore } from "$lib/stores/attention-queue-store.svelte.js";
 import { getNotificationPreferencesStore } from "$lib/stores/notification-preferences-store.svelte.js";
 import { settings } from "$lib/utils/tauri-client/settings.js";
@@ -13,6 +14,7 @@ import SettingsSectionHeader from "../settings-section-header.svelte";
 
 const notifPrefs = getNotificationPreferencesStore();
 const attentionQueue = getAttentionQueueStore();
+const analyticsPrefs = getAnalyticsPreferencesStore();
 
 let showResetConfirm = $state(false);
 
@@ -73,6 +75,23 @@ async function handleResetDatabase() {
 				checked={attentionQueue.enabled}
 				onCheckedChange={(checked) => {
 					void attentionQueue.setEnabled(checked === true);
+				}}
+			/>
+		</SettingsControlCard>
+	</SettingsSection>
+
+	<SettingsSection
+		title="Telemetry"
+		description="Control anonymous usage and crash reporting."
+	>
+		<SettingsControlCard
+			label="Share anonymous usage data"
+			description="Sends anonymous app-open events to PostHog and crash reports to Sentry. No code, prompts, or file contents are collected."
+		>
+			<Switch
+				checked={analyticsPrefs.enabled}
+				onCheckedChange={(checked) => {
+					void analyticsPrefs.setEnabled(checked === true);
 				}}
 			/>
 		</SettingsControlCard>

@@ -63,6 +63,7 @@ import {
 import * as m from "$lib/messages.js";
 import type { PlanData } from "$lib/services/converted-session-types.js";
 import { createPreconnectionAgentSkillsStore } from "$lib/skills/store/preconnection-agent-skills-store.svelte.js";
+import { createAnalyticsPreferencesStore } from "$lib/stores/analytics-preferences-store.svelte.js";
 import { createAttentionQueueStore } from "$lib/stores/attention-queue-store.svelte.js";
 import { createDismissedTipsStore } from "$lib/stores/dismissed-tips-store.svelte.js";
 import { createNotificationPreferencesStore } from "$lib/stores/notification-preferences-store.svelte.js";
@@ -169,6 +170,7 @@ const chatPreferencesStore = createChatPreferencesStore();
 // Notification popup stores
 const windowFocusStore = createWindowFocusStore();
 const notificationPrefsStore = createNotificationPreferencesStore();
+const analyticsPrefsStore = createAnalyticsPreferencesStore();
 const attentionQueueStore = createAttentionQueueStore();
 const dismissedTipsStore = createDismissedTipsStore();
 void dismissedTipsStore.initialize();
@@ -929,6 +931,7 @@ onMount(async () => {
 	// Initialize notification popup stores
 	windowFocusStore.initialize();
 	notificationPrefsStore.initialize();
+	void analyticsPrefsStore.initialize();
 	void attentionQueueStore.initialize();
 
 	// Initialize voice settings (loads persisted prefs + model list from backend)

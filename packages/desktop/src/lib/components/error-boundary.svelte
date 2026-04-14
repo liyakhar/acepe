@@ -15,6 +15,7 @@ import { toast } from "svelte-sonner";
 import CopyButton from "$lib/acp/components/messages/copy-button.svelte";
 import { TIMING } from "$lib/acp/constants/timing.js";
 import { loadCursorTheme } from "$lib/acp/utils/shiki-theme.js";
+import { captureException } from "$lib/analytics.js";
 import * as m from "$lib/messages.js";
 
 interface Props {
@@ -106,6 +107,7 @@ onMount(() => {
 		}
 
 		error = err;
+		captureException(err, { source: "window.error" });
 	};
 
 	const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
@@ -136,6 +138,7 @@ onMount(() => {
 		}
 
 		error = err;
+		captureException(err, { source: "window.unhandledrejection" });
 	};
 
 	window.addEventListener("error", handleError);
