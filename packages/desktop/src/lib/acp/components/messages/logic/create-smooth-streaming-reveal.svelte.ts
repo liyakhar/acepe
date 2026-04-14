@@ -3,10 +3,10 @@ import type { RevealMode } from "./streaming-reveal-engine.js";
 
 const PAUSE_THRESHOLD_MS = 120;
 const FLUSH_INTERVAL_MS = 60;
-const STREAMING_MIN_CHARS_PER_FLUSH = 80;
-const STREAMING_MAX_CHARS_PER_FLUSH = 200;
-const COMPLETION_MIN_CHARS_PER_FLUSH = 200;
-const COMPLETION_MAX_CHARS_PER_FLUSH = 400;
+const STREAMING_MIN_CHARS_PER_FLUSH = 40;
+const STREAMING_MAX_CHARS_PER_FLUSH = 100;
+const COMPLETION_MIN_CHARS_PER_FLUSH = 100;
+const COMPLETION_MAX_CHARS_PER_FLUSH = 200;
 function clamp(value: number, minimum: number, maximum: number): number {
 	return Math.max(minimum, Math.min(value, maximum));
 }

@@ -59,7 +59,7 @@ describe("createSmoothStreamingReveal", () => {
 		expect(reveal.displayedText).toBe("");
 
 		flushNextFrame(64);
-		expect(reveal.displayedText.length).toBeGreaterThanOrEqual(80);
+		expect(reveal.displayedText.length).toBeGreaterThanOrEqual(40);
 		expect(reveal.displayedText.length).toBeLessThan(text.length);
 		expect(reveal.isRevealActive).toBe(true);
 	});
@@ -108,7 +108,7 @@ describe("createSmoothStreamingReveal", () => {
 		flushNextFrame(48);
 		flushNextFrame(64);
 		const streamingLength = reveal.displayedText.length;
-		expect(streamingLength).toBeGreaterThanOrEqual(80);
+		expect(streamingLength).toBeGreaterThanOrEqual(40);
 
 		reveal.setState(text, false);
 		expect(reveal.mode).toBe("completion-catchup");
