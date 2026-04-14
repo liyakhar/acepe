@@ -267,6 +267,9 @@ export async function setAnalyticsEnabled(enabled: boolean): Promise<void> {
 
 	if (!analyticsInitialized) {
 		await initAnalytics();
+		// initAnalytics() reads the persisted preference and may have overwritten
+		// analyticsEnabled; re-apply the caller's intent here.
+		analyticsEnabled = enabled;
 	}
 
 	if (!posthogInitialized) {

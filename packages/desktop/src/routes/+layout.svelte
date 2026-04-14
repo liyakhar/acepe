@@ -10,7 +10,8 @@ import { Toaster } from "$lib/components/ui/sonner/index.js";
 import { TooltipProvider } from "$lib/components/ui/tooltip/index.js";
 
 onMount(async () => {
-	await initAnalytics();
+	// Fire-and-forget — nothing downstream depends on analytics being ready
+	void initAnalytics();
 
 	// Register Cursor theme with pierre/diffs BEFORE initializing highlighter
 	// This must complete before the highlighter tries to use the theme
