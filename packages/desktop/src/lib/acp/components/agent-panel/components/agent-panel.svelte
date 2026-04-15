@@ -44,6 +44,7 @@ import { createLogger } from "../../../utils/logger.js";
 import { sessionEntriesToMarkdown } from "../../../utils/session-to-markdown.js";
 import AgentInput from "../../agent-input/agent-input-ui.svelte";
 import { shouldDisableSendForFailedFirstSend } from "../../agent-input/logic/first-send-recovery.js";
+import type { Attachment } from "../../agent-input/types/attachment.js";
 import { CheckpointTimeline } from "../../checkpoint/index.js";
 import { aggregateFileEdits } from "../../modified-files/logic/aggregate-file-edits.js";
 import { getReviewStatusByFilePath } from "../../modified-files/logic/review-progress.js";
@@ -80,6 +81,7 @@ import {
 	removeWorktreeAndMarkSessionWorktreeDeleted,
 	reduceWorktreeSetupEvent,
 	resolveEffectiveProjectPath,
+	resolveVisibleSessionEntries,
 	shouldConfirmWorktreeClose,
 } from "../logic";
 import { resolveAgentPanelWorktreePending } from "../logic/worktree-pending.js";
@@ -367,6 +369,14 @@ const sessionIsStreaming = $derived(runtimeState?.activityPhase === "running");
 const sessionCanSubmit = $derived(runtimeState?.canSubmit ?? false);
 const sessionShowStop = $derived(runtimeState?.showStop ?? false);
 const sessionConnectionError = $derived(sessionHotState?.connectionError ?? null);
+const activeTurnError = $derived.by(() => {
+	if (sessionHotState?.turnState !== "error") {
+		return null;
+	}
+
+	const lastEntry = sessionEntries.at(-1);
+	return lastEntry?.type === "error" ? lastEntry.message : null;
+});
 const disableSendForFailedFirstSend = $derived(
 	panelConnectionState
 		? shouldDisableSendForFailedFirstSend({
@@ -380,6 +390,8 @@ const errorInfo = $derived.by(() =>
 		panelConnectionState,
 		panelConnectionError,
 		sessionConnectionError,
+		sessionTurnState: sessionHotState?.turnState,
+		activeTurnError,
 	})
 );
 
@@ -392,6 +404,13 @@ $effect(() => {
 });
 
 const showInlineErrorCard = $derived(errorInfo.showError && !errorDismissed);
+const visibleSessionEntries = $derived.by(() =>
+	resolveVisibleSessionEntries({
+		sessionEntries,
+		showInlineErrorCard,
+		activeTurnError,
+	})
+);
 
 // Panel view state: single discriminated union from all inputs
 const viewStateInput = $derived({
@@ -633,7 +652,10 @@ let streamingShipData = $state<import("../../ship-card/ship-card-parser.js").Shi
 let prCardRenderKey = $state(0);
 let worktreeSetupState = $state<WorktreeSetupState | null>(null);
 let preSessionWorktreeFailure = $state<string | null>(null);
-let agentInputRef = $state<{ retrySend: () => void } | null>(null);
+let agentInputRef = $state<{
+	retrySend: () => void;
+	restoreQueuedMessage: (draft: string, attachments: readonly Attachment[]) => void;
+} | null>(null);
 let headerRef: HTMLElement | undefined = $state();
 const pendingWorktreeSetup = $derived(panelHotState ? panelHotState.pendingWorktreeSetup : null);
 const worktreeSetupMatchContext = $derived.by(() => {
@@ -1800,7 +1822,7 @@ const queueIsPaused = $derived(sessionId ? messageQueueStore.pausedIds.has(sessi
 			{#if showCheckpointTimeline && sessionProjectPath && sessionId}
 				<CheckpointTimeline
 					{sessionId}
-					{sessionEntries}
+					sessionEntries={visibleSessionEntries}
 					sessionProjectPath={effectiveProjectPath ?? sessionProjectPath}
 					{allProjects}
 					bind:scrollContainer
@@ -1911,8 +1933,8 @@ const queueIsPaused = $derived(sessionId ? messageQueueStore.pausedIds.has(sessi
 						<div class="flex flex-col gap-0.5 px-5">
 							{#if showInlineErrorCard}
 								<AgentErrorCard
-									title="Connection error"
-									summary={errorInfo.details?.split("\n")[0]?.slice(0, 80) ?? "Failed to connect to agent"}
+									title={errorInfo.title}
+									summary={errorInfo.summary ?? "Failed to connect to agent"}
 									details={errorInfo.details ?? "Unknown error"}
 									onRetry={handleRetryConnection}
 									onDismiss={handleDismissError}
@@ -2079,16 +2101,21 @@ const queueIsPaused = $derived(sessionId ? messageQueueStore.pausedIds.has(sessi
 									pausedLabel={m.agent_input_queue_paused()}
 									resumeLabel={m.agent_input_queue_resume()}
 									clearLabel={m.agent_input_queue_clear()}
-									editLabel={m.common_edit()}
-									deleteLabel={m.common_delete()}
-									sendLabel={m.agent_input_send_message()}
-									saveLabel={m.common_save()}
+									sendLabel={m.agent_input_queue_send_now()}
 									cancelLabel={m.common_cancel()}
-									onSaveEdit={(messageId, content) => {
-										if (sessionId) messageQueueStore.updateMessage(sessionId, messageId, content);
-									}}
-									onRemove={(messageId) => {
-										if (sessionId) messageQueueStore.removeMessage(sessionId, messageId);
+									onCancel={(messageId) => {
+										if (!sessionId || !agentInputRef) {
+											return;
+										}
+										const queuedMessage = queueMessages.find((message) => message.id === messageId);
+										if (!queuedMessage) {
+											return;
+										}
+										agentInputRef.restoreQueuedMessage(
+											queuedMessage.content,
+											queuedMessage.attachments
+										);
+										messageQueueStore.removeMessage(sessionId, messageId);
 									}}
 									onRemoveAttachment={(messageId, attachmentId) => {
 										if (sessionId) messageQueueStore.removeAttachmentFromMessage(sessionId, messageId, attachmentId);

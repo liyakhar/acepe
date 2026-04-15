@@ -3,30 +3,20 @@ pub(crate) use parser::{
     events_jsonl_path_for_session, missing_transcript_marker, resolve_copilot_session_state_root,
 };
 
-use crate::acp::client::AcpClient;
-use crate::acp::event_hub::{AcpEventEnvelope, AcpEventHubState};
-use crate::acp::parsers::AgentType;
-use crate::acp::provider::AgentProvider;
-use crate::acp::providers::copilot::CopilotProvider;
 use crate::acp::session_descriptor::SessionReplayContext;
-use crate::acp::session_update::{SessionUpdate, ToolArguments, ToolCallData};
+use crate::acp::session_update::{
+    SessionUpdate, ToolArguments, ToolCallData, TurnErrorData, TurnErrorKind,
+};
 use crate::acp::types::ContentBlock;
-use crate::db::repository::SessionJournalEventRepository;
 use crate::session_converter::{calculate_todo_timing, merge_tool_call_update};
 use crate::session_jsonl::types::{
     ConvertedSession, SessionStats, StoredAssistantChunk, StoredAssistantMessage,
-    StoredContentBlock, StoredEntry, StoredUserMessage,
+    StoredContentBlock, StoredEntry, StoredErrorMessage, StoredUserMessage,
 };
 use chrono::{TimeZone, Utc};
-use sea_orm::DbConn;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
-use tauri::{AppHandle, Manager};
-
-const REPLAY_IDLE_TIMEOUT: Duration = Duration::from_millis(500);
-const REPLAY_MAX_WAIT: Duration = Duration::from_secs(5);
+use tauri::AppHandle;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopilotListedSession {
     pub session_id: String,
@@ -45,161 +35,45 @@ pub async fn list_workspace_sessions(
 }
 
 pub async fn load_session(
-    app: &AppHandle,
+    _app: &AppHandle,
     replay_context: &SessionReplayContext,
-    cwd: &str,
+    _cwd: &str,
     title: &str,
 ) -> Result<Option<ConvertedSession>, String> {
-    if let Some(source_path) = replay_context.source_path.as_deref() {
-        if !source_path.is_empty() && !parser::is_missing_transcript_marker(source_path) {
-            let session_state_root = parser::resolve_copilot_session_state_root()?;
-            match parser::parse_copilot_session_at_root(
-                &session_state_root,
-                Path::new(source_path),
-                title,
-            )
-            .await
-            {
-                Ok(converted) => return Ok(Some(converted)),
-                Err(error) => {
-                    tracing::info!(
-                        session_id = %replay_context.local_session_id,
-                        source_path = %source_path,
-                        error = %error,
-                        "Falling back to ACP replay for Copilot session"
-                    );
-                }
-            }
+    let session_state_root = parser::resolve_copilot_session_state_root()?;
+    let transcript_path = resolve_transcript_path(&session_state_root, replay_context);
+
+    match parser::parse_copilot_session_at_root(&session_state_root, &transcript_path, title).await
+    {
+        Ok(converted) => Ok(Some(converted)),
+        Err(error) => {
+            tracing::info!(
+                session_id = %replay_context.local_session_id,
+                history_session_id = %replay_context.history_session_id,
+                transcript_path = %transcript_path.display(),
+                error = %error,
+                "Copilot session disk parse failed"
+            );
+            Ok(None)
         }
     }
-
-    // Next fallback: load from session journal (events persisted during live session).
-    if let Some(converted) =
-        load_session_from_journal(app, &replay_context.local_session_id, title).await
-    {
-        return Ok(Some(converted));
-    }
-
-    // Slow path: ACP replay fallback for sessions without a usable transcript or journal
-    // (e.g., sessions created before journal was introduced, or external Copilot sessions).
-    load_session_via_acp_replay(app, replay_context, cwd, title).await
 }
 
-/// Load a Copilot session by replaying persisted journal events from the database.
-/// Returns `None` if no journal events exist for this session.
-async fn load_session_from_journal(
-    app: &AppHandle,
-    session_id: &str,
-    title: &str,
-) -> Option<ConvertedSession> {
-    let db = app
-        .try_state::<DbConn>()
-        .map(|state| state.inner().clone())?;
-
-    let rows = SessionJournalEventRepository::list_serialized(&db, session_id)
-        .await
-        .ok()?;
-
-    if rows.is_empty() {
-        return None;
-    }
-
-    let replay_context = crate::acp::session_descriptor::SessionReplayContext {
-        local_session_id: session_id.to_string(),
-        history_session_id: session_id.to_string(),
-        agent_id: crate::acp::types::CanonicalAgentId::Copilot,
-        parser_agent_type: AgentType::Copilot,
-        project_path: String::new(),
-        worktree_path: None,
-        effective_cwd: String::new(),
-        source_path: None,
-        compatibility: crate::acp::session_descriptor::SessionDescriptorCompatibility::Canonical,
-    };
-
-    let events =
-        crate::acp::session_journal::decode_serialized_events(&replay_context, rows).ok()?;
-
-    let updates: Vec<(u64, SessionUpdate)> = events
-        .into_iter()
-        .filter_map(|event| {
-            if let crate::acp::session_journal::SessionJournalEventPayload::ProjectionUpdate {
-                update,
-            } = event.payload
-            {
-                Some((
-                    event.created_at_ms.max(0) as u64,
-                    update.into_session_update(),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if updates.is_empty() {
-        return None;
-    }
-
-    tracing::info!(
-        session_id = %session_id,
-        journal_events = updates.len(),
-        "Loaded Copilot session from journal"
-    );
-
-    Some(convert_replay_updates_to_session(
-        session_id, title, &updates,
-    ))
-}
-
-/// Fallback: load a Copilot session by spawning a Copilot process and replaying via ACP.
-async fn load_session_via_acp_replay(
-    app: &AppHandle,
+fn resolve_transcript_path(
+    session_state_root: &Path,
     replay_context: &SessionReplayContext,
-    cwd: &str,
-    title: &str,
-) -> Result<Option<ConvertedSession>, String> {
-    let provider = Arc::new(CopilotProvider);
-    if !provider.is_available() {
-        return Ok(None);
-    }
-
-    let hub = app.state::<Arc<AcpEventHubState>>();
-    let mut receiver = hub.subscribe();
-    let mut client = AcpClient::new_with_provider(provider, Some(app.clone()), PathBuf::from(cwd))
-        .map_err(|error| format!("Failed to create Copilot session loader: {error}"))?;
-
-    client
-        .start()
-        .await
-        .map_err(|error| format!("Failed to start Copilot session loader: {error}"))?;
-    client
-        .initialize()
-        .await
-        .map_err(|error| format!("Failed to initialize Copilot session loader: {error}"))?;
-
-    let load_result = client
-        .load_session(replay_context.history_session_id.clone(), cwd.to_string())
-        .await;
-    let replay_updates = collect_replay_updates(
-        &mut receiver,
-        &replay_context.history_session_id,
-        replay_context.parser_agent_type,
-    )
-    .await;
-    client.stop();
-
-    match load_result {
-        Ok(_) => Ok(Some(convert_replay_updates_to_session(
-            &replay_context.local_session_id,
-            title,
-            &replay_updates,
-        ))),
-        Err(crate::acp::error::AcpError::SessionNotFound(_)) => Ok(None),
-        Err(error) => Err(format!("Failed to load Copilot session: {error}")),
+) -> PathBuf {
+    match replay_context.source_path.as_deref() {
+        Some(source_path)
+            if !source_path.is_empty() && !parser::is_missing_transcript_marker(source_path) =>
+        {
+            PathBuf::from(source_path)
+        }
+        _ => events_jsonl_path_for_session(session_state_root, &replay_context.history_session_id),
     }
 }
 
-pub fn convert_replay_updates_to_session(
+pub(crate) fn convert_replay_updates_to_session(
     session_id: &str,
     title: &str,
     updates: &[(u64, SessionUpdate)],
@@ -215,62 +89,6 @@ pub fn convert_replay_updates_to_session(
 
     accumulator.finish(session_id, title)
 }
-
-async fn collect_replay_updates(
-    receiver: &mut tokio::sync::broadcast::Receiver<AcpEventEnvelope>,
-    session_id: &str,
-    replay_agent: AgentType,
-) -> Vec<(u64, SessionUpdate)> {
-    let started = tokio::time::Instant::now();
-    let mut updates = Vec::new();
-
-    loop {
-        let elapsed = started.elapsed();
-        if elapsed >= REPLAY_MAX_WAIT {
-            break;
-        }
-
-        let remaining_total = REPLAY_MAX_WAIT.saturating_sub(elapsed);
-        let wait = remaining_total.min(REPLAY_IDLE_TIMEOUT);
-
-        match tokio::time::timeout(wait, receiver.recv()).await {
-            Ok(Ok(envelope)) => {
-                if envelope.event_name != "acp-session-update" {
-                    continue;
-                }
-
-                if envelope.session_id.as_deref() != Some(session_id) {
-                    continue;
-                }
-
-                match crate::acp::agent_context::with_agent(replay_agent, || {
-                    serde_json::from_value::<SessionUpdate>(envelope.payload)
-                }) {
-                    Ok(update) => updates.push((envelope.emitted_at_ms, update)),
-                    Err(error) => {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            error = %error,
-                            "Failed to deserialize Copilot replay update from event hub"
-                        );
-                    }
-                }
-            }
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped))) => {
-                tracing::warn!(
-                    session_id = %session_id,
-                    skipped = skipped,
-                    "Lagged while collecting Copilot replay updates"
-                );
-            }
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
-            Err(_) => break,
-        }
-    }
-
-    updates
-}
-
 fn fallback_title(session_id: &str) -> String {
     let short_id = &session_id[..8.min(session_id.len())];
     format!("Session {short_id}")
@@ -325,6 +143,50 @@ fn combine_user_blocks(chunks: &[StoredContentBlock]) -> StoredContentBlock {
         block_type: "text".to_string(),
         text: Some(texts.join("")),
     }
+}
+
+fn turn_error_message(error: &TurnErrorData) -> &str {
+    match error {
+        TurnErrorData::Legacy(message) => message.as_str(),
+        TurnErrorData::Structured(info) => info.message.as_str(),
+    }
+}
+
+fn stored_error_message_from_turn_error(error: &TurnErrorData) -> StoredErrorMessage {
+    match error {
+        TurnErrorData::Legacy(message) => StoredErrorMessage {
+            content: message.clone(),
+            code: None,
+            kind: TurnErrorKind::Recoverable,
+        },
+        TurnErrorData::Structured(info) => StoredErrorMessage {
+            content: info.message.clone(),
+            code: info.code.map(|code| code.to_string()),
+            kind: info.kind,
+        },
+    }
+}
+
+fn assistant_message_matches_turn_error(
+    message: &StoredAssistantMessage,
+    error_message: &str,
+) -> bool {
+    if message.chunks.len() != 1 {
+        return false;
+    }
+
+    let Some(chunk) = message.chunks.first() else {
+        return false;
+    };
+    if chunk.chunk_type != "message" {
+        return false;
+    }
+
+    let Some(text) = chunk.block.text.as_deref() else {
+        return false;
+    };
+
+    text.trim() == error_message.trim()
 }
 
 fn merge_replay_tool_arguments(current: ToolArguments, incoming: ToolArguments) -> ToolArguments {
@@ -561,6 +423,7 @@ struct ReplayAccumulator {
     tool_call_indices: HashMap<String, usize>,
     next_user_index: usize,
     next_assistant_index: usize,
+    next_error_index: usize,
     last_assistant_key: Option<String>,
     first_event_timestamp: Option<String>,
 }
@@ -573,6 +436,7 @@ impl ReplayAccumulator {
             tool_call_indices: HashMap::new(),
             next_user_index: 1,
             next_assistant_index: 1,
+            next_error_index: 1,
             last_assistant_key: None,
             first_event_timestamp: None,
         }
@@ -625,6 +489,11 @@ impl ReplayAccumulator {
                         merge_tool_call_update(message, update);
                     }
                 }
+            }
+            SessionUpdate::TurnError { error, .. } => {
+                self.last_assistant_key = None;
+                self.remove_trailing_assistant_error_echo(error);
+                self.push_turn_error(error, timestamp);
             }
             _ => {}
         }
@@ -727,6 +596,34 @@ impl ReplayAccumulator {
             timestamp,
         });
     }
+
+    fn remove_trailing_assistant_error_echo(&mut self, error: &TurnErrorData) {
+        let should_remove = match self.entries.last() {
+            Some(StoredEntry::Assistant { message, .. }) => {
+                assistant_message_matches_turn_error(message, turn_error_message(error))
+            }
+            _ => false,
+        };
+
+        if !should_remove {
+            return;
+        }
+
+        let removed = self.entries.pop();
+        if let Some(StoredEntry::Assistant { id, .. }) = removed {
+            self.assistant_indices.remove(&id);
+        }
+    }
+
+    fn push_turn_error(&mut self, error: &TurnErrorData, timestamp: Option<String>) {
+        let id = format!("error-{}", self.next_error_index);
+        self.next_error_index += 1;
+        self.entries.push(StoredEntry::Error {
+            id,
+            message: stored_error_message_from_turn_error(error),
+            timestamp,
+        });
+    }
 }
 
 fn build_stats(entries: &[StoredEntry]) -> SessionStats {
@@ -754,6 +651,7 @@ fn build_stats(entries: &[StoredEntry]) -> SessionStats {
                     stats.tool_results += 1;
                 }
             }
+            StoredEntry::Error { .. } => {}
         }
     }
 
@@ -762,15 +660,56 @@ fn build_stats(entries: &[StoredEntry]) -> SessionStats {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_replay_updates, convert_replay_updates_to_session};
-    use crate::acp::agent_context::with_agent;
-    use crate::acp::event_hub::AcpEventEnvelope;
+    use super::{convert_replay_updates_to_session, resolve_transcript_path};
     use crate::acp::parsers::AgentType;
+    use crate::acp::session_descriptor::{SessionDescriptorCompatibility, SessionReplayContext};
     use crate::acp::session_update::{
         ContentChunk, ToolArguments, ToolCallData, ToolCallStatus, ToolCallUpdateData, ToolKind,
+        TurnErrorData, TurnErrorInfo, TurnErrorKind,
     };
+    use crate::acp::types::CanonicalAgentId;
     use crate::acp::types::ContentBlock;
     use crate::session_jsonl::types::StoredEntry;
+    use std::path::Path;
+
+    fn replay_context(source_path: Option<&str>) -> SessionReplayContext {
+        SessionReplayContext {
+            local_session_id: "local-session-1".to_string(),
+            history_session_id: "history-session-1".to_string(),
+            agent_id: CanonicalAgentId::Copilot,
+            parser_agent_type: AgentType::Copilot,
+            project_path: "/repo".to_string(),
+            worktree_path: None,
+            effective_cwd: "/repo".to_string(),
+            source_path: source_path.map(ToString::to_string),
+            compatibility: SessionDescriptorCompatibility::Canonical,
+        }
+    }
+
+    #[test]
+    fn resolve_transcript_path_prefers_explicit_source_path() {
+        let session_state_root = Path::new("/tmp/copilot-session-state");
+        let replay_context = replay_context(Some("/tmp/custom/events.jsonl"));
+
+        let path = resolve_transcript_path(session_state_root, &replay_context);
+
+        assert_eq!(path, Path::new("/tmp/custom/events.jsonl"));
+    }
+
+    #[test]
+    fn resolve_transcript_path_falls_back_to_session_state_file_when_source_path_missing() {
+        let session_state_root = Path::new("/tmp/copilot-session-state");
+        let replay_context = replay_context(Some(
+            "__session_registry__/copilot_missing/history-session-1",
+        ));
+
+        let path = resolve_transcript_path(session_state_root, &replay_context);
+
+        assert_eq!(
+            path,
+            Path::new("/tmp/copilot-session-state/history-session-1/events.jsonl")
+        );
+    }
 
     #[test]
     fn converts_replay_updates_into_thread_entries() {
@@ -1142,39 +1081,64 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn collect_replay_updates_uses_explicit_replay_agent() {
-        let (sender, mut receiver) = tokio::sync::broadcast::channel(4);
-        sender
-            .send(AcpEventEnvelope {
-                seq: 1,
-                event_name: "acp-session-update".to_string(),
-                session_id: Some("replay-session".to_string()),
-                payload: serde_json::json!({
-                    "sessionId": "replay-session",
-                    "toolCallId": "tool-search-1",
-                    "title": "Search branch:main|branch: in desktop",
-                    "kind": "search",
-                    "status": "running"
-                }),
-                priority: "normal".to_string(),
-                droppable: false,
-                emitted_at_ms: 1_710_000_000_000,
-            })
-            .expect("send replay event");
+    #[test]
+    fn replaces_synthetic_error_echo_with_error_entry() {
+        let session_id = "copilot-session-error";
+        let error_message = "You've hit your limit. Please wait before trying again.";
+        let converted = convert_replay_updates_to_session(
+            session_id,
+            "Copilot Session",
+            &[
+                (
+                    1_710_000_020_000,
+                    crate::acp::session_update::SessionUpdate::UserMessageChunk {
+                        chunk: ContentChunk {
+                            content: ContentBlock::Text {
+                                text: "Try again".to_string(),
+                            },
+                            aggregation_hint: None,
+                        },
+                        session_id: Some(session_id.to_string()),
+                    },
+                ),
+                (
+                    1_710_000_020_500,
+                    crate::acp::session_update::SessionUpdate::AgentMessageChunk {
+                        chunk: ContentChunk {
+                            content: ContentBlock::Text {
+                                text: error_message.to_string(),
+                            },
+                            aggregation_hint: None,
+                        },
+                        part_id: None,
+                        message_id: None,
+                        session_id: Some(session_id.to_string()),
+                    },
+                ),
+                (
+                    1_710_000_021_000,
+                    crate::acp::session_update::SessionUpdate::TurnError {
+                        error: TurnErrorData::Structured(TurnErrorInfo {
+                            message: error_message.to_string(),
+                            kind: TurnErrorKind::Recoverable,
+                            code: Some(429),
+                            source: None,
+                        }),
+                        session_id: Some(session_id.to_string()),
+                    },
+                ),
+            ],
+        );
 
-        let updates = with_agent(AgentType::ClaudeCode, || async {
-            collect_replay_updates(&mut receiver, "replay-session", AgentType::Codex).await
-        })
-        .await;
+        assert_eq!(converted.entries.len(), 2);
 
-        assert_eq!(updates.len(), 1);
-        match &updates[0].1 {
-            crate::acp::session_update::SessionUpdate::ToolCall { tool_call, .. } => {
-                assert_eq!(tool_call.id, "tool-search-1");
-                assert_eq!(tool_call.kind, Some(ToolKind::Search));
+        match &converted.entries[1] {
+            StoredEntry::Error { message, .. } => {
+                assert_eq!(message.content, error_message);
+                assert_eq!(message.code.as_deref(), Some("429"));
+                assert_eq!(message.kind, TurnErrorKind::Recoverable);
             }
-            other => panic!("expected replayed tool call, got {:?}", other),
+            other => panic!("expected error entry, got {:?}", other),
         }
     }
 }

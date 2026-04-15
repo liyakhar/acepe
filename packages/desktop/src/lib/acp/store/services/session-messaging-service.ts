@@ -354,6 +354,8 @@ export class SessionMessagingService {
 			message: {
 				content: normalized.message,
 				code: normalized.code != null ? String(normalized.code) : undefined,
+				kind: normalized.kind,
+				source: normalized.source ?? undefined,
 			},
 			timestamp: new Date(),
 		};

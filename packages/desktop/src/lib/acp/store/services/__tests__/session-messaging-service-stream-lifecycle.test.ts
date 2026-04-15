@@ -315,6 +315,8 @@ describe("SessionMessagingService.handleTurnError", () => {
 				type: "error",
 				message: {
 					content: "You're out of extra usage",
+					kind: "recoverable",
+					source: "unknown",
 				},
 			})
 		);
@@ -335,6 +337,8 @@ describe("SessionMessagingService.handleTurnError", () => {
 				message: expect.objectContaining({
 					content: "Rate limit reached",
 					code: "429",
+					kind: "recoverable",
+					source: "unknown",
 				}),
 			})
 		);

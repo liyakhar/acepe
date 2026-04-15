@@ -300,6 +300,35 @@ describe("stored-entry-converter", () => {
 			});
 		});
 
+		describe("error entries", () => {
+			it("should convert stored error entries", () => {
+				const stored: StoredEntry = {
+					type: "error",
+					id: "error-123",
+					message: {
+						content: "Rate limit reached",
+						code: "429",
+						kind: "recoverable",
+					},
+					timestamp: "2026-01-13T12:00:00Z",
+				};
+				const timestamp = new Date("2026-01-13T12:00:00Z");
+
+				const result = convertStoredEntryToSessionEntry(stored, timestamp);
+
+				expect(result).toEqual({
+					id: "error-123",
+					type: "error",
+					message: {
+						content: "Rate limit reached",
+						code: "429",
+						kind: "recoverable",
+					},
+					timestamp,
+				});
+			});
+		});
+
 		describe("timestamp handling", () => {
 			it("should use provided timestamp for all entry types", () => {
 				const timestamp = new Date("2026-06-15T10:30:00.000Z");

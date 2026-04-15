@@ -360,6 +360,15 @@ pub struct StoredAssistantMessage {
     pub received_at: Option<String>,
 }
 
+/// Error entry stored in replayed session history.
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
+pub struct StoredErrorMessage {
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub kind: crate::acp::session_update::TurnErrorKind,
+}
+
 /// Answered question data from toolUseResult field in JSONL.
 /// Stores both the questions and the user's answers.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -393,6 +402,12 @@ pub enum StoredEntry {
     ToolCall {
         id: String,
         message: ToolCallData,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
+    Error {
+        id: String,
+        message: StoredErrorMessage,
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<String>,
     },

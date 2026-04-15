@@ -475,6 +475,11 @@ export type StoredAssistantMessage = { chunks: StoredAssistantChunk[]; model?: s
 displayModel?: string | null; receivedAt?: string | null }
 
 /**
+ * Error entry stored in replayed session history.
+ */
+export type StoredErrorMessage = { content: string; code?: string | null; kind: TurnErrorKind }
+
+/**
  * Skill metadata for skill tool calls.
  */
 export type SkillMeta = { description?: string | null; filePath?: string | null }
@@ -497,7 +502,7 @@ answers: Partial<{ [key in string]: JsonValue }> }
  * A single entry in the thread.
  * Discriminated union tagged by "type".
  */
-export type StoredEntry = { type: "user"; id: string; message: StoredUserMessage; timestamp?: string | null } | { type: "assistant"; id: string; message: StoredAssistantMessage; timestamp?: string | null } | { type: "tool_call"; id: string; message: ToolCallData; timestamp?: string | null }
+export type StoredEntry = { type: "user"; id: string; message: StoredUserMessage; timestamp?: string | null } | { type: "assistant"; id: string; message: StoredAssistantMessage; timestamp?: string | null } | { type: "tool_call"; id: string; message: ToolCallData; timestamp?: string | null } | { type: "error"; id: string; message: StoredErrorMessage; timestamp?: string | null }
 
 /**
  * Result of converting a full session to stored entries.
@@ -863,3 +868,4 @@ export type FileExplorerPreviewResponse =
  * Fallback for binary, too-large, deleted, or unsupported files.
  */
 { kind: "fallback"; file_path: string; file_name: string; reason: string; size_bytes: number | null; git_status: FileGitStatus | null; preview_kind: PreviewKind }
+

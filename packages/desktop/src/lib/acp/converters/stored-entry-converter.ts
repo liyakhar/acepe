@@ -1,4 +1,5 @@
 import type {
+	StoredErrorMessage,
 	StoredAssistantMessage,
 	StoredEntry,
 	StoredUserMessage,
@@ -6,6 +7,7 @@ import type {
 } from "$lib/services/converted-session-types.js";
 import type { SessionEntry } from "../application/dto/session.js";
 import type { AssistantMessage } from "../types/assistant-message.js";
+import type { ErrorMessage } from "../types/error-message.js";
 import type { ToolCall } from "../types/tool-call.js";
 import type { UserMessage } from "../types/user-message.js";
 
@@ -62,6 +64,14 @@ function convertStoredAssistantMessage(stored: StoredAssistantMessage): Assistan
 	return stored as unknown as AssistantMessage;
 }
 
+function convertStoredErrorMessage(stored: StoredErrorMessage): ErrorMessage {
+	return {
+		content: stored.content,
+		code: stored.code ?? undefined,
+		kind: stored.kind,
+	};
+}
+
 /**
  * Convert StoredEntry (backend) to SessionEntry (frontend).
  *
@@ -91,6 +101,13 @@ export function convertStoredEntryToSessionEntry(
 				id: entry.id,
 				type: "assistant",
 				message: convertStoredAssistantMessage(entry.message),
+				timestamp,
+			};
+		case "error":
+			return {
+				id: entry.id,
+				type: "error",
+				message: convertStoredErrorMessage(entry.message),
 				timestamp,
 			};
 		default: {

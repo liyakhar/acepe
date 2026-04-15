@@ -28,8 +28,18 @@ function makeRuntimeState(overrides: Partial<SessionRuntimeState> = {}): Session
 	};
 }
 
-const NO_ERROR: PanelErrorInfo = { showError: false, details: null };
-const HAS_ERROR: PanelErrorInfo = { showError: true, details: "Connection failed" };
+const NO_ERROR: PanelErrorInfo = {
+	showError: false,
+	title: "Connection error",
+	summary: null,
+	details: null,
+};
+const HAS_ERROR: PanelErrorInfo = {
+	showError: true,
+	title: "Connection error",
+	summary: "Connection failed",
+	details: "Connection failed",
+};
 
 function makeInput(overrides: Partial<Parameters<typeof derivePanelViewState>[0]> = {}) {
 	return {
@@ -72,7 +82,15 @@ describe("derivePanelViewState", () => {
 
 	it("should return error with fallback details when details is null", () => {
 		const result = derivePanelViewState(
-			makeInput({ errorInfo: { showError: true, details: null }, entriesCount: 0 })
+			makeInput({
+				errorInfo: {
+					showError: true,
+					title: "Connection error",
+					summary: null,
+					details: null,
+				},
+				entriesCount: 0,
+			})
 		);
 		expect(result.kind).toBe("error");
 		if (result.kind === "error") {
