@@ -47,14 +47,21 @@
 	type="button"
 	onclick={() => file.onSelect?.()}
 	data-selected={isSelected ? "true" : "false"}
-	class="group flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[0.6875rem] transition-colors {isSelected
-		? 'bg-accent text-accent-foreground ring-1 ring-ring/50'
-		: 'hover:bg-muted/30'}"
+	class="group relative flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[0.6875rem] transition-colors {isSelected
+		? 'bg-accent text-foreground font-medium'
+		: 'text-muted-foreground hover:bg-muted/40 hover:text-foreground'}"
 >
+	{#if isSelected}
+		<span
+			class="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-foreground/70"
+			aria-hidden="true"
+		></span>
+	{/if}
 	<FilePathBadge
 		filePath={file.filePath}
 		fileName={file.fileName ?? undefined}
 		interactive={false}
+		class="!bg-transparent !border-transparent !px-0"
 	/>
 
 	<span

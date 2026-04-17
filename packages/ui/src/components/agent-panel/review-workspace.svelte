@@ -31,18 +31,19 @@
 </script>
 
 <div
-	class="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-card"
+	class="flex h-full min-h-0 w-full min-w-0 flex-col gap-2 overflow-hidden bg-card p-2"
 	data-testid="review-workspace"
 >
 	<ReviewWorkspaceHeader
 		label={headerLabel}
 		closeButtonLabel={closeButtonLabel}
+		fileCount={files.length}
 		{onClose}
 	/>
 
-	<div class="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="review-workspace-body">
+	<div class="flex min-h-0 min-w-0 flex-1 gap-2 overflow-hidden" data-testid="review-workspace-body">
 		<aside
-			class="w-[280px] shrink-0 border-r border-border"
+			class="flex w-[280px] shrink-0 flex-col overflow-hidden rounded-md border border-border bg-input/30"
 			data-testid="review-workspace-files-pane"
 		>
 			<ReviewWorkspaceFileList
@@ -54,12 +55,12 @@
 		</aside>
 
 		<section
-			class="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+			class="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-card"
 			data-testid="review-workspace-content-pane"
 		>
 			{#if showEmptyState}
 				<div
-					class="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground"
+					class="flex flex-1 items-center justify-center px-6 text-center text-[0.6875rem] text-muted-foreground"
 					data-testid="review-workspace-content-empty"
 				>
 					{emptyStateLabel}

@@ -22,8 +22,9 @@ import * as m from "$lib/messages.js";
 import type { MainAppViewState } from "../../logic/main-app-view-state.svelte.js";
 import { getSpawnableSessionAgents } from "../../logic/spawnable-agents.js";
 
-import { groupAllPanelsByProject } from "./panel-grouping.js";
+import { groupAllPanelsByProject, sortProjectGroupsForMultiLayout } from "./panel-grouping.js";
 import KanbanView from "./kanban-view.svelte";
+import MultiProjectGroupLabel from "./multi-project-group-label.svelte";
 
 const pcLogger = createLogger({ id: "panels-container-perf", name: "PanelsContainerPerf" });
 
@@ -117,6 +118,23 @@ $effect(() => {
 // - validateRestoredSessions() cleans up orphaned session IDs (Phase 3)
 // No reactive $effect needed — imperative flows avoid infinite retry loops.
 
+// Hoisted out of the `{#each}` loop so it has a stable identity across
+// panel list mutations (open/close). If computed inside the loop, every
+// render allocates a fresh array of fresh objects, which cascades into
+// each AgentPanel's `viewStateInput` → `viewState` `$derived` chain and
+// re-fires every dependent `$effect` on sibling panels — producing a
+// visible flicker across other panels when one is opened or closed.
+const availableAgents = $derived(
+	getSpawnableSessionAgents(agentStore.agents, agentPreferencesStore.selectedAgentIds).map(
+		(a) => ({
+			id: a.id,
+			name: a.name,
+			icon: a.icon,
+			availability_kind: a.availability_kind,
+		})
+	)
+);
+
 // Focused view: panels grouped by project (needed for view mode state and card layout)
 const allGroups = $derived(
 	groupAllPanelsByProject(
@@ -129,8 +147,6 @@ const allGroups = $derived(
 		projectManager.projects
 	)
 );
-const hideEmbeddedProjectBadge = $derived(allGroups.length > 1);
-
 const topLevelPanelsWithProject = $derived.by(() => {
 	const topLevelPanels: Array<{ id: string; projectPath: string | null }> = [];
 	for (const panel of panelsWithState) {
@@ -149,6 +165,21 @@ const topLevelPanelsWithProject = $derived.by(() => {
 const viewModeState = $derived.by(() =>
 	getViewModeState(panelStore, { panelsWithState: topLevelPanelsWithProject, allGroups })
 );
+
+// True multi-project layout: cards layout with no focused project (all groups visible).
+// Drives wrapper removal, explicit project ordering, and per-panel project badge visibility.
+const isMultiCardsMode = $derived(
+	viewModeState.layout === "cards" && viewModeState.activeProjectPath == null && allGroups.length > 1
+);
+
+// Explicitly-sorted groups for true multi-project rendering. project/single modes keep
+// reading `allGroups` so focused-project switching and fallback semantics stay intact.
+const sortedGroupsForMulti = $derived(sortProjectGroupsForMultiLayout(allGroups));
+
+// Hide the embedded project badge only when the outer ProjectCard wrapper already
+// provides project identity (project mode with multiple groups). In multi-cards mode
+// the wrapper is gone, so each agent panel header surfaces its own project badge.
+const hideEmbeddedProjectBadge = $derived(allGroups.length > 1 && !isMultiCardsMode);
 
 function isGroupHidden(group: { projectPath: string }): boolean {
 	return (
@@ -381,10 +412,10 @@ const terminalTabsPanelStore = $derived.by(() => ({
 			<KanbanView {projectManager} {state} />
 		{:else}
 			<!-- Project/Multi mode: panels grouped by project; hide inactive in focused view so they stay mounted -->
-		{#each allGroups as group (group.projectPath)}
+		{#each (isMultiCardsMode ? sortedGroupsForMulti : allGroups) as group (group.projectPath)}
 			{@const hasAgentPanels = group.agentPanels.length > 0}
 			{@const isSingleProject = allGroups.length === 1}
-			{#snippet groupPanels()}
+			{#snippet nonAgentPanels()}
 					<!-- File panels (tabbed per project) -->
 					{#if group.filePanels.length > 0}
 						{@const project = projectManager.projects.find((p) => p.path === group.projectPath)}
@@ -442,7 +473,9 @@ const terminalTabsPanelStore = $derived.by(() => ({
 							onResize={(panelId, delta) => panelStore.resizeBrowserPanel(panelId, delta)}
 						/>
 					{/each}
+			{/snippet}
 
+			{#snippet agentPanels()}
 					<!-- Agent panels -->
 					{#each group.agentPanels as panel (panel.id)}
 							{@const effectiveTheme = themeState.effectiveTheme}
@@ -450,15 +483,6 @@ const terminalTabsPanelStore = $derived.by(() => ({
 							{@const project = projectPath
 								? (projectManager.projects.find((p) => p.path === projectPath) ?? null)
 								: null}
-							{@const availableAgents = getSpawnableSessionAgents(
-								agentStore.agents,
-								agentPreferencesStore.selectedAgentIds
-							).map((a) => ({
-									id: a.id,
-									name: a.name,
-									icon: a.icon,
-									availability_kind: a.availability_kind,
-								}))}
 							{@const selectedAgentId = panel.selectedAgentId
 								? availableAgents.some((agent) => agent.id === panel.selectedAgentId)
 									? panel.selectedAgentId
@@ -522,7 +546,22 @@ const terminalTabsPanelStore = $derived.by(() => ({
 			{/snippet}
 
 			{#if isSingleProject}
-				{@render groupPanels()}
+				{@render nonAgentPanels()}
+				{@render agentPanels()}
+			{:else if isMultiCardsMode}
+				{#if hasAgentPanels}
+					{@render agentPanels()}
+					{@render nonAgentPanels()}
+				{:else}
+					<div class="flex flex-col flex-1 min-w-0 min-h-0">
+						<MultiProjectGroupLabel
+							projectName={group.projectName}
+							projectColor={group.projectColor}
+							projectIconSrc={group.projectIconSrc}
+						/>
+						{@render nonAgentPanels()}
+					</div>
+				{/if}
 			{:else}
 			<ProjectCard
 				class="{!hasAgentPanels
@@ -537,7 +576,8 @@ const terminalTabsPanelStore = $derived.by(() => ({
 					activeProjectPath={viewModeState.activeProjectPath}
 					onSelectProject={(path: string) => panelStore.setFocusedViewProjectPath(path)}
 				>
-					{@render groupPanels()}
+					{@render nonAgentPanels()}
+					{@render agentPanels()}
 				</ProjectCard>
 			{/if}
 			{/each}

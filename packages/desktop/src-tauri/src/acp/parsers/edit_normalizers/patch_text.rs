@@ -223,7 +223,7 @@ fn parse_patch_section(section: PatchSection) -> EditEntry {
     parse_file_diff_section(rendered_path, &diff_lines)
 }
 
-fn parse_file_diff_section(file_path: &str, diff_lines: &str) -> EditEntry {
+pub(super) fn parse_file_diff_section(file_path: &str, diff_lines: &str) -> EditEntry {
     let mut old_lines: Vec<&str> = Vec::new();
     let mut new_lines: Vec<&str> = Vec::new();
 

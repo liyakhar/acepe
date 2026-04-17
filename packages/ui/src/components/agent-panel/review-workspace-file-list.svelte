@@ -44,22 +44,22 @@
 	}
 </script>
 
-<div class="flex h-full min-h-0 flex-col bg-background/70" data-testid="review-workspace-file-list">
+<div class="flex h-full min-h-0 flex-col" data-testid="review-workspace-file-list">
 	{#if files.length === 0}
 		<div
-			class="flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground"
+			class="flex flex-1 items-center justify-center px-4 text-center text-[0.6875rem] text-muted-foreground"
 			data-testid="review-workspace-file-list-empty"
 		>
 			{emptyStateLabel}
 		</div>
 	{:else}
-		<div class="flex-1 overflow-y-auto p-2">
-			<div class="flex flex-col gap-1">
+		<div class="flex-1 overflow-y-auto p-1">
+			<div class="flex flex-col gap-0.5">
 				{#each files as file, index (file.id)}
 					{@const isSelected = index === selectedIndex}
 					<div
 						use:scrollSelectedIntoView={isSelected}
-						class="rounded-md"
+						class="rounded"
 						data-testid={"review-workspace-file-item-" + index}
 					>
 						<AgentPanelModifiedFileRow

@@ -188,6 +188,42 @@ export function groupAllPanelsByProject<TAgent extends { sessionProjectPath: str
 	return groupOrder.map((key) => groupMap.get(key)!);
 }
 
+/**
+ * Sort project groups for true multi-project layout.
+ *
+ * Multi-project presentation should not depend on incidental panel creation order.
+ * This projection is scoped to the multi-mode render path; project/single modes keep
+ * reading `allGroups` in its original insertion order so switcher and focused-project
+ * semantics stay intact (see docs/plans/2026-04-12-001-feat-multi-project-agent-panel-presentation-plan.md).
+ *
+ * Sort policy:
+ * - Primary: resolved project display name, case-insensitive.
+ * - Tiebreaker: project path, so identical names get a stable deterministic order.
+ * - Groups with empty/unresolved project keys always sort after named groups.
+ */
+export function sortProjectGroupsForMultiLayout<
+	G extends {
+		readonly projectPath: string;
+		readonly projectName: string;
+	},
+>(groups: readonly G[]): G[] {
+	return [...groups].sort((a, b) => {
+		const aEmpty = a.projectPath === "";
+		const bEmpty = b.projectPath === "";
+		if (aEmpty && !bEmpty) return 1;
+		if (!aEmpty && bEmpty) return -1;
+
+		const nameA = a.projectName.toLocaleLowerCase();
+		const nameB = b.projectName.toLocaleLowerCase();
+		if (nameA < nameB) return -1;
+		if (nameA > nameB) return 1;
+
+		if (a.projectPath < b.projectPath) return -1;
+		if (a.projectPath > b.projectPath) return 1;
+		return 0;
+	});
+}
+
 export function groupWorkspacePanelsByProject<
 	TAgent extends { id: string; projectPath: string | null },
 >(

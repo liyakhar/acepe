@@ -4,6 +4,7 @@ use crate::acp::parsers::arguments::parse_generic_edit_arguments;
 use crate::acp::parsers::edit_normalizers::parse_changes_map_edit;
 use crate::acp::session_update::ToolArguments;
 
+use super::git_diff::parse_git_diff_edit;
 use super::patch_text::{parse_patch_text, parse_patch_text_value};
 
 fn parse_inline_patch_string(raw_arguments: &serde_json::Value) -> Option<ToolArguments> {
@@ -19,6 +20,9 @@ pub(crate) fn parse_shared_chat_edit_arguments(raw_arguments: &serde_json::Value
         parse_patch_text(raw_arguments).or_else(|| parse_inline_patch_string(raw_arguments))
     {
         return arguments_from_patch;
+    }
+    if let Some(arguments_from_git_diff) = parse_git_diff_edit(raw_arguments) {
+        return arguments_from_git_diff;
     }
     if let Some(arguments_from_changes) = parse_changes_map_edit(raw_arguments) {
         return arguments_from_changes;

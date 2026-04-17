@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-import { groupAllPanelsByProject, groupWorkspacePanelsByProject } from "./panel-grouping.js";
+import {
+	groupAllPanelsByProject,
+	groupWorkspacePanelsByProject,
+	sortProjectGroupsForMultiLayout,
+} from "./panel-grouping.js";
 
 describe("groupAllPanelsByProject", () => {
 	it("groups unified workspace panels by project and kind", () => {
@@ -102,6 +106,62 @@ describe("groupAllPanelsByProject", () => {
 		expect(groups[0]?.terminalPanels).toHaveLength(2);
 		expect(groups[0]?.terminalPanels[0]?.id).toBe("group-a");
 		expect(groups[0]?.terminalPanels[1]?.id).toBe("group-b");
+	});
+});
+
+describe("sortProjectGroupsForMultiLayout", () => {
+	function makeGroup(projectPath: string, projectName: string) {
+		return {
+			projectPath,
+			projectName,
+			projectColor: "#123456",
+			projectIconSrc: null,
+			agentPanels: [],
+			filePanels: [],
+			reviewPanels: [],
+			terminalPanels: [],
+			browserPanels: [],
+			gitPanels: [],
+		};
+	}
+
+	it("sorts groups alphabetically by resolved project name (case-insensitive)", () => {
+		const sorted = sortProjectGroupsForMultiLayout([
+			makeGroup("/tmp/zulu", "zulu"),
+			makeGroup("/tmp/alpha", "Alpha"),
+			makeGroup("/tmp/bravo", "bravo"),
+		]);
+
+		expect(sorted.map((g) => g.projectName)).toEqual(["Alpha", "bravo", "zulu"]);
+	});
+
+	it("uses project path as a stable tiebreaker when names match", () => {
+		const sorted = sortProjectGroupsForMultiLayout([
+			makeGroup("/tmp/b-alpha", "Alpha"),
+			makeGroup("/tmp/a-alpha", "Alpha"),
+		]);
+
+		expect(sorted.map((g) => g.projectPath)).toEqual(["/tmp/a-alpha", "/tmp/b-alpha"]);
+	});
+
+	it("sorts groups with empty/unresolved project keys after named projects", () => {
+		const sorted = sortProjectGroupsForMultiLayout([
+			makeGroup("", ""),
+			makeGroup("/tmp/bravo", "Bravo"),
+			makeGroup("/tmp/alpha", "Alpha"),
+		]);
+
+		expect(sorted.map((g) => g.projectPath)).toEqual(["/tmp/alpha", "/tmp/bravo", ""]);
+	});
+
+	it("does not mutate the input array", () => {
+		const input = [
+			makeGroup("/tmp/zulu", "zulu"),
+			makeGroup("/tmp/alpha", "Alpha"),
+		];
+		const snapshot = input.map((g) => g.projectPath);
+		sortProjectGroupsForMultiLayout(input);
+		expect(input.map((g) => g.projectPath)).toEqual(snapshot);
 	});
 });
 

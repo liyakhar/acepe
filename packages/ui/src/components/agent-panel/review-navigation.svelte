@@ -73,7 +73,7 @@
 		{#if showReviewNextFileCta}
 			<button
 				type="button"
-				class="h-7 px-2.5 text-xs font-medium bg-primary text-primary-foreground hover:opacity-90 inline-flex items-center gap-1"
+				class="{embeddedButtonClass} gap-1 text-foreground"
 				onclick={onReviewNextFile}
 			>
 				{nextFileLabel}

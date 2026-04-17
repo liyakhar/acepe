@@ -5,13 +5,9 @@ import {
 	AgentPanelPermissionBarProgress,
 	AgentPanelPermissionBarActions,
 } from "@acepe/ui/agent-panel";
-import { Button } from "@acepe/ui/button";
-import { Robot } from "phosphor-svelte";
 import * as m from "$lib/messages.js";
-import { toast } from "svelte-sonner";
 import { getPermissionStore } from "../../store/permission-store.svelte.js";
 import { getSessionStore } from "../../store/session-store.svelte.js";
-import { createLogger } from "../../utils/logger.js";
 import type { SessionEntry } from "../../application/dto/session-entry.js";
 import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";
@@ -48,10 +44,6 @@ let {
 
 const permissionStore = getPermissionStore();
 const sessionStore = getSessionStore();
-const logger = createLogger({
-	id: "permission-bar",
-	name: "PermissionBar",
-});
 
 const effectiveEntries = $derived(entriesProp ?? sessionStore.getEntries(sessionId));
 
@@ -95,22 +87,6 @@ const currentToolCall = $derived.by((): ToolCall | null => {
 const showEditPreview = $derived(
 	showCompactEditPreview && currentToolCall !== null && currentToolCall.kind === "edit"
 );
-const autonomousAlreadyEnabled = $derived(
-	sessionStore.getHotState(sessionId)?.autonomousEnabled ?? false
-);
-
-async function handleAutonomous(): Promise<void> {
-	const result = await sessionStore.setAutonomousEnabled(sessionId, true);
-	if (result.isErr()) {
-		toast.error("Failed to enable Autonomous.");
-		return;
-	}
-	const drainResult = await permissionStore.drainPendingForSession(sessionId);
-	if (drainResult.isErr()) {
-		logger.error("Failed to drain Autonomous permissions", { error: drainResult.error });
-		toast.error("Autonomous is on, but some pending permissions still need attention.");
-	}
-}
 </script>
 
 
@@ -143,24 +119,15 @@ async function handleAutonomous(): Promise<void> {
 		{/snippet}
 
 		{#snippet actionBar()}
-			<div class="flex w-full items-center gap-1.5">
-				{#if !autonomousAlreadyEnabled}
-					<Button variant="toolbar" size="toolbar" class="justify-center shrink-0 gap-1" onclick={handleAutonomous} title={m.permission_autonomous()}>
-						<Robot weight="fill" class="size-3 shrink-0" style="color: {Colors[COLOR_NAMES.PURPLE]}" />
-						<span class="text-[10px] text-muted-foreground">Auto</span>
-					</Button>
-				{/if}
-				<div class="flex-1"></div>
-				<AgentPanelPermissionBarActions
-					allowLabel={m.permission_allow()}
-					alwaysAllowLabel={m.permission_always_allow()}
-					denyLabel={m.permission_deny()}
-					showAlwaysAllow={currentPermission.always !== undefined && currentPermission.always.length > 0}
-					onAllow={() => permissionStore.reply(currentPermission.id, "once")}
-					onAlwaysAllow={() => permissionStore.reply(currentPermission.id, "always")}
-					onDeny={() => permissionStore.reply(currentPermission.id, "reject")}
-				/>
-			</div>
+			<AgentPanelPermissionBarActions
+				allowLabel={m.permission_allow()}
+				alwaysAllowLabel={m.permission_always_allow()}
+				denyLabel={m.permission_deny()}
+				showAlwaysAllow={currentPermission.always !== undefined && currentPermission.always.length > 0}
+				onAllow={() => permissionStore.reply(currentPermission.id, "once")}
+				onAlwaysAllow={() => permissionStore.reply(currentPermission.id, "always")}
+				onDeny={() => permissionStore.reply(currentPermission.id, "reject")}
+			/>
 		{/snippet}
 
 		{#snippet editPreview()}

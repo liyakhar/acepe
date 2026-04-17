@@ -7,6 +7,7 @@ pub(crate) mod claude_code;
 pub(crate) mod codex;
 pub(crate) mod copilot;
 pub(crate) mod cursor;
+pub(crate) mod git_diff;
 pub(crate) mod opencode;
 pub(crate) mod patch_text;
 pub(crate) mod shared_chat;

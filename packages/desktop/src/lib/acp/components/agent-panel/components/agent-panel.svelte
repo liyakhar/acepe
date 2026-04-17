@@ -669,6 +669,7 @@ const ATTACHED_COLUMN_WIDTH = 450;
 const PLAN_SIDEBAR_COLUMN_WIDTH = 450;
 const REVIEW_COLUMN_WIDTH = 450;
 const BROWSER_SIDEBAR_COLUMN_WIDTH = 500;
+const REVIEW_EXTRA_COLUMN_WIDTH = 520;
 const ATTACHED_COLUMN_GAP_WIDTH = 2;
 
 // Dynamic minimum width reported by the toolbar's intrinsic content measurement.
@@ -817,6 +818,7 @@ const effectiveWidth = $derived.by(() => {
 	if (showPlanSidebar && hasPlan) w += PLAN_SIDEBAR_COLUMN_WIDTH;
 	if (reviewMode && reviewFilesState) w += REVIEW_COLUMN_WIDTH;
 	if (showBrowserSidebar) w += BROWSER_SIDEBAR_COLUMN_WIDTH;
+	if (reviewMode) w += REVIEW_EXTRA_COLUMN_WIDTH;
 	return w;
 });
 
@@ -869,22 +871,30 @@ const debugPanelState = $derived.by(() => {
 	};
 });
 
-// Compute aggregateFileEdits off the main thread to avoid blocking the reactive cascade.
-// Uses $effect + setTimeout(0) so it runs after the current reactive cascade settles.
-// (requestIdleCallback is unavailable in Tauri's WebKit webview on macOS)
-let modifiedFilesState = $state<ModifiedFilesState | null>(null);
-$effect(() => {
+// Pure derivation of modified files from session entries.
+//
+// Previously computed via `$effect` + `setTimeout(0)` to defer aggregation
+// off the current reactive cascade. That pattern had two problems:
+//   1. It violates the project rule against `$effect` + `$state` writes
+//      for computed values.
+//   2. On any upstream re-render (e.g. a sibling panel closing rebuilds
+//      `panelsWithState`), the effect's cleanup cleared the pending
+//      `setTimeout` and re-scheduled a new one. While the timer was
+//      pending, consumers of `modifiedFilesState` that depended on its
+//      stable identity could observe a transient reset, producing a
+//      visible flicker in `ModifiedFilesHeader` and the files list
+//      across every sibling agent panel.
+//
+// Making this a `$derived` keeps the value synchronously consistent
+// with `sessionEntries` — Svelte 5 re-runs it only when its reactive
+// reads actually change, so unrelated panel-close cascades do not
+// touch it, and there is no in-between null state.
+const modifiedFilesState = $derived.by<ModifiedFilesState | null>(() => {
 	if (viewState.kind !== "conversation" || sessionEntries.length === 0) {
-		modifiedFilesState = null;
-		return;
+		return null;
 	}
-	// Capture reactive dependencies synchronously, then defer the heavy work
-	const entries = sessionEntries;
-	const id = setTimeout(() => {
-		const state = aggregateFileEdits(entries);
-		modifiedFilesState = state.fileCount > 0 ? state : null;
-	});
-	return () => clearTimeout(id);
+	const state = aggregateFileEdits(sessionEntries);
+	return state.fileCount > 0 ? state : null;
 });
 
 // Track panelId changes for tab switching detection
