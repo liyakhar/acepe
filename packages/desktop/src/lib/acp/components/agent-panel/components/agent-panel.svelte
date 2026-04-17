@@ -1866,10 +1866,27 @@ const queueIsPaused = $derived(sessionId ? messageQueueStore.pausedIds.has(sessi
 			<div class="flex-1 min-h-0 mb-2">
 				<AgentPanelContent
 					bind:this={contentRef}
+					bind:scrollContainer
+					bind:scrollViewport={contentScrollViewport}
+					bind:isAtBottom={contentIsAtBottom}
+					bind:isAtTop={contentIsAtTop}
+					bind:isStreaming={contentIsStreaming}
 					panelId={effectivePanelId}
 					{viewState}
 					{sessionId}
+					sessionEntries={visibleSessionEntries}
 					sessionProjectPath={effectiveProjectPath ?? sessionProjectPath}
+					{allProjects}
+					onProjectAgentSelected={handleProjectAgentSelected}
+					onRetryConnection={handleRetryConnection}
+					onCancelConnection={handleCancelConnection}
+					{agentIconSrc}
+					{isFullscreen}
+					{availableAgents}
+					{effectiveTheme}
+					{modifiedFilesState}
+					turnState={sessionHotState?.turnState ?? "idle"}
+					isWaitingForResponse={runtimeState?.showThinking ?? false}
 				/>
 			</div>
 			{#if viewState.kind === "conversation" && !contentIsAtTop}

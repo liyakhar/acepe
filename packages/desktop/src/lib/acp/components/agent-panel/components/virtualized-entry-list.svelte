@@ -592,7 +592,7 @@ function shouldUseDesktopToolRenderer(entry: Extract<SessionEntry, { type: "tool
 			isStreaming &&
 				entry.type !== "thinking" &&
 				((entry.type === "assistant" && entry.id === (lastAssistantId ?? "")) ||
-					(entry.type === "assistant_merged_thoughts" &&
+					(entry.type === "assistant_merged" &&
 						entry.memberIds.includes(lastAssistantId ?? ""))) &&
 				index === displayEntries.length - 1,
 			activeRootToolCallId,
@@ -623,7 +623,7 @@ function shouldUseDesktopToolRenderer(entry: Extract<SessionEntry, { type: "tool
 					{projectPath}
 					{streamingAnimationMode}
 				/>
-			{:else if entry.type === "assistant_merged_thoughts"}
+			{:else if entry.type === "assistant_merged"}
 				<AssistantMessage
 					message={{
 						chunks: entry.message.chunks,

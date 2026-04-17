@@ -808,7 +808,7 @@ describe("desktop agent panel scene adapter", () => {
 	it("maps merged virtualized assistant entries into shared conversation entries", () => {
 		const entry = mapVirtualizedDisplayEntryToConversationEntry(
 			{
-				type: "assistant_merged_thoughts",
+				type: "assistant_merged",
 				key: "assistant-merged",
 				memberIds: ["assistant-1", "assistant-2"],
 				message: {

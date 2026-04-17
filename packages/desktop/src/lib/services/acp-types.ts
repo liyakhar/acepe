@@ -194,18 +194,6 @@ export type TurnErrorSource = "json_rpc" | "transport" | "process" | "unknown"
 
 export type TurnFailureSnapshot = { turn_id: string | null; message: string; code?: string | null; kind: TurnErrorKind; source: TurnErrorSource }
 
-export type TranscriptSegment = { kind: "text"; segmentId: string; text: string }
-
-export type TranscriptEntryRole = "user" | "assistant" | "tool" | "error"
-
-export type TranscriptEntry = { entryId: string; role: TranscriptEntryRole; segments: TranscriptSegment[] }
-
-export type TranscriptSnapshot = { revision: number; entries: TranscriptEntry[] }
-
-export type TranscriptDeltaOperation = { kind: "appendEntry"; entry: TranscriptEntry } | { kind: "appendSegment"; entryId: string; role: TranscriptEntryRole; segment: TranscriptSegment } | { kind: "replaceSnapshot"; snapshot: TranscriptSnapshot }
-
-export type TranscriptDelta = { eventSeq: number; sessionId: string; snapshotRevision: number; operations: TranscriptDeltaOperation[] }
-
 export type SessionProjectionSnapshot = { session: SessionSnapshot | null; operations: OperationSnapshot[]; interactions: InteractionSnapshot[] }
 
 /**
@@ -418,3 +406,4 @@ export function normalizeModelsForDisplay(
 		},
 	};
 }
+

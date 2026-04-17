@@ -890,7 +890,7 @@ export function mapVirtualizedDisplayEntryToConversationEntry(
 		};
 	}
 
-	if (entry.type === "assistant_merged_thoughts") {
+	if (entry.type === "assistant_merged") {
 		return {
 			id: entry.key,
 			type: "assistant",

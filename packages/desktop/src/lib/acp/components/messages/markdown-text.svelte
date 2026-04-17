@@ -157,7 +157,12 @@ $effect(() => {
 
 	if (wasStreaming) {
 		wasStreaming = false;
-		reveal.setState(text, false);
+		// Once the source has finished streaming, switch straight to the settled
+		// markdown renderer. Keeping the temporary streaming-tail parser alive
+		// after completion can fragment finished markdown across transient
+		// sections, which shows up as broken lists/paragraphs in the final UI.
+		hasStreamingSession = false;
+		reveal.reset();
 		return;
 	}
 
