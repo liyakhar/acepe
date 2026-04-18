@@ -17,6 +17,7 @@ export type {
   AppTabStatus,
   AppTabMode,
   AppSessionItem as AppSessionItemType,
+  AppSessionPrState,
   AppProjectGroup,
   AppSidebarProjectHeaderAgent,
 } from "./types.js";
