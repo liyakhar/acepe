@@ -36,3 +36,10 @@ export interface AppTabGroup {
   projectIconSrc?: string | null;
   tabs: AppTab[];
 }
+
+export interface AppSidebarProjectHeaderAgent {
+  id: string;
+  name: string;
+  iconSrc: string;
+  selected: boolean;
+}
