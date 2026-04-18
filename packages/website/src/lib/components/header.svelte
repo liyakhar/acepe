@@ -1,18 +1,10 @@
 <script lang="ts">
 import { BrandLockup } from "@acepe/ui";
 import * as m from "$lib/messages.js";
-import { browser } from "$app/environment";
 import { page } from "$app/stores";
-import { Download, Menu, Moon, Sun } from "@lucide/svelte";
+import { Download, Menu } from "@lucide/svelte";
 import { Drawer, DrawerContent, DrawerOverlay, DrawerPortal, DrawerTrigger } from "@acepe/ui";
 import { DiscordLogo, GithubLogo, Star } from "phosphor-svelte";
-import {
-	THEME_STORAGE_KEY,
-	applyThemeToDocument,
-	getToggledTheme,
-	websiteThemeStore,
-	type WebsiteTheme,
-} from "$lib/theme/theme";
 
 interface Props {
 	showLogin?: boolean;
@@ -30,21 +22,6 @@ function formatStars(count: number): string {
 		return `${(count / 1000).toFixed(1).replace(/\.0$/, "")}k`;
 	}
 	return count.toString();
-}
-const theme = $derived($websiteThemeStore);
-
-const toggleThemeLabel = $derived(
-	theme === "dark" ? m.theme_switch_to_light() : m.theme_switch_to_dark()
-);
-
-function handleThemeToggle() {
-	const nextTheme = getToggledTheme(theme);
-
-	if (browser) {
-		websiteThemeStore.set(nextTheme);
-		applyThemeToDocument(nextTheme, document.documentElement);
-		window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-	}
 }
 
 const desktopNavLinkClass =
@@ -127,19 +104,6 @@ const mobileNavLinkClass =
 					/>
 				</svg>
 			</a>
-			<button
-				type="button"
-				class="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-card/70 text-foreground transition-colors hover:bg-card"
-				aria-label={toggleThemeLabel}
-				title={toggleThemeLabel}
-				onclick={handleThemeToggle}
-			>
-				{#if theme === 'dark'}
-					<Sun class="h-4 w-4" />
-				{:else}
-					<Moon class="h-4 w-4" />
-				{/if}
-			</button>
 			{#if showDownload}
 				<a
 					href="/download"
@@ -228,19 +192,6 @@ const mobileNavLinkClass =
 									/>
 								</svg>
 							</a>
-								<button
-									type="button"
-									class="inline-flex h-11 min-h-11 w-11 min-w-11 cursor-pointer items-center justify-center rounded-full bg-card/70 text-foreground transition-colors hover:bg-card"
-									aria-label={toggleThemeLabel}
-									title={toggleThemeLabel}
-									onclick={handleThemeToggle}
-								>
-									{#if theme === 'dark'}
-										<Sun class="h-4 w-4" />
-									{:else}
-										<Moon class="h-4 w-4" />
-									{/if}
-								</button>
 							</div>
 						</div>
 						<nav class="flex flex-col gap-1">
