@@ -30,6 +30,7 @@ import {
 	AgentPanelTodoHeader,
 	AgentPanelWorktreeSetupCard,
 } from "@acepe/ui";
+import { CloseAction, FullscreenAction, OverflowMenuTriggerAction } from "@acepe/ui/panel-header";
 import type {
 	AgentPanelModifiedFileItem,
 	AgentPanelModifiedFilesTrailingModel,
@@ -38,6 +39,7 @@ import type {
 	AgentPanelSceneModel,
 	AgentTodoItem,
 } from "@acepe/ui/agent-panel";
+import { AgentPanelStatusIcon } from "@acepe/ui/agent-panel";
 
 import LandingDemoFrame from "./landing-demo-frame.svelte";
 import { websiteThemeStore } from "$lib/theme/theme.js";
@@ -54,6 +56,8 @@ type DemoConfigOption = {
 	currentValue: string;
 	options: { value: string; name: string }[];
 };
+
+const noop = () => {};
 
 type DemoModelItem = {
 	id: string;
@@ -516,11 +520,15 @@ function buildScene(panel: DemoPanel, currentTheme: string): AgentPanelSceneMode
 	};
 }
 
+function getPanelStatus(panel: DemoPanel): DemoPanel["status"] {
+	return panel.status;
+}
+
 let panels = $state<DemoPanel[]>([
 	{
 		id: "composer-primary",
 		title: "Unblock review queue",
-		status: "running",
+		status: "connected",
 		subtitle: null,
 		agentLabel: null,
 		agentKey: "claude",
@@ -608,7 +616,7 @@ let panels = $state<DemoPanel[]>([
 	{
 		id: "composer-polish",
 		title: "Polish release notes flow",
-		status: "idle",
+		status: "connected",
 		subtitle: null,
 		agentLabel: null,
 		agentKey: "cursor",
@@ -905,6 +913,12 @@ function handleSubmit(panel: DemoPanel): void {
 						iconBasePath="/svgs/icons"
 						widthStyle="min-width: 0; width: 100%; max-width: 100%;"
 					>
+						{#snippet headerControls()}
+							<AgentPanelStatusIcon status={getPanelStatus(panel)} />
+							<OverflowMenuTriggerAction title="More actions" />
+							<FullscreenAction isFullscreen={false} onToggle={noop} />
+							<CloseAction onClose={noop} />
+						{/snippet}
 						{#snippet topBarOverride()}
 							{#if panel.id === "composer-polish"}
 								<AgentPanelPlanHeader

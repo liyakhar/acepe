@@ -16,13 +16,14 @@
 		TextShimmer,
 		SegmentedProgress,
 	} from "@acepe/ui";
+	import { AgentPanelStatusIcon } from "@acepe/ui/agent-panel";
 	import {
 		AppMainLayout,
 		AppSidebarLayout,
 		AppSidebarProjectGroup,
 		AppSidebarFooter,
-		AppSearchButton,
 	} from "@acepe/ui/app-layout";
+	import { CloseAction, FullscreenAction, OverflowMenuTriggerAction } from "@acepe/ui/panel-header";
 	import type {
 		AppProjectGroup,
 	} from "@acepe/ui/app-layout";
@@ -186,11 +187,11 @@
 
 	const focusedScene = $derived<AgentPanelSceneModel>({
 		panelId: "by-project-panel",
-		status: "running",
+		status: "connected",
 		header: {
 			title: "Unblock review queue",
 			subtitle: null,
-			status: "running",
+			status: "connected",
 			agentLabel: "Claude Code",
 			agentIconSrc: agentIcon("claude", theme),
 			projectLabel: "acepe.dev",
@@ -273,10 +274,7 @@
 			{#snippet sidebar()}
 				<AppSidebarLayout>
 					{#snippet queueSection()}
-						<div class="shrink-0 px-1.5 pt-1.5">
-							<AppSearchButton label="Search sessions…" />
-						</div>
-						<div class="mb-0.5 flex shrink-0 flex-col overflow-hidden rounded-lg bg-card/50 mx-1.5 mt-1">
+						<div class="mb-0.5 mt-1.5 flex shrink-0 flex-col overflow-hidden rounded-lg bg-card/50 mx-1.5">
 							<div class="flex w-full items-center gap-1.5 px-2 py-1.5">
 								<span class="text-[11px] font-medium text-muted-foreground">Attention Queue</span>
 								<span class="text-[10px] text-muted-foreground/60 tabular-nums">{queueItems.length}</span>
@@ -316,7 +314,7 @@
 						</div>
 					{/snippet}
 					{#snippet sessionList()}
-						<div class="flex flex-col overflow-auto p-1.5 gap-0.5">
+						<div class="relative flex flex-col flex-1 min-h-0 gap-0.5 overflow-y-auto outline-none">
 							{#each sidebarGroups as group (group.name)}
 								<AppSidebarProjectGroup {group} />
 							{/each}
@@ -352,6 +350,12 @@
 						iconBasePath="/svgs/icons"
 						widthStyle="min-width: 0; width: 100%; max-width: 100%;"
 					>
+						{#snippet headerControls()}
+							<AgentPanelStatusIcon status={focusedScene.header.status} />
+							<OverflowMenuTriggerAction title="More actions" />
+							<FullscreenAction isFullscreen={false} onToggle={() => {}} />
+							<CloseAction onClose={() => {}} />
+						{/snippet}
 						{#snippet composerOverride()}
 							<div class="shrink-0">
 								<AgentPanelComposerFrame>

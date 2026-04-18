@@ -72,7 +72,9 @@
 		{dropdownMenu}
 	>
 		{#snippet statusIndicator()}
-			<AgentPanelStatusIcon status={header.status} />
+			{#if !controls}
+				<AgentPanelStatusIcon status={header.status} />
+			{/if}
 		{/snippet}
 
 		{#snippet trailingActions()}

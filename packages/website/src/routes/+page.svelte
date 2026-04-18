@@ -396,14 +396,14 @@ const features = [
 
 	<main class="pt-20">
 		<!-- Hero Section -->
-		<section class="flex justify-center px-4 pt-16 pb-12 md:px-6 md:pt-24 md:pb-16">
+		<section class="flex justify-center px-4 pt-16 pb-20 md:px-6 md:pt-24 md:pb-28">
 			<div class="text-center">
 				<AgentIconsRow size={24} class="mb-6" />
 
-				<h1 class="mb-6 text-3xl leading-[1.1] font-semibold tracking-[-0.03em] md:text-[56px]">
+				<h1 class="mb-6 text-[26px] leading-[1.1] font-semibold tracking-[-0.03em] md:text-[48px]">
 					{m.landing_hero_title()}
 				</h1>
-				<p class="mx-auto mb-10 max-w-[760px] text-lg leading-[1.5] font-normal tracking-[-0.01em] text-muted-foreground md:text-[22px]">
+				<p class="mx-auto mb-10 max-w-[760px] text-[18px] leading-[1.5] font-normal tracking-[-0.01em] text-muted-foreground md:text-[20px]">
 					{m.landing_hero_subtitle()}
 				</p>
 
