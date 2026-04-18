@@ -28,9 +28,18 @@ import {
 	AppSidebarFooter,
 	AppSidebarProjectHeader,
 } from "../components/app-layout/index.js";
+import { AgentSelectorView } from "../components/agent-selector/index.js";
+import { BranchPickerView } from "../components/branch-picker/index.js";
+import { ProjectSelectorView } from "../components/project-selector/index.js";
 
 test("Unit 1 shells import without forbidden dependencies", () => {
 	expect(AppSidebarFooter).toBeDefined();
 	expect(AppSidebarProjectHeader).toBeDefined();
 	expect(AppQueueRow).toBeDefined();
+});
+
+test("Unit 3 selector shells import without forbidden dependencies", () => {
+	expect(ProjectSelectorView).toBeDefined();
+	expect(BranchPickerView).toBeDefined();
+	expect(AgentSelectorView).toBeDefined();
 });
