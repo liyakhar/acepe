@@ -505,6 +505,7 @@ function buildScene(panel: DemoPanel, currentTheme: string): AgentPanelSceneMode
 			agentIconSrc: resolveAgentIcon(panel.agentKey, currentTheme),
 			projectLabel: panel.projectLabel,
 			projectColor: panel.projectColor,
+			projectIconSrc: null,
 			sequenceId: panel.sequenceId,
 			actions: [],
 		},
@@ -817,7 +818,7 @@ function handleSubmit(panel: DemoPanel): void {
 					<AgentPanelComposer
 						class="border-t-0 p-0"
 						inputClass="flex-shrink-0 border border-border bg-input/30"
-						contentClass="p-2"
+						contentClass="p-3"
 					>
 						{#snippet content()}
 							<AgentInputEditor

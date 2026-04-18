@@ -138,7 +138,7 @@ const groups = $derived.by((): readonly KanbanSceneColumnGroup[] => {
 	return [
 		{
 			id: "answer_needed",
-			label: "Input Needed",
+			label: "Input needed",
 			items: [
 				createCard({
 					id: "landing-question-card",
