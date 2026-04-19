@@ -325,15 +325,30 @@ impl AcpUiEventDispatcher {
     }
 
     pub fn enqueue(&self, event: AcpUiEvent) {
+        // Build the canonical domain event first so we have the seq for idempotency.
+        let derived_domain_event = session_domain_event_from_update(&event.payload)
+            .map(|e| self.create_session_domain_event(&e.session_id, e.kind, e.payload));
+
         if let AcpUiEventPayload::SessionUpdate(update) = &event.payload {
             if let Some(session_id) = update.session_id() {
-                self.projection_registry
-                    .apply_session_update(session_id, update.as_ref());
+                if let Some(canonical) = &derived_domain_event {
+                    if let AcpUiEventPayload::SessionDomainEvent(domain_event) = &canonical.payload
+                    {
+                        // Route through the canonical entrypoint for idempotency and ordering.
+                        self.projection_registry.apply_canonical_event(
+                            session_id,
+                            domain_event,
+                            update.as_ref(),
+                        );
+                    }
+                } else {
+                    // Fallback: updates with no canonical mapping (Plan, ConfigOptionUpdate, …)
+                    // still need to advance projection state.
+                    self.projection_registry
+                        .apply_session_update(session_id, update.as_ref());
+                }
             }
         }
-
-        let derived_domain_event = session_domain_event_from_update(&event.payload)
-            .map(|event| self.create_session_domain_event(&event.session_id, event.kind, event.payload));
 
         #[cfg(test)]
         if let Some(sink) = &self.test_sink {
