@@ -18,6 +18,7 @@ use crate::acp::client_transport::write_serialized_line;
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::projections::ProjectionRegistry;
 use crate::acp::provider::AgentProvider;
+use crate::acp::runtime_resolver::{load_saved_agent_env_overrides, resolve_effective_runtime};
 use crate::acp::session_policy::SessionPolicyRegistry;
 use crate::acp::session_registry::{bind_provider_session_id_persisted, SessionRegistry};
 use crate::acp::session_update::{SessionUpdate, ToolKind};
@@ -231,7 +232,38 @@ impl AgentClient for CodexNativeClient {
         }
 
         let spawn_config = self.provider.spawn_config();
-        let runtime_identity = detect_codex_runtime_identity(&spawn_config.command);
+        let saved_overrides = if let Some(app_handle) = &self.app_handle {
+            match load_saved_agent_env_overrides(app_handle).await {
+                Ok(saved_overrides) => Some(saved_overrides),
+                Err(error) => {
+                    tracing::warn!(
+                        agent_id = %self.provider.id(),
+                        error = %error,
+                        "Failed to load saved agent env overrides for Codex"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let provider_id = self.provider.id().to_string();
+        let runtime_cwd = self.cwd.clone();
+        let runtime_spawn_config = spawn_config.clone();
+        let runtime_saved_overrides = saved_overrides.clone();
+        let runtime = tokio::task::spawn_blocking(move || {
+            resolve_effective_runtime(
+                &provider_id,
+                &runtime_cwd,
+                &runtime_spawn_config,
+                runtime_saved_overrides.as_ref(),
+            )
+        })
+        .await
+        .map_err(|error| {
+            AcpError::InvalidState(format!("Failed to resolve Codex runtime: {error}"))
+        })?;
+        let runtime_identity = detect_codex_runtime_identity(&runtime.command);
         if let Some(identity) = runtime_identity.clone() {
             tracing::info!(
                 command = %identity.command,
@@ -241,11 +273,12 @@ impl AgentClient for CodexNativeClient {
             );
         }
         self.runtime_identity = runtime_identity;
-        let mut command = Command::new(&spawn_config.command);
+        let mut command = Command::new(&runtime.command);
         command
-            .args(&spawn_config.args)
-            .envs(&spawn_config.env)
-            .current_dir(&self.cwd)
+            .args(&runtime.args)
+            .env_clear()
+            .envs(&runtime.env)
+            .current_dir(&runtime.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

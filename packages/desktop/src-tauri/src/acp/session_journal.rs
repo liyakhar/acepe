@@ -11,7 +11,7 @@ use crate::acp::session_update::{
 };
 use crate::db::repository::{
     SerializedSessionJournalEventRow, SessionJournalEventRepository,
-    SessionProjectionSnapshotRepository,
+    SessionProjectionSnapshotRepository, SessionThreadSnapshotRepository,
 };
 use chrono::Utc;
 use sea_orm::DbConn;
@@ -342,10 +342,9 @@ pub async fn load_projection_from_journal(
     let events = decode_serialized_events(replay_context, rows)?;
 
     // A `MaterializationBarrier` event alone marks the open-time cutoff but
-    // carries no projection state. Return `None` so the caller falls back to
-    // the persisted snapshot in `session_projection_snapshot`, which was written
-    // by `persist_canonical_materialization` at materialization time and carries
-    // the actual in-progress operations, interactions, and session state.
+    // carries no projection state. Return `None` so the caller can rebuild from
+    // the canonical thread snapshot instead of consulting a second persisted
+    // projection authority.
     let has_projection_data = events.iter().any(|e| {
         matches!(
             e.payload,
@@ -366,6 +365,21 @@ pub async fn load_stored_projection(
 ) -> Result<Option<SessionProjectionSnapshot>, anyhow::Error> {
     if let Some(journal_projection) = load_projection_from_journal(db, replay_context).await? {
         return Ok(Some(journal_projection));
+    }
+
+    let thread_snapshot = SessionThreadSnapshotRepository::get(
+        db,
+        &replay_context.local_session_id,
+        &replay_context.agent_id,
+    )
+    .await?;
+
+    if let Some(snapshot) = thread_snapshot {
+        return Ok(Some(ProjectionRegistry::project_thread_snapshot(
+            &replay_context.local_session_id,
+            Some(replay_context.agent_id.clone()),
+            &snapshot,
+        )));
     }
 
     SessionProjectionSnapshotRepository::get(db, &replay_context.local_session_id).await
