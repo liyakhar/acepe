@@ -642,53 +642,27 @@ export class InitializationManager {
    * Pre-loads restored panel session content in parallel with the sidebar scan,
    * then reconnects the restored session so startup behavior matches manual open.
    *
-   * Prefer canonical session metadata loaded from the backend; persisted panel fields
-   * are only fallback hints for sessions that have not been hydrated yet.
+   * When a panel's session is not yet in the local store (registry-only recovery),
+   * a minimal cold shell is seeded from persisted panel hints so that
+   * openPersistedSession can proceed. The canonical snapshot is applied by
+   * openPersistedSession itself via getSessionOpenResult.
    */
   private earlyPreloadPanelSessions(): void {
     for (const panel of this.panelStore.panels) {
       if (!panel.sessionId) continue;
+
       const session = this.sessionStore.getSessionCold(panel.sessionId);
       if (!session) {
         const projectPath = panel.projectPath;
         const agentId = panel.agentId;
-
         if (!projectPath || !agentId) {
           continue;
         }
-
-        this.sessionStore
-          .loadSessionById(
-            panel.sessionId,
-            projectPath,
-            agentId,
-            panel.sourcePath ?? undefined,
-            panel.worktreePath ?? undefined,
-            panel.sessionTitle ?? undefined,
-          )
-          .andThen(() => {
-            openPersistedSession({
-              panelId: panel.id,
-              sessionId: panel.sessionId!,
-              sessionStore: this.sessionStore,
-              sessionOpenHydrator: this.sessionOpenHydrator,
-              timeoutMs: SESSION_OPEN_TIMEOUT_MS,
-              source: "initialization-manager",
-            });
-            return okAsync(undefined);
-          })
-          .mapErr((error) => {
-            logger.warn(
-              "Early panel preload failed, clearing session reference",
-              {
-                panelId: panel.id,
-                sessionId: panel.sessionId,
-                error,
-              },
-            );
-            this.panelStore.updatePanelSession(panel.id, null);
-          });
-        continue;
+        this.sessionStore.registerSessionPlaceholder(panel.sessionId, projectPath, agentId, {
+          sourcePath: panel.sourcePath ?? undefined,
+          worktreePath: panel.worktreePath ?? undefined,
+          placeholderTitle: panel.sessionTitle ?? undefined,
+        });
       }
 
       openPersistedSession({

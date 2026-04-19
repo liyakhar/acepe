@@ -13,7 +13,6 @@
 
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { HistoryEntry } from "../../../services/claude-history-types.js";
-import type { SessionOpenFound } from "../../../services/acp-types.js";
 import { tauriClient } from "../../../utils/tauri-client.js";
 import { AgentError, type AppError } from "../../errors/app-error.js";
 import { createLogger } from "../../utils/logger.js";
@@ -107,7 +106,6 @@ function resolveSessionTitle(
  * Repository for session persistence and loading operations.
  */
 export class SessionRepository {
-	private readonly preloadedSourcePaths = new Map<string, string | undefined>();
 
 	constructor(
 		private readonly stateReader: ISessionStateReader,
@@ -371,24 +369,23 @@ export class SessionRepository {
 				return Promise.resolve({ id, success: false as const });
 			}
 
-			return this.preloadSessionDetails(
-				id,
-				session.projectPath,
-				session.agentId,
-				session.sourcePath
-			).match(
-				(result) => {
-					// Update session metadata if title changed
-					if (result.title && result.title !== session.title) {
-						this.stateWriter.updateSession(result.canonicalSessionId, { title: result.title });
+			return api
+				.getSessionOpenResult(id, session.projectPath, session.agentId, session.sourcePath)
+				.andThen((openResult) => {
+					if (openResult.outcome !== "found") {
+						return okAsync({ id, success: false as const });
 					}
-
-					return { id: result.canonicalSessionId, success: true as const };
-				},
-				() => {
-					return { id, success: false as const };
-				}
-			);
+					this.stateWriter.replaceSessionOpenSnapshot(openResult);
+					const title = openResult.sessionTitle || undefined;
+					if (title && title !== session.title) {
+						this.stateWriter.updateSession(openResult.canonicalSessionId, { title });
+					}
+					return okAsync({ id: openResult.canonicalSessionId, success: true as const });
+				})
+				.match(
+					(result) => result,
+					() => ({ id, success: false as const })
+				);
 		});
 
 		return ResultAsync.fromSafePromise(Promise.all(loadPromises)).map((results) => {
@@ -408,129 +405,6 @@ export class SessionRepository {
 
 			return { loaded, missing };
 		});
-	}
-
-	/**
-	 * Preload full session details from disk.
-	 */
-	preloadSessionDetails(
-		sessionId: string,
-		projectPath: string,
-		agentId: string,
-		sourcePath?: string
-	): ResultAsync<{ entries: SessionEntry[]; title?: string; canonicalSessionId: string }, AppError> {
-		if (this.entryManager.isPreloaded(sessionId)) {
-			const existingSourcePath = this.preloadedSourcePaths.get(sessionId);
-			if (existingSourcePath === sourcePath) {
-				const existing = this.entryManager.getEntries(sessionId);
-				return okAsync({ entries: existing, canonicalSessionId: sessionId });
-			}
-
-			logger.info("Reloading preloaded session because sourcePath changed", {
-				sessionId,
-				existingSourcePath,
-				sourcePath,
-			});
-		}
-
-		return api
-			.getSessionOpenResult(sessionId, projectPath, agentId, sourcePath)
-			.andThen((openResult) => {
-				if (openResult.outcome === "missing") {
-					return errAsync(
-						new AgentError(
-							"get_session_open_result",
-							new Error(`Session ${openResult.requestedSessionId} not found`)
-						)
-					);
-				}
-
-				if (openResult.outcome === "error") {
-					return errAsync(
-						new AgentError("get_session_open_result", new Error(openResult.message))
-					);
-				}
-
-				return this.applyPreloadedSnapshot(openResult, sourcePath);
-			})
-			.mapErr((error) => {
-				logger.warn("Failed to load session content", { sessionId, error });
-				return error;
-			});
-	}
-
-	/**
-	 * Load a session directly by ID with its context.
-	 */
-	loadSessionById(
-		sessionId: string,
-		projectPath: string,
-		agentId: string,
-		sourcePath?: string,
-		worktreePath?: string,
-		setSessionLoading?: (sessionId: string) => void,
-		setSessionLoaded?: (sessionId: string) => void,
-		placeholderTitle?: string
-	): ResultAsync<SessionCold, AppError> {
-		// Guard: already loaded
-		if (this.entryManager.isPreloaded(sessionId)) {
-			const existing = this.stateReader.getSessionCold(sessionId);
-			if (existing) {
-				return okAsync(existing);
-			}
-		}
-
-		// Create a transient loading shell if not in store yet
-		const existing = this.stateReader.getSessionCold(sessionId);
-		const createdLoadingShell = !existing;
-		if (createdLoadingShell) {
-			const now = new Date();
-			const loadingShell: SessionCold = {
-				id: sessionId,
-				projectPath,
-				agentId,
-				worktreePath,
-				title: placeholderTitle ?? "Loading...",
-				updatedAt: now,
-				createdAt: now,
-				sourcePath,
-				sessionLifecycleState: sourcePath ? "persisted" : "created",
-				parentId: null,
-			};
-			this.stateWriter.addSession(loadingShell);
-		}
-
-		// Start content loading in state machine
-		this.connectionManager.sendContentLoad(sessionId);
-
-		setSessionLoading?.(sessionId);
-
-		return this.preloadSessionDetails(sessionId, projectPath, agentId, sourcePath)
-			.map((result) => {
-				// Content loaded successfully
-				this.connectionManager.sendContentLoaded(sessionId);
-				setSessionLoaded?.(sessionId);
-
-				const newTitle =
-					result.title && result.title !== ""
-						? result.title
-						: existing?.title && !isReplaceableSessionTitle(existing.title)
-							? existing.title
-							: "New Thread";
-				this.stateWriter.updateSession(result.canonicalSessionId, { title: newTitle });
-
-				return this.stateReader.getSessionCold(result.canonicalSessionId)!;
-			})
-			.mapErr((error) => {
-				// Content loading failed — remove transient loading shell to prevent ghost sessions
-				// that survive mergeHistoryWithExisting indefinitely
-				if (createdLoadingShell) {
-					this.stateWriter.removeSession(sessionId);
-				}
-				this.connectionManager.sendContentLoadError(sessionId);
-				setSessionLoaded?.(sessionId); // Clear loading state
-				return error;
-			});
 	}
 
 	/**
@@ -589,20 +463,6 @@ export class SessionRepository {
 	// ============================================
 	// PRIVATE HELPERS
 	// ============================================
-
-	private applyPreloadedSnapshot(
-		found: SessionOpenFound,
-		requestedSourcePath?: string
-	): ResultAsync<{ entries: SessionEntry[]; title?: string; canonicalSessionId: string }, AppError> {
-		this.stateWriter.replaceSessionOpenSnapshot(found);
-		this.preloadedSourcePaths.set(found.canonicalSessionId, requestedSourcePath);
-		const entries = this.entryManager.getEntries(found.canonicalSessionId);
-		return okAsync({
-			entries,
-			title: found.sessionTitle || undefined,
-			canonicalSessionId: found.canonicalSessionId,
-		});
-	}
 
 	/**
 	 * Merge history entries with existing sessions.

@@ -794,28 +794,39 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	}
 
 	/**
-	 * Load a session directly by ID with its context.
+	 * Register a minimal cold-shell so that openPersistedSession can find session
+	 * metadata when the session is only present in the backend registry (not yet in the
+	 * local store). The canonical snapshot is applied by the subsequent
+	 * openPersistedSession call; this method only seeds the lookup.
+	 *
+	 * No-op when the session is already registered.
 	 */
-	loadSessionById(
+	registerSessionPlaceholder(
 		sessionId: string,
 		projectPath: string,
 		agentId: string,
-		sourcePath?: string,
-		worktreePath?: string,
-		placeholderTitle?: string
-	): ResultAsync<SessionCold, AppError> {
-		return this.repository
-			.loadSessionById(
-				sessionId,
-				projectPath,
-				agentId,
-				sourcePath,
-				worktreePath,
-				(id) => this.setSessionLoading(id),
-				(id) => this.setSessionLoaded(id),
-				placeholderTitle
-			)
-			.map((session) => session);
+		options?: {
+			sourcePath?: string;
+			worktreePath?: string;
+			placeholderTitle?: string | null;
+		}
+	): void {
+		if (this.getSessionCold(sessionId)) {
+			return;
+		}
+		const now = new Date();
+		this.addSession({
+			id: sessionId,
+			projectPath,
+			agentId,
+			worktreePath: options?.worktreePath,
+			title: options?.placeholderTitle ?? null,
+			updatedAt: now,
+			createdAt: now,
+			sourcePath: options?.sourcePath,
+			sessionLifecycleState: options?.sourcePath ? "persisted" : "created",
+			parentId: null,
+		});
 	}
 
 	/**

@@ -597,24 +597,6 @@ export class SessionConnectionManager {
 			});
 			return okAsync(session);
 		}
-		// Defensive guard: if we already have a bound ACP session ID for this thread,
-		// treat it as connected instead of issuing another resume call (which can replay history).
-		if (hotState.acpSessionId === sessionId && hotState.status !== "error") {
-			logger.info(
-				"Session has bound ACP session ID while disconnected; skipping duplicate resume",
-				{
-					sessionId,
-					status: hotState.status,
-				}
-			);
-			this.hotStateManager.updateHotState(sessionId, {
-				isConnected: true,
-				status: hotState.status === "idle" ? "ready" : hotState.status,
-				connectionError: null,
-			});
-			return okAsync(session);
-		}
-
 		const pending = this.pendingConnections.get(sessionId);
 		if (pending) {
 			logger.debug("Connection already in flight, returning pending", { sessionId });

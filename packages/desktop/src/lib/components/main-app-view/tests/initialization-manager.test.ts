@@ -103,16 +103,7 @@ describe("InitializationManager", () => {
       loadStartupSessions: mock(() =>
         okAsync({ missing: [], aliasRemaps: {} }),
       ),
-      loadSessionById: mock(() =>
-        okAsync(
-          buildSession(
-            "session-1",
-            "claude-code",
-            "/project1",
-            "Recovered session",
-          ),
-        ),
-      ),
+      registerSessionPlaceholder: mock(() => {}),
       preloadSessions: mock(() => okAsync({ loaded: [], missing: [] })),
       scanSessions: mock(() => okAsync(undefined)),
       createSession: mock(
@@ -688,27 +679,22 @@ describe("InitializationManager", () => {
       mockSessionStore.getSessionCold = mock(
         () => undefined,
       ) as SessionStore["getSessionCold"];
-      mockSessionStore.loadSessionById = mock(() =>
-        okAsync(
-          buildSession(
-            "session-1",
-            "claude-code",
-            "/project1",
-            "Recovered session",
-          ),
-        ),
-      ) as SessionStore["loadSessionById"];
+      mockSessionStore.registerSessionPlaceholder = mock(
+        () => {},
+      ) as SessionStore["registerSessionPlaceholder"];
 
       await manager.initialize();
       await Promise.resolve();
 
-      expect(mockSessionStore.loadSessionById).toHaveBeenCalledWith(
+      expect(mockSessionStore.registerSessionPlaceholder).toHaveBeenCalledWith(
         "session-1",
         "/project1",
         "claude-code",
-        "/project1/.claude/projects/session-1.jsonl",
-        "/project1/.git/worktrees/feature-a",
-        "Recovered session",
+        {
+          sourcePath: "/project1/.claude/projects/session-1.jsonl",
+          worktreePath: "/project1/.git/worktrees/feature-a",
+          placeholderTitle: "Recovered session",
+        },
       );
       expect(openPersistedSessionMock).toHaveBeenCalledWith({
         panelId: "panel-1",
