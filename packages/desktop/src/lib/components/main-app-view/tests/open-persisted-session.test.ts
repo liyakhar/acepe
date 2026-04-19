@@ -179,6 +179,104 @@ describe("openPersistedSession", () => {
 		});
 	});
 
+	// ==========================================================================
+	// U7 E2E proof: canonical open path invariants
+	// ==========================================================================
+
+	it("[E2E] openToken from found result is threaded verbatim into connectSession", async () => {
+		// Core proof: the token must survive the open → hydrate → connect chain without
+		// being dropped or replaced by any intermediate step.
+		const specificToken = "token-abc-xyz-123";
+		getSessionOpenResultMock.mockImplementation(() =>
+			okAsync(createFoundResult("session-1", { openToken: specificToken }))
+		);
+		sessionOpenHydrator.hydrateFound = mock(() =>
+			okAsync({ canonicalSessionId: "session-1", openToken: specificToken, applied: true })
+		);
+
+		openPersistedSession({
+			panelId: "panel-e2e-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(sessionStore.connectSession).toHaveBeenCalledWith("session-1", {
+			openToken: specificToken,
+		});
+	});
+
+	it("[E2E] uses canonical session id for all store updates when hydration rewrites an alias", async () => {
+		// When the backend returns a canonical id different from the requested id (alias),
+		// ALL store updates must use the canonical id, not the alias.
+		const requestedId = "alias-provider-session";
+		const canonicalId = "acepe-canonical-uuid";
+
+		sessionStore.getSessionCold = mock(() => ({
+			id: requestedId,
+			title: "Aliased session",
+			projectPath: "/project",
+			agentId: "claude-code",
+			sourcePath: "/tmp/alias.jsonl",
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			parentId: null,
+		}));
+		getSessionOpenResultMock.mockImplementation(() =>
+			okAsync(
+				createFoundResult(requestedId, {
+					canonicalSessionId: canonicalId,
+					isAlias: true,
+				})
+			)
+		);
+		sessionOpenHydrator.hydrateFound = mock(() =>
+			okAsync({ canonicalSessionId: canonicalId, openToken: "token-alias", applied: true })
+		);
+
+		openPersistedSession({
+			panelId: "panel-e2e-2",
+			sessionId: requestedId,
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith(canonicalId);
+		expect(sessionStore.connectSession).toHaveBeenCalledWith(canonicalId, expect.anything());
+		expect(sessionStore.setSessionLoaded).not.toHaveBeenCalledWith(requestedId);
+	});
+
+	it("[E2E] does not call connectSession when the open attempt is superseded by a newer one", async () => {
+		// If a panel is retargeted between the open result arriving and hydration completing,
+		// isCurrentAttempt returns false and reconnect must be suppressed to avoid stale state.
+		sessionOpenHydrator.isCurrentAttempt = mock(() => false);
+
+		openPersistedSession({
+			panelId: "panel-e2e-3",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(sessionStore.connectSession).not.toHaveBeenCalled();
+		expect(sessionOpenHydrator.hydrateFound).toHaveBeenCalled();
+	});
+
 	it("marks the session loaded without connecting when the result is missing", async () => {
 		getSessionOpenResultMock.mockImplementation(
 			() =>
@@ -204,7 +302,10 @@ describe("openPersistedSession", () => {
 	});
 });
 
-function createFoundResult(sessionId: string): SessionOpenResult {
+function createFoundResult(
+	sessionId: string,
+	overrides?: Partial<Extract<SessionOpenResult, { outcome: "found" }>>
+): SessionOpenResult {
 	return {
 		outcome: "found",
 		requestedSessionId: sessionId,
@@ -225,5 +326,6 @@ function createFoundResult(sessionId: string): SessionOpenResult {
 		operations: [],
 		interactions: [],
 		turnState: "Idle",
+		...overrides,
 	};
 }

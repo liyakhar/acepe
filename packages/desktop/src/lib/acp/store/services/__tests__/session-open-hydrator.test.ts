@@ -180,6 +180,62 @@ describe("SessionOpenHydrator", () => {
 		expect(replaceSessionProjection).toHaveBeenCalledTimes(1);
 	});
 
+	// ==========================================================================
+	// U7 E2E proof: canonical snapshot invariants
+	// ==========================================================================
+
+	it("[E2E] openToken from found result is preserved verbatim through hydrateFound", async () => {
+		// The hydrator must surface the exact openToken from the backend result so the
+		// caller can thread it into reconnect without the token being altered or dropped.
+		const requestToken = hydrator.beginAttempt("panel-e2e");
+		const specificToken = "backend-issued-token-deadbeef";
+
+		const result = await hydrator.hydrateFound(
+			"panel-e2e",
+			requestToken,
+			createFoundResult({ openToken: specificToken })
+		);
+
+		expect(result.isOk()).toBe(true);
+		expect(result._unsafeUnwrap().openToken).toBe(specificToken);
+	});
+
+	it("[E2E] replaceSessionOpenSnapshot is called with the canonical session id even for alias opens", async () => {
+		// When an alias is resolved, the hydrator must apply the snapshot under the
+		// canonical id so downstream delta events keyed by canonical id merge correctly.
+		const requestToken = hydrator.beginAttempt("panel-e2e-alias");
+
+		const result = await hydrator.hydrateFound(
+			"panel-e2e-alias",
+			requestToken,
+			createFoundResult({
+				requestedSessionId: "alias-id",
+				canonicalSessionId: "canonical-id",
+				isAlias: true,
+			})
+		);
+
+		expect(result.isOk()).toBe(true);
+		const applied = result._unsafeUnwrap();
+		expect(applied.canonicalSessionId).toBe("canonical-id");
+		expect(replaceSessionOpenSnapshot).toHaveBeenCalledTimes(1);
+		// The snapshot payload must carry the canonical session id
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const snapshotArg = (replaceSessionOpenSnapshot.mock.calls as any)[0]?.[0];
+		expect(snapshotArg?.canonicalSessionId).toBe("canonical-id");
+	});
+
+	it("[E2E] replaceSessionProjection is called exactly once per hydrateFound — no double-hydration", async () => {
+		// Regression guard: open-time projection must be applied exactly once.
+		// A double-hydrate would leave the UI in a partially-reset state.
+		const requestToken = hydrator.beginAttempt("panel-e2e-single");
+
+		await hydrator.hydrateFound("panel-e2e-single", requestToken, createFoundResult());
+
+		expect(replaceSessionProjection).toHaveBeenCalledTimes(1);
+		expect(replaceSessionOpenSnapshot).toHaveBeenCalledTimes(1);
+	});
+
 	it("[characterize] session with in-progress operations preserves those operations through hydration", async () => {
 		// A session reopened during an active tool call must carry the in-progress
 		// operation in the hydrated snapshot so the UI renders the in-flight state.

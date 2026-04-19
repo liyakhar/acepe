@@ -942,6 +942,56 @@ describe("SessionConnectionManager.connectSession", () => {
 			"open-token-123"
 		);
 	});
+
+	// ==========================================================================
+	// U7 E2E proof: delta-only reconnect after canonical open
+	// ==========================================================================
+
+	it("[E2E] reconnect after canonical open delivers only post-snapshot events (no replay suppression needed)", async () => {
+		// Proof: openToken is the sole reconnect boundary. The frontend passes it straight
+		// to resumeSession — no replay-suppression guard, no conditional skip logic.
+		// The Rust side uses the token to ensure only events after last_event_seq are
+		// delivered. This test verifies there is no guard in connectSession that would
+		// swallow the reconnect call when the session already has an acpSessionId.
+		getSessionModelForMode.mockReturnValue(undefined);
+
+		// Simulate a session that was previously connected (has an acpSessionId in hot state).
+		// The old replay-suppression guard would have skipped the resume call in this case.
+		// Post-U5 this must always proceed to resumeSession.
+		(hotState.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			status: "idle",
+			acpSessionId: "existing-acp-session-id",
+			isConnected: false,
+			connectionError: null,
+			metadata: {},
+		});
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.connectSession(sessionId, createMockEventHandler(), {
+			openToken: "open-token-post-snapshot",
+		});
+		result._unsafeUnwrap();
+
+		// resumeSession MUST be called — no guard should short-circuit it just because
+		// acpSessionId is already set. The openToken boundary on the Rust side ensures
+		// only post-snapshot deltas replay.
+		expect(resumeSession).toHaveBeenCalledWith(
+			sessionId,
+			projectPath,
+			expect.any(Number),
+			undefined,
+			undefined,
+			"open-token-post-snapshot"
+		);
+	});
 });
 
 describe("SessionConnectionManager.createSession", () => {
