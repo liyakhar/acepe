@@ -161,7 +161,7 @@ describe("LiveInteractionProjectionSync", () => {
 		);
 
 		await sync.start();
-		expect(registeredListenerId).toBe("tracked-listener-42");
+		expect(registeredListenerId === "tracked-listener-42").toBe(true);
 
 		sync.stop();
 

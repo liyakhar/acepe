@@ -947,12 +947,10 @@ describe("SessionConnectionManager.connectSession", () => {
 	// U7 E2E proof: delta-only reconnect after canonical open
 	// ==========================================================================
 
-	it("[E2E] reconnect after canonical open delivers only post-snapshot events (no replay suppression needed)", async () => {
-		// Proof: openToken is the sole reconnect boundary. The frontend passes it straight
-		// to resumeSession — no replay-suppression guard, no conditional skip logic.
-		// The Rust side uses the token to ensure only events after last_event_seq are
-		// delivered. This test verifies there is no guard in connectSession that would
-		// swallow the reconnect call when the session already has an acpSessionId.
+	it("[E2E] reconnect after canonical open still invokes resumeSession with the openToken frontier", async () => {
+		// Proof: reconnect always forwards the openToken boundary to Rust even when the
+		// session already has an acpSessionId. Frontend replay suppression must never
+		// short-circuit the reconnect invoke itself.
 		getSessionModelForMode.mockReturnValue(undefined);
 
 		// Simulate a session that was previously connected (has an acpSessionId in hot state).
@@ -981,8 +979,8 @@ describe("SessionConnectionManager.connectSession", () => {
 		result._unsafeUnwrap();
 
 		// resumeSession MUST be called — no guard should short-circuit it just because
-		// acpSessionId is already set. The openToken boundary on the Rust side ensures
-		// only post-snapshot deltas replay.
+		// acpSessionId is already set. The reconnect frontier still belongs to the
+		// openToken carried into Rust.
 		expect(resumeSession).toHaveBeenCalledWith(
 			sessionId,
 			projectPath,
@@ -991,6 +989,35 @@ describe("SessionConnectionManager.connectSession", () => {
 			undefined,
 			"open-token-post-snapshot"
 		);
+	});
+
+	it("[regression] open-token reconnect brackets resume with snapshot replay suppression", async () => {
+		getSessionModelForMode.mockReturnValue(undefined);
+		const beginSnapshotReconnect = vi.spyOn(
+			SessionEventService.prototype,
+			"beginSnapshotReconnect"
+		);
+		const endSnapshotReconnect = vi.spyOn(
+			SessionEventService.prototype,
+			"endSnapshotReconnect"
+		);
+
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.connectSession(sessionId, createMockEventHandler(), {
+			openToken: "open-token-suppress-replay",
+		});
+		result._unsafeUnwrap();
+
+		expect(beginSnapshotReconnect).toHaveBeenCalledWith(sessionId);
+		expect(endSnapshotReconnect).toHaveBeenCalledWith(sessionId);
 	});
 });
 

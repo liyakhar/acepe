@@ -1134,6 +1134,99 @@ describe("SessionEventService streaming delta handling", () => {
 		);
 	});
 
+	it("[regression] suppresses raw session updates during snapshot reconnect while connecting", () => {
+		const reconnectingHandler = createMockHandler();
+		const session = {
+			id: "session-123",
+			agentId: "claude-code",
+		} as unknown as SessionCold;
+		(reconnectingHandler.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue(session);
+		(reconnectingHandler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: false,
+			status: "connecting",
+		});
+
+		service.beginSnapshotReconnect("session-123");
+
+		const update: SessionUpdate = {
+			type: "toolCall",
+			session_id: "session-123",
+			tool_call: {
+				id: "tool-replay-connecting-1",
+				name: "Read",
+				status: "in_progress",
+				kind: "read",
+				arguments: {
+					kind: "read",
+					file_path: "/repo/src/replayed.ts",
+				},
+				awaitingPlanApproval: false,
+			},
+		};
+
+		service.handleSessionUpdate(update, reconnectingHandler, 500);
+		service.endSnapshotReconnect("session-123");
+		(reconnectingHandler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: true,
+			status: "idle",
+			turnState: "idle",
+		});
+		service.flushPendingEvents("session-123", reconnectingHandler);
+
+		expect(reconnectingHandler.createToolCallEntry).not.toHaveBeenCalled();
+	});
+
+	it("[regression] buffers transcript deltas during snapshot reconnect and flushes them after connect", () => {
+		const reconnectingHandler = createMockHandler();
+		const session = {
+			id: "session-123",
+			agentId: "claude-code",
+		} as unknown as SessionCold;
+		(reconnectingHandler.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue(session);
+		(reconnectingHandler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: false,
+			status: "connecting",
+		});
+
+		service.beginSnapshotReconnect("session-123");
+
+		const delta: TranscriptDelta = {
+			sessionId: "session-123",
+			eventSeq: 42,
+			snapshotRevision: 42,
+			operations: [
+				{
+					kind: "appendEntry",
+					entry: {
+						entryId: "assistant-42",
+						role: "assistant",
+						segments: [
+							{
+								kind: "text",
+								segmentId: "assistant-42:segment:42",
+								text: "post-snapshot delta",
+							},
+						],
+					},
+				},
+			],
+		};
+
+		service.handleTranscriptDelta(delta, reconnectingHandler);
+		expect(reconnectingHandler.applyTranscriptDelta).not.toHaveBeenCalled();
+
+		service.endSnapshotReconnect("session-123");
+		(reconnectingHandler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
+			isConnected: true,
+			status: "idle",
+			turnState: "idle",
+		});
+		service.flushPendingEvents("session-123", reconnectingHandler);
+
+		expect(reconnectingHandler.applyTranscriptDelta).toHaveBeenCalledTimes(1);
+		expect(reconnectingHandler.applyTranscriptDelta).toHaveBeenCalledWith("session-123", delta);
+	});
+
 	it("does not infer plan mode from enter_plan_mode tool calls", () => {
 		const update: SessionUpdate = {
 			type: "toolCall",

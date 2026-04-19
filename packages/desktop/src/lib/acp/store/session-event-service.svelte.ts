@@ -154,6 +154,10 @@ export class SessionEventService {
 	private eventSubscriber: EventSubscriber | null = null;
 	private sessionUpdateSubscriptionId: string | null = null;
 	private transcriptDeltaSubscriptionId: string | null = null;
+	// Sessions reopened from a canonical snapshot. During the reconnect handoff,
+	// transcript deltas remain authoritative and raw provider replay must not be
+	// re-applied through the live sessionUpdate path.
+	private snapshotReconnectSessions = new Set<string>();
 	// Pending events buffer for sessions being created (race condition handling)
 	private pendingEvents = new SvelteMap<string, PendingSessionEvent[]>();
 	private pendingEventTimestamps = new SvelteMap<string, number>();
@@ -198,6 +202,14 @@ export class SessionEventService {
 	 */
 	setCallbacks(callbacks: SessionEventServiceCallbacks): void {
 		this.callbacks = callbacks;
+	}
+
+	beginSnapshotReconnect(sessionId: string): void {
+		this.snapshotReconnectSessions.add(sessionId);
+	}
+
+	endSnapshotReconnect(sessionId: string): void {
+		this.snapshotReconnectSessions.delete(sessionId);
 	}
 
 	/**
@@ -394,6 +406,24 @@ export class SessionEventService {
 		const hotState = session ? handler.getHotState(sessionId) : null;
 		const isDisconnectedSession = hotState?.isConnected === false;
 		const isConnectingSession = hotState?.status === "connecting";
+		const isSnapshotReconnect =
+			isConnectingSession && this.snapshotReconnectSessions.has(sessionId);
+
+		if (update.type === "connectionComplete" || update.type === "connectionFailed") {
+			this.snapshotReconnectSessions.delete(sessionId);
+		}
+
+		if (
+			isSnapshotReconnect &&
+			update.type !== "connectionComplete" &&
+			update.type !== "connectionFailed"
+		) {
+			logger.debug("Suppressing raw session replay during snapshot reconnect", {
+				sessionId,
+				updateType: update.type,
+			});
+			return;
+		}
 
 		// Buffer events for known disconnected sessions so they can be replayed
 		// when connectSession() calls flushPendingEvents(). This handles the
@@ -663,6 +693,13 @@ export class SessionEventService {
 		const hotState = session ? handler.getHotState(sessionId) : null;
 		const isDisconnectedSession = hotState?.isConnected === false;
 		const isConnectingSession = hotState?.status === "connecting";
+		const isSnapshotReconnect =
+			isConnectingSession && this.snapshotReconnectSessions.has(sessionId);
+
+		if (isSnapshotReconnect) {
+			this.bufferPendingTranscriptDelta(sessionId, delta);
+			return;
+		}
 
 		if (isDisconnectedSession && !isConnectingSession) {
 			this.telemetryDisconnectedDrops++;
