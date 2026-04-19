@@ -340,7 +340,20 @@ pub async fn load_projection_from_journal(
     let rows = SessionJournalEventRepository::list_serialized(db, &replay_context.local_session_id)
         .await?;
     let events = decode_serialized_events(replay_context, rows)?;
-    if events.is_empty() {
+
+    // A `MaterializationBarrier` event alone marks the open-time cutoff but
+    // carries no projection state. Return `None` so the caller falls back to
+    // the persisted snapshot in `session_projection_snapshot`, which was written
+    // by `persist_canonical_materialization` at materialization time and carries
+    // the actual in-progress operations, interactions, and session state.
+    let has_projection_data = events.iter().any(|e| {
+        matches!(
+            e.payload,
+            SessionJournalEventPayload::ProjectionUpdate { .. }
+                | SessionJournalEventPayload::InteractionTransition { .. }
+        )
+    });
+    if !has_projection_data {
         return Ok(None);
     }
 
