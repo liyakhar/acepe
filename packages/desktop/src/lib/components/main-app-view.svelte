@@ -35,6 +35,7 @@ import {
 	createReviewPreferenceStore,
 	createSessionStore,
 	LiveInteractionProjectionSync,
+	LiveOperationProjectionSync,
 	SessionOpenHydrator,
 	SessionProjectionHydrator,
 	createTabBarStore,
@@ -152,6 +153,14 @@ const sessionProjectionHydrator = new SessionProjectionHydrator({
 	replaceSessionProjection(projection) {
 		interactionStore.replaceSessionProjection(projection);
 		sessionStore.applySessionProjection(projection);
+		const projectionSessionId =
+			projection.session?.session_id ?? projection.operations[0]?.session_id ?? null;
+		if (projectionSessionId !== null) {
+			sessionStore.getOperationStore().replaceSessionOperations(
+				projectionSessionId,
+				projection.operations
+			);
+		}
 	},
 	clearSession(sessionId) {
 		interactionStore.clearSession(sessionId);
@@ -160,6 +169,10 @@ const sessionProjectionHydrator = new SessionProjectionHydrator({
 });
 const sessionDomainEventSubscriber = new SessionDomainEventSubscriber();
 const liveInteractionProjectionSync = new LiveInteractionProjectionSync(
+	sessionDomainEventSubscriber,
+	sessionProjectionHydrator
+);
+const liveOperationProjectionSync = new LiveOperationProjectionSync(
 	sessionDomainEventSubscriber,
 	sessionProjectionHydrator
 );
@@ -934,6 +947,13 @@ onMount(async () => {
 		});
 	}
 
+	const liveOpSyncResult = await liveOperationProjectionSync.start();
+	if (liveOpSyncResult.isErr()) {
+		logger.error("Failed to start live operation projection sync", {
+			error: liveOpSyncResult.error,
+		});
+	}
+
 	// Initialize inbound request handler for ACP permission and question requests
 	const handlerResult = await inboundRequestHandler.start(
 		(permission) => {
@@ -1114,6 +1134,7 @@ onDestroy(() => {
 	// Cleanup inbound request handler
 	inboundRequestHandler.stop();
 	liveInteractionProjectionSync.stop();
+	liveOperationProjectionSync.stop();
 	// Cleanup session update subscription (removes Tauri event listener)
 	sessionStore.cleanupSessionUpdates();
 	// Unregister global keyboard handler
