@@ -134,6 +134,75 @@ describe("LiveInteractionProjectionSync", () => {
 		expect(hydrateSessionMock).toHaveBeenCalledTimes(3);
 	});
 
+	// ==========================================================================
+	// Unit 7: End-to-end canonical pipeline proof
+	// ==========================================================================
+
+	it("[E2E] stop unsubscribes the exact listener ID that start registered — lifecycle is paired", async () => {
+		// Proves the canonical pipeline lifecycle contract: stop() unsubscribes using
+		// the exact listener ID returned by subscribe(). This ensures no listener
+		// leaks — each start/stop cycle is fully paired.
+		let registeredListenerId: string | null = null;
+		const trackedSubscribe = mock((nextListener: (event: SessionDomainEvent) => void) => {
+			listener = nextListener;
+			registeredListenerId = "tracked-listener-42";
+			return okAsync("tracked-listener-42");
+		});
+		const trackedUnsubscribe = mock(() => {});
+
+		const sync = new LiveInteractionProjectionSync(
+			{
+				subscribe: trackedSubscribe,
+				unsubscribeById: trackedUnsubscribe,
+			},
+			{
+				hydrateSession: hydrateSessionMock,
+			}
+		);
+
+		await sync.start();
+		expect(registeredListenerId).toBe("tracked-listener-42");
+
+		sync.stop();
+
+		// unsubscribeById must be called with the exact ID returned by subscribe
+		expect(trackedUnsubscribe).toHaveBeenCalledWith("tracked-listener-42");
+		expect(trackedUnsubscribe).toHaveBeenCalledTimes(1);
+	});
+
+	it("[E2E] fresh session reconnect: start → stop → start delivers events to new hydrator without leak from old listener", async () => {
+		// Proves the reconnect path: old listener unsubscribed, new listener registered,
+		// only new events trigger hydration. This is the "restored session reconnects"
+		// scenario from U7 test scenarios.
+		const sync = new LiveInteractionProjectionSync(
+			{
+				subscribe: subscribeMock,
+				unsubscribeById: unsubscribeByIdMock,
+			},
+			{
+				hydrateSession: hydrateSessionMock,
+			}
+		);
+
+		// First connection
+		await sync.start();
+		listener?.(createEvent("interaction_upserted"));
+		expect(hydrateSessionMock).toHaveBeenCalledTimes(1);
+
+		// Reconnect
+		sync.stop();
+		hydrateSessionMock.mockClear();
+		await sync.start();
+
+		// Only new events trigger hydration — old listener is gone
+		listener?.(createEvent("interaction_upserted"));
+		expect(hydrateSessionMock).toHaveBeenCalledTimes(1);
+		// subscribe was called twice (initial + reconnect)
+		expect(subscribeMock).toHaveBeenCalledTimes(2);
+		// unsubscribe was called once (for the first connection)
+		expect(unsubscribeByIdMock).toHaveBeenCalledTimes(1);
+	});
+
 function createEvent(kind: SessionDomainEvent["kind"]): SessionDomainEvent {
 	return {
 		event_id: "event-1",
