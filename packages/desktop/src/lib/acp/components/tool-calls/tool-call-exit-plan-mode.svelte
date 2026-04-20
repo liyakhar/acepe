@@ -18,6 +18,7 @@ import { useSessionContext } from "../../hooks/use-session-context.js";
 import { getPanelStore } from "../../store/panel-store.svelte.js";
 import { getPermissionStore } from "../../store/permission-store.svelte.js";
 import { getPlanPreferenceStore } from "../../store/plan-preference-store.svelte.js";
+import { getSessionStore } from "../../store/session-store.svelte.js";
 import type { TurnState } from "../../store/types.js";
 import type { ToolCall } from "../../types/tool-call.js";
 import { findExitPlanPermission, getExitPlanDisplayPlan } from "./exit-plan-helpers.js";
@@ -36,6 +37,7 @@ let localOutcome = $state<"building" | "rejected" | null>(null);
 const permissionStore = getPermissionStore();
 const panelStore = getPanelStore();
 const planPrefs = getPlanPreferenceStore();
+const sessionStore = getSessionStore();
 const sessionContext = useSessionContext();
 
 const inline = usePlanInline({
@@ -43,13 +45,30 @@ const inline = usePlanInline({
 	getAwaitingPlanApproval: () => false,
 });
 
+function resolvePendingPermission(sessionId: string) {
+	const operationStore = sessionStore.getOperationStore();
+	const operation = operationStore.getByToolCallId(sessionId, toolCall.id);
+	if (operation != null) {
+		return (
+			permissionStore.getForOperation(operation, operationStore) ??
+			permissionStore.getForToolCall(sessionId, toolCall.id) ??
+			findExitPlanPermission(toolCall, permissionStore.getForSession(sessionId))
+		);
+	}
+
+	return (
+		permissionStore.getForToolCall(sessionId, toolCall.id) ??
+		findExitPlanPermission(toolCall, permissionStore.getForSession(sessionId))
+	);
+}
+
 const pendingPermission = $derived.by(() => {
 	const sessionId = sessionContext?.sessionId;
 	if (!sessionId) {
 		return null;
 	}
 
-	return findExitPlanPermission(toolCall, permissionStore.getForSession(sessionId));
+	return resolvePendingPermission(sessionId);
 });
 
 const displayPlan = $derived.by(() => {
@@ -117,7 +136,8 @@ $effect(() => {
 	const handleKeyDown = (e: KeyboardEvent) => {
 		if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
 			e.preventDefault();
-			const current = permissionStore.getForToolCall(sessionContext?.sessionId, toolCall.id);
+			const sessionId = sessionContext?.sessionId;
+			const current = sessionId ? resolvePendingPermission(sessionId) : null;
 			if (current?.id === currentPermissionId) {
 				handleBuildManual();
 			}
