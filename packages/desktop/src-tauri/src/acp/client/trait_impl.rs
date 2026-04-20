@@ -1,5 +1,4 @@
 use super::*;
-use crate::acp::client_trait::ReconnectSessionMethod;
 use async_trait::async_trait;
 
 impl Drop for AcpClient {
@@ -46,11 +45,14 @@ impl AgentClient for AcpClient {
         self.load_session(session_id, cwd).await
     }
 
-    fn reconnect_method(&self) -> ReconnectSessionMethod {
-        self.provider
-            .as_ref()
-            .map(|provider| provider.reconnect_method())
-            .unwrap_or_default()
+    async fn reconnect_session(
+        &mut self,
+        session_id: String,
+        cwd: String,
+        launch_mode_id: Option<String>,
+    ) -> AcpResult<ResumeSessionResponse> {
+        self.reconnect_live_session(session_id, cwd, launch_mode_id)
+            .await
     }
 
     async fn fork_session(
