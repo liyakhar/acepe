@@ -6,25 +6,25 @@ Operations exist so Acepe can represent tool execution as durable product state 
 
 ## Operation in one picture
 
-```text
-provider tool signals
-        |
-        v
-+----------------------+
-| projected operation  |
-+----------------------+
-| id                   |
-| tool identity        |
-| lifecycle / status   |
-| blocked reason       |
-| typed metadata       |
-| timing               |
-| parent/child links   |
-| evidence             |
-+----------------------+
-        |
-        v
-OperationStore -> selectors -> tool UI
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+flowchart TD
+    signals["Provider tool signals"] --> projected["Projected operation"]
+    projected --> store["OperationStore"]
+    store --> selectors["Selectors"]
+    selectors --> ui["Tool UI"]
+
+    classDef blue fill:#B4D2F0,stroke:#6b7280,color:#1f2937;
+    classDef green fill:#B4E6C8,stroke:#6b7280,color:#1f2937;
+    classDef yellow fill:#FFEBB4,stroke:#6b7280,color:#1f2937;
+    classDef orange fill:#FFD2AA,stroke:#6b7280,color:#1f2937;
+    classDef purple fill:#D2BEF0,stroke:#6b7280,color:#1f2937;
+    classDef gray fill:#DCDCE1,stroke:#6b7280,color:#1f2937;
+
+    class signals blue;
+    class projected purple;
+    class store yellow;
+    class selectors,ui orange;
 ```
 
 ## Why operations exist
@@ -103,12 +103,16 @@ That boundary matters because transcript replacement can legally degrade tool ro
 
 ## Lifecycle
 
-```text
-pending -> running -> completed
-             |
-             +------> blocked ----+
-             |                    |
-             +------> failed <----+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+stateDiagram-v2
+    [*] --> Pending
+    Pending --> Running
+    Running --> Completed
+    Running --> Blocked
+    Running --> Failed
+    Blocked --> Running
+    Blocked --> Failed
 ```
 
 Operations may pass through phases like:

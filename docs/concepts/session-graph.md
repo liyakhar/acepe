@@ -6,17 +6,27 @@ It is the durable structure that the rest of the architecture should look to whe
 
 ## Shape
 
-```text
-+-------------------------------------------------------------+
-| session                                                    |
-|-------------------------------------------------------------|
-| transcript entries                                          |
-| operations                                                  |
-| interactions                                                |
-| runtime lifecycle                                           |
-| capabilities / config                                       |
-| telemetry / budget                                          |
-+-------------------------------------------------------------+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+flowchart TB
+    session["Session graph"] --> transcript["Transcript entries"]
+    session --> operations["Operations"]
+    session --> interactions["Interactions"]
+    session --> runtime["Runtime lifecycle"]
+    session --> capabilities["Capabilities / config"]
+    session --> telemetry["Telemetry / budget"]
+
+    classDef blue fill:#B4D2F0,stroke:#6b7280,color:#1f2937;
+    classDef green fill:#B4E6C8,stroke:#6b7280,color:#1f2937;
+    classDef yellow fill:#FFEBB4,stroke:#6b7280,color:#1f2937;
+    classDef orange fill:#FFD2AA,stroke:#6b7280,color:#1f2937;
+    classDef purple fill:#D2BEF0,stroke:#6b7280,color:#1f2937;
+    classDef gray fill:#DCDCE1,stroke:#6b7280,color:#1f2937;
+
+    class session purple;
+    class transcript gray;
+    class operations,interactions green;
+    class runtime,capabilities,telemetry blue;
 ```
 
 ## Ownership table
@@ -69,24 +79,30 @@ Acepe should have **one durable authority path** for session truth:
 
 `provider signal -> backend projection -> canonical session graph -> desktop stores -> UI selectors`
 
-```text
-provider adapter
-     |
-     v
-backend reducer / projector
-     |
-     v
-SessionStateEnvelope
-     |
-     v
-desktop session store
-     |
-     +--> SessionEntryStore
-     +--> OperationStore
-     +--> Interaction stores
-     |
-     v
-rendering selectors
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+flowchart TD
+    adapter["Provider adapter"] --> reducer["Backend reducer / projector"]
+    reducer --> envelope["SessionStateEnvelope"]
+    envelope --> store["Desktop session store"]
+    store --> entry["SessionEntryStore"]
+    store --> operation["OperationStore"]
+    store --> interaction["Interaction stores"]
+    store --> selector["Rendering selectors"]
+
+    classDef blue fill:#B4D2F0,stroke:#6b7280,color:#1f2937;
+    classDef green fill:#B4E6C8,stroke:#6b7280,color:#1f2937;
+    classDef yellow fill:#FFEBB4,stroke:#6b7280,color:#1f2937;
+    classDef orange fill:#FFD2AA,stroke:#6b7280,color:#1f2937;
+    classDef purple fill:#D2BEF0,stroke:#6b7280,color:#1f2937;
+    classDef gray fill:#DCDCE1,stroke:#6b7280,color:#1f2937;
+
+    class adapter,reducer blue;
+    class envelope purple;
+    class store yellow;
+    class entry gray;
+    class operation,interaction green;
+    class selector orange;
 ```
 
 If a feature needs to answer "what is the current tool?", "is this blocked on permission?", or "what runtime state should survive reopen?", it should answer from the session graph or a store materialized from it.

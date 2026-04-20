@@ -2,34 +2,29 @@
 
 This section is the **architecture reference** for Acepe's core product concepts.
 
-```text
-provider signal
-      |
-      v
-+---------------------+
-| backend projection  |
-+---------------------+
-      |
-      v
-+---------------------+
-| canonical session   |
-| graph               |
-+---------------------+
-   |            |
-   v            v
-operations   interactions
-   |            |
-   +------v-----+
-          |
-          v
-+---------------------+
-| desktop stores      |
-+---------------------+
-          |
-          v
-+---------------------+
-| UI selectors/views  |
-+---------------------+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+flowchart TD
+    provider["Provider signal"] --> projection["Backend projection"]
+    projection --> graph["Canonical session graph"]
+    graph --> operations["Operations"]
+    graph --> interactions["Interactions"]
+    operations --> stores["Desktop stores"]
+    interactions --> stores
+    stores --> views["UI selectors / views"]
+
+    classDef blue fill:#B4D2F0,stroke:#6b7280,color:#1f2937;
+    classDef green fill:#B4E6C8,stroke:#6b7280,color:#1f2937;
+    classDef yellow fill:#FFEBB4,stroke:#6b7280,color:#1f2937;
+    classDef orange fill:#FFD2AA,stroke:#6b7280,color:#1f2937;
+    classDef purple fill:#D2BEF0,stroke:#6b7280,color:#1f2937;
+    classDef gray fill:#DCDCE1,stroke:#6b7280,color:#1f2937;
+
+    class provider,projection blue;
+    class graph purple;
+    class operations,interactions green;
+    class stores yellow;
+    class views orange;
 ```
 
 Use it when you need to answer questions like:
@@ -73,13 +68,13 @@ The goal is to stop the codebase from drifting into multiple hidden authorities.
 
 ## Canonical ownership at a glance
 
-```text
-transcript history     -> SessionEntryStore
-runtime work           -> OperationStore
-human/policy gates     -> Interaction/Permission/Question stores
-session truth stream   -> revisioned session graph envelopes
-UI rendering           -> selectors over canonical stores
-```
+| Surface | Canonical owner |
+|---|---|
+| Transcript history | `SessionEntryStore` materialized from the session graph |
+| Runtime work | `OperationStore` |
+| Human / policy gates | Interaction, permission, and question stores |
+| Session truth stream | Revisioned session graph envelopes |
+| UI rendering | Selectors over canonical stores |
 
 | If you are asking... | Look here first |
 |---|---|

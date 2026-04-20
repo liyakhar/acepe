@@ -12,20 +12,24 @@ If Acepe has split authority, reconnect/resume will usually show it through:
 
 ## Restore pipeline
 
-```text
-stored canonical snapshot
-          |
-          v
-restore runtime from projection snapshot
-          |
-          v
-register session locally
-          |
-          v
-apply buffered revisioned envelopes
-          |
-          v
-accept live updates as freshness, not authority
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+flowchart TD
+    snapshot["Stored canonical snapshot"] --> runtime["Restore runtime from projection snapshot"]
+    runtime --> register["Register session locally"]
+    register --> envelopes["Apply buffered revisioned envelopes"]
+    envelopes --> live["Accept live updates as freshness, not authority"]
+
+    classDef blue fill:#B4D2F0,stroke:#6b7280,color:#1f2937;
+    classDef green fill:#B4E6C8,stroke:#6b7280,color:#1f2937;
+    classDef yellow fill:#FFEBB4,stroke:#6b7280,color:#1f2937;
+    classDef orange fill:#FFD2AA,stroke:#6b7280,color:#1f2937;
+    classDef purple fill:#D2BEF0,stroke:#6b7280,color:#1f2937;
+    classDef gray fill:#DCDCE1,stroke:#6b7280,color:#1f2937;
+
+    class snapshot,runtime blue;
+    class register,envelopes purple;
+    class live yellow;
 ```
 
 ## Principle
@@ -85,14 +89,26 @@ Reconnect/resume should not require:
 - provider-specific policy hidden in presentation metadata,
 - raw transport events finalizing durable state independently.
 
-## ASCII anti-pattern map
+## Anti-pattern map
 
-```text
-BAD
-raw event ---> component state ---> reconnect patch-up logic
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+flowchart LR
+    raw1["Raw event"] --> local["Component state"] --> patchup["Reconnect patch-up logic"]
+    raw2["Raw event"] --> projection["Projection"] --> graph["Canonical graph"] --> store["Store"] --> selector["Selector"] --> component["Component"]
 
-GOOD
-raw event ---> projection ---> canonical graph ---> store ---> selector ---> component
+    classDef blue fill:#B4D2F0,stroke:#6b7280,color:#1f2937;
+    classDef green fill:#B4E6C8,stroke:#6b7280,color:#1f2937;
+    classDef yellow fill:#FFEBB4,stroke:#6b7280,color:#1f2937;
+    classDef orange fill:#FFD2AA,stroke:#6b7280,color:#1f2937;
+    classDef purple fill:#D2BEF0,stroke:#6b7280,color:#1f2937;
+    classDef gray fill:#DCDCE1,stroke:#6b7280,color:#1f2937;
+
+    class raw1,local,patchup orange;
+    class raw2,projection blue;
+    class graph purple;
+    class store yellow;
+    class selector,component green;
 ```
 
 ## Agent-agnostic rule

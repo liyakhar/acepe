@@ -11,22 +11,24 @@ In Acepe, interactions are the durable state behind things like:
 
 ## Interaction in one picture
 
-```text
-operation -----------+
-                     |
-                     v
-              +--------------+
-              | interaction  |
-              +--------------+
-              | type         |
-              | state        |
-              | request id   |
-              | session id   |
-              | linkage      |
-              +--------------+
-                     |
-                     v
-             permission / question / approval UI
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+flowchart TD
+    operation["Operation"] --> interaction["Interaction"]
+    interaction --> permission["Permission UI"]
+    interaction --> question["Question UI"]
+    interaction --> approval["Approval UI"]
+
+    classDef blue fill:#B4D2F0,stroke:#6b7280,color:#1f2937;
+    classDef green fill:#B4E6C8,stroke:#6b7280,color:#1f2937;
+    classDef yellow fill:#FFEBB4,stroke:#6b7280,color:#1f2937;
+    classDef orange fill:#FFD2AA,stroke:#6b7280,color:#1f2937;
+    classDef purple fill:#D2BEF0,stroke:#6b7280,color:#1f2937;
+    classDef gray fill:#DCDCE1,stroke:#6b7280,color:#1f2937;
+
+    class operation green;
+    class interaction purple;
+    class permission,question,approval yellow;
 ```
 
 ## Why interactions matter
@@ -87,18 +89,23 @@ Interactions should own:
 
 ## Association hierarchy
 
-```text
-best match
-   |
-   v
-canonical operation link
-   |
-stable session + tool-call identity
-   |
-provider-projected request identity
-   |
-   x
-visible text / timing / local component guesses
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryTextColor':'#1f2937','primaryBorderColor':'#9ca3af','lineColor':'#6b7280','tertiaryColor':'#ffffff','background':'#ffffff'}}}%%
+flowchart TB
+    best["Best match"] --> op["Canonical operation link"]
+    op --> session["Stable session + tool-call identity"]
+    session --> provider["Provider-projected request identity"]
+    provider --> bad["Visible text / timing / local guesses"]
+
+    classDef blue fill:#B4D2F0,stroke:#6b7280,color:#1f2937;
+    classDef green fill:#B4E6C8,stroke:#6b7280,color:#1f2937;
+    classDef yellow fill:#FFEBB4,stroke:#6b7280,color:#1f2937;
+    classDef orange fill:#FFD2AA,stroke:#6b7280,color:#1f2937;
+    classDef purple fill:#D2BEF0,stroke:#6b7280,color:#1f2937;
+    classDef gray fill:#DCDCE1,stroke:#6b7280,color:#1f2937;
+
+    class best,op,session,provider green;
+    class bad orange;
 ```
 
 ## What the UI should not do
