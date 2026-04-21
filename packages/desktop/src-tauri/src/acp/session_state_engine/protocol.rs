@@ -3,6 +3,7 @@ use crate::acp::session_state_engine::revision::SessionGraphRevision;
 use crate::acp::session_state_engine::selectors::{
     SessionGraphCapabilities, SessionGraphLifecycle,
 };
+use crate::acp::session_update::UsageTelemetryData;
 use crate::acp::transcript_projection::TranscriptDeltaOperation;
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +39,10 @@ pub enum SessionStatePayload {
     },
     Capabilities {
         capabilities: Box<SessionGraphCapabilities>,
+        revision: SessionGraphRevision,
+    },
+    Telemetry {
+        telemetry: UsageTelemetryData,
         revision: SessionGraphRevision,
     },
 }
