@@ -56,7 +56,12 @@ const hasIcon = $derived(Boolean(projectIconSrc));
 const hasResetProjectIcon = $derived(Boolean(hasIcon && onResetProjectIcon));
 const showColorPicker = $derived(Boolean(onColorChange && !hasIcon));
 const showSettingsSection = $derived(
-	Boolean(showColorPicker || onViewModeChange || onRemoveProject || hasResetProjectIcon)
+	Boolean(
+		showColorPicker ||
+			onViewModeChange ||
+			onRemoveProject ||
+			hasResetProjectIcon
+	)
 );
 const displaySectionClass = $derived(
 	`px-2 py-1.5${showColorPicker || onRemoveProject || hasResetProjectIcon
