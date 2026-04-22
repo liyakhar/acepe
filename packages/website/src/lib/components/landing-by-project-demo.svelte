@@ -1,233 +1,292 @@
 <script lang="ts">
-import {
-	AgentPanelScene,
-	AgentPanelComposer,
-	AgentPanelComposerFrame,
-	AgentPanelFooter,
-	AgentInputEditor,
-	AgentInputToolbar,
-	AgentInputModeSelector,
-	AgentInputDivider,
-	AgentInputAutonomousToggle,
-	AgentInputModelSelector,
-	AgentInputMetricsChip,
-	AgentInputMicButton,
-	ProjectLetterBadge,
-	TextShimmer,
-	SegmentedProgress,
-} from "@acepe/ui";
-import { AgentPanelStatusIcon } from "@acepe/ui/agent-panel";
-import {
-	AppMainLayout,
-	AppSidebarLayout,
-	AppSidebarProjectGroup,
-	AppSidebarFooter,
-} from "@acepe/ui/app-layout";
-import { CloseAction, FullscreenAction, OverflowMenuTriggerAction } from "@acepe/ui/panel-header";
-import type { AppProjectGroup } from "@acepe/ui/app-layout";
-import { ProjectCard } from "@acepe/ui/project-card";
-import type { AgentPanelSceneModel } from "@acepe/ui";
+	import {
+		AgentPanelScene,
+		AgentPanelComposer,
+		AgentPanelComposerFrame,
+		AgentPanelFooter,
+		AgentInputEditor,
+		AgentInputToolbar,
+		AgentInputModeSelector,
+		AgentInputDivider,
+		AgentInputAutonomousToggle,
+		AgentInputModelSelector,
+		AgentInputMetricsChip,
+		AgentInputMicButton,
+		DiffPill,
+		ProjectLetterBadge,
+		TextShimmer,
+		SegmentedProgress,
+	} from "@acepe/ui";
+	import { AgentPanelStatusIcon } from "@acepe/ui/agent-panel";
+	import {
+		AppMainLayout,
+		AppSidebarLayout,
+		AppSidebarProjectGroup,
+		AppSidebarFooter,
+	} from "@acepe/ui/app-layout";
+	import { CloseAction, FullscreenAction, OverflowMenuTriggerAction } from "@acepe/ui/panel-header";
+	import { ProjectCard } from "@acepe/ui/project-card";
+	import type {
+		AgentPanelSceneModel,
+	} from "@acepe/ui";
 
-import LandingDemoFrame from "./landing-demo-frame.svelte";
-import { websiteThemeStore } from "$lib/theme/theme.js";
+	import LandingDemoFrame from "./landing-demo-frame.svelte";
+	import { websiteThemeStore } from "$lib/theme/theme.js";
 
-const theme = $derived($websiteThemeStore);
+	const theme = $derived($websiteThemeStore);
 
-function agentIcon(agent: "claude" | "codex" | "cursor" | "opencode", t: string): string {
-	if (agent === "codex") return `/svgs/agents/codex/codex-icon-${t}.svg`;
-	if (agent === "cursor") return `/svgs/agents/cursor/cursor-icon-${t}.svg`;
-	if (agent === "opencode") return `/svgs/agents/opencode/opencode-logo-${t}.svg`;
-	return `/svgs/agents/claude/claude-icon-${t}.svg`;
-}
+	function agentIcon(agent: "claude" | "codex" | "cursor" | "opencode", t: string): string {
+		if (agent === "codex") return `/svgs/agents/codex/codex-icon-${t}.svg`;
+		if (agent === "cursor") return `/svgs/agents/cursor/cursor-icon-${t}.svg`;
+		if (agent === "opencode") return `/svgs/agents/opencode/opencode-logo-${t}.svg`;
+		return `/svgs/agents/claude/claude-icon-${t}.svg`;
+	}
 
-// Queue items for the attention queue
-interface DemoQueueItem {
-	id: string;
-	title: string;
-	agentIconSrc: string;
-	projectName: string;
-	projectColor: string;
-	statusText: string;
-	isStreaming: boolean;
-	todoProgress: { current: number; total: number } | null;
-}
+	// Queue items for the attention queue
+	interface DemoQueueItem {
+		id: string;
+		title: string;
+		agentIconSrc: string;
+		projectName: string;
+		projectColor: string;
+		statusText: string;
+		isStreaming: boolean;
+		todoProgress: { current: number; total: number } | null;
+	}
 
-const queueItems = $derived<DemoQueueItem[]>([
-	{
-		id: "q1",
-		title: "Unblock review queue",
-		agentIconSrc: agentIcon("claude", theme),
-		projectName: "acepe.dev",
-		projectColor: "#9858FF",
-		statusText: "Editing agent-panel-shell.svelte",
-		isStreaming: true,
-		todoProgress: { current: 2, total: 4 },
-	},
-	{
-		id: "q2",
-		title: "Audit panel regressions",
-		agentIconSrc: agentIcon("codex", theme),
-		projectName: "desktop",
-		projectColor: "#4AD0FF",
-		statusText: "Searching panel parity surfaces",
-		isStreaming: true,
-		todoProgress: { current: 1, total: 3 },
-	},
-]);
+	interface DemoSidebarSession {
+		id: string;
+		title: string;
+		agentIconSrc: string;
+		status: "idle" | "running" | "done" | "error";
+		isActive: boolean;
+		timeAgo: string;
+		lastActionText: string;
+		isStreaming?: boolean;
+		insertions?: number;
+		deletions?: number;
+		sequenceId?: number;
+		worktreePath?: string;
+		prNumber?: number;
+		prState?: "OPEN" | "CLOSED" | "MERGED";
+	}
 
-const sidebarGroups = $derived<AppProjectGroup[]>([
-	{
-		name: "acepe.dev",
-		color: "#9858FF",
-		sessions: [
-			{
-				id: "s1",
-				title: "Unblock review queue",
-				agentIconSrc: agentIcon("claude", theme),
-				status: "running",
-				isActive: true,
-			},
-			{
-				id: "s2",
-				title: "Polish release notes",
-				agentIconSrc: agentIcon("cursor", theme),
-				status: "done",
-				isActive: false,
-			},
-			{
-				id: "s3",
-				title: "Fix hero spacing",
-				agentIconSrc: agentIcon("claude", theme),
-				status: "done",
-				isActive: false,
-			},
-		],
-	},
-	{
-		name: "desktop",
-		color: "#4AD0FF",
-		sessions: [
-			{
-				id: "s4",
-				title: "Audit panel regressions",
-				agentIconSrc: agentIcon("codex", theme),
-				status: "running",
-				isActive: false,
-			},
-			{
-				id: "s5",
-				title: "Worktree isolation bug",
-				agentIconSrc: agentIcon("claude", theme),
-				status: "error",
-				isActive: false,
-			},
-		],
-	},
-	{
-		name: "api",
-		color: "#FF8D20",
-		sessions: [
-			{
-				id: "s6",
-				title: "Fix auth middleware",
-				agentIconSrc: agentIcon("opencode", theme),
-				status: "idle",
-				isActive: false,
-			},
-			{
-				id: "s7",
-				title: "Rate limiter config",
-				agentIconSrc: agentIcon("codex", theme),
-				status: "done",
-				isActive: false,
-			},
-		],
-	},
-]);
+	interface DemoSidebarGroup {
+		name: string;
+		color: string;
+		iconSrc?: string | null;
+		sessions: DemoSidebarSession[];
+	}
 
-const focusedScene = $derived<AgentPanelSceneModel>({
-	panelId: "by-project-panel",
-	status: "connected",
-	header: {
-		title: "Unblock review queue",
-		subtitle: null,
+	const queueItems = $derived<DemoQueueItem[]>([
+		{
+			id: "q1",
+			title: "Unblock review queue",
+			agentIconSrc: agentIcon("claude", theme),
+			projectName: "acepe.dev",
+			projectColor: "#9858FF",
+			statusText: "Editing agent-panel-shell.svelte",
+			isStreaming: true,
+			todoProgress: { current: 2, total: 4 },
+		},
+		{
+			id: "q2",
+			title: "Audit panel regressions",
+			agentIconSrc: agentIcon("codex", theme),
+			projectName: "desktop",
+			projectColor: "#4AD0FF",
+			statusText: "Searching panel parity surfaces",
+			isStreaming: true,
+			todoProgress: { current: 1, total: 3 },
+		},
+	]);
+
+	const sidebarGroups = $derived<DemoSidebarGroup[]>([
+		{
+			name: "acepe.dev",
+			color: "#9858FF",
+			sessions: [
+				{
+					id: "s1",
+					title: "Unblock review queue",
+					agentIconSrc: agentIcon("claude", theme),
+					status: "running",
+					isActive: true,
+					timeAgo: "2m",
+					lastActionText: "Editing agent-panel-shell.svelte",
+					isStreaming: true,
+					insertions: 18,
+					deletions: 5,
+					sequenceId: 12,
+				},
+				{
+					id: "s2",
+					title: "Polish release notes",
+					agentIconSrc: agentIcon("cursor", theme),
+					status: "done",
+					isActive: false,
+					timeAgo: "14m",
+					lastActionText: "Ran bun run check",
+					insertions: 34,
+					deletions: 8,
+					sequenceId: 9,
+				},
+				{
+					id: "s3",
+					title: "Fix hero spacing",
+					agentIconSrc: agentIcon("claude", theme),
+					status: "done",
+					isActive: false,
+					timeAgo: "1h",
+					lastActionText: "Done — 3 files changed",
+					insertions: 12,
+					deletions: 3,
+					sequenceId: 6,
+				},
+			],
+		},
+		{
+			name: "desktop",
+			color: "#4AD0FF",
+			sessions: [
+				{
+					id: "s4",
+					title: "Audit panel regressions",
+					agentIconSrc: agentIcon("codex", theme),
+					status: "running",
+					isActive: false,
+					timeAgo: "5m",
+					lastActionText: "Searching panel parity surfaces",
+					isStreaming: true,
+					insertions: 6,
+					deletions: 1,
+					sequenceId: 4,
+				},
+				{
+					id: "s5",
+					title: "Worktree isolation bug",
+					agentIconSrc: agentIcon("claude", theme),
+					status: "error",
+					isActive: false,
+					timeAgo: "22m",
+					lastActionText: "Error: git worktree remove failed",
+					sequenceId: 3,
+					worktreePath: "/tmp/acepe-wt-3",
+				},
+			],
+		},
+		{
+			name: "api",
+			color: "#FF8D20",
+			sessions: [
+				{
+					id: "s6",
+					title: "Fix auth middleware",
+					agentIconSrc: agentIcon("opencode", theme),
+					status: "idle",
+					isActive: false,
+					timeAgo: "45m",
+					lastActionText: "Idle — waiting for input",
+					sequenceId: 2,
+				},
+				{
+					id: "s7",
+					title: "Rate limiter config",
+					agentIconSrc: agentIcon("codex", theme),
+					status: "done",
+					isActive: false,
+					timeAgo: "2h",
+					lastActionText: "Done — rate limiting applied",
+					insertions: 22,
+					deletions: 4,
+					sequenceId: 1,
+					prNumber: 47,
+					prState: "MERGED",
+				},
+			],
+		},
+	]);
+
+	const focusedScene = $derived<AgentPanelSceneModel>({
+		panelId: "by-project-panel",
 		status: "connected",
-		agentLabel: "Claude Code",
-		agentIconSrc: agentIcon("claude", theme),
-		projectLabel: "acepe.dev",
-		projectColor: "#9858FF",
-		sequenceId: 12,
-		actions: [],
-	},
-	conversation: {
-		entries: [
-			{
-				id: "bp-u1",
-				type: "user",
-				text: "Tighten the review queue so the shared agent panel stops drifting between desktop and website.",
-			},
-			{
-				id: "bp-tool-1",
-				type: "tool_call",
-				kind: "search",
-				title: "Search",
-				subtitle: "shared panel surfaces",
-				query: "AgentPanelDeck AgentPanelFooter",
-				searchPath: "packages",
-				searchFiles: [
-					"packages/ui/src/components/agent-panel/agent-panel-deck.svelte",
-					"packages/ui/src/components/agent-panel/agent-panel-footer.svelte",
-				],
-				searchResultCount: 2,
-				status: "done",
-			},
-			{
-				id: "bp-tool-2",
-				type: "tool_call",
-				kind: "edit",
-				title: "Edit",
-				filePath: "packages/ui/src/components/agent-panel/agent-panel-shell.svelte",
-				status: "done",
-			},
-			{
-				id: "bp-a1",
-				type: "assistant",
-				markdown:
-					"Pulled the shared panel rail and composer frame into `@acepe/ui`, then removed the website-only footer drift.\n\nChecking the remaining spacing deltas now.",
-				isStreaming: true,
-			},
-		],
-		isStreaming: true,
-	},
-});
+		header: {
+			title: "Unblock review queue",
+			subtitle: null,
+			status: "connected",
+			agentLabel: "Claude Code",
+			agentIconSrc: agentIcon("claude", theme),
+			projectLabel: "acepe.dev",
+			projectColor: "#9858FF",
+			sequenceId: 12,
+			actions: [],
+		},
+		conversation: {
+			entries: [
+				{ id: "bp-u1", type: "user", text: "Tighten the review queue so the shared agent panel stops drifting between desktop and website." },
+				{
+					id: "bp-tool-1",
+					type: "tool_call",
+					kind: "search",
+					title: "Search",
+					subtitle: "shared panel surfaces",
+					query: "AgentPanelDeck AgentPanelFooter",
+					searchPath: "packages",
+					searchFiles: [
+						"packages/ui/src/components/agent-panel/agent-panel-deck.svelte",
+						"packages/ui/src/components/agent-panel/agent-panel-footer.svelte",
+					],
+					searchResultCount: 2,
+					status: "done",
+				},
+				{
+					id: "bp-tool-2",
+					type: "tool_call",
+					kind: "edit",
+					title: "Edit",
+					filePath: "packages/ui/src/components/agent-panel/agent-panel-shell.svelte",
+					status: "done",
+				},
+				{
+					id: "bp-a1",
+					type: "assistant",
+					markdown: "Pulled the shared panel rail and composer frame into `@acepe/ui`, then removed the website-only footer drift.\n\nChecking the remaining spacing deltas now.",
+					isStreaming: true,
+				},
+			],
+			isStreaming: true,
+		},
+	});
 
-const availableModes = [{ id: "plan" }, { id: "build" }] as const;
+	const availableModes = [{ id: "plan" }, { id: "build" }] as const;
 
-const modelGroups = $derived([
-	{
-		label: "Anthropic",
-		items: [
-			{
-				id: "claude-sonnet-4",
-				name: "Claude Sonnet 4",
-				providerSource: "Anthropic",
-				isFavorite: true,
-				isBuildDefault: true,
-				isPlanDefault: false,
-			},
-			{
-				id: "claude-opus-4-6",
-				name: "Claude Opus 4.6",
-				providerSource: "Anthropic",
-				isFavorite: false,
-				isBuildDefault: false,
-				isPlanDefault: true,
-			},
-		],
-	},
-]);
+	const modelGroups = $derived([
+		{
+			label: "Anthropic",
+			items: [
+				{
+					id: "claude-sonnet-4",
+					name: "Claude Sonnet 4",
+					providerSource: "Anthropic",
+					isFavorite: true,
+					isBuildDefault: true,
+					isPlanDefault: false,
+				},
+				{
+					id: "claude-opus-4-6",
+					name: "Claude Opus 4.6",
+					providerSource: "Anthropic",
+					isFavorite: false,
+					isBuildDefault: false,
+					isPlanDefault: true,
+				},
+			],
+		},
+	]);
 
-const favoriteModels = $derived(modelGroups.flatMap((g) => g.items.filter((i) => i.isFavorite)));
+	const favoriteModels = $derived(
+		modelGroups.flatMap((g) => g.items.filter((i) => i.isFavorite))
+	);
 </script>
 
 <LandingDemoFrame>
@@ -278,7 +337,89 @@ const favoriteModels = $derived(modelGroups.flatMap((g) => g.items.filter((i) =>
 					{#snippet sessionList()}
 						<div class="relative flex flex-col flex-1 min-h-0 gap-0.5 overflow-y-auto outline-none">
 							{#each sidebarGroups as group (group.name)}
-								<AppSidebarProjectGroup {group} />
+								<AppSidebarProjectGroup
+									group={{
+										name: group.name,
+										color: group.color,
+										iconSrc: group.iconSrc ?? null,
+										sessions: [],
+									}}
+								>
+									{#snippet children()}
+										<div class="flex-1 min-h-0 overflow-auto">
+											<div class="flex flex-col gap-0.5 p-1">
+												{#each group.sessions as session (session.id)}
+													<button
+														type="button"
+														class="flex w-full flex-col gap-1 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/50 {session.isActive
+															? 'bg-accent/20'
+															: ''}"
+													>
+														<div class="flex items-center gap-1.5">
+															<img
+																src={session.agentIconSrc}
+																alt=""
+																class="h-3 w-3 shrink-0 m-0.5 rounded-sm"
+																role="presentation"
+																width="12"
+																height="12"
+															/>
+															<div class="min-w-0 flex-1">
+																<div class="truncate text-xs font-medium">{session.title}</div>
+															</div>
+															<span class="shrink-0 text-[10px] tabular-nums text-muted-foreground/60">
+																{session.timeAgo}
+															</span>
+															{#if session.status === "running"}
+																<span class="relative flex h-1.5 w-1.5 shrink-0">
+																	<span
+																		class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-75"
+																	></span>
+																	<span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
+																</span>
+															{:else if session.status === "done"}
+																<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500"></span>
+															{:else if session.status === "error"}
+																<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive"></span>
+															{/if}
+														</div>
+														<div class="flex items-center gap-1.5">
+															<div class="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
+																{#if session.isStreaming}
+																	<TextShimmer class="truncate">{session.lastActionText}</TextShimmer>
+																{:else}
+																	<span class="truncate">{session.lastActionText}</span>
+																{/if}
+															</div>
+															{#if (session.insertions ?? 0) > 0 || (session.deletions ?? 0) > 0}
+																<DiffPill
+																	insertions={session.insertions ?? 0}
+																	deletions={session.deletions ?? 0}
+																	variant="plain"
+																	class="text-[10px]"
+																/>
+															{/if}
+														</div>
+														{#if session.worktreePath || session.prNumber}
+															<div class="flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
+																{#if session.worktreePath}
+																	<span class="min-w-0 flex-1 truncate font-mono">
+																		{session.worktreePath}
+																	</span>
+																{/if}
+																{#if session.prNumber}
+																	<span class="shrink-0 rounded border border-border/60 px-1.5 py-0.5 font-mono uppercase">
+																		PR #{session.prNumber} {session.prState?.toLowerCase()}
+																	</span>
+																{/if}
+															</div>
+														{/if}
+													</button>
+												{/each}
+											</div>
+										</div>
+									{/snippet}
+								</AppSidebarProjectGroup>
 							{/each}
 						</div>
 					{/snippet}
