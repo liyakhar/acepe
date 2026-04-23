@@ -13,7 +13,6 @@ import {
 	AgentPanelComposer,
 	AgentPanelComposerFrame,
 	AgentPanelFooter,
-	AgentPanelInstallCard,
 	AgentPanelModifiedFileRow,
 	AgentPanelModifiedFilesHeader,
 	AgentPanelModifiedFilesTrailingControls,
@@ -21,8 +20,6 @@ import {
 	AgentPanelPrCard,
 	AgentPanelScene,
 	AgentPanelTerminalDrawer,
-	AgentPanelTodoHeader,
-	AgentPanelWorktreeSetupCard,
 } from "@acepe/ui";
 import { CloseAction, FullscreenAction, OverflowMenuTriggerAction } from "@acepe/ui/panel-header";
 import type {
@@ -30,7 +27,6 @@ import type {
 	AgentPanelModifiedFilesTrailingModel,
 	AgentPanelPrCardModel,
 	AgentPanelSceneModel,
-	AgentTodoItem,
 } from "@acepe/ui/agent-panel";
 
 import LandingDemoFrame from "./landing-demo-frame.svelte";
@@ -372,29 +368,6 @@ const demoModifiedFilesTrailing: AgentPanelModifiedFilesTrailingModel = {
 	reviewedCount: 1,
 	totalCount: 3,
 };
-
-const demoTodoItems: readonly AgentTodoItem[] = [
-	{
-		content: "Find existing keyboard handler entry point",
-		activeForm: "Finding keyboard handler entry point",
-		status: "completed",
-		duration: 3100,
-	},
-	{
-		content: "Add focusPrev / focusNext to panel-focus-store",
-		activeForm: "Adding focusPrev / focusNext",
-		status: "completed",
-		duration: 5800,
-	},
-	{
-		content: "Wire ⌘[ and ⌘] in the keydown handler",
-		activeForm: "Wiring ⌘[ and ⌘]",
-		status: "in_progress",
-	},
-	{ content: "Write tests and run type check", activeForm: "Running type check", status: "pending" },
-];
-
-const demoCurrentTask: AgentTodoItem = demoTodoItems[2];
 
 const demoPrCardModel: AgentPanelPrCardModel = {
 	mode: "pr",
@@ -860,21 +833,7 @@ function handleSubmit(panel: DemoPanel): void {
 						{/snippet}
 						{#snippet preComposerOverride()}
 							<div class="flex flex-col gap-1 px-5 pb-1">
-								{#if panel.id === "composer-primary"}
-									<AgentPanelWorktreeSetupCard
-										visible={true}
-										title="Worktree"
-										summary="Setting up worktree"
-										details="Cloning to ../acepe-session-list on branch fix/remove-effect"
-										tone="running"
-									/>
-									<AgentPanelInstallCard
-										title="Installing"
-										summary="@sveltejs/kit 2.9.1"
-										details="Updating lockfile…"
-										progressPercent={68}
-									/>
-								{:else if panel.id === "composer-verify"}
+								{#if panel.id === "composer-verify"}
 									<AgentPanelModifiedFilesHeader visible={true} initiallyExpanded={false}>
 										{#snippet leadingContent()}
 											<span class="pl-2 text-[10px] font-medium text-muted-foreground">3 files changed</span>
@@ -891,16 +850,6 @@ function handleSubmit(panel: DemoPanel): void {
 									<AgentPanelPrCard
 										visible={true}
 										model={demoPrCardModel}
-										initiallyExpanded={false}
-									/>
-									<AgentPanelTodoHeader
-										items={demoTodoItems}
-										currentTask={demoCurrentTask}
-										completedCount={2}
-										totalCount={4}
-										isLive={true}
-										allCompletedLabel="All tasks completed"
-										pausedLabel="Tasks paused"
 										initiallyExpanded={false}
 									/>
 								{/if}
