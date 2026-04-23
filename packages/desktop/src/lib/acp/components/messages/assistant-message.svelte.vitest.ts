@@ -263,10 +263,10 @@ describe("AssistantMessage thinking auto-scroll", () => {
 
 	it("falls back to an empty message when the runtime prop is invalid", () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const invalidMessage = "invalid message" as never;
 
 		const view = render(AssistantMessageComponent, {
-			// @ts-expect-error exercising runtime guard for an invalid prop shape
-			message: "invalid message",
+			message: invalidMessage,
 			isStreaming: true,
 		});
 
