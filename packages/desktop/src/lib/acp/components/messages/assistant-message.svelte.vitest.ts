@@ -266,7 +266,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 
 		const view = render(AssistantMessageComponent, {
 			// @ts-expect-error exercising runtime guard for an invalid prop shape
-			message: undefined,
+			message: "invalid message",
 			isStreaming: true,
 		});
 
@@ -274,7 +274,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		expect(warnSpy).toHaveBeenCalledWith(
 			"[ASSISTANT_MESSAGE_INVALID_PROP]",
 			expect.objectContaining({
-				hasCandidate: false,
+				hasCandidate: true,
 				isStreaming: true,
 			})
 		);

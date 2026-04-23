@@ -1469,8 +1469,8 @@ function handleEditorFocus(): void {
 		shouldSyncPanelFocusOnEditorFocus({
 			focusedPanelId: panelStore.focusedPanelId,
 			panelId,
-		})
-		&& panelId
+		}) &&
+		panelId
 	) {
 		panelStore.focusPanel(panelId);
 	}

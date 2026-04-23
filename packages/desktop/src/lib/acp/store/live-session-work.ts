@@ -69,10 +69,7 @@ function deriveLiveConnectionState(input: LiveSessionWorkInput): LiveConnectionS
 		return "paused";
 	}
 
-	if (
-		input.runtimeState.activityPhase === "running" &&
-		input.currentStreamingToolCall !== null
-	) {
+	if (input.runtimeState.activityPhase === "running" && input.currentStreamingToolCall !== null) {
 		return "streaming";
 	}
 
