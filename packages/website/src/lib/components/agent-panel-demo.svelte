@@ -12,19 +12,13 @@ import {
 	AgentPanelDeck,
 	AgentPanelComposer,
 	AgentPanelComposerFrame,
-	AgentPanelErrorCard,
 	AgentPanelFooter,
 	AgentPanelInstallCard,
 	AgentPanelModifiedFileRow,
 	AgentPanelModifiedFilesHeader,
 	AgentPanelModifiedFilesTrailingControls,
-	AgentPanelPermissionBar,
-	AgentPanelPermissionBarActions,
-	AgentPanelPermissionBarIcon,
-	AgentPanelPermissionBarProgress,
 	AgentPanelPlanHeader,
 	AgentPanelPrCard,
-	AgentPanelQueueCardStrip,
 	AgentPanelScene,
 	AgentPanelTerminalDrawer,
 	AgentPanelTodoHeader,
@@ -35,7 +29,6 @@ import type {
 	AgentPanelModifiedFileItem,
 	AgentPanelModifiedFilesTrailingModel,
 	AgentPanelPrCardModel,
-	AgentPanelQueuedMessage,
 	AgentPanelSceneModel,
 	AgentTodoItem,
 } from "@acepe/ui/agent-panel";
@@ -456,21 +449,6 @@ const demoTodoItems: readonly AgentTodoItem[] = [
 ];
 
 const demoCurrentTask: AgentTodoItem = demoTodoItems[2];
-
-const demoQueueMessages: readonly AgentPanelQueuedMessage[] = [
-	{
-		id: "q1",
-		content: "Also update the README with the new API docs",
-		attachmentCount: 0,
-		attachments: [],
-	},
-	{
-		id: "q2",
-		content: "Run the test suite after those changes",
-		attachmentCount: 1,
-		attachments: [{ id: "qa1", displayName: "screenshot.png", extension: "png", kind: "image" }],
-	},
-];
 
 const demoPrCardModel: AgentPanelPrCardModel = {
 	mode: "pr",
@@ -932,26 +910,6 @@ function handleSubmit(panel: DemoPanel): void {
 						{#snippet preComposerOverride()}
 							<div class="flex flex-col gap-1 px-5 pb-1">
 								{#if panel.id === "composer-primary"}
-									<AgentPanelPermissionBar
-										verb="Edit"
-										filePath="packages/ui/src/components/agent-panel/agent-panel-shell.svelte"
-										hasProgress={true}
-									>
-										{#snippet leading()}
-											<AgentPanelPermissionBarIcon kind="edit" />
-										{/snippet}
-										{#snippet progress()}
-											<AgentPanelPermissionBarProgress completed={1} total={3} />
-										{/snippet}
-										{#snippet actionBar()}
-											<AgentPanelPermissionBarActions
-												onAllow={() => {}}
-												onDeny={() => {}}
-												onAlwaysAllow={() => {}}
-												showAlwaysAllow={true}
-											/>
-										{/snippet}
-									</AgentPanelPermissionBar>
 									<AgentPanelWorktreeSetupCard
 										visible={true}
 										title="Worktree"
@@ -966,7 +924,7 @@ function handleSubmit(panel: DemoPanel): void {
 										progressPercent={42}
 									/>
 								{:else if panel.id === "composer-verify"}
-									<AgentPanelModifiedFilesHeader visible={true}>
+									<AgentPanelModifiedFilesHeader visible={true} initiallyExpanded={false}>
 										{#snippet leadingContent()}
 											<span class="pl-2 text-[10px] font-medium text-muted-foreground">3 files changed</span>
 										{/snippet}
@@ -982,6 +940,7 @@ function handleSubmit(panel: DemoPanel): void {
 									<AgentPanelPrCard
 										visible={true}
 										model={demoPrCardModel}
+										initiallyExpanded={false}
 									/>
 									<AgentPanelTodoHeader
 										items={demoTodoItems}
@@ -991,27 +950,7 @@ function handleSubmit(panel: DemoPanel): void {
 										isLive={true}
 										allCompletedLabel="All tasks completed"
 										pausedLabel="Tasks paused"
-									/>
-								{:else if panel.id === "composer-polish"}
-									<AgentPanelErrorCard
-										title="Connection error"
-										summary="Failed to connect to agent"
-										details="ECONNREFUSED 127.0.0.1:3000 — the agent process may have crashed. Check logs for details."
-										onRetry={() => {}}
-										onDismiss={() => {}}
-									/>
-									<AgentPanelQueueCardStrip
-										messages={demoQueueMessages}
-										isPaused={false}
-										queueLabel="Queued"
-										pausedLabel="Paused"
-										resumeLabel="Resume"
-										clearLabel="Clear"
-										sendLabel="Send"
-										cancelLabel="Cancel"
-										onCancel={() => {}}
-										onClear={() => {}}
-										onSendNow={() => {}}
+										initiallyExpanded={false}
 									/>
 								{/if}
 							</div>

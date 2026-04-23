@@ -22,9 +22,9 @@ const features: Feature[] = [
 let activeFeature = $state("agent");
 </script>
 
-<div class="flex flex-col gap-4">
+<div class="flex flex-col gap-5 md:gap-6">
 	<!-- Feature selector pills -->
-	<div class="flex items-center justify-center gap-1">
+	<div class="flex items-center justify-center gap-3 md:gap-4">
 		{#each features as feature (feature.id)}
 			{@const isActive = activeFeature === feature.id}
 			<button
