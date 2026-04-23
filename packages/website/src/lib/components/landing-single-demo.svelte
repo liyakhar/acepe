@@ -14,7 +14,6 @@
 		AgentInputMicButton,
 		type AgentPanelSceneModel,
 	} from "@acepe/ui";
-	import { AgentPanelStatusIcon } from "@acepe/ui/agent-panel";
 	import {
 		AppMainLayout,
 		AppSidebarLayout,
@@ -84,7 +83,7 @@
 		panelId: "single-panel-demo",
 		status: "connected",
 		header: {
-			title: "For our website second section where we showcase each view we have, can you take the exact pixel by ...",
+			title: "The composer placeholder on the website doesn't match desktop — still shows the old copy.",
 			subtitle: null,
 			status: "empty",
 			agentLabel: null,
@@ -99,14 +98,21 @@
 				{
 					id: "single-user-1",
 					type: "user",
-					text: "For our website second section where we showcase each view we have, can you take the exact pixel by pixel design from our actual app and implement it instead of having almost similar as it is now",
+					text: "The composer placeholder on the website doesn't match desktop — still shows the old copy.",
 				},
 				{
 					id: "single-tool-1",
 					type: "tool_call",
-					kind: "execute",
-					title: "Run",
-					command: "cd /Users/liya/Documents/acepe/packages/website && bun run check 2>&1 | tail -20",
+					kind: "search",
+					title: "Search",
+					subtitle: "composer placeholder",
+					query: "Plan, @ for context",
+					searchPath: "packages",
+					searchFiles: [
+						"packages/website/src/lib/components/landing-single-demo.svelte",
+						"packages/desktop/src/lib/components/agent-input/agent-input-editor.svelte",
+					],
+					searchResultCount: 2,
 					status: "done",
 				},
 				{
@@ -114,14 +120,22 @@
 					type: "tool_call",
 					kind: "read",
 					title: "Read",
-					filePath: "landing-single-demo.svelte",
+					filePath: "packages/website/src/lib/components/landing-single-demo.svelte",
+					status: "done",
+				},
+				{
+					id: "single-edit-1",
+					type: "tool_call",
+					kind: "edit",
+					title: "Edit",
+					filePath: "packages/website/src/lib/components/landing-single-demo.svelte",
 					status: "done",
 				},
 				{
 					id: "single-assistant-1",
 					type: "assistant",
 					markdown:
-						"Done. The **Single** demo now uses the real desktop composition instead of the simplified version:\n\n- selectors are **injected into the composer toolbar**\n- full composer chrome is back: **mode, autonomous, model, agent, project, metrics, mic**\n- branch picker is rendered in the same separate minimal row as the app",
+						"The website demo had a stale placeholder string. Updated it to match desktop:\n\n```svelte\n- placeholder=\"Ask anything…\"\n+ placeholder=\"Plan, @ for context, / for commands\"\n```",
 					isStreaming: false,
 				},
 			],
@@ -234,7 +248,6 @@
 							widthStyle="min-width: 0; width: 100%; max-width: 100%;"
 						>
 							{#snippet headerControls()}
-								<AgentPanelStatusIcon status="connected" />
 								<OverflowMenuTriggerAction title="More actions" />
 								<FullscreenAction isFullscreen={false} onToggle={() => {}} />
 								<CloseAction onClose={() => {}} />
