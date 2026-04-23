@@ -464,7 +464,7 @@ const features = [
 						<span class="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50">//</span>
 						<span class="font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">The new paradigm</span>
 					</div>
-					<h2 class="mb-6 text-2xl leading-[1.2] font-semibold tracking-[-0.03em] md:text-[40px]">
+					<h2 class="mb-4 text-2xl leading-[1.2] font-semibold tracking-[-0.03em] md:text-[40px]">
 						{"Why an ADE?"}
 					</h2>
 					<p class="max-w-[640px] text-[15px] leading-[1.7] text-muted-foreground md:text-[17px]">
