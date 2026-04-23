@@ -426,7 +426,7 @@ const features = [
 						{"Developer Environment"}
 					</h1>
 
-					<p class="mb-12 max-w-[760px] tracking-[0.045em] text-base leading-[1.5] text-muted-foreground md:text-[18px]">
+					<p class="mb-12 max-w-[680px] tracking-[0.045em] text-base leading-[1.5] text-muted-foreground md:text-[18px]">
 						{"One native workspace for every coding agent. Run them in parallel, review every change, and ship from plan to PR without leaving the window."}
 					</p>
 
