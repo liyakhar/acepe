@@ -265,6 +265,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
 		const view = render(AssistantMessageComponent, {
+			// @ts-expect-error exercising runtime guard for an invalid prop shape
 			message: undefined,
 			isStreaming: true,
 		});
