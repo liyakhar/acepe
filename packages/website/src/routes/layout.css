@@ -23,15 +23,15 @@
 	/* Dark theme colors — matched to desktop app */
 	--background: #121212;
 	--foreground: #d8dee9;
-	--card: #1A1A1A;
+	--card: #1a1a1a;
 	--card-foreground: #ffffff;
-	--popover: #1E1E1E;
+	--popover: #1e1e1e;
 	--popover-foreground: #ffffff;
 	--primary: var(--token-brand-primary);
 	--primary-foreground: var(--token-brand-primary-foreground);
 	--secondary: #565656;
 	--secondary-foreground: #ececec;
-	--muted: #2A2A2A;
+	--muted: #2a2a2a;
 	--muted-foreground: #cccccc;
 	--accent: #313131;
 	--accent-foreground: #ffffff;

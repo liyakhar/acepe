@@ -6,24 +6,24 @@
  */
 export type EmbeddedResource = {
 	uri: string;
-	text?: string;
-	blob?: string;
-	mimeType?: string;
+	text?: string | null;
+	blob?: string | null;
+	mimeType?: string | null;
 };
 
 export type ContentBlock =
 	| { type: "text"; text: string }
-	| { type: "image"; data: string; mimeType: string; uri?: string }
+	| { type: "image"; data: string; mimeType: string; uri?: string | null }
 	| { type: "audio"; data: string; mimeType: string }
 	| { type: "resource"; resource: EmbeddedResource }
 	| {
 			type: "resource_link";
 			uri: string;
 			name: string;
-			title?: string;
-			description?: string;
-			mimeType?: string;
-			size?: number;
+			title?: string | null;
+			description?: string | null;
+			mimeType?: string | null;
+			size?: number | null;
 	  };
 
 /**
