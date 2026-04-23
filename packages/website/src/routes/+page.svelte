@@ -407,7 +407,7 @@ const features = [
 			<HeroShaderStage heightClass="h-full" />
 
 			<!-- Hero Section — centered headline + CTA, demo below -->
-			<section class="relative z-10 px-4 pt-36 pb-14 md:px-6 md:pt-42 md:pb-18">
+			<section class="relative z-10 px-4 pt-36 pb-24 md:px-6 md:pt-42 md:pb-32">
 				<div class="mx-auto flex w-full max-w-4xl flex-col items-center text-center">
 					<div class="mb-7 flex flex-col items-center gap-4">
 						<div class="flex items-center gap-3">
@@ -457,7 +457,7 @@ const features = [
 		</div>
 
 		<!-- What is an ADE? -->
-		<section class="border-t border-border/50 px-4 pt-8 pb-24 md:px-6 md:pt-10 md:pb-32">
+		<section class="border-t border-border/50 px-4 pt-24 pb-24 md:px-6 md:pt-32 md:pb-32">
 			<div class="mx-auto max-w-4xl">
 				<div class="mb-16 flex flex-col items-center text-center">
 					<div class="mb-5 flex items-center gap-2">
