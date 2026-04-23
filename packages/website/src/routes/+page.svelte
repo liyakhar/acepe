@@ -409,7 +409,7 @@ const features = [
 			<!-- Hero Section — centered headline + CTA, demo below -->
 			<section class="relative z-10 px-4 pt-36 pb-16 md:px-6 md:pt-44 md:pb-20">
 				<div class="mx-auto flex w-full max-w-4xl flex-col items-center text-center">
-					<h1 class="mb-6 text-[32px] leading-[1.2] font-light tracking-[0.06em] text-foreground md:text-[60px] [text-shadow:0_1px_30px_rgba(0,0,0,0.45)]">
+					<h1 class="mb-6 text-[32px] leading-[1.2] font-semibold tracking-[0.06em] text-foreground md:text-[60px] [text-shadow:0_1px_30px_rgba(0,0,0,0.45)]">
 						{"The Agentic"}
 						<br />
 						{"Developer Environment"}
@@ -445,7 +445,7 @@ const features = [
 			</section>
 
 			<!-- Supported agents band -->
-			<section class="relative z-10 px-4 pt-12 pb-24 md:px-6 md:pt-16 md:pb-28">
+			<section class="relative z-10 px-4 pt-16 pb-8 md:px-6 md:pt-20 md:pb-10">
 				<div class="mx-auto flex max-w-4xl flex-col items-center">
 					<div class="mb-5 flex items-center gap-3">
 						<span class="h-px w-10 bg-border/60"></span>
@@ -460,7 +460,7 @@ const features = [
 		</div>
 
 		<!-- What is an ADE? -->
-		<section class="border-t border-border/50 px-4 py-24 md:px-6 md:py-32">
+		<section class="border-t border-border/50 px-4 pt-8 pb-24 md:px-6 md:pt-10 md:pb-32">
 			<div class="mx-auto max-w-4xl">
 				<div class="mb-16 flex flex-col items-center text-center">
 					<div class="mb-5 flex items-center gap-2">
