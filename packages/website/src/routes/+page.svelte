@@ -407,9 +407,9 @@ const features = [
 			<HeroShaderStage heightClass="h-full" />
 
 			<!-- Hero Section — centered headline + CTA, demo below -->
-			<section class="relative z-10 px-4 pt-36 pb-16 md:px-6 md:pt-44 md:pb-20">
+			<section class="relative z-10 px-4 pt-36 pb-14 md:px-6 md:pt-42 md:pb-18">
 				<div class="mx-auto flex w-full max-w-4xl flex-col items-center text-center">
-					<div class="mb-8 flex flex-col items-center gap-5">
+					<div class="mb-7 flex flex-col items-center gap-4">
 						<div class="flex items-center gap-3">
 							<span class="h-px w-10 bg-border/60"></span>
 							<span class="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground/80">
@@ -420,17 +420,17 @@ const features = [
 						<AgentIconsRow size={22} />
 					</div>
 
-					<h1 class="mb-6 text-[32px] leading-[1.2] font-semibold tracking-[0.06em] text-foreground md:text-[60px] [text-shadow:0_1px_30px_rgba(0,0,0,0.45)]">
+					<h1 class="mb-5 text-[30px] leading-[1.16] font-semibold tracking-[0.055em] text-foreground md:text-[56px] [text-shadow:0_1px_30px_rgba(0,0,0,0.45)]">
 						{"The Agentic"}
 						<br />
 						{"Developer Environment"}
 					</h1>
 
-					<p class="mb-16 max-w-[780px] tracking-[0.05em] text-base leading-[1.55] text-muted-foreground md:text-[19px]">
+					<p class="mb-12 max-w-[760px] tracking-[0.045em] text-base leading-[1.5] text-muted-foreground md:text-[18px]">
 						{"One native workspace for every coding agent. Run them in parallel, review every change, and ship from plan to PR without leaving the window."}
 					</p>
 
-					<div class="flex flex-col items-center gap-3 sm:flex-row">
+					<div class="flex flex-col items-center gap-2.5 sm:flex-row">
 						<PillButton
 							href="/download"
 							variant="invert"
@@ -448,7 +448,7 @@ const features = [
 				<!-- Demo — below the hero, centered. Hidden below lg: on phone widths
 				     the multi-panel UI is unreadable and the hero works better as a
 				     focused headline + CTA. -->
-				<div class="hero-demo relative mx-auto mt-28 hidden w-full max-w-[1320px] lg:block">
+				<div class="hero-demo relative mx-auto mt-24 hidden w-full max-w-[1320px] lg:block">
 					<div class="hero-demo-stage mx-auto">
 						<FeatureShowcase />
 					</div>
