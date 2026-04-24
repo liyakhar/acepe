@@ -73,6 +73,7 @@ import {
 import type {
 	Mode,
 	Model,
+	SessionLinkedPr,
 	SessionCapabilities,
 	SessionCold,
 	SessionContextBudget,
@@ -80,13 +81,16 @@ import type {
 	SessionHotState,
 	SessionIdentity,
 	SessionMetadata,
+	SessionPrLinkMode,
 	SessionUsageTelemetry,
 } from "./types.js";
 import "../errors/app-error.js";
-import type { PrDetails } from "../../utils/tauri-client/git.js";
+import type { GitStackedPrStep, PrChecks, PrDetails } from "../../utils/tauri-client/git.js";
 import { tauriClient } from "../../utils/tauri-client.js";
+import { buildPartialSessionLinkedPr } from "../application/dto/session-linked-pr.js";
 import { normalizeModeIdForUI } from "../constants/mode-mapping.js";
 import { SessionNotFoundError } from "../errors/app-error.js";
+import { resolveAutomaticSessionPrNumberFromShipWorkflow } from "./services/session-pr-link-attribution.js";
 import { createLogger } from "../utils/logger.js";
 import * as preferencesStore from "./agent-model-preferences-store.svelte.js";
 import { api } from "./api.js";
@@ -102,6 +106,7 @@ import { getTitleUpdateFromUserMessage } from "./session-title-policy.js";
 const logger = createLogger({ id: "session-store", name: "SessionStore" });
 
 const SESSION_STORE_KEY = Symbol("session-store");
+const PR_CHECKS_POLL_INTERVAL_MS = 10_000;
 
 type ProjectionTurnFailure = {
 	readonly turn_id?: TurnFailureSnapshot["turn_id"];
@@ -222,10 +227,58 @@ function mapProjectionTurnFailure(
 	};
 }
 const PR_STATE_CACHE_TTL_MS = 60_000;
+const PR_CHECKS_CACHE_TTL_MS = 10_000;
 
 interface CachedPrDetails {
 	details: PrDetails;
 	fetchedAt: number;
+}
+
+interface CachedPrChecks {
+	checks: PrChecks;
+	fetchedAt: number;
+}
+
+function buildResolvedSessionLinkedPr(details: PrDetails): SessionLinkedPr {
+	return {
+		prNumber: details.number,
+		state: details.state,
+		url: details.url,
+		title: details.title,
+		additions: details.additions,
+		deletions: details.deletions,
+		isDraft: details.isDraft,
+		isLoading: false,
+		hasResolvedDetails: true,
+		checksHeadSha: null,
+		checks: [],
+		isChecksLoading: true,
+		hasResolvedChecks: false,
+	};
+}
+
+function buildResolvedSessionPrChecks(checks: PrChecks): Pick<
+	SessionLinkedPr,
+	"checksHeadSha" | "checks" | "isChecksLoading" | "hasResolvedChecks"
+> {
+	return {
+		checksHeadSha: checks.headSha,
+		checks: checks.checkRuns.map((checkRun) => ({
+			name: checkRun.name,
+			status: checkRun.status,
+			conclusion: checkRun.conclusion,
+			detailsUrl: checkRun.detailsUrl,
+			startedAt: checkRun.startedAt,
+			completedAt: checkRun.completedAt,
+			workflowName: checkRun.workflowName,
+		})),
+		isChecksLoading: false,
+		hasResolvedChecks: true,
+	};
+}
+
+function hasActivePrChecks(checks: SessionLinkedPr["checks"]): boolean {
+	return checks.some((checkRun) => checkRun.status !== "COMPLETED");
 }
 
 function normalizeCanonicalAgentId(agentId: SessionOpenFound["agentId"]): string {
@@ -443,8 +496,6 @@ export interface SessionStoreCallbacks {
 	onTurnComplete?: (sessionId: string) => void;
 	onTurnInterrupted?: (sessionId: string) => void;
 	onTurnError?: (sessionId: string) => void;
-	/** Called when a PR number is discovered in agent messages (e.g. Claude created a PR autonomously). */
-	onPrNumberFound?: (sessionId: string, prNumber: number) => void;
 }
 
 export class SessionStore implements SessionEventHandler, ISessionStateReader, ISessionStateWriter {
@@ -476,6 +527,11 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	// PR details cache/dedupe (prevents repeated gh pr view storms during scans)
 	private readonly prDetailsCache = new Map<string, CachedPrDetails>();
 	private readonly prDetailsInflight = new Map<string, ResultAsync<PrDetails | null, never>>();
+	private readonly prChecksCache = new Map<string, CachedPrChecks>();
+	private readonly prChecksInflight = new Map<string, ResultAsync<PrChecks | null, never>>();
+	private readonly prChecksVisibleSurfaces = new Map<string, Set<string>>();
+	private readonly prChecksPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly prLinkUpdateSequence = new Map<string, number>();
 
 	// Connection service (state machines + connection tracking)
 	private readonly connectionService = new SessionConnectionService();
@@ -649,6 +705,8 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 			parentId: session.parentId,
 			prNumber: session.prNumber,
 			prState: session.prState,
+			prLinkMode: session.prLinkMode,
+			linkedPr: session.linkedPr,
 			worktreeDeleted: session.worktreeDeleted,
 			sequenceId: session.sequenceId,
 		};
@@ -1463,8 +1521,189 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	}
 
 	// ============================================
-	// PR STATE REFRESH
+	// PR LINKING + STATE REFRESH
 	// ============================================
+
+	updateSessionPrLink(
+		sessionId: string,
+		projectPath: string,
+		prNumber: number | null,
+		prLinkMode: SessionPrLinkMode
+	): ResultAsync<void, AppError> {
+		const session = this.getSessionCold(sessionId);
+		if (!session) {
+			return errAsync(new SessionNotFoundError(sessionId));
+		}
+
+		const nextLinkedPr =
+			prNumber == null
+				? undefined
+				: session.linkedPr?.prNumber === prNumber
+					? {
+							prNumber: session.linkedPr.prNumber,
+							state: session.linkedPr.state,
+							url: session.linkedPr.url,
+							title: session.linkedPr.title,
+							additions: session.linkedPr.additions,
+							deletions: session.linkedPr.deletions,
+							isDraft: session.linkedPr.isDraft,
+							isLoading: session.linkedPr.isLoading,
+							hasResolvedDetails: session.linkedPr.hasResolvedDetails,
+							checksHeadSha: session.linkedPr.checksHeadSha,
+							checks: session.linkedPr.checks,
+							isChecksLoading: session.linkedPr.isChecksLoading,
+							hasResolvedChecks: session.linkedPr.hasResolvedChecks,
+						}
+					: buildPartialSessionLinkedPr(prNumber, session.prState);
+		const nextPrState =
+			prNumber == null ? undefined : nextLinkedPr ? nextLinkedPr.state : session.prState;
+
+		this.updateSession(
+			sessionId,
+			{
+				prNumber: prNumber ?? undefined,
+				prState: nextPrState,
+				prLinkMode,
+				linkedPr: nextLinkedPr,
+			},
+			{ touchUpdatedAt: false }
+		);
+
+		if (prNumber != null) {
+			this.setLinkedPrLoading(projectPath, prNumber, true);
+			void this.refreshSessionPrState(sessionId, projectPath, prNumber);
+		}
+
+		return tauriClient.history.setSessionPrNumber(sessionId, prNumber, prLinkMode);
+	}
+
+	restoreAutomaticSessionPrLink(
+		sessionId: string,
+		projectPath: string
+	): ResultAsync<void, AppError> {
+		return this.updateSessionPrLink(sessionId, projectPath, null, "automatic");
+	}
+
+	applyAutomaticPrLinkFromShipWorkflow(
+		sessionId: string,
+		projectPath: string,
+		pr: GitStackedPrStep
+	): ResultAsync<number | null, never> {
+		const nextSequence = (this.prLinkUpdateSequence.get(sessionId) ?? 0) + 1;
+		this.prLinkUpdateSequence.set(sessionId, nextSequence);
+
+		return resolveAutomaticSessionPrNumberFromShipWorkflow(projectPath, pr).andThen((prNumber) => {
+			if (this.prLinkUpdateSequence.get(sessionId) !== nextSequence) {
+				return okAsync<number | null, never>(null);
+			}
+
+			if (prNumber == null) {
+				return okAsync<number | null, never>(null);
+			}
+
+			const session = this.getSessionCold(sessionId);
+			if (!session || session.prLinkMode === "manual") {
+				return okAsync<number | null, never>(null);
+			}
+
+			return this.updateSessionPrLink(sessionId, projectPath, prNumber, "automatic")
+				.map(() => prNumber)
+				.orElse(() => okAsync<number | null, never>(null));
+		});
+	}
+
+	invalidatePrDetails(projectPath: string, prNumber: number): void {
+		const cacheKey = this.getPrDetailsCacheKey(projectPath, prNumber);
+		this.prDetailsCache.delete(cacheKey);
+	}
+
+	invalidatePrChecks(projectPath: string, prNumber: number): void {
+		const cacheKey = this.getPrDetailsCacheKey(projectPath, prNumber);
+		this.prChecksCache.delete(cacheKey);
+	}
+
+	registerVisiblePrChecksSurface(
+		projectPath: string,
+		prNumber: number,
+		surfaceId: string
+	): () => void {
+		if (prNumber <= 0 || surfaceId.trim().length === 0) {
+			return () => {};
+		}
+
+		const cacheKey = this.getPrDetailsCacheKey(projectPath, prNumber);
+		const currentSurfaces = this.prChecksVisibleSurfaces.get(cacheKey) ?? new Set<string>();
+		currentSurfaces.add(surfaceId);
+		this.prChecksVisibleSurfaces.set(cacheKey, currentSurfaces);
+		this.ensurePrChecksPolling(projectPath, prNumber);
+
+		return () => {
+			const nextSurfaces = this.prChecksVisibleSurfaces.get(cacheKey);
+			if (!nextSurfaces) {
+				return;
+			}
+			nextSurfaces.delete(surfaceId);
+			if (nextSurfaces.size === 0) {
+				this.prChecksVisibleSurfaces.delete(cacheKey);
+				this.stopPrChecksPolling(cacheKey);
+				return;
+			}
+			this.prChecksVisibleSurfaces.set(cacheKey, nextSurfaces);
+		};
+	}
+
+	refreshSessionPrChecks(
+		sessionId: string,
+		projectPath: string,
+		prNumber: number,
+		options?: { force?: boolean }
+	): ResultAsync<PrChecks | null, never> {
+		if (prNumber <= 0) {
+			return okAsync<PrChecks | null, never>(null);
+		}
+
+		const cacheKey = this.getPrDetailsCacheKey(projectPath, prNumber);
+		const cachedChecks = options?.force ? null : this.getFreshCachedPrChecks(cacheKey);
+		if (cachedChecks) {
+			this.applyPrChecksToSessions(projectPath, prNumber, cachedChecks);
+			this.updatePrChecksPollingState(projectPath, prNumber, cachedChecks);
+			return okAsync<PrChecks | null, never>(cachedChecks);
+		}
+
+		this.setLinkedPrChecksLoading(projectPath, prNumber, true);
+
+		const inflightRequest = this.prChecksInflight.get(cacheKey);
+		if (inflightRequest) {
+			return inflightRequest;
+		}
+
+		const request = tauriClient.git
+			.prChecks(projectPath, prNumber)
+			.map((checks): PrChecks | null => {
+				this.prChecksCache.set(cacheKey, {
+					checks,
+					fetchedAt: Date.now(),
+				});
+				this.prChecksInflight.delete(cacheKey);
+				this.applyPrChecksToSessions(projectPath, prNumber, checks);
+				this.updatePrChecksPollingState(projectPath, prNumber, checks);
+				return checks;
+			})
+			.orElse((err) => {
+				this.prChecksInflight.delete(cacheKey);
+				logger.warn("Failed to fetch PR checks", {
+					sessionId,
+					prNumber,
+					error: err.message,
+				});
+				this.setLinkedPrChecksLoading(projectPath, prNumber, false);
+				this.updatePrChecksPollingState(projectPath, prNumber, null);
+				return okAsync<PrChecks | null, never>(null);
+			});
+
+		this.prChecksInflight.set(cacheKey, request);
+		return request;
+	}
 
 	/**
 	 * Fetch the current PR state from GitHub for a single session and update the store.
@@ -1485,6 +1724,8 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 			this.applyPrDetailsToSessions(projectPath, prNumber, cachedDetails);
 			return okAsync<PrDetails | null, never>(cachedDetails);
 		}
+
+		this.setLinkedPrLoading(projectPath, prNumber, true);
 
 		const inflightRequest = this.prDetailsInflight.get(cacheKey);
 		if (inflightRequest) {
@@ -1514,6 +1755,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 					prNumber,
 					error: err.message,
 				});
+				this.setLinkedPrLoading(projectPath, prNumber, false);
 				return okAsync<PrDetails | null, never>(null);
 			});
 
@@ -1536,6 +1778,72 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		}
 	}
 
+	private ensurePrChecksPolling(projectPath: string, prNumber: number): void {
+		const cacheKey = this.getPrDetailsCacheKey(projectPath, prNumber);
+		if ((this.prChecksVisibleSurfaces.get(cacheKey)?.size ?? 0) === 0) {
+			return;
+		}
+		if (this.prChecksPollTimers.has(cacheKey)) {
+			return;
+		}
+		void this.refreshSessionPrChecks(cacheKey, projectPath, prNumber, { force: true });
+	}
+
+	private schedulePrChecksPoll(projectPath: string, prNumber: number): void {
+		const cacheKey = this.getPrDetailsCacheKey(projectPath, prNumber);
+		this.stopPrChecksPolling(cacheKey);
+		if ((this.prChecksVisibleSurfaces.get(cacheKey)?.size ?? 0) === 0) {
+			return;
+		}
+		const timerId = setTimeout(() => {
+			this.prChecksPollTimers.delete(cacheKey);
+			void this.refreshSessionPrChecks(cacheKey, projectPath, prNumber, { force: true });
+		}, PR_CHECKS_POLL_INTERVAL_MS);
+		this.prChecksPollTimers.set(cacheKey, timerId);
+	}
+
+	private stopPrChecksPolling(cacheKey: string): void {
+		const timerId = this.prChecksPollTimers.get(cacheKey);
+		if (timerId != null) {
+			clearTimeout(timerId);
+			this.prChecksPollTimers.delete(cacheKey);
+		}
+	}
+
+	private updatePrChecksPollingState(
+		projectPath: string,
+		prNumber: number,
+		checks: PrChecks | null
+	): void {
+		const cacheKey = this.getPrDetailsCacheKey(projectPath, prNumber);
+		if ((this.prChecksVisibleSurfaces.get(cacheKey)?.size ?? 0) === 0) {
+			this.stopPrChecksPolling(cacheKey);
+			return;
+		}
+
+		const shouldContinuePolling =
+			checks === null ||
+			checks.checkRuns.length === 0 ||
+			hasActivePrChecks(
+				checks.checkRuns.map((checkRun) => ({
+					name: checkRun.name,
+					status: checkRun.status,
+					conclusion: checkRun.conclusion,
+					detailsUrl: checkRun.detailsUrl,
+					startedAt: checkRun.startedAt,
+					completedAt: checkRun.completedAt,
+					workflowName: checkRun.workflowName,
+				}))
+			);
+
+		if (shouldContinuePolling) {
+			this.schedulePrChecksPoll(projectPath, prNumber);
+			return;
+		}
+
+		this.stopPrChecksPolling(cacheKey);
+	}
+
 	private getPrDetailsCacheKey(projectPath: string, prNumber: number): string {
 		return `${projectPath}::${prNumber}`;
 	}
@@ -1554,6 +1862,20 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		return cachedEntry.details;
 	}
 
+	private getFreshCachedPrChecks(cacheKey: string): PrChecks | null {
+		const cachedEntry = this.prChecksCache.get(cacheKey);
+		if (!cachedEntry) {
+			return null;
+		}
+
+		if (Date.now() - cachedEntry.fetchedAt > PR_CHECKS_CACHE_TTL_MS) {
+			this.prChecksCache.delete(cacheKey);
+			return null;
+		}
+
+		return cachedEntry.checks;
+	}
+
 	private applyPrDetailsToSessions(
 		projectPath: string,
 		prNumber: number,
@@ -1569,21 +1891,178 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		}
 
 		for (const session of matchingSessions) {
-			if (details.state !== session.prState) {
-				logger.info("refreshSessionPrState: updating session prState", {
+			const resolvedLinkedPr = buildResolvedSessionLinkedPr(details);
+			const nextLinkedPr = {
+				prNumber: resolvedLinkedPr.prNumber,
+				state: resolvedLinkedPr.state,
+				url: resolvedLinkedPr.url,
+				title: resolvedLinkedPr.title,
+				additions: resolvedLinkedPr.additions,
+				deletions: resolvedLinkedPr.deletions,
+				isDraft: resolvedLinkedPr.isDraft,
+				isLoading: resolvedLinkedPr.isLoading,
+				hasResolvedDetails: resolvedLinkedPr.hasResolvedDetails,
+				checksHeadSha: session.linkedPr?.checksHeadSha ?? resolvedLinkedPr.checksHeadSha,
+				checks: session.linkedPr?.checks ?? resolvedLinkedPr.checks,
+				isChecksLoading:
+					session.linkedPr?.isChecksLoading ?? resolvedLinkedPr.isChecksLoading,
+				hasResolvedChecks:
+					session.linkedPr?.hasResolvedChecks ?? resolvedLinkedPr.hasResolvedChecks,
+			};
+			const linkedPrChanged =
+				session.linkedPr?.state !== nextLinkedPr.state ||
+				session.linkedPr?.url !== nextLinkedPr.url ||
+				session.linkedPr?.title !== nextLinkedPr.title ||
+				session.linkedPr?.additions !== nextLinkedPr.additions ||
+				session.linkedPr?.deletions !== nextLinkedPr.deletions ||
+				session.linkedPr?.isDraft !== nextLinkedPr.isDraft ||
+				session.linkedPr?.isLoading !== nextLinkedPr.isLoading ||
+				session.linkedPr?.hasResolvedDetails !== nextLinkedPr.hasResolvedDetails ||
+				session.linkedPr?.checksHeadSha !== nextLinkedPr.checksHeadSha ||
+				session.linkedPr?.isChecksLoading !== nextLinkedPr.isChecksLoading ||
+				session.linkedPr?.hasResolvedChecks !== nextLinkedPr.hasResolvedChecks ||
+				JSON.stringify(session.linkedPr?.checks ?? []) !== JSON.stringify(nextLinkedPr.checks);
+
+			if (details.state !== session.prState || linkedPrChanged) {
+				logger.info("refreshSessionPrState: updating session linked PR", {
 					sessionId: session.id,
 					oldState: session.prState,
 					newState: details.state,
 				});
-				this.updateSession(session.id, { prState: details.state }, { touchUpdatedAt: false });
+				this.updateSession(
+					session.id,
+					{
+						prState: details.state,
+						linkedPr: nextLinkedPr,
+					},
+					{ touchUpdatedAt: false }
+				);
+			}
+		}
+	}
+
+	private applyPrChecksToSessions(projectPath: string, prNumber: number, checks: PrChecks): void {
+		const matchingSessions = this.sessions.filter(
+			(session) => session.projectPath === projectPath && session.prNumber === prNumber
+		);
+
+		for (const session of matchingSessions) {
+			const nextChecks = buildResolvedSessionPrChecks(checks);
+			const linkedPr = session.linkedPr ?? buildPartialSessionLinkedPr(prNumber, session.prState);
+			const checksChanged =
+				session.linkedPr?.checksHeadSha !== nextChecks.checksHeadSha ||
+				session.linkedPr?.isChecksLoading !== nextChecks.isChecksLoading ||
+				session.linkedPr?.hasResolvedChecks !== nextChecks.hasResolvedChecks ||
+				JSON.stringify(session.linkedPr?.checks ?? []) !== JSON.stringify(nextChecks.checks);
+
+			if (!checksChanged) {
 				continue;
 			}
 
-			logger.debug("refreshSessionPrState: state unchanged, skipping", {
-				sessionId: session.id,
-				currentState: session.prState,
-				newState: details.state,
-			});
+			this.updateSession(
+				session.id,
+				{
+					linkedPr: {
+						prNumber: linkedPr.prNumber,
+						state: linkedPr.state,
+						url: linkedPr.url,
+						title: linkedPr.title,
+						additions: linkedPr.additions,
+						deletions: linkedPr.deletions,
+						isDraft: linkedPr.isDraft,
+						isLoading: linkedPr.isLoading,
+						hasResolvedDetails: linkedPr.hasResolvedDetails,
+						checksHeadSha: nextChecks.checksHeadSha,
+						checks: nextChecks.checks,
+						isChecksLoading: nextChecks.isChecksLoading,
+						hasResolvedChecks: nextChecks.hasResolvedChecks,
+					},
+				},
+				{ touchUpdatedAt: false }
+			);
+		}
+	}
+
+	private setLinkedPrLoading(projectPath: string, prNumber: number, isLoading: boolean): void {
+		const matchingSessions = this.sessions.filter(
+			(session) => session.projectPath === projectPath && session.prNumber === prNumber
+		);
+
+		for (const session of matchingSessions) {
+			const nextLinkedPr = session.linkedPr
+				? {
+						prNumber: session.linkedPr.prNumber,
+						state: session.linkedPr.state,
+						url: session.linkedPr.url,
+						title: session.linkedPr.title,
+						additions: session.linkedPr.additions,
+						deletions: session.linkedPr.deletions,
+						isDraft: session.linkedPr.isDraft,
+						isLoading,
+						hasResolvedDetails: session.linkedPr.hasResolvedDetails,
+						checksHeadSha: session.linkedPr.checksHeadSha,
+						checks: session.linkedPr.checks,
+						isChecksLoading: session.linkedPr.isChecksLoading,
+						hasResolvedChecks: session.linkedPr.hasResolvedChecks,
+					}
+				: {
+						prNumber,
+						state: session.prState ?? "OPEN",
+						url: null,
+						title: null,
+						additions: null,
+						deletions: null,
+						isDraft: null,
+						isLoading,
+						hasResolvedDetails: false,
+						checksHeadSha: null,
+						checks: [],
+						isChecksLoading: true,
+						hasResolvedChecks: false,
+					};
+
+			if (
+				session.linkedPr?.isLoading === nextLinkedPr.isLoading &&
+				session.linkedPr?.hasResolvedDetails === nextLinkedPr.hasResolvedDetails
+			) {
+				continue;
+			}
+
+			this.updateSession(session.id, { linkedPr: nextLinkedPr }, { touchUpdatedAt: false });
+		}
+	}
+
+	private setLinkedPrChecksLoading(projectPath: string, prNumber: number, isChecksLoading: boolean): void {
+		const matchingSessions = this.sessions.filter(
+			(session) => session.projectPath === projectPath && session.prNumber === prNumber
+		);
+
+		for (const session of matchingSessions) {
+			const linkedPr = session.linkedPr ?? buildPartialSessionLinkedPr(prNumber, session.prState);
+			const nextLinkedPr = {
+				prNumber: linkedPr.prNumber,
+				state: linkedPr.state,
+				url: linkedPr.url,
+				title: linkedPr.title,
+				additions: linkedPr.additions,
+				deletions: linkedPr.deletions,
+				isDraft: linkedPr.isDraft,
+				isLoading: linkedPr.isLoading,
+				hasResolvedDetails: linkedPr.hasResolvedDetails,
+				checksHeadSha: linkedPr.checksHeadSha,
+				checks: linkedPr.checks,
+				isChecksLoading,
+				hasResolvedChecks: linkedPr.hasResolvedChecks,
+			};
+
+			if (
+				session.linkedPr?.isChecksLoading === nextLinkedPr.isChecksLoading &&
+				session.linkedPr?.hasResolvedChecks === nextLinkedPr.hasResolvedChecks
+			) {
+				continue;
+			}
+
+			this.updateSession(session.id, { linkedPr: nextLinkedPr }, { touchUpdatedAt: false });
 		}
 	}
 

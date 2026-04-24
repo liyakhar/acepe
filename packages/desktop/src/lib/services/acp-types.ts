@@ -293,7 +293,7 @@ export type FailureReason = "deterministicRestoreFault" | "activationFailed" | "
 
 export type LifecycleState = { status: LifecycleStatus; detachedReason?: DetachedReason | null; failureReason?: FailureReason | null; errorMessage?: string | null }
 
-export type LifecycleCheckpoint = { 
+export type LifecycleCheckpoint = {
 /**
  * Older persisted checkpoints may omit this field; treat as current version for migration.
  */

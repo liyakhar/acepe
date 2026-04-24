@@ -114,7 +114,6 @@ import {
 	openSessionInFinder,
 	openSessionRawFileInEditor,
 	openStreamingLog,
-	persistSessionPrNumber,
 	persistSessionWorktreePathAfterRename,
 	removeWorktreeFromDisk,
 	runCreatePrWorkflow,
@@ -1315,11 +1314,12 @@ async function handleCreatePr(config?: PrGenerationConfig) {
 			streamingShipData = data;
 		},
 		deps: {
-			updateSessionPrNumber: (id, n) => {
-				sessionStore.updateSession(id, { prNumber: n });
-			},
-			persistSessionPrNumber: (id, n) => {
-				void persistSessionPrNumber(id, n);
+			applyAutomaticSessionPrLink: async (id, projectPath, pr) => {
+				const result = await sessionStore.applyAutomaticPrLinkFromShipWorkflow(id, projectPath, pr);
+				return result.match(
+					(prNumber) => prNumber,
+					() => null
+				);
 			},
 		},
 	});
@@ -1338,6 +1338,7 @@ async function handleMergePr(strategy: MergeStrategy) {
 		},
 		onMerged: () => {
 			sessionStore.updateSession(sessionId, { prState: "MERGED" });
+			sessionStore.invalidatePrDetails(path, prNum);
 			fetchPrDetails({
 				sessionId,
 				projectPath: path,
@@ -1764,9 +1765,12 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 			{hideProjectBadge}
 			{sequenceId}
 			sessionStatus={mappedSessionStatus}
+			projectPath={sessionProjectPath}
 			projectName={displayProjectName}
 			{projectColor}
 			{projectIconSrc}
+			linkedPr={sessionMetadata?.linkedPr ?? null}
+			prLinkMode={sessionMetadata?.prLinkMode ?? "automatic"}
 			{debugPanelState}
 			onClose={handleClose}
 			{onToggleFullscreen}
@@ -1941,6 +1945,7 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 			{prCardRenderKey}
 			{prDetails}
 			{prFetchError}
+			linkedPr={sessionMetadata?.linkedPr ?? null}
 			{streamingShipData}
 			{modifiedFilesState}
 			onEnterReviewMode={handleEnterReviewMode}

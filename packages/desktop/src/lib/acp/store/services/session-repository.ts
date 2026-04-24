@@ -12,6 +12,7 @@
  */
 
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { buildPartialSessionLinkedPr, type SessionPrLinkMode } from "../../application/dto/session-linked-pr.js";
 import type { HistoryEntry } from "../../../services/claude-history-types.js";
 import { tauriClient } from "../../../utils/tauri-client.js";
 import { AgentError, type AppError } from "../../errors/app-error.js";
@@ -75,6 +76,17 @@ function resolveSessionTitle(
 	}
 
 	return null;
+}
+
+function normalizeSessionPrLinkMode(
+	prNumber: number | null | undefined,
+	prLinkMode: string | null | undefined
+): SessionPrLinkMode | undefined {
+	if (prLinkMode === "automatic" || prLinkMode === "manual") {
+		return prLinkMode;
+	}
+
+	return prNumber == null ? undefined : "automatic";
 }
 
 /**
@@ -541,6 +553,12 @@ export class SessionRepository {
 		for (const session of mergedSessions) {
 			const canonicalAliasSession = aliasMetadataByCanonicalId.get(session.id);
 			if (canonicalAliasSession !== undefined) {
+				const mergedPrNumber = session.prNumber ?? canonicalAliasSession.prNumber;
+				const mergedPrLinkMode = normalizeSessionPrLinkMode(
+					mergedPrNumber,
+					session.prLinkMode ?? canonicalAliasSession.prLinkMode
+				);
+
 				reconciledSessions.push({
 					id: session.id,
 					projectPath: session.projectPath,
@@ -553,8 +571,10 @@ export class SessionRepository {
 					sessionLifecycleState:
 						session.sessionLifecycleState ?? canonicalAliasSession.sessionLifecycleState,
 					parentId: session.parentId,
-					prNumber: session.prNumber ?? canonicalAliasSession.prNumber,
+					prNumber: mergedPrNumber,
 					prState: session.prState ?? canonicalAliasSession.prState,
+					prLinkMode: mergedPrLinkMode,
+					linkedPr: session.linkedPr ?? canonicalAliasSession.linkedPr,
 					worktreeDeleted: session.worktreeDeleted ?? canonicalAliasSession.worktreeDeleted,
 					sequenceId: session.sequenceId ?? canonicalAliasSession.sequenceId,
 				});
@@ -618,6 +638,14 @@ export class SessionRepository {
 			worktreePath: entry.worktreePath === null ? undefined : entry.worktreePath,
 			worktreeDeleted: entry.worktreeDeleted === null ? undefined : entry.worktreeDeleted,
 			prNumber: entry.prNumber === null ? undefined : entry.prNumber,
+			prLinkMode: normalizeSessionPrLinkMode(entry.prNumber, entry.prLinkMode),
+			linkedPr:
+				entry.prNumber === null || entry.prNumber === undefined
+					? undefined
+					: buildPartialSessionLinkedPr(
+							entry.prNumber,
+							undefined
+						),
 			sequenceId: entry.sequenceId === null ? undefined : entry.sequenceId,
 		};
 	}

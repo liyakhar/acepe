@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ActivityEntryQuestion } from "@acepe/ui";
-import { ActivityEntry, ProjectLetterBadge, RichTokenText } from "@acepe/ui";
+import { ActivityEntry, PrChecksSummary, ProjectLetterBadge, RichTokenText } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
 import { IconChevronDown } from "@tabler/icons-svelte";
 import { IconChevronRight } from "@tabler/icons-svelte";
@@ -55,6 +55,8 @@ import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import { makeWorkspaceRelative } from "$lib/acp/utils/path-utils.js";
 import { tauriClient } from "$lib/utils/tauri-client/index.js";
 import type { SessionDisplayItem as BaseSessionDisplayItem } from "$lib/acp/types/thread-display-item.js";
+import SessionPrLinkMenu from "$lib/acp/components/shared/session-pr-link-menu.svelte";
+import PrChecksSurface from "$lib/acp/components/shared/pr-checks-surface.svelte";
 
 const logger = createLogger({ id: "session-item", name: "Session Item" });
 
@@ -563,6 +565,16 @@ function handleNextQuestion() {
 }
 </script>
 
+{#if session.linkedPr}
+	{#key `${session.projectPath}:${session.linkedPr.prNumber}`}
+		<PrChecksSurface
+			projectPath={session.projectPath}
+			prNumber={session.linkedPr.prNumber}
+			surfaceId={`session-item:${session.id}`}
+		/>
+	{/key}
+{/if}
+
 <Tooltip.Root>
 	<Tooltip.Trigger>
 		{#snippet child({ props })}
@@ -637,6 +649,13 @@ function handleNextQuestion() {
 								state={session.prState ?? "OPEN"}
 								size={11}
 							/>
+							{#if session.linkedPr}
+								<PrChecksSummary
+									checks={session.linkedPr.checks}
+									isLoading={session.linkedPr.isChecksLoading}
+									hasResolved={session.linkedPr.hasResolvedChecks}
+								/>
+							{/if}
 							<span class="text-[10px] font-mono leading-none text-muted-foreground">
 								#{session.prNumber}
 							</span>
@@ -692,6 +711,12 @@ function handleNextQuestion() {
 										{"Rename"}
 									</DropdownMenu.Item>
 								{/if}
+								<SessionPrLinkMenu
+									sessionId={session.id}
+									projectPath={session.projectPath}
+									linkedPr={session.linkedPr ?? null}
+									prLinkMode={session.prLinkMode ?? "automatic"}
+								/>
 								{#if onExportMarkdown || onExportJson}
 									<DropdownMenu.Separator />
 									<DropdownMenu.Sub>

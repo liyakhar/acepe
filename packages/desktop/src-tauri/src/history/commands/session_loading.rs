@@ -837,6 +837,7 @@ pub async fn set_session_pr_number(
     app: AppHandle,
     session_id: String,
     pr_number: Option<i32>,
+    pr_link_mode: Option<String>,
 ) -> CommandResult<()> {
     unexpected_command_result(
         "set_session_pr_number",
@@ -845,6 +846,7 @@ pub async fn set_session_pr_number(
             tracing::info!(
                 session_id = %session_id,
                 pr_number = ?pr_number,
+                pr_link_mode = ?pr_link_mode,
                 "Persisting PR number for session"
             );
 
@@ -854,7 +856,12 @@ pub async fn set_session_pr_number(
                 .inner()
                 .clone();
 
-            SessionMetadataRepository::set_pr_number(&db, &session_id, pr_number)
+            SessionMetadataRepository::set_pr_number(
+                &db,
+                &session_id,
+                pr_number,
+                pr_link_mode.as_deref(),
+            )
                 .await
                 .map_err(|e| {
                     tracing::error!(
