@@ -40,9 +40,6 @@ export type OperationKind =
 	| null
 	| undefined;
 
-/** @deprecated Use OperationProviderStatus. This alias exists for migration only. */
-export type OperationStatus = OperationProviderStatus;
-
 export type OperationState = import("../../services/acp-types.js").OperationState;
 
 export interface Operation {

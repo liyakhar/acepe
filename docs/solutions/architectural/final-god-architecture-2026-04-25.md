@@ -87,6 +87,34 @@ Automated coverage exercised the final authority chain across Rust reducer/super
 
 Tauri MCP live-app verification was attempted during closure, but no MCP Bridge app was reachable on the local driver port. The automated component tests cover the known stale-row/teardown crash class; a human live-app smoke pass should still be run before merge if the PR gate requires fresh Tauri evidence.
 
+## Unit 7 closure (2026-04-27)
+
+Unit 7 final integration proof completed after provider-owned session identity landed.
+
+**R28 matrix results — all seams green:**
+
+| Seam | Tests run | Result |
+|---|---|---|
+| Rust lifecycle supervisor | `acp::lifecycle::` — 7 tests | ✅ pass |
+| Rust client layer | `acp::client::` — 193 tests | ✅ pass |
+| Rust commands | `acp::commands::` — 68 tests | ✅ pass |
+| Rust repository / migrations | `db::repository_test` — 57 tests; `m20260426*`, `m20260427*` — 6 tests | ✅ pass |
+| Rust session descriptor / registry | `acp::session_descriptor` — 7; `acp::session_registry` — 2 | ✅ pass |
+| Rust session history loading | `history::commands::session_loading` — 12 tests | ✅ pass |
+| TypeScript operation store | `operation-store.vitest.ts` | ✅ pass |
+| TypeScript session projection | `session-store-projection-state.vitest.ts` | ✅ pass |
+| TypeScript create-session store | `session-store-create-session.vitest.ts` | ✅ pass |
+| TypeScript connection manager | `session-connection-manager.test.ts` | ✅ pass |
+| TypeScript ACP error deserialization | `deserialize-acp-error.test.ts` | ✅ pass |
+| Full Rust suite | 2080 passed, 0 failed | ✅ pass |
+| Full TypeScript suite | 2648 passed, 0 failed | ✅ pass |
+
+**Remaining schema carry-along (not authority gaps):**
+- `OperationProviderStatus` is the canonical type name; deprecated `OperationStatus` alias removed.
+- `hotState.status === "loading"` in `setSessionLoaded()` is a pre-connection UX guard (prevents double-transition to idle), not lifecycle authority. Canonical projection is primary; this fires only in the brief window before the first `SessionStateEnvelope` arrives.
+
+**Live Tauri smoke pass:** Still required for teardown, reconnect, and pending-permission survival scenarios. Automated component tests cover the stale-row/teardown crash class; Tauri driver was unreachable during automated closure.
+
 
 ## Post-land learnings
 

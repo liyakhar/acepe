@@ -604,7 +604,7 @@ Terminal states are `completed`, `failed`, `cancelled`, and `degraded`. Terminal
   - Product store/selector files cannot import diagnostics-only modules.
 - Repo no longer contains tests that import or instantiate deleted authority types as production behavior.
 
-- [ ] **Unit 7: Final integration proof and PR-stack closure**
+- [x] **Unit 7: Final integration proof and PR-stack closure**
 
 **Goal:** Verify the merged stack satisfies the final architecture, not just each unit in isolation.
 

@@ -61,7 +61,6 @@ export type {
 	Operation,
 	OperationKind,
 	OperationProviderStatus,
-	OperationStatus,
 } from "./operation.js";
 export type { PermissionReply, PermissionRequest } from "./permission.js";
 export type { Plan, PlanStep } from "./plan.js";
