@@ -1,7 +1,7 @@
 import { errAsync, okAsync } from "neverthrow";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionOpenFound } from "$lib/services/acp-types.js";
+import type { SessionOpenFound, SessionStateGraph } from "$lib/services/acp-types.js";
 
 vi.mock("$lib/analytics.js", () => ({
 	captureException: vi.fn(),
@@ -50,6 +50,54 @@ function createSessionOpenFound(overrides: Partial<SessionOpenFound> = {}): Sess
 	};
 }
 
+function createSessionStateGraph(overrides: Partial<SessionStateGraph> = {}): SessionStateGraph {
+	return {
+		requestedSessionId: overrides.requestedSessionId ?? "session-1",
+		canonicalSessionId: overrides.canonicalSessionId ?? "session-1",
+		isAlias: overrides.isAlias ?? false,
+		agentId: overrides.agentId ?? "copilot",
+		projectPath: overrides.projectPath ?? "/repo",
+		worktreePath: overrides.worktreePath ?? null,
+		sourcePath: overrides.sourcePath ?? null,
+		revision: overrides.revision ?? {
+			graphRevision: 1,
+			transcriptRevision: 0,
+			lastEventSeq: 1,
+		},
+		transcriptSnapshot: overrides.transcriptSnapshot ?? {
+			revision: 0,
+			entries: [],
+		},
+		operations: overrides.operations ?? [],
+		interactions: overrides.interactions ?? [],
+		turnState: overrides.turnState ?? "Idle",
+		messageCount: overrides.messageCount ?? 0,
+		activeTurnFailure: overrides.activeTurnFailure ?? null,
+		lastTerminalTurnId: overrides.lastTerminalTurnId ?? null,
+		lifecycle: overrides.lifecycle ?? {
+			status: "ready",
+			actionability: {
+				canSend: true,
+				canResume: false,
+				canRetry: false,
+				canArchive: false,
+				canConfigure: true,
+				recommendedAction: "send",
+				recoveryPhase: "none",
+				compactStatus: "ready",
+			},
+		},
+		activity: overrides.activity ?? {
+			kind: "idle",
+			activeOperationCount: 0,
+			activeSubagentCount: 0,
+			dominantOperationId: null,
+			blockingInteractionId: null,
+		},
+		capabilities: overrides.capabilities ?? {},
+	};
+}
+
 describe("SessionStore.createSession", () => {
 	let store: SessionStore;
 
@@ -72,6 +120,7 @@ describe("SessionStore.createSession", () => {
 		storeWithInternals.connectionMgr = {
 			createSession: vi.fn(() =>
 				okAsync({
+					kind: "ready" as const,
 					session,
 					sessionOpen: {
 						outcome: "found" as const,
@@ -87,7 +136,7 @@ describe("SessionStore.createSession", () => {
 		});
 
 		expect(result.isOk()).toBe(true);
-		expect(result._unsafeUnwrap()).toEqual(session);
+		expect(result._unsafeUnwrap()).toEqual({ kind: "ready", session });
 		expect(hydrateCreated).toHaveBeenCalledWith({
 			outcome: "found",
 			...sessionOpen,
@@ -142,7 +191,7 @@ describe("SessionStore.createSession", () => {
 					tool_call_id: "tc-1",
 					name: "Read",
 					kind: "read",
-					status: "completed",
+					provider_status: "completed",
 					title: "Read file.ts",
 					arguments: { kind: "read", file_path: "file.ts" },
 					progressive_arguments: null,
@@ -166,6 +215,7 @@ describe("SessionStore.createSession", () => {
 		storeWithInternals.connectionMgr = {
 			createSession: vi.fn(() =>
 				okAsync({
+					kind: "ready" as const,
 					session,
 					sessionOpen: { outcome: "found" as const, ...sessionOpen },
 				})
@@ -201,6 +251,7 @@ describe("SessionStore.createSession", () => {
 			storeWithInternals.connectionMgr = {
 				createSession: vi.fn(() =>
 					okAsync({
+						kind: "ready" as const,
 						session,
 						sessionOpen: { outcome: "found" as const, ...sessionOpen },
 					})
@@ -214,5 +265,159 @@ describe("SessionStore.createSession", () => {
 				`hydrateCreated not called for agentId=${agentId}`
 			).toHaveBeenCalledTimes(1);
 		}
+	});
+
+	it("tracks deferred creation without adding a real session until canonical graph promotion", async () => {
+		const storeWithInternals = store as unknown as {
+			connectionMgr: {
+				createSession: ReturnType<typeof vi.fn>;
+			};
+		};
+
+		storeWithInternals.connectionMgr = {
+			createSession: vi.fn(() =>
+				okAsync({
+					kind: "pending" as const,
+					sessionId: "provider-requested-id",
+					creationAttemptId: "attempt-1",
+					projectPath: "/repo",
+					agentId: "claude-code",
+					title: "Build stable panels",
+					worktreePath: null,
+				})
+			),
+		};
+
+		const result = await store.createSession({
+			projectPath: "/repo",
+			agentId: "claude-code",
+		});
+
+		expect(result.isOk()).toBe(true);
+		expect(result._unsafeUnwrap()).toEqual({
+			kind: "pending",
+			sessionId: "provider-requested-id",
+			creationAttemptId: "attempt-1",
+			projectPath: "/repo",
+			agentId: "claude-code",
+			title: "Build stable panels",
+			worktreePath: null,
+		});
+		expect(store.sessions).toEqual([]);
+		expect(store.hasPendingCreationSession("provider-requested-id")).toBe(true);
+
+		const materialized = store.ensureSessionFromStateGraph(
+			createSessionStateGraph({
+				requestedSessionId: "provider-requested-id",
+				canonicalSessionId: "provider-requested-id",
+				agentId: "claude-code",
+				projectPath: "/repo",
+			})
+		);
+
+		expect(materialized).toBe(true);
+		expect(store.sessions).toHaveLength(1);
+		expect(store.sessions[0]).toEqual(
+			expect.objectContaining({
+				id: "provider-requested-id",
+				projectPath: "/repo",
+				agentId: "claude-code",
+				title: "Build stable panels",
+			})
+		);
+		expect(store.hasPendingCreationSession("provider-requested-id")).toBe(false);
+	});
+
+	it("materializes an aliased pending creation from the requested id into the canonical id", async () => {
+		const storeWithInternals = store as unknown as {
+			connectionMgr: {
+				createSession: ReturnType<typeof vi.fn>;
+			};
+		};
+
+		storeWithInternals.connectionMgr = {
+			createSession: vi.fn(() =>
+				okAsync({
+					kind: "pending" as const,
+					sessionId: "requested-local-id",
+					creationAttemptId: "attempt-1",
+					projectPath: "/repo",
+					agentId: "claude-code",
+					title: "Aliased Thread",
+					worktreePath: null,
+				})
+			),
+		};
+
+		await store.createSession({
+			projectPath: "/repo",
+			agentId: "claude-code",
+		});
+
+		const materialized = store.ensureSessionFromStateGraph(
+			createSessionStateGraph({
+				requestedSessionId: "requested-local-id",
+				canonicalSessionId: "provider-canonical-id",
+				isAlias: true,
+				agentId: "claude-code",
+				projectPath: "/repo",
+			})
+		);
+
+		expect(materialized).toBe(true);
+		expect(store.sessions).toHaveLength(1);
+		expect(store.sessions[0]).toEqual(
+			expect.objectContaining({
+				id: "provider-canonical-id",
+				title: "Aliased Thread",
+			})
+		);
+		expect(store.hasPendingCreationSession("requested-local-id")).toBe(false);
+		expect(store.hasPendingCreationSession("provider-canonical-id")).toBe(false);
+	});
+
+	it("removes pending creation when a terminal creation error arrives before materialization", async () => {
+		const storeWithInternals = store as unknown as {
+			connectionMgr: {
+				createSession: ReturnType<typeof vi.fn>;
+			};
+		};
+
+		storeWithInternals.connectionMgr = {
+			createSession: vi.fn(() =>
+				okAsync({
+					kind: "pending" as const,
+					sessionId: "pending-session",
+					creationAttemptId: "attempt-1",
+					projectPath: "/repo",
+					agentId: "claude-code",
+					title: "Failed Thread",
+					worktreePath: null,
+				})
+			),
+		};
+
+		await store.createSession({
+			projectPath: "/repo",
+			agentId: "claude-code",
+		});
+
+		store.failPendingCreationSession("pending-session", {
+			type: "turnError",
+			session_id: "pending-session",
+			error: {
+				message: "Claude provider session identity could not be verified",
+				kind: "fatal",
+				source: "transport",
+			},
+		});
+
+		expect(store.hasPendingCreationSession("pending-session")).toBe(false);
+		expect(store.getHotState("pending-session")).toEqual(
+			expect.objectContaining({
+				status: "error",
+				turnState: "error",
+			})
+		);
 	});
 });

@@ -1,4 +1,4 @@
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_TRANSIENT_PROJECTION } from "../../types.js";
 import type { IConnectionManager } from "../interfaces/connection-manager.js";
@@ -205,5 +205,35 @@ describe("SessionMessagingService.sendMessage", () => {
 		expect(sendPrompt).toHaveBeenCalledWith("session-1", [
 			{ type: "text", text: "diagnostic follow-up - reply ok" },
 		]);
+	});
+
+	it("rolls back pending creation hot state when the first prompt fails to send", async () => {
+		const deps = createMockDeps();
+		const error = new Error("transport unavailable");
+		sendPrompt.mockReturnValue(errAsync(error));
+		const service = new SessionMessagingService(
+			deps.stateReader,
+			deps.hotStateManager,
+			deps.entryManager,
+			deps.connectionManager
+		);
+
+		const result = await service.sendPendingCreationMessage("pending-session", "hello");
+
+		expect(result.isErr()).toBe(true);
+		expect(deps.connectionManager.sendTurnFailed).toHaveBeenCalledWith("pending-session", {
+			turnId: null,
+			kind: "fatal",
+			message: "transport unavailable",
+			code: null,
+			source: "unknown",
+		});
+		expect(deps.hotStateManager.updateHotState).toHaveBeenLastCalledWith("pending-session", {
+			status: "error",
+			turnState: "error",
+			connectionError: "transport unavailable",
+			activeTurnFailure: null,
+			lastTerminalTurnId: null,
+		});
 	});
 });

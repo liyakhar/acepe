@@ -69,7 +69,12 @@ The final stack removes or demotes the old peer authorities:
 | Raw `acp-session-update` lane | Diagnostic/coordination only. Raw tool calls, tool updates, plan payloads, user chunks, permission requests, and question requests do not mutate transcript/operation/interaction/lifecycle product stores. |
 | Raw `acp-inbound-request` lane | Normalized at the edge and used only for response coordination; canonical interaction state flows through graph patches. |
 | Local journal/projection restore | No longer reconstructs provider-owned session content when provider history is missing. Provider-history restore owns cold-open content; Acepe-owned metadata layers on top. |
+| Local/provider session-id aliases | Removed from steady state. Completed `session_metadata.id` is the provider-owned canonical id; pre-provider state lives in `creation_attempts`; legacy aliases are migration diagnostics only. |
 | `replace_checkpoint_for_compat` / `compat_graph_lifecycle` | Removed from production names/call sites; lifecycle checkpoints use the seven-state graph lifecycle path. |
+
+## Session identity endpoint
+
+Provider-owned identity is now part of the GOD boundary: provider facts/history/live events enter through adapters, and completed Acepe sessions are stored under the provider-canonical id before they become product sessions. `session_metadata` no longer carries `provider_session_id` or `provider_identity_kind`; those bridge fields were removed after legacy aliases were migrated or diagnosed. See `docs/solutions/architectural/provider-owned-session-identity-2026-04-27.md`.
 
 ## Final verification notes
 

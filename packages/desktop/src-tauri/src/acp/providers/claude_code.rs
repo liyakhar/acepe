@@ -159,8 +159,17 @@ impl AgentProvider for ClaudeCodeProvider {
         _app: &'a AppHandle,
         context: &'a SessionContext,
         _replay_context: &'a SessionReplayContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<SessionThreadSnapshot>, String>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        Option<SessionThreadSnapshot>,
+                        crate::acp::provider::ProviderHistoryLoadError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async move {
             let session_id = &context.local_session_id;
 
@@ -194,9 +203,17 @@ impl AgentProvider for ClaudeCodeProvider {
                                 "Claude session parse failed (both worktree and project paths)"
                             );
                             if is_missing_claude_history_error(&error) {
-                                Ok(None)
+                                Err(
+                                    crate::acp::provider::ProviderHistoryLoadError::provider_history_missing(
+                                        format!("Claude provider history missing: {error}"),
+                                    ),
+                                )
                             } else {
-                                Err(format!("Claude provider history parse failed: {error}"))
+                                Err(
+                                    crate::acp::provider::ProviderHistoryLoadError::provider_unparseable(
+                                        format!("Claude provider history parse failed: {error}"),
+                                    ),
+                                )
                             }
                         }
                     }
@@ -208,9 +225,17 @@ impl AgentProvider for ClaudeCodeProvider {
                         "Claude session parse failed"
                     );
                     if is_missing_claude_history_error(&error) {
-                        Ok(None)
+                        Err(
+                            crate::acp::provider::ProviderHistoryLoadError::provider_history_missing(
+                                format!("Claude provider history missing: {error}"),
+                            ),
+                        )
                     } else {
-                        Err(format!("Claude provider history parse failed: {error}"))
+                        Err(
+                            crate::acp::provider::ProviderHistoryLoadError::provider_unparseable(
+                                format!("Claude provider history parse failed: {error}"),
+                            ),
+                        )
                     }
                 }
             }

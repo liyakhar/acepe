@@ -299,6 +299,7 @@ export class OperationStore {
 	}
 
 	private operationFromSnapshot(snapshot: OperationSnapshot): Operation {
+		const providerStatus = snapshot.provider_status;
 		return {
 			id: snapshot.id,
 			sessionId: snapshot.session_id,
@@ -306,10 +307,10 @@ export class OperationStore {
 			sourceEntryId: snapshot.source_entry_id ?? null,
 			name: snapshot.name,
 			kind: snapshot.kind,
-			status: snapshot.status,
+			status: providerStatus,
 			operationState:
 				snapshot.operation_state ??
-				deriveOperationState(snapshot.status, snapshot.kind ?? undefined),
+				deriveOperationState(providerStatus, snapshot.kind ?? undefined),
 			operationProvenanceKey: snapshot.operation_provenance_key ?? snapshot.tool_call_id,
 			title: snapshot.title,
 			arguments: snapshot.arguments,

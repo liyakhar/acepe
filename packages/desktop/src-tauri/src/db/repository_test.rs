@@ -13,7 +13,8 @@ mod session_metadata_tests {
     use crate::acp::session_update::{PermissionData, QuestionData, SessionUpdate};
     use crate::db::entities::prelude::AcepeSessionState;
     use crate::db::repository::{
-        ProjectRepository, SessionJournalEventRepository, SessionMetadataRepository,
+        CreationAttemptRepositoryError, CreationAttemptStatus, ProjectRepository,
+        SessionJournalEventRepository, SessionMetadataRepository,
     };
     use sea_orm::{ConnectionTrait, Database, DbConn, EntityTrait, Statement};
     use sea_orm_migration::MigratorTrait;
@@ -1265,7 +1266,7 @@ mod session_metadata_tests {
     }
 
     #[tokio::test]
-    async fn test_set_provider_session_id_allows_batch_upsert_to_update_alias_row() {
+    async fn test_set_provider_session_id_rejects_noncanonical_provider_alias() {
         let db = setup_test_db().await;
 
         SessionMetadataRepository::ensure_exists(
@@ -1277,9 +1278,18 @@ mod session_metadata_tests {
         )
         .await
         .unwrap();
-        SessionMetadataRepository::set_provider_session_id(&db, "acepe-session", "claude-session")
-            .await
-            .unwrap();
+        let error = SessionMetadataRepository::set_provider_session_id(
+            &db,
+            "acepe-session",
+            "claude-session",
+        )
+        .await
+        .expect_err("completed sessions must not persist provider aliases");
+
+        assert!(
+            error.to_string().contains("Provider session id mismatch"),
+            "unexpected error: {error}"
+        );
 
         let updated = SessionMetadataRepository::batch_upsert(
             &db,
@@ -1299,25 +1309,313 @@ mod session_metadata_tests {
 
         assert_eq!(updated, 1);
 
-        let aliased = SessionMetadataRepository::get_by_id(&db, "acepe-session")
+        let local = SessionMetadataRepository::get_by_id(&db, "acepe-session")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(aliased.history_session_id(), "claude-session");
-        assert_eq!(aliased.display, "Real transcript title");
-        assert_eq!(
-            aliased.file_path,
-            "-project-worktrees-feature-a/claude-session.jsonl"
-        );
+        assert_eq!(local.history_session_id(), "acepe-session");
 
         assert!(SessionMetadataRepository::get_by_id(&db, "claude-session")
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn batch_upsert_keeps_canonical_session_id_as_history_id() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "claude-session",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let updated = SessionMetadataRepository::batch_upsert(
+            &db,
+            vec![(
+                "claude-session".to_string(),
+                "Real transcript title".to_string(),
+                1704067300000,
+                "/project".to_string(),
+                "claude-code".to_string(),
+                "-project/claude-session.jsonl".to_string(),
+                1704067300,
+                2048,
+            )],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updated, 1);
+
+        let row = SessionMetadataRepository::get_by_id(&db, "claude-session")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(row.history_session_id(), "claude-session");
+    }
+
+    #[tokio::test]
+    async fn set_provider_session_id_errors_when_metadata_row_is_missing() {
+        let db = setup_test_db().await;
+
+        let error = SessionMetadataRepository::set_provider_session_id(
+            &db,
+            "missing-session",
+            "provider-session",
+        )
+        .await
+        .expect_err("missing metadata must not look like a successful identity write");
+
+        assert!(
+            error.to_string().contains("Session metadata not found"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_provider_session_id_accepts_only_canonical_identity() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "provider-owned-id",
+            "/project",
+            "copilot",
+            None,
+        )
+        .await
+        .unwrap();
+        SessionMetadataRepository::set_provider_session_id(
+            &db,
+            "provider-owned-id",
+            "provider-owned-id",
+        )
+        .await
+        .unwrap();
+
+        let row = SessionMetadataRepository::get_by_id(&db, "provider-owned-id")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.history_session_id(), "provider-owned-id");
+    }
+
+    #[tokio::test]
+    async fn creation_attempt_stores_intent_without_session_metadata_or_sequence() {
+        let db = setup_test_db().await;
+
+        let attempt = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            Some("/project/.worktrees/feature-a"),
+        )
+        .await
+        .unwrap();
+
+        assert!(uuid::Uuid::parse_str(&attempt.id).is_ok());
+        assert_eq!(attempt.status, CreationAttemptStatus::Pending.as_str());
+        assert_eq!(attempt.agent_id, "claude-code");
+        assert_eq!(attempt.project_path, "/project");
+        assert_eq!(
+            attempt.worktree_path.as_deref(),
+            Some("/project/.worktrees/feature-a")
+        );
+        assert_eq!(attempt.sequence_id, None);
+
+        let metadata = SessionMetadataRepository::get_by_id(&db, &attempt.id)
+            .await
+            .unwrap();
+        assert!(metadata.is_none());
+        assert!(AcepeSessionState::find_by_id(&attempt.id)
+            .one(&db)
             .await
             .unwrap()
             .is_none());
     }
 
+    #[tokio::test]
+    async fn promoting_creation_attempt_allocates_sequence_inside_canonical_session_transaction() {
+        let db = setup_test_db().await;
+        let attempt = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let promoted = SessionMetadataRepository::promote_creation_attempt(
+            &db,
+            &attempt.id,
+            "provider-canonical-id",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(promoted.id, "provider-canonical-id");
+        assert_eq!(promoted.agent_id, "claude-code");
+        assert_eq!(promoted.sequence_id, Some(1));
+        assert_eq!(promoted.history_session_id(), "provider-canonical-id");
+
+        let attempt_after = SessionMetadataRepository::get_creation_attempt(&db, &attempt.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            attempt_after.status,
+            CreationAttemptStatus::Consumed.as_str()
+        );
+        assert_eq!(
+            attempt_after.provider_session_id.as_deref(),
+            Some("provider-canonical-id")
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_pending_creation_attempt_gc_expires_old_rows_only() {
+        let db = setup_test_db().await;
+        let stale = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .unwrap();
+        let recent =
+            SessionMetadataRepository::create_creation_attempt(&db, "/project", "copilot", None)
+                .await
+                .unwrap();
+
+        db.execute(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "UPDATE creation_attempts SET created_at = ? WHERE id = ?",
+            [
+                chrono::Utc::now()
+                    .checked_sub_signed(chrono::Duration::hours(2))
+                    .unwrap()
+                    .into(),
+                stale.id.clone().into(),
+            ],
+        ))
+        .await
+        .unwrap();
+
+        let expired = SessionMetadataRepository::expire_stale_creation_attempts(
+            &db,
+            chrono::Utc::now()
+                .checked_sub_signed(chrono::Duration::hours(1))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(expired, 1);
+        assert_eq!(
+            SessionMetadataRepository::get_creation_attempt(&db, &stale.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            CreationAttemptStatus::Expired.as_str()
+        );
+        assert_eq!(
+            SessionMetadataRepository::get_creation_attempt(&db, &recent.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            CreationAttemptStatus::Pending.as_str()
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_creation_attempt_quota_rejects_excess_rows() {
+        let db = setup_test_db().await;
+        for _ in 0..SessionMetadataRepository::PENDING_CREATION_ATTEMPTS_PER_PROJECT_AGENT_CAP {
+            SessionMetadataRepository::create_creation_attempt(
+                &db,
+                "/project",
+                "claude-code",
+                None,
+            )
+            .await
+            .unwrap();
+        }
+
+        let error = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect_err("quota must reject the extra pending attempt");
+
+        assert!(matches!(
+            error,
+            CreationAttemptRepositoryError::QuotaExceeded { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn worktree_launch_reservation_uses_creation_attempt_not_fake_session_metadata() {
+        let db = setup_test_db().await;
+
+        let reserved =
+            SessionMetadataRepository::reserve_worktree_launch(&db, "/project", "claude-code")
+                .await
+                .unwrap();
+
+        assert_eq!(reserved.sequence_id, 1);
+        assert!(uuid::Uuid::parse_str(&reserved.launch_token).is_ok());
+        assert!(
+            SessionMetadataRepository::get_by_id(&db, &reserved.launch_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let attempt = SessionMetadataRepository::get_creation_attempt(&db, &reserved.launch_token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(attempt.status, CreationAttemptStatus::Pending.as_str());
+        assert_eq!(attempt.sequence_id, Some(1));
+        assert_eq!(
+            attempt.launch_token.as_deref(),
+            Some(reserved.launch_token.as_str())
+        );
+
+        SessionMetadataRepository::attach_reserved_worktree_launch(
+            &db,
+            &reserved.launch_token,
+            "/project/.worktrees/feature-a",
+        )
+        .await
+        .unwrap();
+        let attached =
+            SessionMetadataRepository::get_reserved_worktree_launch(&db, &reserved.launch_token)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            attached.worktree_path.as_deref(),
+            Some("/project/.worktrees/feature-a")
+        );
+    }
+
     #[test]
-    fn test_session_metadata_row_history_session_id_preserves_generic_provider_alias() {
+    fn test_session_metadata_row_history_session_id_is_always_canonical() {
         let row = crate::db::repository::SessionMetadataRow {
             id: "session-generic".to_string(),
             display: "Generic".to_string(),
@@ -1328,7 +1626,6 @@ mod session_metadata_tests {
             file_path: "/project/session-generic.jsonl".to_string(),
             file_mtime: 0,
             file_size: 0,
-            provider_session_id: Some("cursor-provider".to_string()),
             worktree_path: None,
             pr_number: None,
             pr_link_mode: None,
@@ -1336,25 +1633,61 @@ mod session_metadata_tests {
             sequence_id: None,
         };
 
-        assert_eq!(row.history_session_id(), "cursor-provider");
+        assert_eq!(row.history_session_id(), "session-generic");
     }
 
     #[tokio::test]
-    async fn test_delete_by_agent_for_projects_excluding_ids_respects_provider_session_id() {
+    async fn test_delete_by_agent_for_projects_excluding_ids_preserves_acepe_managed_rows() {
         let db = setup_test_db().await;
 
         SessionMetadataRepository::ensure_exists(
             &db,
-            "acepe-session",
+            "acepe-managed-session",
             "/project",
-            "claude-code",
+            "copilot",
             None,
         )
         .await
         .unwrap();
-        SessionMetadataRepository::set_provider_session_id(&db, "acepe-session", "claude-session")
-            .await
-            .unwrap();
+
+        let deleted = SessionMetadataRepository::delete_by_agent_for_projects_excluding_ids(
+            &db,
+            "copilot",
+            &["/project".to_string()],
+            &std::collections::HashSet::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            deleted, 0,
+            "provider tombstones must not delete active Acepe-managed sessions"
+        );
+        assert!(
+            SessionMetadataRepository::get_by_id(&db, "acepe-managed-session")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_by_agent_for_projects_excluding_ids_uses_canonical_ids_only() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::upsert(
+            &db,
+            "acepe-session".to_string(),
+            "Scanned".to_string(),
+            1704067200000,
+            "/project".to_string(),
+            "claude-code".to_string(),
+            "-project/acepe-session.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .unwrap();
 
         let deleted = SessionMetadataRepository::delete_by_agent_for_projects_excluding_ids(
             &db,
@@ -1365,11 +1698,11 @@ mod session_metadata_tests {
         .await
         .unwrap();
 
-        assert_eq!(deleted, 0);
+        assert_eq!(deleted, 1);
         assert!(SessionMetadataRepository::get_by_id(&db, "acepe-session")
             .await
             .unwrap()
-            .is_some());
+            .is_none());
     }
 
     #[tokio::test]
@@ -1951,11 +2284,9 @@ mod session_metadata_tests {
         assert_eq!(descriptor.history_session_id, "session-claude");
         assert_eq!(
             descriptor.compatibility,
-            SessionDescriptorCompatibility::ReadOnly {
-                missing_facts: vec![SessionDescriptorMissingFact::ProviderSessionId]
-            }
+            SessionDescriptorCompatibility::Canonical
         );
-        assert!(!descriptor.is_resumable());
+        assert!(descriptor.is_resumable());
     }
 
     #[tokio::test]
@@ -1993,23 +2324,6 @@ mod session_metadata_tests {
                 session_id: "session-thin".to_string(),
                 missing_facts: vec![SessionDescriptorMissingFact::CanonicalAgentId]
             }
-        );
-    }
-
-    #[test]
-    fn repository_provider_identity_rules_are_capability_driven() {
-        let source = include_str!("repository.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap_or_default();
-
-        assert!(
-            !source.contains("incoming_agent_id == \"claude-code\""),
-            "repository should not hardcode Claude provider alias rules"
-        );
-        assert!(
-            source.contains("backend_identity_policy_for_provider_id"),
-            "repository should resolve backend identity policy through shared capability helpers"
         );
     }
 }

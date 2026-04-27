@@ -8,7 +8,7 @@ superseded-by: docs/plans/2026-04-25-002-refactor-final-god-architecture-stack-p
 
 # refactor: Session lifecycle convergence after proof
 
-> Superseded by `docs/plans/2026-04-25-002-refactor-final-god-architecture-stack-plan.md`. This convergence plan is no longer an active endpoint; the final GOD stack replaces coexistence/convergence framing.
+> Superseded by `docs/plans/2026-04-25-002-refactor-final-god-architecture-stack-plan.md`. This convergence plan is no longer an active endpoint; the final GOD stack replaces coexistence/convergence framing. Session identity closure is documented in `docs/solutions/architectural/provider-owned-session-identity-2026-04-27.md`.
 
 ## Overview
 

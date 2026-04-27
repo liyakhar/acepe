@@ -1,9 +1,6 @@
 use crate::db::entities::prelude::*;
 use crate::storage::acepe_config;
 use crate::{
-    acp::parsers::provider_capabilities::{
-        all_provider_capabilities, find_provider_capabilities_by_id,
-    },
     acp::session_descriptor::{
         resolve_existing_session_descriptor, resolve_existing_session_resume,
         ResolvedResumeSession, SessionCompatibilityInput, SessionDescriptor,
@@ -13,14 +10,15 @@ use crate::{
         ProjectionJournalUpdate, SessionJournalEvent as SessionJournalRecord,
         SessionJournalEventPayload,
     },
-    db::entities::session_journal_event,
+    db::entities::{creation_attempt, session_journal_event},
 };
 use anyhow::Result;
 use chrono::Utc;
 use rand::Rng;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DbBackend, DbConn, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Statement, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseTransaction, DbConn,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Statement,
+    TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -903,7 +901,6 @@ pub struct SessionMetadataRow {
     pub file_path: String,
     pub file_mtime: i64,
     pub file_size: i64,
-    pub provider_session_id: Option<String>,
     pub worktree_path: Option<String>,
     pub pr_number: Option<i32>,
     pub pr_link_mode: Option<String>,
@@ -935,8 +932,7 @@ impl SessionMetadataRow {
     }
 
     pub fn history_session_id(&self) -> &str {
-        backend_identity_policy_for_provider_id(&self.agent_id)
-            .history_session_id(&self.id, self.provider_session_id.as_deref())
+        &self.id
     }
 
     pub fn effective_project_path(&self) -> Option<&str> {
@@ -948,7 +944,6 @@ impl SessionMetadataRow {
     pub fn descriptor_facts(&self) -> SessionDescriptorFacts {
         SessionDescriptorFacts {
             local_session_id: self.id.clone(),
-            provider_session_id: self.provider_session_id.clone(),
             agent_id: self.agent_id_enum(),
             project_path: (!self.project_path.is_empty()).then_some(self.project_path.clone()),
             worktree_path: self.worktree_path.clone(),
@@ -1006,7 +1001,6 @@ fn compose_session_metadata_row(
         file_path: model.file_path,
         file_mtime: model.file_mtime,
         file_size: model.file_size,
-        provider_session_id: model.provider_session_id,
         worktree_path,
         pr_number,
         pr_link_mode,
@@ -1015,17 +1009,84 @@ fn compose_session_metadata_row(
     }
 }
 
-fn backend_identity_policy_for_provider_id(
-    provider_id: &str,
-) -> crate::acp::provider::BackendIdentityPolicy {
-    find_provider_capabilities_by_id(all_provider_capabilities(), provider_id)
-        .map(|capabilities| capabilities.backend_identity_policy)
-        .unwrap_or_default()
-}
-
 /// A batch record for session metadata upsert:
 /// (session_id, display, timestamp, project_path, agent_id, file_path, file_mtime, file_size)
 pub type SessionMetadataRecord = (String, String, i64, String, String, String, i64, i64);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreationAttemptRow {
+    pub id: String,
+    pub agent_id: String,
+    pub project_path: String,
+    pub worktree_path: Option<String>,
+    pub launch_token: Option<String>,
+    pub status: String,
+    pub failure_reason: Option<String>,
+    pub provider_session_id: Option<String>,
+    pub sequence_id: Option<i32>,
+    pub created_at: chrono::DateTime<Utc>,
+    pub updated_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CreationAttemptStatus {
+    Pending,
+    Failed,
+    Consumed,
+    Expired,
+}
+
+impl CreationAttemptStatus {
+    pub const PENDING: &'static str = "pending";
+    pub const FAILED: &'static str = "failed";
+    pub const CONSUMED: &'static str = "consumed";
+    pub const EXPIRED: &'static str = "expired";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => Self::PENDING,
+            Self::Failed => Self::FAILED,
+            Self::Consumed => Self::CONSUMED,
+            Self::Expired => Self::EXPIRED,
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CreationAttemptRepositoryError {
+    #[error(
+        "creation attempt quota exceeded for project {project_path} and agent {agent_id} (cap {cap})"
+    )]
+    QuotaExceeded {
+        project_path: String,
+        agent_id: String,
+        cap: u64,
+    },
+    #[error("creation attempt not found: {attempt_id}")]
+    NotFound { attempt_id: String },
+    #[error("creation attempt is not pending: {attempt_id}")]
+    NotPending { attempt_id: String },
+    #[error("{message}")]
+    InvalidState { message: String },
+    #[error(transparent)]
+    Database(#[from] sea_orm::DbErr),
+}
+
+fn compose_creation_attempt_row(model: creation_attempt::Model) -> CreationAttemptRow {
+    CreationAttemptRow {
+        id: model.id,
+        agent_id: model.agent_id,
+        project_path: model.project_path,
+        worktree_path: model.worktree_path,
+        launch_token: model.launch_token,
+        status: model.status,
+        failure_reason: model.failure_reason,
+        provider_session_id: model.provider_session_id,
+        sequence_id: model.sequence_id,
+        created_at: model.created_at,
+        updated_at: model.updated_at,
+    }
+}
 
 /// Repository for canonical session records plus transcript metadata.
 ///
@@ -1034,6 +1095,262 @@ pub type SessionMetadataRecord = (String, String, i64, String, String, String, i
 pub struct SessionMetadataRepository;
 
 impl SessionMetadataRepository {
+    pub const PENDING_CREATION_ATTEMPTS_PER_PROJECT_AGENT_CAP: u64 = 5;
+
+    pub async fn create_creation_attempt(
+        db: &DbConn,
+        project_path: &str,
+        agent_id: &str,
+        worktree_path: Option<&str>,
+    ) -> std::result::Result<CreationAttemptRow, CreationAttemptRepositoryError> {
+        Self::insert_creation_attempt(db, None, project_path, agent_id, worktree_path, None, None)
+            .await
+    }
+
+    async fn insert_creation_attempt(
+        db: &DbConn,
+        attempt_id: Option<String>,
+        project_path: &str,
+        agent_id: &str,
+        worktree_path: Option<&str>,
+        launch_token: Option<String>,
+        sequence_id: Option<i32>,
+    ) -> std::result::Result<CreationAttemptRow, CreationAttemptRepositoryError> {
+        let txn = db.begin().await?;
+        let row = Self::insert_creation_attempt_in_transaction(
+            &txn,
+            attempt_id,
+            project_path,
+            agent_id,
+            worktree_path,
+            launch_token,
+            sequence_id,
+        )
+        .await?;
+        txn.commit().await?;
+
+        Ok(row)
+    }
+
+    async fn insert_creation_attempt_in_transaction(
+        txn: &DatabaseTransaction,
+        attempt_id: Option<String>,
+        project_path: &str,
+        agent_id: &str,
+        worktree_path: Option<&str>,
+        launch_token: Option<String>,
+        sequence_id: Option<i32>,
+    ) -> std::result::Result<CreationAttemptRow, CreationAttemptRepositoryError> {
+        let pending_count = CreationAttempt::find()
+            .filter(creation_attempt::Column::ProjectPath.eq(project_path))
+            .filter(creation_attempt::Column::AgentId.eq(agent_id))
+            .filter(creation_attempt::Column::Status.eq(CreationAttemptStatus::Pending.as_str()))
+            .count(txn)
+            .await?;
+
+        if pending_count >= Self::PENDING_CREATION_ATTEMPTS_PER_PROJECT_AGENT_CAP {
+            return Err(CreationAttemptRepositoryError::QuotaExceeded {
+                project_path: project_path.to_string(),
+                agent_id: agent_id.to_string(),
+                cap: Self::PENDING_CREATION_ATTEMPTS_PER_PROJECT_AGENT_CAP,
+            });
+        }
+
+        let now = Utc::now();
+        let id = attempt_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let model = creation_attempt::ActiveModel {
+            id: Set(id),
+            agent_id: Set(agent_id.to_string()),
+            project_path: Set(project_path.to_string()),
+            worktree_path: Set(worktree_path.map(std::borrow::ToOwned::to_owned)),
+            launch_token: Set(launch_token),
+            status: Set(CreationAttemptStatus::Pending.as_str().to_string()),
+            failure_reason: Set(None),
+            provider_session_id: Set(None),
+            sequence_id: Set(sequence_id),
+            created_at: Set(now),
+            updated_at: Set(now),
+        };
+        let inserted = model.insert(txn).await?;
+
+        Ok(compose_creation_attempt_row(inserted))
+    }
+
+    pub async fn get_creation_attempt(
+        db: &DbConn,
+        attempt_id: &str,
+    ) -> std::result::Result<Option<CreationAttemptRow>, CreationAttemptRepositoryError> {
+        let model = CreationAttempt::find_by_id(attempt_id).one(db).await?;
+        Ok(model.map(compose_creation_attempt_row))
+    }
+
+    pub async fn record_creation_attempt_requested_provider_session_id(
+        db: &DbConn,
+        attempt_id: &str,
+        provider_session_id: &str,
+    ) -> std::result::Result<(), CreationAttemptRepositoryError> {
+        let now = Utc::now();
+        let result = db
+            .execute(Statement::from_sql_and_values(
+                db.get_database_backend(),
+                "UPDATE creation_attempts SET provider_session_id = ?, updated_at = ? WHERE id = ? AND status = ?",
+                [
+                    provider_session_id.into(),
+                    now.into(),
+                    attempt_id.into(),
+                    CreationAttemptStatus::Pending.as_str().into(),
+                ],
+            ))
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(CreationAttemptRepositoryError::NotPending {
+                attempt_id: attempt_id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub async fn get_reserved_worktree_launch(
+        db: &DbConn,
+        launch_token: &str,
+    ) -> Result<Option<ReservedWorktreeLaunchRow>> {
+        let attempt = CreationAttempt::find_by_id(launch_token).one(db).await?;
+        Ok(attempt
+            .filter(|attempt| attempt.status == CreationAttemptStatus::Pending.as_str())
+            .map(|attempt| ReservedWorktreeLaunchRow {
+                launch_token: attempt.id,
+                project_path: attempt.project_path,
+                worktree_path: attempt.worktree_path,
+                sequence_id: attempt.sequence_id.unwrap_or_default(),
+            }))
+    }
+
+    pub async fn promote_creation_attempt(
+        db: &DbConn,
+        attempt_id: &str,
+        provider_session_id: &str,
+    ) -> std::result::Result<SessionMetadataRow, CreationAttemptRepositoryError> {
+        if provider_session_id.is_empty() {
+            return Err(CreationAttemptRepositoryError::InvalidState {
+                message: "provider session id cannot be empty".to_string(),
+            });
+        }
+
+        let txn = db.begin().await?;
+        let attempt = CreationAttempt::find_by_id(attempt_id)
+            .one(&txn)
+            .await?
+            .ok_or_else(|| CreationAttemptRepositoryError::NotFound {
+                attempt_id: attempt_id.to_string(),
+            })?;
+        if attempt.status != CreationAttemptStatus::Pending.as_str() {
+            return Err(CreationAttemptRepositoryError::NotPending {
+                attempt_id: attempt_id.to_string(),
+            });
+        }
+
+        let sequence_id = if let Some(sequence_id) = attempt.sequence_id {
+            sequence_id
+        } else {
+            Self::next_sequence_id_for_project(&txn, &attempt.project_path)
+                .await
+                .map_err(|error| CreationAttemptRepositoryError::InvalidState {
+                    message: error.to_string(),
+                })?
+        };
+        let now = Utc::now();
+        let preview_len = 8usize.min(provider_session_id.len());
+        let metadata = session_metadata::ActiveModel {
+            id: Set(provider_session_id.to_string()),
+            display: Set(format!("Session {}", &provider_session_id[..preview_len])),
+            timestamp: Set(now.timestamp_millis()),
+            project_path: Set(attempt.project_path.clone()),
+            agent_id: Set(attempt.agent_id.clone()),
+            file_path: Set(Self::created_session_file_path(provider_session_id)),
+            file_mtime: Set(0),
+            file_size: Set(0),
+            worktree_path: Set(attempt.worktree_path.clone()),
+            pr_number: sea_orm::ActiveValue::NotSet,
+            is_acepe_managed: Set(1),
+            sequence_id: Set(Some(sequence_id)),
+            created_at: Set(now),
+            updated_at: Set(now),
+        };
+        let inserted_metadata = metadata.insert(&txn).await?;
+        let state = acepe_session_state::ActiveModel {
+            session_id: Set(provider_session_id.to_string()),
+            relationship: Set(AcepeSessionRelationship::Created.as_str().to_string()),
+            project_path: Set(attempt.project_path.clone()),
+            title_override: Set(None),
+            worktree_path: Set(attempt.worktree_path.clone()),
+            pr_number: Set(None),
+            pr_link_mode: Set(None),
+            sequence_id: Set(Some(sequence_id)),
+            created_at: Set(now),
+            updated_at: Set(now),
+        };
+        let inserted_state = state.insert(&txn).await?;
+
+        let mut attempt_active: creation_attempt::ActiveModel = attempt.into();
+        attempt_active.status = Set(CreationAttemptStatus::Consumed.as_str().to_string());
+        attempt_active.provider_session_id = Set(Some(provider_session_id.to_string()));
+        attempt_active.updated_at = Set(now);
+        attempt_active.update(&txn).await?;
+        txn.commit().await?;
+
+        Ok(compose_session_metadata_row(
+            inserted_metadata,
+            Some(&inserted_state),
+        ))
+    }
+
+    pub async fn expire_stale_creation_attempts(
+        db: &DbConn,
+        older_than: chrono::DateTime<Utc>,
+    ) -> std::result::Result<u64, CreationAttemptRepositoryError> {
+        let now = Utc::now();
+        let result = db
+            .execute(Statement::from_sql_and_values(
+                db.get_database_backend(),
+                "UPDATE creation_attempts SET status = ?, updated_at = ? WHERE status = ? AND created_at < ?",
+                [
+                    CreationAttemptStatus::Expired.as_str().into(),
+                    now.into(),
+                    CreationAttemptStatus::Pending.as_str().into(),
+                    older_than.into(),
+                ],
+            ))
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn fail_creation_attempt(
+        db: &DbConn,
+        attempt_id: &str,
+        reason: &str,
+    ) -> std::result::Result<(), CreationAttemptRepositoryError> {
+        let now = Utc::now();
+        let result = db
+            .execute(Statement::from_sql_and_values(
+                db.get_database_backend(),
+                "UPDATE creation_attempts SET status = ?, failure_reason = ?, updated_at = ? WHERE id = ? AND status = ?",
+                [
+                    CreationAttemptStatus::Failed.as_str().into(),
+                    reason.into(),
+                    now.into(),
+                    attempt_id.into(),
+                    CreationAttemptStatus::Pending.as_str().into(),
+                ],
+            ))
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(CreationAttemptRepositoryError::NotPending {
+                attempt_id: attempt_id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn resolve_existing_session_descriptor_from_metadata(
         session_id: &str,
         metadata: Option<&SessionMetadataRow>,
@@ -1128,10 +1445,6 @@ impl SessionMetadataRepository {
             && incoming_display != existing_display
     }
 
-    fn reserved_worktree_launch_file_path(launch_token: &str) -> String {
-        format!("__worktree__/prepared/{launch_token}")
-    }
-
     fn is_acepe_managed_file_path(file_path: &str) -> bool {
         let is_registry = file_path.starts_with("__session_registry__/")
             && !file_path["__session_registry__/".len()..].contains('/');
@@ -1147,6 +1460,7 @@ impl SessionMetadataRepository {
         let message = error.to_string();
         message.contains("idx_session_metadata_project_sequence_managed")
             || message.contains("idx_acepe_session_state_project_sequence")
+            || message.contains("idx_creation_attempts_project_sequence")
             || message.contains("UNIQUE constraint failed") && message.contains("sequence_id")
     }
 
@@ -1182,12 +1496,20 @@ impl SessionMetadataRepository {
             .await?
             .flatten();
 
-        let max_seq = match (max_state_seq, max_metadata_seq) {
-            (Some(state), Some(metadata)) => Some(state.max(metadata)),
-            (Some(state), None) => Some(state),
-            (None, Some(metadata)) => Some(metadata),
-            (None, None) => None,
-        };
+        let max_attempt_seq: Option<i32> = CreationAttempt::find()
+            .select_only()
+            .column_as(creation_attempt::Column::SequenceId.max(), "max_seq")
+            .filter(creation_attempt::Column::ProjectPath.eq(project_path))
+            .filter(creation_attempt::Column::SequenceId.is_not_null())
+            .into_tuple::<Option<i32>>()
+            .one(db)
+            .await?
+            .flatten();
+
+        let max_seq = [max_state_seq, max_metadata_seq, max_attempt_seq]
+            .into_iter()
+            .flatten()
+            .max();
 
         Ok(max_seq.map_or(1, |max| max + 1))
     }
@@ -1334,25 +1656,6 @@ impl SessionMetadataRepository {
         }
     }
 
-    fn provider_session_id_for_existing_model(
-        existing_model: &session_metadata::Model,
-        incoming_agent_id: &str,
-        incoming_session_id: &str,
-    ) -> Option<String> {
-        backend_identity_policy_for_provider_id(incoming_agent_id)
-            .provider_session_id_for_existing_session(
-                &existing_model.id,
-                incoming_session_id,
-                existing_model.provider_session_id.as_deref(),
-            )
-    }
-
-    fn query_existing_session_by_id_or_provider_session_id(session_id: &str) -> Condition {
-        Condition::any()
-            .add(session_metadata::Column::Id.eq(session_id))
-            .add(session_metadata::Column::ProviderSessionId.eq(session_id))
-    }
-
     async fn load_state_map(
         db: &impl sea_orm::ConnectionTrait,
         session_ids: &[String],
@@ -1398,7 +1701,6 @@ impl SessionMetadataRepository {
                 file_path: Set(Self::created_session_file_path(session_id)),
                 file_mtime: Set(0),
                 file_size: Set(0),
-                provider_session_id: Set(None),
                 worktree_path: Set(worktree_path.map(|path| path.to_string())),
                 pr_number: sea_orm::ActiveValue::NotSet,
                 is_acepe_managed: Set(1),
@@ -1453,43 +1755,21 @@ impl SessionMetadataRepository {
     ) -> Result<ReservedWorktreeLaunchRow> {
         for _attempt in 0..5 {
             let txn = db.begin().await?;
-            let now = Utc::now();
             let launch_token = Uuid::new_v4().to_string();
             let next_sequence_id = Self::next_sequence_id_for_project(&txn, project_path).await?;
+            let inserted = Self::insert_creation_attempt_in_transaction(
+                &txn,
+                Some(launch_token.clone()),
+                project_path,
+                agent_id,
+                None,
+                Some(launch_token.clone()),
+                Some(next_sequence_id),
+            )
+            .await;
 
-            let metadata = session_metadata::ActiveModel {
-                id: Set(launch_token.clone()),
-                display: Set(format!("Prepared worktree launch s{next_sequence_id}")),
-                timestamp: Set(now.timestamp_millis()),
-                project_path: Set(project_path.to_string()),
-                agent_id: Set(agent_id.to_string()),
-                file_path: Set(Self::reserved_worktree_launch_file_path(&launch_token)),
-                file_mtime: Set(0),
-                file_size: Set(0),
-                provider_session_id: Set(None),
-                worktree_path: Set(None),
-                pr_number: sea_orm::ActiveValue::NotSet,
-                is_acepe_managed: Set(1),
-                sequence_id: Set(Some(next_sequence_id)),
-                created_at: Set(now),
-                updated_at: Set(now),
-            };
-
-            match SessionMetadata::insert(metadata).exec(&txn).await {
+            match inserted {
                 Ok(_) => {
-                    let state = acepe_session_state::ActiveModel {
-                        session_id: Set(launch_token.clone()),
-                        relationship: Set(AcepeSessionRelationship::Reserved.as_str().to_string()),
-                        project_path: Set(project_path.to_string()),
-                        title_override: Set(None),
-                        worktree_path: Set(None),
-                        pr_number: Set(None),
-                        pr_link_mode: Set(None),
-                        sequence_id: Set(Some(next_sequence_id)),
-                        created_at: Set(now),
-                        updated_at: Set(now),
-                    };
-                    state.insert(&txn).await?;
                     txn.commit().await?;
                     return Ok(ReservedWorktreeLaunchRow {
                         launch_token,
@@ -1498,16 +1778,16 @@ impl SessionMetadataRepository {
                         sequence_id: next_sequence_id,
                     });
                 }
-                Err(error) => {
-                    if Self::is_sequence_constraint_violation(&error) {
-                        continue;
-                    }
-                    return Err(error.into());
+                Err(CreationAttemptRepositoryError::Database(error))
+                    if Self::is_sequence_constraint_violation(&error) =>
+                {
+                    continue;
                 }
+                Err(error) => return Err(error.into()),
             }
         }
 
-        anyhow::bail!("Failed to reserve a unique sequence_id after retries");
+        anyhow::bail!("Failed to reserve a unique creation attempt sequence_id after retries");
     }
 
     pub async fn attach_reserved_worktree_launch(
@@ -1515,35 +1795,20 @@ impl SessionMetadataRepository {
         launch_token: &str,
         worktree_path: &str,
     ) -> Result<ReservedWorktreeLaunchRow> {
-        let txn = db.begin().await?;
-        let metadata = SessionMetadata::find_by_id(launch_token)
-            .one(&txn)
+        let attempt = CreationAttempt::find_by_id(launch_token)
+            .one(db)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Prepared worktree launch not found"))?;
-        let project_path = metadata.project_path.clone();
-        let sequence_id = metadata.sequence_id.unwrap_or_default();
-        let state = AcepeSessionState::find_by_id(launch_token)
-            .one(&txn)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Prepared worktree launch state not found"))?;
-
-        if AcepeSessionRelationship::from_str(&state.relationship)
-            != AcepeSessionRelationship::Reserved
-        {
+        if attempt.status != CreationAttemptStatus::Pending.as_str() {
             anyhow::bail!("Prepared worktree launch has already been consumed");
         }
 
-        let mut metadata_active: session_metadata::ActiveModel = metadata.into();
-        metadata_active.worktree_path = Set(Some(worktree_path.to_string()));
-        metadata_active.updated_at = Set(Utc::now());
-        metadata_active.update(&txn).await?;
-
-        let mut state_active: acepe_session_state::ActiveModel = state.into();
-        state_active.worktree_path = Set(Some(worktree_path.to_string()));
-        state_active.updated_at = Set(Utc::now());
-        state_active.update(&txn).await?;
-
-        txn.commit().await?;
+        let project_path = attempt.project_path.clone();
+        let sequence_id = attempt.sequence_id.unwrap_or_default();
+        let mut active: creation_attempt::ActiveModel = attempt.into();
+        active.worktree_path = Set(Some(worktree_path.to_string()));
+        active.updated_at = Set(Utc::now());
+        active.update(db).await?;
 
         Ok(ReservedWorktreeLaunchRow {
             launch_token: launch_token.to_string(),
@@ -1554,23 +1819,11 @@ impl SessionMetadataRepository {
     }
 
     pub async fn discard_reserved_worktree_launch(db: &DbConn, launch_token: &str) -> Result<()> {
-        let txn = db.begin().await?;
-        if let Some(state) = AcepeSessionState::find_by_id(launch_token)
-            .one(&txn)
-            .await?
-        {
-            if AcepeSessionRelationship::from_str(&state.relationship)
-                == AcepeSessionRelationship::Reserved
-            {
-                AcepeSessionState::delete_by_id(launch_token)
-                    .exec(&txn)
-                    .await?;
-                SessionMetadata::delete_by_id(launch_token)
-                    .exec(&txn)
-                    .await?;
+        if let Some(attempt) = CreationAttempt::find_by_id(launch_token).one(db).await? {
+            if attempt.status == CreationAttemptStatus::Pending.as_str() {
+                CreationAttempt::delete_by_id(launch_token).exec(db).await?;
             }
         }
-        txn.commit().await?;
         Ok(())
     }
 
@@ -1580,62 +1833,19 @@ impl SessionMetadataRepository {
         session_id: &str,
         agent_id: &str,
     ) -> Result<Option<i32>> {
-        let txn = db.begin().await?;
-        let _metadata = SessionMetadata::find_by_id(launch_token)
-            .one(&txn)
+        let attempt = CreationAttempt::find_by_id(launch_token)
+            .one(db)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Prepared worktree launch not found"))?;
-        let state = AcepeSessionState::find_by_id(launch_token)
-            .one(&txn)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Prepared worktree launch state not found"))?;
-
-        if AcepeSessionRelationship::from_str(&state.relationship)
-            != AcepeSessionRelationship::Reserved
-        {
+        if attempt.status != CreationAttemptStatus::Pending.as_str() {
             anyhow::bail!("Prepared worktree launch has already been consumed");
         }
-
-        let backend = DbBackend::Sqlite;
-        let now = Utc::now();
-        let preview_len = 8usize.min(session_id.len());
-        let display = format!("Session {}", &session_id[..preview_len]);
-
-        let metadata_result = txn
-            .execute(Statement::from_sql_and_values(
-            backend,
-            "UPDATE session_metadata SET id = ?, display = ?, agent_id = ?, file_path = ?, updated_at = ? WHERE id = ?",
-            [
-                session_id.into(),
-                display.into(),
-                agent_id.into(),
-                Self::created_session_file_path(session_id).into(),
-                now.into(),
-                launch_token.into(),
-            ],
-        ))
-            .await?;
-        if metadata_result.rows_affected() != 1 {
-            anyhow::bail!("Prepared worktree launch was already consumed");
+        if attempt.agent_id != agent_id {
+            anyhow::bail!("Prepared worktree launch belongs to a different agent");
         }
 
-        let state_result = txn
-            .execute(Statement::from_sql_and_values(
-            backend,
-            "UPDATE acepe_session_state SET session_id = ?, relationship = ?, updated_at = ? WHERE session_id = ?",
-            [
-                session_id.into(),
-                AcepeSessionRelationship::Created.as_str().into(),
-                now.into(),
-                launch_token.into(),
-            ],
-        ))
-            .await?;
-        if state_result.rows_affected() != 1 {
-            anyhow::bail!("Prepared worktree launch state was already consumed");
-        }
-        txn.commit().await?;
-        Ok(state.sequence_id)
+        let row = Self::promote_creation_attempt(db, launch_token, session_id).await?;
+        Ok(row.sequence_id)
     }
 
     async fn mark_session_as_acepe_tracked(
@@ -1817,8 +2027,8 @@ impl SessionMetadataRepository {
 
     /// Get startup sessions for specific session IDs.
     ///
-    /// Matches against both canonical app session IDs and provider session IDs so restored
-    /// panels can hydrate without a broad project scan.
+    /// Matches only canonical app session IDs. Completed sessions are keyed by provider-owned
+    /// canonical IDs before they reach this table.
     pub async fn get_for_session_ids(
         db: &DbConn,
         session_ids: &[String],
@@ -1833,11 +2043,7 @@ impl SessionMetadataRepository {
         );
 
         let models = SessionMetadata::find()
-            .filter(
-                Condition::any()
-                    .add(session_metadata::Column::Id.is_in(session_ids.to_vec()))
-                    .add(session_metadata::Column::ProviderSessionId.is_in(session_ids.to_vec())),
-            )
+            .filter(session_metadata::Column::Id.is_in(session_ids.to_vec()))
             .all(db)
             .await?;
 
@@ -1920,9 +2126,7 @@ impl SessionMetadataRepository {
         let now = Utc::now();
 
         let existing = SessionMetadata::find()
-            .filter(Self::query_existing_session_by_id_or_provider_session_id(
-                &session_id,
-            ))
+            .filter(session_metadata::Column::Id.eq(&session_id))
             .one(db)
             .await?;
 
@@ -1952,7 +2156,6 @@ impl SessionMetadataRepository {
                     &display,
                     &agent_id,
                 );
-
             // Check if file has changed (mtime + size comparison)
             if existing_model.file_mtime == file_mtime
                 && existing_model.file_size == file_size
@@ -1964,11 +2167,6 @@ impl SessionMetadataRepository {
             }
 
             // Update existing record
-            let provider_session_id = Self::provider_session_id_for_existing_model(
-                &existing_model,
-                &agent_id,
-                &session_id,
-            );
             let mut active: session_metadata::ActiveModel = existing_model.into();
             active.display = Set(display);
             active.timestamp = Set(timestamp);
@@ -1977,7 +2175,6 @@ impl SessionMetadataRepository {
             active.file_path = Set(file_path);
             active.file_mtime = Set(file_mtime);
             active.file_size = Set(file_size);
-            active.provider_session_id = Set(provider_session_id);
             active.is_acepe_managed = Set(next_is_acepe_managed);
             active.updated_at = Set(now);
             let state_project_path = active.project_path.as_ref().clone();
@@ -1995,7 +2192,6 @@ impl SessionMetadataRepository {
                 0
             };
 
-            // Insert new record
             let model = session_metadata::ActiveModel {
                 id: Set(session_id.clone()),
                 display: Set(display),
@@ -2005,7 +2201,6 @@ impl SessionMetadataRepository {
                 file_path: Set(file_path),
                 file_mtime: Set(file_mtime),
                 file_size: Set(file_size),
-                provider_session_id: Set(None),
                 worktree_path: sea_orm::ActiveValue::NotSet,
                 pr_number: sea_orm::ActiveValue::NotSet,
                 is_acepe_managed: Set(is_acepe_managed),
@@ -2045,11 +2240,7 @@ impl SessionMetadataRepository {
 
         // Single bulk SELECT to get all existing records at once (O(n) instead of N queries)
         let existing_records: Vec<session_metadata::Model> = SessionMetadata::find()
-            .filter(
-                Condition::any()
-                    .add(session_metadata::Column::Id.is_in(session_ids.clone()))
-                    .add(session_metadata::Column::ProviderSessionId.is_in(session_ids.clone())),
-            )
+            .filter(session_metadata::Column::Id.is_in(session_ids.clone()))
             .all(&txn)
             .await?;
         let existing_ids = existing_records
@@ -2062,9 +2253,6 @@ impl SessionMetadataRepository {
         let mut existing_map: std::collections::HashMap<String, session_metadata::Model> =
             std::collections::HashMap::new();
         for model in existing_records {
-            if let Some(provider_session_id) = model.provider_session_id.clone() {
-                existing_map.insert(provider_session_id, model.clone());
-            }
             existing_map.insert(model.id.clone(), model);
         }
 
@@ -2102,7 +2290,6 @@ impl SessionMetadataRepository {
                         &display,
                         &agent_id,
                     );
-
                 // Check if file has changed (skip if mtime+size match).
                 // Non-Claude agents use mtime=0/size=0 sentinel — always refresh those.
                 if file_mtime != 0
@@ -2123,11 +2310,6 @@ impl SessionMetadataRepository {
                 active.file_path = Set(file_path);
                 active.file_mtime = Set(file_mtime);
                 active.file_size = Set(file_size);
-                active.provider_session_id = Set(Self::provider_session_id_for_existing_model(
-                    existing_model,
-                    active.agent_id.as_ref(),
-                    &session_id,
-                ));
                 active.is_acepe_managed = Set(next_is_acepe_managed);
                 active.updated_at = Set(now);
                 let state_project_path = active.project_path.as_ref().clone();
@@ -2148,7 +2330,6 @@ impl SessionMetadataRepository {
                     0
                 };
 
-                // Insert new
                 let model = session_metadata::ActiveModel {
                     id: Set(session_id),
                     display: Set(display),
@@ -2158,7 +2339,6 @@ impl SessionMetadataRepository {
                     file_path: Set(file_path),
                     file_mtime: Set(file_mtime),
                     file_size: Set(file_size),
-                    provider_session_id: Set(None),
                     worktree_path: sea_orm::ActiveValue::NotSet,
                     pr_number: sea_orm::ActiveValue::NotSet,
                     is_acepe_managed: Set(is_acepe_managed),
@@ -2280,7 +2460,6 @@ impl SessionMetadataRepository {
                 file_path: Set(Self::created_session_file_path(session_id)),
                 file_mtime: Set(0),
                 file_size: Set(0),
-                provider_session_id: Set(None),
                 worktree_path: Set(Some(worktree_path.to_string())),
                 pr_number: sea_orm::ActiveValue::NotSet,
                 is_acepe_managed: Set(0),
@@ -2362,27 +2541,22 @@ impl SessionMetadataRepository {
         );
 
         let model = SessionMetadata::find_by_id(session_id).one(db).await?;
-        let Some(model) = model else {
-            return Ok(());
-        };
-
-        let normalized_provider_session_id =
-            backend_identity_policy_for_provider_id(&model.agent_id)
-                .normalize_provider_session_id(session_id, provider_session_id);
-
-        if model.provider_session_id == normalized_provider_session_id {
-            return Ok(());
+        if model.is_none() {
+            anyhow::bail!("Session metadata not found: {}", session_id);
         }
 
-        let mut active: session_metadata::ActiveModel = model.into();
-        active.provider_session_id = Set(normalized_provider_session_id);
-        active.updated_at = Set(Utc::now());
-        active.update(db).await?;
+        if session_id != provider_session_id {
+            anyhow::bail!(
+                "Provider session id mismatch for canonical session {}: {}",
+                session_id,
+                provider_session_id
+            );
+        }
 
         tracing::info!(
             session_id = %session_id,
             provider_session_id = %provider_session_id,
-            "Provider session ID set"
+            "Provider session ID verified as canonical"
         );
 
         Ok(())
@@ -2427,20 +2601,13 @@ impl SessionMetadataRepository {
             .filter(session_metadata::Column::AgentId.eq(agent_id))
             .filter(session_metadata::Column::ProjectPath.is_in(project_paths.to_vec()))
             .filter(session_metadata::Column::WorktreePath.is_null())
+            .filter(session_metadata::Column::IsAcepeManaged.eq(0))
             .all(db)
             .await?;
 
         let ids_to_delete: Vec<String> = candidates
             .into_iter()
-            .filter(|model| {
-                !live_session_ids.contains(&model.id)
-                    && model
-                        .provider_session_id
-                        .as_ref()
-                        .is_none_or(|provider_session_id| {
-                            !live_session_ids.contains(provider_session_id)
-                        })
-            })
+            .filter(|model| !live_session_ids.contains(&model.id))
             .map(|model| model.id)
             .collect();
 
@@ -2487,16 +2654,7 @@ impl SessionMetadataRepository {
 
         Ok(models
             .into_iter()
-            .map(|model| {
-                (
-                    model
-                        .provider_session_id
-                        .unwrap_or_else(|| model.id.clone()),
-                    model.file_path,
-                    model.file_mtime,
-                    model.file_size,
-                )
-            })
+            .map(|model| (model.id, model.file_path, model.file_mtime, model.file_size))
             .collect())
     }
 

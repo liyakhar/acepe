@@ -1,4 +1,6 @@
 use super::*;
+use crate::acp::client_trait::CommunicationMode;
+use crate::acp::error::{CreationFailure, CreationFailureKind};
 use crate::acp::event_hub::AcpEventHubState;
 use crate::acp::lifecycle::{ReadyDispatchPermit, SessionSupervisor};
 use crate::acp::projections::{ProjectionRegistry, SessionProjectionSnapshot};
@@ -84,6 +86,74 @@ pub(crate) async fn persist_session_metadata_for_cwd(
         })?;
 
     Ok(sequence_id)
+}
+
+pub(crate) fn validate_provider_session_id_for_creation(
+    session_id: &str,
+) -> Result<(), SerializableAcpError> {
+    const MAX_PROVIDER_SESSION_ID_LEN: usize = 256;
+    if session_id.is_empty() {
+        return Err(creation_failure(
+            CreationFailureKind::InvalidProviderSessionId,
+            "Provider returned an empty session id",
+            None,
+            None,
+            false,
+        ));
+    }
+    if session_id.len() > MAX_PROVIDER_SESSION_ID_LEN {
+        return Err(creation_failure(
+            CreationFailureKind::InvalidProviderSessionId,
+            format!(
+                "Provider returned an oversized session id ({} bytes)",
+                session_id.len()
+            ),
+            Some(session_id.to_string()),
+            None,
+            false,
+        ));
+    }
+    let is_allowed = session_id.chars().all(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
+    });
+    if !is_allowed {
+        return Err(creation_failure(
+            CreationFailureKind::InvalidProviderSessionId,
+            "Provider returned a session id with disallowed characters",
+            Some(session_id.to_string()),
+            None,
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn creation_failure(
+    kind: CreationFailureKind,
+    message: impl Into<String>,
+    session_id: Option<String>,
+    creation_attempt_id: Option<String>,
+    retryable: bool,
+) -> SerializableAcpError {
+    SerializableAcpError::CreationFailed(CreationFailure::new(
+        kind,
+        message,
+        session_id,
+        creation_attempt_id,
+        retryable,
+    ))
+}
+
+async fn mark_creation_attempt_failed(db: &DbConn, attempt_id: &str, reason: &str) {
+    if let Err(error) =
+        SessionMetadataRepository::fail_creation_attempt(db, attempt_id, reason).await
+    {
+        tracing::warn!(
+            attempt_id = %attempt_id,
+            error = %error,
+            "Failed to mark creation attempt failed"
+        );
+    }
 }
 
 async fn ensure_session_anchor_snapshots(
@@ -436,11 +506,7 @@ async fn load_transcript_snapshot_for_state_lookup_with_app(
                     replay_context,
                 )
                 .await
-                .map_err(|error| SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to load provider-owned transcript for state lookup {canonical_session_id}: {error}"
-                    ),
-                })?
+                .map_err(SerializableAcpError::from)?
             {
                 return Ok(TranscriptSnapshot::from_stored_entries(
                     last_event_seq,
@@ -522,11 +588,7 @@ async fn load_session_projection_lookup(
                 .expect("replay context should exist with metadata"),
         )
         .await
-        .map_err(|error| SerializableAcpError::InvalidState {
-            message: format!(
-                "Failed to load provider-owned session content for state lookup {session_id}: {error}"
-            ),
-        })?;
+        .map_err(SerializableAcpError::from)?;
 
     let Some(imported_thread_snapshot) = imported_thread_snapshot else {
         return Ok(SessionProjectionLookup {
@@ -581,9 +643,34 @@ pub async fn acp_new_session(
 
         // Determine which agent to use
         let agent_id_enum = resolve_requested_agent_id(agent_id.as_deref(), active_agent.get());
+        let provider_uses_deferred_creation = registry
+            .get(&agent_id_enum)
+            .is_some_and(|provider| provider.communication_mode() == CommunicationMode::CcSdk);
+        let (project_path, worktree_path) = session_metadata_context_from_cwd(&cwd);
+        let creation_attempt_id = if let Some(launch_token) = launch_token.as_deref() {
+            launch_token.to_string()
+        } else {
+            SessionMetadataRepository::create_creation_attempt(
+                db.inner(),
+                &project_path,
+                agent_id_enum.as_str(),
+                worktree_path.as_deref(),
+            )
+            .await
+            .map_err(|error| {
+                creation_failure(
+                    CreationFailureKind::MetadataCommitFailed,
+                    format!("Failed to create session creation attempt: {error}"),
+                    None,
+                    None,
+                    true,
+                )
+            })?
+            .id
+        };
 
         // Create and initialize client with cwd so subprocess spawns in correct directory
-        let mut client = create_and_initialize_client(
+        let mut client = match create_and_initialize_client(
             &registry,
             &opencode_manager,
             agent_id_enum.clone(),
@@ -591,69 +678,228 @@ pub async fn acp_new_session(
             cwd.clone(),
             "new session",
         )
-        .await?;
+        .await
+        {
+            Ok(client) => client,
+            Err(error) => {
+                mark_creation_attempt_failed(
+                    db.inner(),
+                    &creation_attempt_id,
+                    &format!("client-initialization-failed: {error}"),
+                )
+                .await;
+                return Err(creation_failure(
+                    CreationFailureKind::ProviderFailedBeforeId,
+                    error.to_string(),
+                    None,
+                    Some(creation_attempt_id),
+                    true,
+                ));
+            }
+        };
+        if provider_uses_deferred_creation {
+            client.bind_pending_creation_attempt(Some(creation_attempt_id.clone()));
+        }
 
         // Create the session
         tracing::debug!("Creating session");
-        let result = client
+        let result = match client
             .new_session(cwd.to_string_lossy().to_string())
             .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "New session failed");
-                SerializableAcpError::from(e)
-            })?;
+        {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::error!(error = %error, "New session failed");
+                mark_creation_attempt_failed(
+                    db.inner(),
+                    &creation_attempt_id,
+                    &format!("provider-new-session-failed: {error}"),
+                )
+                .await;
+                return Err(creation_failure(
+                    CreationFailureKind::ProviderFailedBeforeId,
+                    error.to_string(),
+                    None,
+                    Some(creation_attempt_id),
+                    true,
+                ));
+            }
+        };
+        if let Err(error) = validate_provider_session_id_for_creation(&result.session_id) {
+            mark_creation_attempt_failed(
+                db.inner(),
+                &creation_attempt_id,
+                &format!("provider-session-id-invalid: {error}"),
+            )
+            .await;
+            client.stop();
+            let message = error.to_string();
+            return Err(creation_failure(
+                CreationFailureKind::InvalidProviderSessionId,
+                message,
+                Some(result.session_id),
+                Some(creation_attempt_id),
+                false,
+            ));
+        }
 
-        let sequence_id = if let Some(launch_token) = launch_token.as_deref() {
-            SessionMetadataRepository::consume_reserved_worktree_launch(
+        let sequence_id = if provider_uses_deferred_creation {
+            SessionMetadataRepository::record_creation_attempt_requested_provider_session_id(
+                db.inner(),
+                &creation_attempt_id,
+                &result.session_id,
+            )
+            .await
+            .map_err(|error| {
+                client.stop();
+                creation_failure(
+                    CreationFailureKind::MetadataCommitFailed,
+                    format!(
+                        "Failed to bind requested provider session id {} to creation attempt {creation_attempt_id}: {error}",
+                        result.session_id
+                    ),
+                    Some(result.session_id.clone()),
+                    Some(creation_attempt_id.clone()),
+                    true,
+                )
+            })?;
+            if let Some(launch_token) = launch_token.as_deref() {
+                SessionMetadataRepository::get_reserved_worktree_launch(db.inner(), launch_token)
+                    .await
+                    .map_err(|error| {
+                        creation_failure(
+                            CreationFailureKind::LaunchTokenUnavailable,
+                            format!(
+                            "Failed to load deferred worktree launch {launch_token}: {error}"
+                        ),
+                            Some(result.session_id.clone()),
+                            Some(creation_attempt_id.clone()),
+                            true,
+                        )
+                    })?
+                    .map(|reserved| reserved.sequence_id)
+            } else {
+                None
+            }
+        } else if let Some(launch_token) = launch_token.as_deref() {
+            match SessionMetadataRepository::consume_reserved_worktree_launch(
                 db.inner(),
                 launch_token,
                 &result.session_id,
                 agent_id_enum.as_str(),
             )
             .await
-            .map_err(|error| {
-                tracing::error!(
-                    error = %error,
-                    launch_token,
-                    session_id = %result.session_id,
-                    "Prepared worktree launch consumption failed; stopping session client"
-                );
-                client.stop();
-                SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to consume prepared worktree launch {launch_token} for session {}: {error}",
+            {
+                Ok(sequence_id) => sequence_id,
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        launch_token,
+                        session_id = %result.session_id,
+                        "Prepared worktree launch consumption failed; stopping session client"
+                    );
+                    mark_creation_attempt_failed(
+                        db.inner(),
+                        &creation_attempt_id,
+                        &format!("worktree-launch-promotion-failed: {error}"),
+                    )
+                    .await;
+                    client.stop();
+                    return Err(creation_failure(
+                        CreationFailureKind::LaunchTokenUnavailable,
+                        format!(
+                            "Failed to consume prepared worktree launch {launch_token} for session {}: {error}",
+                            result.session_id
+                        ),
+                        Some(result.session_id),
+                        Some(creation_attempt_id),
+                        true,
+                    ));
+                }
+            }
+        } else {
+            let promoted = match SessionMetadataRepository::promote_creation_attempt(
+                db.inner(),
+                &creation_attempt_id,
+                &result.session_id,
+            )
+            .await
+            {
+                Ok(promoted) => promoted,
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        attempt_id = %creation_attempt_id,
+                        session_id = %result.session_id,
+                        "Creation attempt promotion failed; stopping session client"
+                    );
+                    mark_creation_attempt_failed(
+                        db.inner(),
+                        &creation_attempt_id,
+                        &format!("metadata-promotion-failed: {error}"),
+                    )
+                    .await;
+                    client.stop();
+                    return Err(creation_failure(
+                        CreationFailureKind::MetadataCommitFailed,
+                        format!(
+                            "Failed to promote creation attempt {creation_attempt_id} into session {}: {error}",
+                            result.session_id
+                        ),
+                        Some(result.session_id),
+                        Some(creation_attempt_id),
+                        true,
+                    ));
+                }
+            };
+            promoted.sequence_id
+        };
+        if !provider_uses_deferred_creation {
+            ensure_session_anchor_snapshots(db.inner(), &result.session_id, &agent_id_enum)
+                .await
+                .map_err(|error| {
+                    creation_failure(
+                        CreationFailureKind::MetadataCommitFailed,
+                        format!(
+                        "Failed to persist canonical session anchors for session {}: {error}",
                         result.session_id
                     ),
-                }
-            })?
-        } else {
-            persist_session_metadata_for_cwd(db.inner(), &result.session_id, &agent_id_enum, &cwd)
-                .await?
-        };
+                        Some(result.session_id.clone()),
+                        Some(creation_attempt_id.clone()),
+                        true,
+                    )
+                })?;
+        }
 
         tracing::info!(
             session_id = %result.session_id,
             "New session created with dedicated client"
         );
         projection_registry.register_session(result.session_id.clone(), agent_id_enum.clone());
-        app.state::<Arc<crate::acp::lifecycle::SessionSupervisor>>()
-            .inner()
-            .reserve(db.inner(), projection_registry.inner(), &result.session_id)
-            .await
-            .map_err(|error| {
-                tracing::error!(
-                    session_id = %result.session_id,
-                    error = %error,
-                    "Failed to reserve supervisor runtime checkpoint for new session"
-                );
-                client.stop();
-                SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to reserve lifecycle runtime checkpoint for session {}: {error}",
-                        result.session_id
-                    ),
-                }
-            })?;
+        if !provider_uses_deferred_creation {
+            app.state::<Arc<crate::acp::lifecycle::SessionSupervisor>>()
+                .inner()
+                .reserve(db.inner(), projection_registry.inner(), &result.session_id)
+                .await
+                .map_err(|error| {
+                    tracing::error!(
+                        session_id = %result.session_id,
+                        error = %error,
+                        "Failed to reserve supervisor runtime checkpoint for new session"
+                    );
+                    client.stop();
+                    creation_failure(
+                        CreationFailureKind::MetadataCommitFailed,
+                        format!(
+                            "Failed to reserve lifecycle runtime checkpoint for session {}: {error}",
+                            result.session_id
+                        ),
+                        Some(result.session_id.clone()),
+                        Some(creation_attempt_id.clone()),
+                        true,
+                    )
+                })?;
+        }
 
         // Store the client keyed by session_id only after session metadata and
         // supervisor state are durably attached.
@@ -683,12 +929,17 @@ pub async fn acp_new_session(
             )
             .map_err(SerializableAcpError::from)?;
 
-        let session_open =
-            build_new_session_open_result(&app, &result.session_id, &agent_id_enum).await?;
+        let session_open = if provider_uses_deferred_creation {
+            None
+        } else {
+            Some(build_new_session_open_result(&app, &result.session_id, &agent_id_enum).await?)
+        };
 
         Ok(NewSessionResponse {
+            creation_attempt_id: Some(creation_attempt_id),
+            deferred_creation: provider_uses_deferred_creation,
             sequence_id,
-            session_open: Some(session_open),
+            session_open,
             ..result
         })
     }
@@ -1221,11 +1472,7 @@ async fn load_transcript_snapshot_for_resume_with_app(
                     replay_context,
                 )
                 .await
-                .map_err(|error| SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to load provider-owned transcript for resumed session {session_id}: {error}"
-                    ),
-                })?
+                .map_err(SerializableAcpError::from)?
             {
                 return Ok(TranscriptSnapshot::from_stored_entries(
                     journal_max.unwrap_or(0),
@@ -1309,25 +1556,15 @@ async fn async_resume_session_work(
     )
     .await?;
 
-    if let Some(provider_session_id) = resume_descriptor.provider_session_id.as_deref() {
-        session_registry
-            .bind_provider_session_id(session_id, provider_session_id)
-            .map_err(SerializableAcpError::from)?;
-    }
-
     let replay_context: crate::acp::session_descriptor::SessionReplayContext =
         resume_descriptor.clone().into();
     let restored_thread_snapshot =
         crate::history::commands::session_loading::load_provider_owned_session_snapshot(
-        app.clone(),
-        &replay_context,
-    )
-    .await
-    .map_err(|error| SerializableAcpError::InvalidState {
-        message: format!(
-            "Failed to materialize canonical session state for resumed session {session_id}: {error}"
-        ),
-    })?;
+            app.clone(),
+            &replay_context,
+        )
+        .await
+        .map_err(SerializableAcpError::from)?;
     let transcript_snapshot = if let Some(snapshot) = restored_thread_snapshot.as_ref() {
         let last_event_seq = SessionJournalEventRepository::max_event_seq(db.inner(), session_id)
             .await
@@ -1564,6 +1801,8 @@ pub async fn acp_fork_session(
             let session_open =
                 build_new_session_open_result(&app, &result.session_id, &agent_id_enum).await?;
             Ok(NewSessionResponse {
+                creation_attempt_id: None,
+                deferred_creation: false,
                 sequence_id,
                 session_open: Some(session_open),
                 ..result
@@ -2058,36 +2297,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_resolution_rejects_existing_claude_session_missing_provider_id() {
-        let db = setup_test_db().await;
-
-        SessionMetadataRepository::ensure_exists(
-            &db,
-            "session-claude",
-            "/project",
-            "claude-code",
-            None,
-        )
-        .await
-        .unwrap();
-
-        let error =
-            resolve_resume_session_target(&db, None, "session-claude", "/fallback-project", None)
-                .await
-                .expect_err("resume should fail");
-
-        match error {
-            SerializableAcpError::ProtocolError { message } => {
-                assert_eq!(
-                    message,
-                    "session session-claude is not resumable because persisted descriptor facts are missing: provider_session_id"
-                );
-            }
-            other => panic!("expected protocol error, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
     async fn resume_resolution_rejects_existing_session_with_incompatible_override() {
         let db = setup_test_db().await;
 
@@ -2172,62 +2381,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fork_resolution_uses_provider_history_id_for_claude_sessions() {
+    async fn fork_resolution_uses_canonical_provider_id_for_claude_sessions() {
         let db = setup_test_db().await;
 
         SessionMetadataRepository::ensure_exists(
             &db,
-            "session-claude",
+            "provider-session-1",
             "/project",
             "claude-code",
             None,
-        )
-        .await
-        .unwrap();
-        SessionMetadataRepository::set_provider_session_id(
-            &db,
-            "session-claude",
-            "provider-session-1",
         )
         .await
         .unwrap();
 
         let resolved =
-            resolve_fork_session_target(&db, "session-claude", "/fallback-project", None)
+            resolve_fork_session_target(&db, "provider-session-1", "/fallback-project", None)
                 .await
                 .expect("fork target");
 
         assert_eq!(resolved.launch_agent_id, CanonicalAgentId::ClaudeCode);
         assert_eq!(resolved.fork_parent_session_id, "provider-session-1");
-    }
-
-    #[tokio::test]
-    async fn fork_resolution_rejects_existing_claude_session_missing_provider_id() {
-        let db = setup_test_db().await;
-
-        SessionMetadataRepository::ensure_exists(
-            &db,
-            "session-claude",
-            "/project",
-            "claude-code",
-            None,
-        )
-        .await
-        .unwrap();
-
-        let error = resolve_fork_session_target(&db, "session-claude", "/fallback-project", None)
-            .await
-            .expect_err("fork should fail");
-
-        match error {
-            SerializableAcpError::ProtocolError { message } => {
-                assert_eq!(
-                    message,
-                    "session session-claude is not forkable because persisted descriptor facts are missing: provider_session_id"
-                );
-            }
-            other => panic!("expected protocol error, got {:?}", other),
-        }
     }
 
     #[tokio::test]

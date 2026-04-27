@@ -600,8 +600,12 @@ export class InitializationManager {
 					agentId: panel.selectedAgentId!,
 					projectPath: project.path,
 				})
-				.map((session) => {
-					this.panelStore.updatePanelSession(panel.id, session.id);
+				.map((createdSession) => {
+					const sessionId =
+						createdSession.kind === "pending"
+							? createdSession.sessionId
+							: createdSession.session.id;
+					this.panelStore.updatePanelSession(panel.id, sessionId);
 				})
 				.mapErr(() => {
 					// Error state will be shown via status indicator

@@ -36,7 +36,7 @@ function createOperationSnapshot(overrides: Partial<OperationSnapshot> = {}): Op
 		tool_call_id: overrides.tool_call_id ?? "tool-1",
 		name: overrides.name ?? "bash",
 		kind: overrides.kind ?? "execute",
-		status: overrides.status ?? "in_progress",
+		provider_status: overrides.provider_status ?? "in_progress",
 		title: overrides.title ?? "Run command",
 		arguments: overrides.arguments ?? {
 			kind: "execute",
@@ -505,7 +505,7 @@ describe("SessionStore.applySessionStateEnvelope", () => {
 							tool_call_id: "tool-1",
 							name: "bash",
 							kind: "execute",
-							status: "completed",
+							provider_status: "completed",
 							title: "Run command",
 							arguments: {
 								kind: "execute",

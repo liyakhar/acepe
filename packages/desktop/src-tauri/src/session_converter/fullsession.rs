@@ -9,7 +9,7 @@ use crate::session_jsonl::types::{
 };
 use std::collections::{HashMap, HashSet};
 
-use super::calculate_todo_timing;
+use super::{assistant_provider_error_entry, calculate_todo_timing};
 
 pub(crate) fn parse_skill_meta_from_content(content: &str) -> SkillMeta {
     let mut file_path: Option<String> = None;
@@ -466,6 +466,13 @@ fn convert_assistant_message(
                 });
             }
         }
+    }
+
+    if let Some(error) = &msg.error {
+        return (
+            Some(assistant_provider_error_entry(msg, error)),
+            tool_entries,
+        );
     }
 
     let assistant_entry = if !chunks.is_empty() {

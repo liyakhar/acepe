@@ -649,9 +649,11 @@ export class AgentInputState {
 			worktreePath: worktreePath ?? undefined,
 			launchToken: launchToken ?? undefined,
 		})
-			.andThen((newSessionId) => {
+			.andThen((createdSession) => {
+				const newSessionId = createdSession.sessionId;
 				this.logger.info("[PERF] sendMessage: session created", {
 					newSessionId,
+					deferredCreation: createdSession.deferredCreation,
 					elapsed_ms: Math.round(performance.now() - sendT0),
 				});
 				// Notify parent with the canonical session ID

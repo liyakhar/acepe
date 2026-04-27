@@ -27,7 +27,7 @@ describe("AgentInputState - initial session title", () => {
 			sessionLifecycleState: "created",
 			parentId: null,
 		};
-		const createSession = vi.fn(() => okAsync(createdSession));
+		const createSession = vi.fn(() => okAsync({ kind: "ready" as const, session: createdSession }));
 		const sendMessage = vi.fn(() => okAsync(undefined));
 		const getSessionCold = vi.fn(() => createdSession);
 		const mockStore: Partial<SessionStore> = {
@@ -76,7 +76,7 @@ describe("AgentInputState - initial session title", () => {
 			sessionLifecycleState: "created",
 			parentId: null,
 		};
-		const createSession = vi.fn(() => okAsync(createdSession));
+		const createSession = vi.fn(() => okAsync({ kind: "ready" as const, session: createdSession }));
 		const sendMessage = vi.fn(() => {
 			events.push("send-message");
 			return okAsync(undefined);
@@ -119,5 +119,53 @@ describe("AgentInputState - initial session title", () => {
 
 		expect(result.isOk()).toBe(true);
 		expect(events).toEqual(["set-pending", "session-created", "send-message", "clear-pending"]);
+	});
+
+	it("sends the first message through a deferred creation handle without requiring a cold session", async () => {
+		const createSession = vi.fn(() =>
+			okAsync({
+				kind: "pending" as const,
+				sessionId: "provider-requested-id",
+				creationAttemptId: "attempt-1",
+				projectPath: "/tmp/project",
+				agentId: "claude-code",
+				title: "Build stable panels",
+				worktreePath: null,
+			})
+		);
+		const sendMessage = vi.fn(() => okAsync(undefined));
+		const onSessionCreated = vi.fn();
+		const mockStore: Partial<SessionStore> = {
+			createSession,
+			sendMessage,
+			getSessionCold: vi.fn(() => undefined),
+		};
+		const mockPanelStore: Partial<PanelStore> = {
+			getHotState: vi.fn(() =>
+				Object.assign({}, DEFAULT_PANEL_HOT_STATE, {
+					pendingUserEntry: null,
+				})
+			),
+			setPendingUserEntry: vi.fn(() => {}),
+			clearPendingUserEntry: vi.fn(() => {}),
+		};
+		const state = new AgentInputState(
+			mockStore as SessionStore,
+			mockPanelStore as PanelStore,
+			() => "/tmp/project"
+		);
+
+		const result = await state.sendPreparedMessage({
+			content: "Build stable panels",
+			panelId: "panel-1",
+			projectPath: "/tmp/project",
+			projectName: "Acepe",
+			selectedAgentId: "claude-code",
+			onSessionCreated,
+		});
+
+		expect(result.isOk()).toBe(true);
+		expect(onSessionCreated).toHaveBeenCalledWith("provider-requested-id", "panel-1");
+		expect(sendMessage).toHaveBeenCalledWith("provider-requested-id", "Build stable panels", []);
 	});
 });

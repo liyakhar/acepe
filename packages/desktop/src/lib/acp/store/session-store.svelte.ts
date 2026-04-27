@@ -97,7 +97,10 @@ import * as preferencesStore from "./agent-model-preferences-store.svelte.js";
 import { api } from "./api.js";
 import { OperationStore } from "./operation-store.svelte.js";
 import { canActivateCreatedSessionWithFirstPrompt } from "./services/first-send-activation.js";
-import { SessionConnectionManager } from "./services/session-connection-manager.js";
+import {
+	SessionConnectionManager,
+	type CreatedPendingSessionResult,
+} from "./services/session-connection-manager.js";
 import { SessionMessagingService } from "./services/session-messaging-service.js";
 import { resolveAutomaticSessionPrNumberFromShipWorkflow } from "./services/session-pr-link-attribution.js";
 import { SessionRepository } from "./services/session-repository.js";
@@ -122,6 +125,10 @@ type ProjectionTurnFailure = {
 type CreatedSessionHydrator = {
 	hydrateCreated(found: SessionOpenFound): ResultAsync<void, AppError>;
 };
+
+export type SessionCreationResult =
+	| { readonly kind: "ready"; readonly session: SessionCold }
+	| CreatedPendingSessionResult;
 
 type LiveSessionStateGraphConsumer = {
 	replaceSessionStateGraph(graph: SessionStateGraph): void;
@@ -586,6 +593,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 
 	// Canonical graph selector state for lifecycle/activity/actionability consumers.
 	private readonly canonicalProjections = new SvelteMap<string, CanonicalSessionProjection>();
+	private readonly pendingCreationSessions = new SvelteMap<string, CreatedPendingSessionResult>();
 
 	// Canonical tool execution domain state
 	private readonly operationStore = new OperationStore();
@@ -746,6 +754,10 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	 */
 	getCanonicalSessionProjection(sessionId: string): CanonicalSessionProjection | null {
 		return this.canonicalProjections.get(sessionId) ?? null;
+	}
+
+	hasPendingCreationSession(sessionId: string): boolean {
+		return this.pendingCreationSessions.has(sessionId);
 	}
 
 	getSessionCanSend(sessionId: string): boolean | null {
@@ -1258,6 +1270,52 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		this.connectionService.sendContentLoaded(canonicalSessionId);
 	}
 
+	ensureSessionFromStateGraph(graph: SessionStateGraph): boolean {
+		const sessionId = graph.canonicalSessionId;
+		if (this.getSessionCold(sessionId)) {
+			this.pendingCreationSessions.delete(sessionId);
+			if (graph.isAlias) {
+				this.pendingCreationSessions.delete(graph.requestedSessionId);
+			}
+			return true;
+		}
+
+		const pendingCreation =
+			this.pendingCreationSessions.get(sessionId) ??
+			(graph.isAlias ? (this.pendingCreationSessions.get(graph.requestedSessionId) ?? null) : null);
+		if (pendingCreation === null) {
+			return false;
+		}
+
+		const now = new Date();
+		this.addSession({
+			id: sessionId,
+			projectPath: graph.projectPath,
+			agentId: normalizeCanonicalAgentId(graph.agentId),
+			worktreePath: graph.worktreePath ?? undefined,
+			title: pendingCreation.title ?? "New Thread",
+			updatedAt: now,
+			createdAt: now,
+			sourcePath: graph.sourcePath ?? undefined,
+			sessionLifecycleState: graph.sourcePath ? "persisted" : "created",
+			parentId: null,
+		});
+		this.pendingCreationSessions.delete(sessionId);
+		if (graph.isAlias) {
+			this.pendingCreationSessions.delete(graph.requestedSessionId);
+		}
+		return true;
+	}
+
+	failPendingCreationSession(sessionId: string, update: TurnErrorUpdate): void {
+		if (!this.pendingCreationSessions.has(sessionId)) {
+			return;
+		}
+		this.messagingSvc.handleTurnError(sessionId, update);
+		this.pendingCreationSessions.delete(sessionId);
+		this.callbacks.onTurnError?.(sessionId);
+	}
+
 	/**
 	 * Register a callback to run when a session is removed.
 	 * Used by external stores (e.g., PlanStore) for cleanup.
@@ -1439,15 +1497,26 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		initialModelId?: string;
 		worktreePath?: string;
 		launchToken?: string;
-	}): ResultAsync<SessionCold, AppError> {
+	}): ResultAsync<SessionCreationResult, AppError> {
 		return this.connectionMgr.createSession(options, this).andThen((createdSession) => {
+			if (createdSession.kind === "pending") {
+				this.pendingCreationSessions.set(createdSession.sessionId, createdSession);
+				return okAsync(createdSession);
+			}
+
 			if (this.sessionOpenHydrator !== null && createdSession.sessionOpen?.outcome === "found") {
 				return this.sessionOpenHydrator
 					.hydrateCreated(createdSession.sessionOpen)
-					.map(() => createdSession.session);
+					.map(() => ({
+						kind: "ready" as const,
+						session: createdSession.session,
+					}));
 			}
 
-			return okAsync(createdSession.session);
+			return okAsync({
+				kind: "ready" as const,
+				session: createdSession.session,
+			});
 		});
 	}
 
@@ -1538,6 +1607,14 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	): ResultAsync<void, AppError> {
 		const session = this.getSessionCold(sessionId);
 		if (!session) {
+			if (this.pendingCreationSessions.has(sessionId)) {
+				return this.messagingSvc
+					.sendPendingCreationMessage(sessionId, content, attachments)
+					.mapErr((error) => {
+						this.pendingCreationSessions.delete(sessionId);
+						return error;
+					});
+			}
 			return errAsync(new SessionNotFoundError(sessionId));
 		}
 		logger.info("sendMessage: store entrypoint", {

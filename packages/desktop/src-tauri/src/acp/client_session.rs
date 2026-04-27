@@ -30,6 +30,10 @@ fn default_json_object() -> Value {
 pub struct NewSessionResponse {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_attempt_id: Option<String>,
+    #[serde(default)]
+    pub deferred_creation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence_id: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_open: Option<SessionOpenResult>,

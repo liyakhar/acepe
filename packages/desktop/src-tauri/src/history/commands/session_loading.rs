@@ -1,6 +1,6 @@
 use super::*;
 use crate::acp::event_hub::AcpEventHubState;
-use crate::acp::provider::HistoryReplayFamily;
+use crate::acp::provider::{HistoryReplayFamily, ProviderHistoryLoadError};
 use crate::acp::registry::AgentRegistry;
 use crate::acp::session_descriptor::SessionReplayContext;
 use crate::acp::session_open_snapshot::{SessionOpenError, SessionOpenMissing, SessionOpenResult};
@@ -270,23 +270,27 @@ impl ProviderRestoreAuditReport {
 
 fn session_open_error_from_provider_load(
     requested_session_id: &str,
-    message: String,
+    error: ProviderHistoryLoadError,
 ) -> SessionOpenError {
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("provider unavailable") || lower.contains("database unavailable") {
-        SessionOpenError::provider_unavailable(requested_session_id, message)
-    } else if lower.contains("provider history missing") || lower.contains("history missing") {
-        SessionOpenError::provider_history_missing(requested_session_id, message)
-    } else if lower.contains("provider history parse failed")
-        || lower.contains("provider history unparseable")
-    {
-        SessionOpenError::provider_unparseable(requested_session_id, message)
-    } else if lower.contains("provider history validation failed") {
-        SessionOpenError::provider_validation_failed(requested_session_id, message)
-    } else if lower.contains("stale lineage") {
-        SessionOpenError::stale_lineage_recovery(requested_session_id, message)
-    } else {
-        SessionOpenError::internal(requested_session_id, message)
+    match error {
+        ProviderHistoryLoadError::ProviderUnavailable { message } => {
+            SessionOpenError::provider_unavailable(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::ProviderHistoryMissing { message } => {
+            SessionOpenError::provider_history_missing(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::ProviderUnparseable { message } => {
+            SessionOpenError::provider_unparseable(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::ProviderValidationFailed { message } => {
+            SessionOpenError::provider_validation_failed(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::StaleLineageRecovery { message } => {
+            SessionOpenError::stale_lineage_recovery(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::Internal { message } => {
+            SessionOpenError::internal(requested_session_id, message)
+        }
     }
 }
 
@@ -301,7 +305,7 @@ fn history_replay_family(agent: &CanonicalAgentId) -> HistoryReplayFamily {
 async fn load_unified_session_content_with_context(
     app: AppHandle,
     context: crate::history::session_context::SessionContext,
-) -> Result<Option<SessionThreadSnapshot>, String> {
+) -> Result<Option<SessionThreadSnapshot>, ProviderHistoryLoadError> {
     tracing::info!(
         session_id = %context.local_session_id,
         agent_id = %context.agent_id,
@@ -325,7 +329,12 @@ async fn load_unified_session_content_with_context(
                     .load_provider_owned_session(&app, &context, &replay_context)
                     .await?
             }
-            None => None,
+            None => {
+                return Err(ProviderHistoryLoadError::provider_unavailable(format!(
+                    "Provider {} is unavailable for provider-owned session load",
+                    context.agent_id
+                )));
+            }
         },
         HistoryReplayFamily::SharedCanonical => None,
     };
@@ -338,18 +347,20 @@ async fn load_unified_session_content_with_context(
 pub async fn load_provider_owned_session_snapshot(
     app: AppHandle,
     replay_context: &SessionReplayContext,
-) -> Result<Option<SessionThreadSnapshot>, String> {
+) -> Result<Option<SessionThreadSnapshot>, ProviderHistoryLoadError> {
     let Some(db) = app.try_state::<DbConn>().map(|s| s.inner().clone()) else {
-        return Err("Database unavailable for provider-owned session load".to_string());
+        return Err(ProviderHistoryLoadError::provider_unavailable(
+            "Database unavailable for provider-owned session load",
+        ));
     };
     let session_metadata =
         SessionMetadataRepository::get_by_id(&db, &replay_context.local_session_id)
             .await
             .map_err(|error| {
-                format!(
+                ProviderHistoryLoadError::internal(format!(
                     "Failed to load session metadata for {}: {error}",
                     replay_context.local_session_id
-                )
+                ))
             })?;
 
     let context = crate::history::session_context::SessionContext {
@@ -422,7 +433,7 @@ mod tests {
         apply_session_title_metadata, history_replay_family, session_open_error_from_provider_load,
         ProvenanceKeyStability, ProviderRestoreAuditCase, ProviderRestoreAuditReport,
     };
-    use crate::acp::provider::HistoryReplayFamily;
+    use crate::acp::provider::{HistoryReplayFamily, ProviderHistoryLoadError};
     use crate::acp::session_descriptor::{SessionDescriptorCompatibility, SessionReplayContext};
     use crate::acp::session_open_snapshot::SessionOpenErrorReason;
     use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
@@ -511,7 +522,6 @@ mod tests {
             file_path: "file.jsonl".to_string(),
             file_mtime: 0,
             file_size: 0,
-            provider_session_id: None,
             worktree_path: None,
             pr_number: None,
             pr_link_mode: None,
@@ -537,7 +547,6 @@ mod tests {
             file_path: "file.jsonl".to_string(),
             file_mtime: 0,
             file_size: 0,
-            provider_session_id: None,
             worktree_path: None,
             pr_number: None,
             pr_link_mode: None,
@@ -600,7 +609,9 @@ mod tests {
     fn provider_history_parse_failures_are_non_retryable_unparseable_errors() {
         let error = session_open_error_from_provider_load(
             "session-1",
-            "Claude provider history parse failed: invalid JSON".to_string(),
+            ProviderHistoryLoadError::provider_unparseable(
+                "Claude provider history parse failed: invalid JSON",
+            ),
         );
 
         assert!(matches!(
@@ -614,7 +625,9 @@ mod tests {
     fn provider_history_restore_failures_have_specific_taxonomy() {
         let missing = session_open_error_from_provider_load(
             "session-1",
-            "provider history missing for provider session".to_string(),
+            ProviderHistoryLoadError::provider_history_missing(
+                "provider history missing for provider session",
+            ),
         );
         assert!(matches!(
             missing.reason,
@@ -624,7 +637,9 @@ mod tests {
 
         let unavailable = session_open_error_from_provider_load(
             "session-1",
-            "provider unavailable while loading history".to_string(),
+            ProviderHistoryLoadError::provider_unavailable(
+                "provider unavailable while loading history",
+            ),
         );
         assert!(matches!(
             unavailable.reason,
@@ -634,7 +649,9 @@ mod tests {
 
         let validation = session_open_error_from_provider_load(
             "session-1",
-            "provider history validation failed: invalid provenance".to_string(),
+            ProviderHistoryLoadError::provider_validation_failed(
+                "provider history validation failed: invalid provenance",
+            ),
         );
         assert!(matches!(
             validation.reason,
@@ -644,10 +661,12 @@ mod tests {
     }
 
     #[test]
-    fn provider_history_load_failures_remain_retryable_internal_errors() {
+    fn provider_history_load_failures_use_explicit_internal_errors() {
         let error = session_open_error_from_provider_load(
             "session-1",
-            "Copilot provider history load failed: transport timeout".to_string(),
+            ProviderHistoryLoadError::internal(
+                "Copilot provider history load failed: transport timeout",
+            ),
         );
 
         assert!(matches!(error.reason, SessionOpenErrorReason::Internal));

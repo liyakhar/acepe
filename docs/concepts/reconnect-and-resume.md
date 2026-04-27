@@ -39,6 +39,8 @@ The intended restore sequence is:
 3. apply buffered canonical envelopes in revision order,
 4. let live transport updates improve freshness without replacing authority.
 
+The session id used for step 1 is `session_metadata.id` itself. Completed sessions are keyed by the provider-owned canonical id; Acepe does not maintain a second durable provider-id alias for restore.
+
 The important normalization rules are:
 
 - persisted `Ready` cold-opens as `Detached { restored_requires_attach }`

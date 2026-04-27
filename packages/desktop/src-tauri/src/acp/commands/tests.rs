@@ -5,7 +5,8 @@ use crate::acp::client_session::{default_modes, default_session_model_state};
 use crate::acp::client_trait::AgentClient;
 use crate::acp::client_transport::InboundRequestResponder;
 use crate::acp::commands::session_commands::{
-    persist_session_metadata_for_cwd, resolve_requested_agent_id, session_metadata_context_from_cwd,
+    persist_session_metadata_for_cwd, resolve_requested_agent_id,
+    session_metadata_context_from_cwd, validate_provider_session_id_for_creation,
 };
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::projections::ProjectionRegistry;
@@ -270,6 +271,37 @@ async fn persist_session_metadata_for_cwd_inserts_created_plain_project_session(
     assert_eq!(row.worktree_path, None);
     assert_eq!(row.agent_id, "claude-code");
     assert!(row.is_transcript_pending());
+}
+
+#[test]
+fn provider_session_id_creation_validation_accepts_provider_safe_ids() {
+    for session_id in [
+        "7377ad20-98c4-47bb-9540-f44156420c63",
+        "ses_abc123",
+        "thread:codex.123",
+    ] {
+        assert!(validate_provider_session_id_for_creation(session_id).is_ok());
+    }
+}
+
+#[test]
+fn provider_session_id_creation_validation_rejects_empty_oversized_and_shell_sensitive_ids() {
+    let oversized = "a".repeat(257);
+    for session_id in [
+        "",
+        oversized.as_str(),
+        "has space",
+        "quote'id",
+        "slash/id",
+        "semi;colon",
+        "dollar$id",
+        "back\\slash",
+    ] {
+        assert!(
+            validate_provider_session_id_for_creation(session_id).is_err(),
+            "{session_id:?} should be rejected"
+        );
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -760,7 +792,6 @@ fn session_metadata_created_rows_are_detected_as_pending_transcript() {
         file_path: "__worktree__/session-placeholder".to_string(),
         file_mtime: 0,
         file_size: 0,
-        provider_session_id: None,
         worktree_path: None,
         pr_number: None,
         pr_link_mode: None,
@@ -783,7 +814,6 @@ fn session_metadata_real_rows_are_resumable() {
         file_path: "/project/session-real.jsonl".to_string(),
         file_mtime: 1704067200,
         file_size: 1024,
-        provider_session_id: None,
         worktree_path: None,
         pr_number: None,
         pr_link_mode: None,
@@ -809,7 +839,6 @@ fn session_metadata_created_rows_with_worktree_context_are_resumable() {
         file_path: "__session_registry__/session-worktree-placeholder".to_string(),
         file_mtime: 0,
         file_size: 0,
-        provider_session_id: None,
         worktree_path: Some(worktree_path),
         pr_number: None,
         pr_link_mode: None,
@@ -959,10 +988,6 @@ async fn reserved_send_prompt_emits_connection_complete_before_prompt_echo() {
     )
     .await
     .expect("persist session metadata");
-    SessionMetadataRepository::set_provider_session_id(&db, session_id, "provider-session-1")
-        .await
-        .expect("set provider session id");
-
     let event_hub = Arc::new(crate::acp::event_hub::AcpEventHubState::new());
     let projection_registry = Arc::new(ProjectionRegistry::new());
     let transcript_projection_registry = Arc::new(TranscriptProjectionRegistry::new());
@@ -1278,10 +1303,6 @@ async fn resume_session_emits_connecting_session_state_before_completion_events(
     persist_session_metadata_for_cwd(&db, session_id, &CanonicalAgentId::ClaudeCode, temp.path())
         .await
         .expect("persist session metadata");
-    SessionMetadataRepository::set_provider_session_id(&db, session_id, "provider-session-1")
-        .await
-        .expect("set provider session id");
-
     let event_hub = Arc::new(crate::acp::event_hub::AcpEventHubState::new());
     let projection_registry = Arc::new(ProjectionRegistry::new());
     let transcript_projection_registry = Arc::new(TranscriptProjectionRegistry::new());

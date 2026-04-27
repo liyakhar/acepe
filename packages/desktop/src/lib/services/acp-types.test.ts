@@ -200,7 +200,7 @@ describe("session-state protocol graph contract", () => {
 						tool_call_id: "tool-1",
 						name: "task",
 						kind: "task",
-						status: "in_progress",
+						provider_status: "in_progress",
 						title: null,
 						arguments: { kind: "other", raw: {} },
 						progressive_arguments: null,

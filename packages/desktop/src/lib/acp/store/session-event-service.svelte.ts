@@ -377,6 +377,17 @@ export class SessionEventService {
 		const hasSession = this.hasKnownSession(handler, sessionId);
 
 		if (!hasSession) {
+			if (update.type === "turnError" && handler.hasPendingCreationSession?.(sessionId) === true) {
+				if (this.shouldDropProcessedSessionUpdate(envelopeSeq, sessionId, update.type)) {
+					return;
+				}
+				this.recordInboundEvent();
+				rawStreamingStore.record(sessionId, update);
+				handler.failPendingCreationSession?.(sessionId, update);
+				this.pendingEvents.delete(sessionId);
+				this.pendingEventTimestamps.delete(sessionId);
+				return;
+			}
 			this.bufferPendingEvent(sessionId, update, envelopeSeq);
 			return;
 		}
@@ -505,6 +516,14 @@ export class SessionEventService {
 		);
 		this.advanceConnectionMaterializationWaiter(envelope);
 		if (!this.hasKnownSession(handler, envelope.sessionId)) {
+			if (envelope.payload.kind === "snapshot") {
+				const materialized = handler.ensureSessionFromStateGraph?.(envelope.payload.graph);
+				if (materialized === true) {
+					handler.applySessionStateEnvelope(envelope.sessionId, envelope);
+					this.flushPendingEvents(envelope.sessionId, handler);
+					return;
+				}
+			}
 			this.bufferPendingSessionState(envelope.sessionId, envelope);
 			return;
 		}

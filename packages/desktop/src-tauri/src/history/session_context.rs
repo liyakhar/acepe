@@ -144,11 +144,7 @@ mod tests {
         assert_eq!(context.agent_id, CanonicalAgentId::ClaudeCode);
         assert_eq!(
             context.compatibility,
-            SessionDescriptorCompatibility::ReadOnly {
-                missing_facts: vec![
-                    crate::acp::session_descriptor::SessionDescriptorMissingFact::ProviderSessionId
-                ]
-            }
+            SessionDescriptorCompatibility::Canonical
         );
     }
 
@@ -211,11 +207,7 @@ mod tests {
         assert_eq!(context.agent_id, CanonicalAgentId::ClaudeCode);
         assert_eq!(
             context.compatibility,
-            SessionDescriptorCompatibility::ReadOnly {
-                missing_facts: vec![
-                    crate::acp::session_descriptor::SessionDescriptorMissingFact::ProviderSessionId
-                ]
-            }
+            SessionDescriptorCompatibility::Canonical
         );
     }
 
@@ -249,44 +241,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_session_context_prefers_provider_session_id_for_history_loading() {
-        let db = setup_test_db().await;
-
-        SessionMetadataRepository::ensure_exists(
-            &db,
-            "session-app-id",
-            "/repo",
-            "claude-code",
-            Some("/repo/.worktrees/feature-a"),
-        )
-        .await
-        .expect("ensure exists");
-        SessionMetadataRepository::set_provider_session_id(
-            &db,
-            "session-app-id",
-            "session-provider-id",
-        )
-        .await
-        .expect("set provider session id");
-
-        let context = resolve_session_context(
-            Some(&db),
-            "session-app-id",
-            "/fallback-repo",
-            "claude-code",
-            None,
-        )
-        .await;
-
-        assert_eq!(context.local_session_id, "session-app-id");
-        assert_eq!(context.history_session_id, "session-provider-id");
-        assert_eq!(
-            context.compatibility,
-            SessionDescriptorCompatibility::Canonical
-        );
-    }
-
-    #[tokio::test]
     async fn resolve_session_context_keeps_local_history_id_when_provider_alias_missing() {
         let db = setup_test_db().await;
 
@@ -314,11 +268,7 @@ mod tests {
         assert_eq!(context.agent_id, CanonicalAgentId::ClaudeCode);
         assert_eq!(
             context.compatibility,
-            SessionDescriptorCompatibility::ReadOnly {
-                missing_facts: vec![
-                    crate::acp::session_descriptor::SessionDescriptorMissingFact::ProviderSessionId,
-                ],
-            }
+            SessionDescriptorCompatibility::Canonical
         );
     }
 }

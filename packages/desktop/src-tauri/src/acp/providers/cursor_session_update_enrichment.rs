@@ -580,6 +580,7 @@ mod tests {
                 }],
                 model: None,
                 usage: None,
+                error: None,
                 request_id: None,
                 is_meta: false,
                 source_tool_use_id: None,

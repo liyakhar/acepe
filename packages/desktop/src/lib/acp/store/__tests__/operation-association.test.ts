@@ -127,7 +127,7 @@ describe("operation association", () => {
 				operation_provenance_key: "provider-tool-1",
 				name: "bash",
 				kind: "execute",
-				status: "pending",
+				provider_status: "pending",
 				operation_state: "pending",
 				title: "Run command",
 				arguments: { kind: "execute", command: "mkdir demo" },

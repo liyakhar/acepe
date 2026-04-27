@@ -306,18 +306,37 @@ pub async fn session_open_result_from_thread_snapshot(
     let session_snap = projection.session.as_ref();
     let operations = projection.operations;
     let interactions = projection.interactions;
-    let graph_revision = session_snap
+    let projected_graph_revision = session_snap
         .map(|session| session.last_event_seq)
         .unwrap_or(last_event_seq);
-    let turn_state = session_snap
-        .map(|session| session.turn_state.clone())
-        .unwrap_or(SessionTurnState::Idle);
-    let message_count = session_snap
-        .map(|session| session.message_count)
-        .unwrap_or(0);
-    let active_turn_failure = session_snap.and_then(|session| session.active_turn_failure.clone());
-    let last_terminal_turn_id =
-        session_snap.and_then(|session| session.last_terminal_turn_id.clone());
+    // Provider history can lag behind the canonical journal frontier. In that
+    // case, preserve transcript content but do not resurrect stale active work.
+    let projection_is_behind_journal = projected_graph_revision < last_event_seq;
+    let graph_revision = projected_graph_revision.max(last_event_seq);
+    let turn_state = if projection_is_behind_journal {
+        SessionTurnState::Idle
+    } else {
+        session_snap
+            .map(|session| session.turn_state.clone())
+            .unwrap_or(SessionTurnState::Idle)
+    };
+    let message_count = if projection_is_behind_journal {
+        0
+    } else {
+        session_snap
+            .map(|session| session.message_count)
+            .unwrap_or(0)
+    };
+    let active_turn_failure = if projection_is_behind_journal {
+        None
+    } else {
+        session_snap.and_then(|session| session.active_turn_failure.clone())
+    };
+    let last_terminal_turn_id = if projection_is_behind_journal {
+        None
+    } else {
+        session_snap.and_then(|session| session.last_terminal_turn_id.clone())
+    };
     let transcript_snapshot =
         TranscriptSnapshot::from_stored_entries(last_event_seq, &snapshot.entries);
 
@@ -406,11 +425,15 @@ mod tests {
     use crate::acp::event_hub::AcpEventHubState;
     use crate::acp::session_descriptor::{SessionDescriptorCompatibility, SessionReplayContext};
     use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
-    use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
+    use crate::acp::session_update::{
+        ToolArguments, ToolCallData, ToolCallStatus, ToolKind, TurnErrorKind, TurnErrorSource,
+    };
     use crate::acp::transcript_projection::TranscriptSnapshot;
     use crate::acp::types::CanonicalAgentId;
     use crate::db::repository::{SessionJournalEventRepository, SessionMetadataRepository};
-    use crate::session_jsonl::types::StoredEntry;
+    use crate::session_jsonl::types::{
+        StoredContentBlock, StoredEntry, StoredErrorMessage, StoredUserMessage,
+    };
     use sea_orm::{Database, DbConn};
     use sea_orm_migration::MigratorTrait;
     use serde_json::json;
@@ -496,6 +519,39 @@ mod tests {
             title: title.to_string(),
             created_at: "2026-04-23T00:00:00Z".to_string(),
             current_mode_id: None,
+        }
+    }
+
+    fn make_text_block(text: &str) -> StoredContentBlock {
+        StoredContentBlock {
+            block_type: "text".to_string(),
+            text: Some(text.to_string()),
+        }
+    }
+
+    fn make_user_entry(id: &str, text: &str) -> StoredEntry {
+        StoredEntry::User {
+            id: id.to_string(),
+            message: StoredUserMessage {
+                id: Some(id.to_string()),
+                content: make_text_block(text),
+                chunks: vec![make_text_block(text)],
+                sent_at: None,
+            },
+            timestamp: None,
+        }
+    }
+
+    fn make_error_entry(id: &str, text: &str) -> StoredEntry {
+        StoredEntry::Error {
+            id: id.to_string(),
+            message: StoredErrorMessage {
+                content: text.to_string(),
+                code: Some("401".to_string()),
+                kind: TurnErrorKind::Fatal,
+                source: Some(TurnErrorSource::Transport),
+            },
+            timestamp: None,
         }
     }
 
@@ -593,6 +649,49 @@ mod tests {
         assert_eq!(found.last_event_seq, 1);
         assert_eq!(found.transcript_snapshot.revision, 1);
         assert_eq!(found.transcript_snapshot, expected_transcript);
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_does_not_reactivate_stale_historical_error() {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-stale-error-open";
+        seed_session_metadata(&db, session_id, "claude-code").await;
+        append_frontier_barrier(&db, session_id).await;
+        append_frontier_barrier(&db, session_id).await;
+        append_frontier_barrier(&db, session_id).await;
+
+        let provider_snapshot = SessionThreadSnapshot {
+            entries: vec![
+                make_user_entry("user-1", "hi"),
+                make_error_entry(
+                    "error-1",
+                    "Failed to authenticate. API Error: 401 {\"error\":{\"message\":\"User not found.\",\"code\":401}}",
+                ),
+            ],
+            title: "hi".to_string(),
+            created_at: "2026-04-23T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::ClaudeCode);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.last_event_seq, 3);
+        assert_eq!(found.graph_revision, 3);
+        assert_eq!(found.turn_state, SessionTurnState::Idle);
+        assert!(found.active_turn_failure.is_none());
+        assert_eq!(found.transcript_snapshot.entries.len(), 2);
     }
 
     #[tokio::test]

@@ -21,10 +21,7 @@ static FUTURE_PROVIDER_CAPABILITIES: [ProviderCapabilities; 1] = [ProviderCapabi
     provider_id: "future-shared-chat",
     agent: AgentType::ClaudeCode,
     parser: &FutureSharedChatParser,
-    backend_identity_policy: BackendIdentityPolicy {
-        requires_persisted_provider_session_id: false,
-        prefers_incoming_provider_session_id_alias: false,
-    },
+    backend_identity_policy: BackendIdentityPolicy,
     plan_adapter_policy: PlanAdapterPolicy {
         parses_wrapper_plan_from_text_stream: false,
         finalizes_wrapper_plan_on_turn_end: false,

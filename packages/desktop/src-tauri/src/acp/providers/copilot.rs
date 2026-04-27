@@ -205,8 +205,17 @@ impl AgentProvider for CopilotProvider {
         app: &'a AppHandle,
         context: &'a SessionContext,
         replay_context: &'a SessionReplayContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<SessionThreadSnapshot>, String>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        Option<SessionThreadSnapshot>,
+                        crate::acp::provider::ProviderHistoryLoadError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async move {
             let session_id = &context.local_session_id;
             let db = app.try_state::<DbConn>().map(|state| state.inner().clone());
@@ -237,7 +246,11 @@ impl AgentProvider for CopilotProvider {
                         error = %error,
                         "Copilot session replay load failed"
                     );
-                    Err(format!("Copilot provider history load failed: {error}"))
+                    Err(
+                        crate::acp::provider::ProviderHistoryLoadError::provider_unparseable(
+                            format!("Copilot provider history load failed: {error}"),
+                        ),
+                    )
                 }
             }
         })

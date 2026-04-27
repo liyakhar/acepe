@@ -32,6 +32,13 @@ pub trait AgentClient: Send + Sync {
     /// Create a new session
     async fn new_session(&mut self, cwd: String) -> AcpResult<NewSessionResponse>;
 
+    /// Bind a pre-session creation attempt to this client.
+    ///
+    /// Most providers synchronously return their provider-owned session id and do
+    /// not need this hook. Stream-verified providers use it to promote the
+    /// attempt only after the first stream confirms the provider identity.
+    fn bind_pending_creation_attempt(&mut self, _attempt_id: Option<String>) {}
+
     /// Resume an existing session
     /// Per ACP protocol: ResumeSessionResponse does NOT include sessionId
     async fn resume_session(

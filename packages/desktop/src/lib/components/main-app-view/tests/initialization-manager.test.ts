@@ -151,14 +151,15 @@ describe("InitializationManager", () => {
 			preloadSessions: mock(() => okAsync({ loaded: [], missing: [] })),
 			scanSessions: mock(() => okAsync(undefined)),
 			createSession: mock((options: { agentId: string; projectPath: string; title?: string }) =>
-				okAsync(
-					buildSession(
+				okAsync({
+					kind: "ready",
+					session: buildSession(
 						"session-1",
 						options.agentId,
 						options.projectPath,
 						options.title ? options.title : "New Thread"
-					)
-				)
+					),
+				})
 			),
 			setSessions: mock(() => {}),
 			getSessionCold: mock(() => undefined),

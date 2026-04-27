@@ -887,7 +887,10 @@ impl ProjectionRegistry {
             return;
         };
 
-        let next_status = update.status.clone().unwrap_or(existing.provider_status.clone());
+        let next_status = update
+            .status
+            .clone()
+            .unwrap_or(existing.provider_status.clone());
         let next_arguments = update
             .arguments
             .clone()

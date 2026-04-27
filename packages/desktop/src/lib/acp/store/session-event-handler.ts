@@ -6,7 +6,7 @@
  */
 
 import type { ResultAsync } from "neverthrow";
-import type { SessionStateEnvelope } from "../../services/acp-types.js";
+import type { SessionStateEnvelope, SessionStateGraph } from "../../services/acp-types.js";
 import type {
 	ConfigOptionData,
 	ContentBlock,
@@ -45,6 +45,9 @@ export interface SessionEventHandler {
 	 */
 	getHotState(sessionId: string): SessionTransientProjection;
 	getSessionCanSend?(sessionId: string): boolean | null;
+	hasPendingCreationSession?(sessionId: string): boolean;
+	failPendingCreationSession?(sessionId: string, update: TurnErrorUpdate): void;
+	ensureSessionFromStateGraph?(graph: SessionStateGraph): boolean;
 
 	/**
 	 * Aggregate an assistant message chunk into the appropriate entry.

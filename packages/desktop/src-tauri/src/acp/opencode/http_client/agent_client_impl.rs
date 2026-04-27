@@ -76,6 +76,8 @@ impl AgentClient for OpenCodeHttpClient {
         let available_commands = self.fetch_available_commands().await;
         let mut response = NewSessionResponse {
             session_id: session.id,
+            creation_attempt_id: None,
+            deferred_creation: false,
             sequence_id: None,
             session_open: None,
             models: SessionModelState {

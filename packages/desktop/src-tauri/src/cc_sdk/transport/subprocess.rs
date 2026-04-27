@@ -196,6 +196,12 @@ impl SubprocessTransport {
         options
     }
 
+    fn should_emit_session_id_flag(&self) -> bool {
+        self.options.session_id.is_some()
+            && (self.options.resume.is_none() && !self.options.continue_conversation
+                || self.options.fork_session)
+    }
+
     /// Create a new subprocess transport
     pub fn new(options: ClaudeCodeOptions) -> Result<Self> {
         let options = Self::normalize_options(options);
@@ -526,6 +532,15 @@ impl SubprocessTransport {
         // Model
         if let Some(ref model) = self.options.model {
             cmd.arg("--model").arg(model);
+        }
+
+        if self.should_emit_session_id_flag() {
+            let session_id = self
+                .options
+                .session_id
+                .as_ref()
+                .expect("session_id exists when should_emit_session_id_flag is true");
+            cmd.arg("--session-id").arg(session_id);
         }
 
         // Permission prompt tool
@@ -1463,6 +1478,50 @@ mod tests {
         );
         assert!(command_debug.contains("\"--permission-prompt-tool\""));
         assert!(command_debug.contains("\"stdio\""));
+    }
+
+    #[test]
+    fn test_transport_emits_session_id_flag_when_session_id_is_configured() {
+        let options = ClaudeCodeOptions::builder()
+            .session_id("00000000-0000-4000-8000-000000000001")
+            .build();
+
+        let transport = SubprocessTransport::with_cli_path(options, "/usr/bin/true");
+        let command_debug = format!("{:?}", transport.build_command());
+
+        assert!(command_debug.contains("\"--session-id\""));
+        assert!(command_debug.contains("\"00000000-0000-4000-8000-000000000001\""));
+    }
+
+    #[test]
+    fn test_transport_omits_session_id_flag_for_plain_resume() {
+        let options = ClaudeCodeOptions::builder()
+            .session_id("00000000-0000-4000-8000-000000000001")
+            .resume("00000000-0000-4000-8000-000000000001")
+            .build();
+
+        let transport = SubprocessTransport::with_cli_path(options, "/usr/bin/true");
+        let command_debug = format!("{:?}", transport.build_command());
+
+        assert!(command_debug.contains("\"--resume\""));
+        assert!(!command_debug.contains("\"--session-id\""));
+    }
+
+    #[test]
+    fn test_transport_keeps_session_id_flag_for_forked_resume() {
+        let options = ClaudeCodeOptions::builder()
+            .session_id("00000000-0000-4000-8000-000000000002")
+            .resume("00000000-0000-4000-8000-000000000001")
+            .fork_session(true)
+            .build();
+
+        let transport = SubprocessTransport::with_cli_path(options, "/usr/bin/true");
+        let command_debug = format!("{:?}", transport.build_command());
+
+        assert!(command_debug.contains("\"--resume\""));
+        assert!(command_debug.contains("\"--fork-session\""));
+        assert!(command_debug.contains("\"--session-id\""));
+        assert!(command_debug.contains("\"00000000-0000-4000-8000-000000000002\""));
     }
 
     #[test]

@@ -1011,6 +1011,7 @@ fn parse_transcript_message(
         content_blocks,
         model: None,
         usage: None,
+        error: None,
         request_id: None,
         is_meta: false,
         source_tool_use_id: None, // Cursor doesn't support skill meta messages

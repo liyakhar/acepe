@@ -445,7 +445,11 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
         .is_some_and(|checkpoint| {
             checkpoint.lifecycle.status == crate::acp::lifecycle::LifecycleStatus::Reserved
         });
-    let ready_dispatch_permit = if reserved_before_send {
+    let has_supervisor_snapshot = supervisor
+        .as_ref()
+        .and_then(|state| state.inner().snapshot_for_session(&session_id))
+        .is_some();
+    let ready_dispatch_permit = if reserved_before_send || !has_supervisor_snapshot {
         None
     } else {
         supervisor

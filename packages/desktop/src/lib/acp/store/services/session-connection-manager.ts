@@ -23,8 +23,14 @@ import type {
 	SessionOpenResult,
 } from "../../../services/acp-types.js";
 import { tauriClient } from "../../../utils/tauri-client.js";
+import { TauriCommandError } from "../../../utils/tauri-client/invoke.js";
 import type { AppError } from "../../errors/app-error.js";
-import { AgentError, ConnectionError, SessionNotFoundError } from "../../errors/app-error.js";
+import {
+	AgentError,
+	ConnectionError,
+	CreationFailureError,
+	SessionNotFoundError,
+} from "../../errors/app-error.js";
 import type { ModeType } from "../../types/agent-model-preferences.js";
 import { CanonicalModeId } from "../../types/canonical-mode-id.js";
 import { createLogger } from "../../utils/logger.js";
@@ -62,10 +68,23 @@ interface ConnectSessionOptions {
 	openToken?: string;
 }
 
-export interface CreatedSessionResult {
+export interface CreatedReadySessionResult {
+	readonly kind: "ready";
 	readonly session: SessionCold;
 	readonly sessionOpen: SessionOpenResult | null;
 }
+
+export interface CreatedPendingSessionResult {
+	readonly kind: "pending";
+	readonly sessionId: string;
+	readonly creationAttemptId: string | null;
+	readonly projectPath: string;
+	readonly agentId: string;
+	readonly title: string | null;
+	readonly worktreePath: string | null;
+}
+
+export type CreatedSessionResult = CreatedReadySessionResult | CreatedPendingSessionResult;
 
 type ProviderAwareSessionModelState = AcpSessionModelState & {
 	readonly providerMetadata?: ProviderMetadataProjection | null;
@@ -294,6 +313,58 @@ export class SessionConnectionManager {
 			)
 			.andThen((result) => {
 				const sessionId = result.sessionId;
+				if (result.deferredCreation === true) {
+					const modelState = getProviderAwareSessionModelState(result.models);
+					const rawModels = modelState.availableModels ?? [];
+					const rawProviderMetadata = modelState.providerMetadata;
+					const providerMetadata = this.resolveProviderMetadata(options.agentId, rawProviderMetadata);
+					const availableModels: Model[] = rawModels.map((m) => ({
+						id: m.modelId,
+						name: m.name,
+						description: m.description ?? undefined,
+					}));
+					const availableModes: Mode[] = (result.modes?.availableModes ?? []).map((m) => ({
+						id: m.id,
+						name: m.name,
+						description: m.description ?? undefined,
+					}));
+					const modelsDisplay =
+						normalizeModelsForDisplay(
+							options.agentId,
+							modelState.modelsDisplay,
+							options.agentId,
+							providerMetadata
+						) ?? undefined;
+
+					preferencesStore.updateModelsCache(options.agentId, availableModels);
+					preferencesStore.updateProviderMetadataCache(options.agentId, providerMetadata);
+					preferencesStore.updateModelsDisplayCache(
+						options.agentId,
+						modelsDisplay,
+						providerMetadata
+					);
+					preferencesStore.updateModesCache(options.agentId, availableModes);
+					this.hotStateManager.initializeHotState(sessionId, {
+						status: "connecting",
+						isConnected: false,
+						turnState: "idle",
+						connectionError: null,
+					});
+					logger.info("Deferred session creation is pending provider identity promotion", {
+						sessionId,
+						creationAttemptId: result.creationAttemptId ?? null,
+						agentId: options.agentId,
+					});
+					return okAsync({
+						kind: "pending" as const,
+						sessionId,
+						creationAttemptId: result.creationAttemptId ?? null,
+						projectPath: options.projectPath,
+						agentId: options.agentId,
+						title: options.title ?? null,
+						worktreePath: options.worktreePath ?? null,
+					});
+				}
 				const now = new Date();
 				const modelState = getProviderAwareSessionModelState(result.models);
 				const {
@@ -555,6 +626,7 @@ export class SessionConnectionManager {
 							});
 
 							return {
+								kind: "ready" as const,
 								session: sessionCold,
 								sessionOpen: result.sessionOpen ?? null,
 							};
@@ -563,6 +635,21 @@ export class SessionConnectionManager {
 			})
 			.mapErr((error) => {
 				logger.error("Failed to create session", { error });
+				if (
+					error instanceof TauriCommandError &&
+					error.domain?.type === "acp" &&
+					error.domain.data.type === "creation_failed"
+				) {
+					const failure = error.domain.data.data;
+					return new CreationFailureError(
+						failure.kind,
+						failure.message,
+						failure.sessionId,
+						failure.creationAttemptId,
+						failure.retryable,
+						error
+					);
+				}
 				const message = error instanceof Error ? error.message : String(error);
 				return new ConnectionError(
 					`Failed to create session: ${message}`,

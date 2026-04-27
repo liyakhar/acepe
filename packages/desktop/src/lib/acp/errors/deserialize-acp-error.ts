@@ -1,4 +1,5 @@
 import type { AcpError } from "./acp-error.js";
+import { CreationFailedAcpError, ProviderHistoryFailedAcpError } from "./acp-error.js";
 import { ConnectionError } from "./connection-error.js";
 import { ProtocolError } from "./protocol-error.js";
 import {
@@ -55,6 +56,23 @@ export function deserializeAcpError(serializableError: SerializableAcpError): Ac
 
 		case "invalid_state":
 			return new ProtocolError(`Invalid state: ${serializableError.data.message}`);
+
+		case "creation_failed":
+			return new CreationFailedAcpError(
+				serializableError.data.message,
+				serializableError.data.kind,
+				serializableError.data.sessionId,
+				serializableError.data.creationAttemptId,
+				serializableError.data.retryable
+			);
+
+		case "provider_history_failed":
+			return new ProviderHistoryFailedAcpError(
+				serializableError.data.message,
+				serializableError.data.kind,
+				serializableError.data.sessionId,
+				serializableError.data.retryable
+			);
 
 		default:
 			// Fallback for unknown error types

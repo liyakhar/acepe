@@ -243,8 +243,17 @@ impl AgentProvider for OpenCodeProvider {
         app: &'a AppHandle,
         context: &'a SessionContext,
         _replay_context: &'a SessionReplayContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<SessionThreadSnapshot>, String>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        Option<SessionThreadSnapshot>,
+                        crate::acp::provider::ProviderHistoryLoadError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async move {
             let session_id = &context.local_session_id;
             let lookup_session_id = &context.history_session_id;
@@ -290,7 +299,11 @@ impl AgentProvider for OpenCodeProvider {
                         error = ?error,
                         "HTTP fallback also failed for OpenCode session"
                     );
-                    Err(format!("OpenCode provider history load failed: {error}"))
+                    Err(
+                        crate::acp::provider::ProviderHistoryLoadError::provider_unavailable(
+                            format!("OpenCode provider history load failed: {error}"),
+                        ),
+                    )
                 }
             }
         })

@@ -24,6 +24,10 @@ mod m20260413_000001_add_project_sidebar_metadata;
 mod m20260422_000001_remove_duplicate_session_truth;
 mod m20260423_000001_move_runtime_checkpoint_to_acepe_session_state;
 mod m20260423_000002_add_pr_link_mode_to_acepe_session_state;
+mod m20260426_000001_add_provider_identity_kind;
+mod m20260427_000001_create_creation_attempts;
+mod m20260427_000002_migrate_legacy_provider_aliases;
+mod m20260427_000003_drop_provider_identity_bridge;
 
 pub struct Migrator;
 
@@ -55,6 +59,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20260422_000001_remove_duplicate_session_truth::Migration),
             Box::new(m20260423_000001_move_runtime_checkpoint_to_acepe_session_state::Migration),
             Box::new(m20260423_000002_add_pr_link_mode_to_acepe_session_state::Migration),
+            Box::new(m20260426_000001_add_provider_identity_kind::Migration),
+            Box::new(m20260427_000001_create_creation_attempts::Migration),
+            Box::new(m20260427_000002_migrate_legacy_provider_aliases::Migration),
+            Box::new(m20260427_000003_drop_provider_identity_bridge::Migration),
         ]
     }
 }

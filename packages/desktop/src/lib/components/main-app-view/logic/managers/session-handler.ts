@@ -133,9 +133,11 @@ export class SessionHandler {
 				agentId: options.agentId,
 				projectPath: options.projectPath,
 			})
-			.map((session) => {
-				this.panelStore.openSession(session.id, DEFAULT_PANEL_WIDTH);
-				return session.id;
+			.map((createdSession) => {
+				const sessionId =
+					createdSession.kind === "pending" ? createdSession.sessionId : createdSession.session.id;
+				this.panelStore.openSession(sessionId, DEFAULT_PANEL_WIDTH);
+				return sessionId;
 			})
 			.mapErr(
 				(error) =>

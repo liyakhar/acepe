@@ -161,6 +161,8 @@ pub struct OrderedMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<crate::cc_sdk::AssistantMessageError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     pub is_meta: bool,
     /// ID of the tool use this meta message is associated with (for skill content)

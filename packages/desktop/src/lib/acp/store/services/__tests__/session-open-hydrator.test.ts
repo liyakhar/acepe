@@ -262,7 +262,7 @@ describe("SessionOpenHydrator", () => {
 			tool_call_id: "tool-read-1",
 			name: "Read",
 			kind: "read" as const,
-			status: "in_progress" as const,
+			provider_status: "in_progress" as const,
 			title: "Read /repo/src/main.ts",
 			arguments: { kind: "read" as const, file_path: "/repo/src/main.ts" },
 			progressive_arguments: null,
@@ -287,6 +287,6 @@ describe("SessionOpenHydrator", () => {
 		const snapshotArg = (replaceSessionOpenSnapshot.mock.calls as any)[0]?.[0];
 		expect(snapshotArg?.operations).toHaveLength(1);
 		expect(snapshotArg?.operations[0]?.id).toBe("op-read-1");
-		expect(snapshotArg?.operations[0]?.status).toBe("in_progress");
+		expect(snapshotArg?.operations[0]?.provider_status).toBe("in_progress");
 	});
 });

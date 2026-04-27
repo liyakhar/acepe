@@ -107,7 +107,7 @@ export function getModelDisplayName(
  * - "claude-sonnet-4" -> "Anthropic"
  * - "gpt-5.3-codex" -> "OpenAI"
  * - "default" -> "Default"
- * - "opus" -> "Other" (no separator)
+ * - "custom-model" -> "Other"
  *
  * @param modelId - The model ID to extract provider from
  * @returns Provider display name or "Other" if not found

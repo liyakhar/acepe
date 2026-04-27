@@ -199,6 +199,8 @@ pub fn build_codex_native_new_session_response_with_state(
 ) -> NewSessionResponse {
     NewSessionResponse {
         session_id,
+        creation_attempt_id: None,
+        deferred_creation: false,
         sequence_id: None,
         session_open: None,
         models: build_codex_native_session_model_state_with_state(state),

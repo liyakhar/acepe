@@ -18,6 +18,7 @@
 export type AppErrorCode =
 	| "SESSION_NOT_FOUND"
 	| "CONNECTION_ERROR"
+	| "CREATION_FAILURE"
 	| "AGENT_ERROR"
 	| "VALIDATION_ERROR"
 	| "PANEL_ERROR"
@@ -60,6 +61,29 @@ export class ConnectionError extends AppError {
 		cause?: Error
 	) {
 		super(`Failed to connect session: ${sessionId}`, cause);
+	}
+}
+
+export type CreationFailureKind =
+	| "provider_failed_before_id"
+	| "invalid_provider_session_id"
+	| "provider_identity_mismatch"
+	| "metadata_commit_failed"
+	| "launch_token_unavailable"
+	| "creation_attempt_expired";
+
+export class CreationFailureError extends AppError {
+	readonly code = "CREATION_FAILURE" as const;
+
+	constructor(
+		readonly kind: CreationFailureKind,
+		message: string,
+		readonly sessionId: string | null,
+		readonly creationAttemptId: string | null,
+		readonly retryable: boolean,
+		cause?: Error
+	) {
+		super(message, cause);
 	}
 }
 

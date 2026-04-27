@@ -9,7 +9,7 @@ superseded-by: docs/plans/2026-04-25-002-refactor-final-god-architecture-stack-p
 
 # refactor: God-clean canonical operation model
 
-> Superseded by `docs/plans/2026-04-25-002-refactor-final-god-architecture-stack-plan.md`. This plan remains as historical operation-model research; the final GOD stack is the active endpoint.
+> Superseded by `docs/plans/2026-04-25-002-refactor-final-god-architecture-stack-plan.md`. This plan remains as historical operation-model research; the final GOD stack is the active endpoint. Session identity closure is documented in `docs/solutions/architectural/provider-owned-session-identity-2026-04-27.md`.
 
 ## Overview
 

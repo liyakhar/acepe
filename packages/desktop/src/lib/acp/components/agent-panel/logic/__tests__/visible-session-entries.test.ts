@@ -38,6 +38,28 @@ describe("resolveVisibleSessionEntries", () => {
 		expect(result).toEqual([]);
 	});
 
+	it("hides a trailing transcript error row when canonical failed-turn metadata is richer", () => {
+		const sessionEntries: SessionEntry[] = [
+			createErrorEntry({
+				content:
+					'Failed to authenticate. API Error: 401 {"error":{"message":"User not found.","code":401}}',
+			}),
+		];
+
+		const result = resolveVisibleSessionEntries({
+			sessionEntries,
+			activeTurnError: {
+				content:
+					'Failed to authenticate. API Error: 401 {"error":{"message":"User not found.","code":401}}',
+				code: "401",
+				kind: "fatal",
+				source: "transport",
+			},
+		});
+
+		expect(result).toEqual([]);
+	});
+
 	it("keeps transcript entries when the canonical failed-turn state does not match", () => {
 		const sessionEntries: SessionEntry[] = [
 			createErrorEntry({

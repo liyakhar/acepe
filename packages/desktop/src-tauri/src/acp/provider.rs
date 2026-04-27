@@ -65,57 +65,71 @@ pub struct ModelFallbackCandidate {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct BackendIdentityPolicy {
-    pub requires_persisted_provider_session_id: bool,
-    pub prefers_incoming_provider_session_id_alias: bool,
+pub struct BackendIdentityPolicy;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderHistoryLoadError {
+    ProviderUnavailable { message: String },
+    ProviderHistoryMissing { message: String },
+    ProviderUnparseable { message: String },
+    ProviderValidationFailed { message: String },
+    StaleLineageRecovery { message: String },
+    Internal { message: String },
+}
+
+impl ProviderHistoryLoadError {
+    pub fn provider_unavailable(message: impl Into<String>) -> Self {
+        Self::ProviderUnavailable {
+            message: message.into(),
+        }
+    }
+
+    pub fn provider_history_missing(message: impl Into<String>) -> Self {
+        Self::ProviderHistoryMissing {
+            message: message.into(),
+        }
+    }
+
+    pub fn provider_unparseable(message: impl Into<String>) -> Self {
+        Self::ProviderUnparseable {
+            message: message.into(),
+        }
+    }
+
+    pub fn provider_validation_failed(message: impl Into<String>) -> Self {
+        Self::ProviderValidationFailed {
+            message: message.into(),
+        }
+    }
+
+    pub fn stale_lineage_recovery(message: impl Into<String>) -> Self {
+        Self::StaleLineageRecovery {
+            message: message.into(),
+        }
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::Internal {
+            message: message.into(),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::ProviderUnavailable { message }
+            | Self::ProviderHistoryMissing { message }
+            | Self::ProviderUnparseable { message }
+            | Self::ProviderValidationFailed { message }
+            | Self::StaleLineageRecovery { message }
+            | Self::Internal { message } => message,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProviderReconnectPolicy {
     pub use_load_semantics: bool,
     pub outbound_launch_mode_id: Option<String>,
-}
-
-impl BackendIdentityPolicy {
-    pub fn missing_provider_session_id(self, provider_session_id: Option<&str>) -> bool {
-        self.requires_persisted_provider_session_id && provider_session_id.is_none()
-    }
-
-    pub fn normalize_provider_session_id(
-        self,
-        local_session_id: &str,
-        provider_session_id: &str,
-    ) -> Option<String> {
-        if provider_session_id == local_session_id {
-            None
-        } else {
-            Some(provider_session_id.to_string())
-        }
-    }
-
-    pub fn provider_session_id_for_existing_session(
-        self,
-        local_session_id: &str,
-        incoming_session_id: &str,
-        persisted_provider_session_id: Option<&str>,
-    ) -> Option<String> {
-        if self.prefers_incoming_provider_session_id_alias {
-            return self.normalize_provider_session_id(local_session_id, incoming_session_id);
-        }
-
-        persisted_provider_session_id
-            .filter(|provider_session_id| *provider_session_id != local_session_id)
-            .map(ToOwned::to_owned)
-    }
-
-    pub fn history_session_id<'a>(
-        self,
-        local_session_id: &'a str,
-        provider_session_id: Option<&'a str>,
-    ) -> &'a str {
-        let _ = self;
-        provider_session_id.unwrap_or(local_session_id)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -430,8 +444,13 @@ pub trait AgentProvider: Send + Sync {
         _app: &'a AppHandle,
         _context: &'a SessionContext,
         _replay_context: &'a SessionReplayContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<SessionThreadSnapshot>, String>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<SessionThreadSnapshot>, ProviderHistoryLoadError>>
+                + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async { Ok(None) })
     }
 

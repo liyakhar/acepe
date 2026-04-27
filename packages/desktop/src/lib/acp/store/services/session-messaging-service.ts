@@ -43,6 +43,12 @@ import type {
 
 const logger = createLogger({ id: "session-messaging-service", name: "SessionMessagingService" });
 
+type PromptContentBlocks = {
+	readonly textContent: string;
+	readonly imageBlocks: ReadonlyArray<Extract<ContentBlock, { type: "image" }>>;
+	readonly contentBlocks: ReadonlyArray<{ type: string; text?: string; data?: string; mimeType?: string }>;
+};
+
 function matchesTurnId(
 	previousTurnId: string | null | undefined,
 	nextTurnId: string | null | undefined
@@ -52,6 +58,47 @@ function matchesTurnId(
 	}
 
 	return previousTurnId === nextTurnId;
+}
+
+function buildPromptContentBlocks(
+	content: string,
+	attachments: readonly Attachment[]
+): PromptContentBlocks | null {
+	const imageAttachments = attachments.filter(isInlineImageAttachment);
+	const otherAttachments = attachments.filter((attachment) => !isInlineImageAttachment(attachment));
+	const textContent = serializeWithAttachments(content, otherAttachments).trim();
+	const imageBlocks: Array<Extract<ContentBlock, { type: "image" }>> = [];
+	for (const imageAttachment of imageAttachments) {
+		if (!imageAttachment.content) {
+			continue;
+		}
+		const parsed = parseDataUrl(imageAttachment.content);
+		if (parsed === null) {
+			continue;
+		}
+		imageBlocks.push({ type: "image", data: parsed.data, mimeType: parsed.mimeType });
+	}
+	if (!textContent && imageBlocks.length === 0) {
+		return null;
+	}
+
+	const contentBlocks: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [];
+	for (const imageBlock of imageBlocks) {
+		contentBlocks.push({
+			type: imageBlock.type,
+			data: imageBlock.data,
+			mimeType: imageBlock.mimeType,
+		});
+	}
+	if (textContent) {
+		contentBlocks.push({ type: "text", text: textContent });
+	}
+
+	return {
+		textContent,
+		imageBlocks,
+		contentBlocks,
+	};
 }
 
 /**
@@ -103,36 +150,31 @@ export class SessionMessagingService {
 			return errAsync(new ConnectionError(sessionId));
 		}
 
-		// Separate inline image attachments (clipboard pastes with base64 content, no path)
-		// Uses the same predicate as message-preparation.ts to prevent double-send
-		const imageAttachments = attachments.filter(isInlineImageAttachment);
-		const otherAttachments = attachments.filter((a) => !isInlineImageAttachment(a));
-
-		// Serialize non-image attachments as text tokens (backward compatible)
-		const textContent = serializeWithAttachments(content, otherAttachments).trim();
-		if (!textContent && imageAttachments.length === 0) {
+		const promptContent = buildPromptContentBlocks(content, attachments);
+		if (promptContent === null) {
 			logger.warn("Attempted to send empty message, ignoring", { sessionId });
 			return errAsync(new AgentError("sendMessage: cannot send empty message"));
 		}
+
+		const textContent = promptContent.textContent;
+		const imageBlocks = promptContent.imageBlocks;
 
 		// Providers like Cursor can reuse/omit message IDs across prompts. Force the
 		// next assistant chunks into a new entry so the new answer stays after this prompt.
 		this.entryManager.startNewAssistantTurn(sessionId);
 
 		const textBlock = { type: "text" as const, text: textContent };
-		const imageBlocks = imageAttachments
-			.map((img) => {
-				const parsed = parseDataUrl(img.content!);
-				if (!parsed) return null;
-				return { type: "image" as const, data: parsed.data, mimeType: parsed.mimeType };
-			})
-			.filter((b): b is Extract<ContentBlock, { type: "image" }> => b !== null);
+		const chunks: ContentBlock[] = [];
+		for (const imageBlock of imageBlocks) {
+			chunks.push(imageBlock);
+		}
+		chunks.push(textBlock);
 		const userEntry: SessionEntry = {
 			id: crypto.randomUUID(),
 			type: "user",
 			message: {
 				content: textBlock,
-				chunks: [...imageBlocks, textBlock],
+				chunks,
 				sentAt: new Date(),
 			},
 			timestamp: new Date(),
@@ -145,7 +187,7 @@ export class SessionMessagingService {
 			entryType: userEntry.type,
 			entryCount: this.stateReader.getEntries(sessionId).length,
 			preview: textContent.slice(0, 120),
-			imageCount: imageAttachments.length,
+			imageCount: imageBlocks.length,
 		});
 
 		// Start awaiting response in state machine
@@ -160,17 +202,8 @@ export class SessionMessagingService {
 		});
 		logger.debug("Sending message (optimistic)", { sessionId });
 
-		// Build content blocks: image blocks first, then text block
-		// @[text:BASE64] tokens are expanded to <pasted-content> blocks by the Rust
-		// Tauri layer (attachment_token_expander) before reaching any agent backend.
-		const contentBlocks: Array<{ type: string; text?: string; data?: string; mimeType?: string }> =
-			[
-				...imageBlocks.map((b) => ({ type: b.type, data: b.data, mimeType: b.mimeType })),
-				...(textContent ? [{ type: "text", text: textContent }] : []),
-			];
-
 		return api
-			.sendPrompt(sessionId, contentBlocks)
+			.sendPrompt(sessionId, promptContent.contentBlocks)
 			.map(() => {
 				// Prompt sent successfully - response will arrive via Tauri events
 				// DO NOT call stream complete here - sendPrompt is fire-and-forget
@@ -196,6 +229,53 @@ export class SessionMessagingService {
 					lastTerminalTurnId: null,
 				});
 				logger.error("Failed to send message, rolling back", {
+					sessionId,
+					error,
+				});
+				return error;
+			});
+	}
+
+	sendPendingCreationMessage(
+		sessionId: string,
+		content: string,
+		attachments: readonly Attachment[] = []
+	): ResultAsync<void, AppError> {
+		const promptContent = buildPromptContentBlocks(content, attachments);
+		if (promptContent === null) {
+			logger.warn("Attempted to send empty pending creation message", { sessionId });
+			return errAsync(new AgentError("sendPendingCreationMessage: cannot send empty message"));
+		}
+
+		this.hotStateManager.updateHotState(sessionId, {
+			status: "streaming",
+			turnState: "streaming",
+			connectionError: null,
+			activeTurnFailure: null,
+			lastTerminalTurnId: null,
+		});
+		this.connectionManager.sendMessageSent(sessionId);
+		return api
+			.sendPrompt(sessionId, promptContent.contentBlocks)
+			.map(() => {
+				logger.debug("Pending creation prompt sent successfully", { sessionId });
+			})
+			.mapErr((error) => {
+				this.connectionManager.sendTurnFailed(sessionId, {
+					turnId: null,
+					kind: "fatal",
+					message: error.message,
+					code: null,
+					source: "unknown",
+				});
+				this.hotStateManager.updateHotState(sessionId, {
+					status: "error",
+					turnState: "error",
+					connectionError: error.message,
+					activeTurnFailure: null,
+					lastTerminalTurnId: null,
+				});
+				logger.error("Failed to send pending creation message", {
 					sessionId,
 					error,
 				});

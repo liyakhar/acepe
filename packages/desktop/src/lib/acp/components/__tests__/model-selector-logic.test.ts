@@ -250,8 +250,8 @@ describe("model-selector-logic", () => {
 			expect(getProviderFromModelId("gpt-5.3-codex")).toBe("OpenAI");
 		});
 
-		it("returns 'Other' for modelId without separator", () => {
-			expect(getProviderFromModelId("opus")).toBe("Other");
+		it("returns 'Other' for an unrecognized modelId without separator", () => {
+			expect(getProviderFromModelId("custom-model")).toBe("Other");
 		});
 
 		it("returns 'Other' for empty modelId", () => {

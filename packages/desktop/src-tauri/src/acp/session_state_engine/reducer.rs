@@ -510,6 +510,9 @@ mod tests {
             graph.operations[0].operation_state,
             Some(OperationState::Completed)
         );
-        assert_eq!(graph.operations[0].provider_status, ToolCallStatus::Completed);
+        assert_eq!(
+            graph.operations[0].provider_status,
+            ToolCallStatus::Completed
+        );
     }
 }

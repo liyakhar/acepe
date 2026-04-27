@@ -90,11 +90,7 @@ impl SessionSupervisor {
         true
     }
 
-    pub(crate) fn replace_checkpoint(
-        &self,
-        session_id: String,
-        checkpoint: LifecycleCheckpoint,
-    ) {
+    pub(crate) fn replace_checkpoint(&self, session_id: String, checkpoint: LifecycleCheckpoint) {
         self.store_checkpoint(&session_id, checkpoint, true);
     }
 

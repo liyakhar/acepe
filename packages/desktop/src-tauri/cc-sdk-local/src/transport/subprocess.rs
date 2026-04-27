@@ -430,6 +430,10 @@ impl SubprocessTransport {
             cmd.arg("--model").arg(model);
         }
 
+        if let Some(ref session_id) = self.options.session_id {
+            cmd.arg("--session-id").arg(session_id);
+        }
+
         // Permission prompt tool
         if let Some(ref tool_name) = self.options.permission_prompt_tool_name {
             cmd.arg("--permission-prompt-tool").arg(tool_name);
@@ -1393,6 +1397,19 @@ mod tests {
         );
         assert!(command_debug.contains("\"--permission-prompt-tool\""));
         assert!(command_debug.contains("\"stdio\""));
+    }
+
+    #[test]
+    fn test_transport_emits_session_id_flag_when_session_id_is_configured() {
+        let options = ClaudeCodeOptions::builder()
+            .session_id("00000000-0000-4000-8000-000000000001")
+            .build();
+
+        let transport = SubprocessTransport::with_cli_path(options, "/usr/bin/true");
+        let command_debug = format!("{:?}", transport.build_command());
+
+        assert!(command_debug.contains("\"--session-id\""));
+        assert!(command_debug.contains("\"00000000-0000-4000-8000-000000000001\""));
     }
 
     #[test]

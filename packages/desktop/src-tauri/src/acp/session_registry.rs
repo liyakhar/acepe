@@ -12,15 +12,11 @@ use tokio::sync::Mutex as TokioMutex;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSessionDescriptor {
     pub agent_id: CanonicalAgentId,
-    pub provider_session_id: Option<String>,
 }
 
 impl LiveSessionDescriptor {
-    pub fn new(agent_id: CanonicalAgentId, provider_session_id: Option<String>) -> Self {
-        Self {
-            agent_id,
-            provider_session_id,
-        }
+    pub fn new(agent_id: CanonicalAgentId) -> Self {
+        Self { agent_id }
     }
 }
 
@@ -54,11 +50,7 @@ impl SessionRegistry {
         client: Box<dyn AgentClient + Send + Sync + 'static>,
         agent_id: CanonicalAgentId,
     ) -> Option<Arc<TokioMutex<Box<dyn AgentClient + Send + Sync + 'static>>>> {
-        self.store_descriptor(
-            session_id,
-            client,
-            LiveSessionDescriptor::new(agent_id, None),
-        )
+        self.store_descriptor(session_id, client, LiveSessionDescriptor::new(agent_id))
     }
 
     pub fn store_descriptor(
@@ -144,30 +136,18 @@ impl SessionRegistry {
         session_id: &str,
         provider_session_id: &str,
     ) -> AcpResult<()> {
-        let Some(mut entry) = self.sessions.get_mut(session_id) else {
+        if !self.sessions.contains_key(session_id) {
             return Err(AcpError::SessionNotFound(redact_session_id(session_id)));
-        };
-
-        let normalized_provider_session_id = if provider_session_id == session_id {
-            None
-        } else {
-            Some(provider_session_id.to_string())
-        };
-
-        if entry.descriptor.provider_session_id == normalized_provider_session_id {
-            return Ok(());
         }
 
-        if let Some(existing_provider_session_id) = entry.descriptor.provider_session_id.as_ref() {
+        if provider_session_id != session_id {
             return Err(AcpError::InvalidState(format!(
-                "conflicting provider session binding for {}: existing={}, new={}",
+                "provider session id mismatch for canonical session {}: {}",
                 redact_session_id(session_id),
-                existing_provider_session_id,
                 provider_session_id
             )));
         }
 
-        entry.descriptor.provider_session_id = normalized_provider_session_id;
         Ok(())
     }
 
@@ -426,38 +406,31 @@ mod tests {
         registry.store_descriptor(
             "session-1".to_string(),
             Box::new(NoopClient),
-            LiveSessionDescriptor::new(CanonicalAgentId::ClaudeCode, None),
+            LiveSessionDescriptor::new(CanonicalAgentId::ClaudeCode),
         );
 
         registry
-            .bind_provider_session_id("session-1", "provider-1")
-            .expect("binding should succeed");
+            .bind_provider_session_id("session-1", "session-1")
+            .expect("canonical binding should succeed");
 
         assert_eq!(
-            registry
-                .get_descriptor("session-1")
-                .expect("descriptor")
-                .provider_session_id
-                .as_deref(),
-            Some("provider-1")
+            registry.get_descriptor("session-1").expect("descriptor"),
+            LiveSessionDescriptor::new(CanonicalAgentId::ClaudeCode)
         );
     }
 
     #[test]
-    fn bind_provider_session_id_rejects_conflicts() {
+    fn bind_provider_session_id_rejects_aliases() {
         let registry = SessionRegistry::new();
         registry.store_descriptor(
             "session-1".to_string(),
             Box::new(NoopClient),
-            LiveSessionDescriptor::new(
-                CanonicalAgentId::ClaudeCode,
-                Some("provider-1".to_string()),
-            ),
+            LiveSessionDescriptor::new(CanonicalAgentId::ClaudeCode),
         );
 
         let error = registry
-            .bind_provider_session_id("session-1", "provider-2")
-            .expect_err("conflict should fail");
+            .bind_provider_session_id("session-1", "provider-1")
+            .expect_err("alias should fail");
 
         assert!(matches!(error, AcpError::InvalidState(_)));
     }

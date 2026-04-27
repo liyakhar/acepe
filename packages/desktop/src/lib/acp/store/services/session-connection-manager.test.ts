@@ -5,7 +5,7 @@ import type {
 	AvailableCommand,
 	ConfigOptionData,
 } from "../../../services/converted-session-types.js";
-import { AgentError } from "../../errors/app-error.js";
+import { AgentError, CreationFailureError } from "../../errors/app-error.js";
 import type { SessionEventHandler } from "../session-event-handler.js";
 import type { ConnectionCompleteData } from "../session-event-service.svelte.js";
 import { SessionEventService } from "../session-event-service.svelte.js";
@@ -16,6 +16,7 @@ import type { IEntryManager } from "./interfaces/entry-manager.js";
 import type { ISessionStateReader } from "./interfaces/session-state-reader.js";
 import type { ISessionStateWriter } from "./interfaces/session-state-writer.js";
 import type { ITransientProjectionManager } from "./interfaces/transient-projection-manager.js";
+import { TauriCommandError } from "../../../utils/tauri-client/invoke.js";
 
 let SessionConnectionManager: typeof import("./session-connection-manager.js").SessionConnectionManager;
 
@@ -1373,6 +1374,108 @@ describe("SessionConnectionManager.createSession", () => {
 		expect(connectionManager.initializeConnectedSession).not.toHaveBeenCalled();
 	});
 
+	it("keeps deferred creation attempt out of the session store until promotion", async () => {
+		newSession.mockReturnValue(
+			okAsync({
+				sessionId: "provider-requested-id",
+				creationAttemptId: "attempt-1",
+				deferredCreation: true,
+				modes: {
+					currentModeId: "build",
+					availableModes: [{ id: "build", name: "Build", description: null }],
+				},
+				models: {
+					currentModelId: "claude-sonnet-4.6",
+					availableModels: [
+						{
+							modelId: "claude-sonnet-4.6",
+							name: "Claude Sonnet 4.6",
+							description: null,
+						},
+					],
+				},
+				availableCommands: [],
+			})
+		);
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.createSession({ projectPath, agentId }, createMockEventHandler());
+		const created = result._unsafeUnwrap();
+
+		expect(created).toEqual({
+			kind: "pending",
+			sessionId: "provider-requested-id",
+			creationAttemptId: "attempt-1",
+			projectPath,
+			agentId,
+			title: null,
+			worktreePath: null,
+		});
+		expect(stateWriter.addSession).not.toHaveBeenCalled();
+		expect(hotState.initializeHotState).toHaveBeenCalledWith("provider-requested-id", {
+			status: "connecting",
+			isConnected: false,
+			turnState: "idle",
+			connectionError: null,
+		});
+		expect(entryManager.markPreloaded).not.toHaveBeenCalled();
+	});
+
+	it("surfaces typed backend creation failures without adding a local session", async () => {
+		newSession.mockReturnValue(
+			errAsync(
+				new TauriCommandError({
+					commandName: "acp_new_session",
+					classification: "expected",
+					backendCorrelationId: "correlation-1",
+					message: "Provider failed before creating a session id",
+					domain: {
+						type: "acp",
+						data: {
+							type: "creation_failed",
+							data: {
+								kind: "provider_failed_before_id",
+								message: "Provider failed before creating a session id",
+								sessionId: null,
+								creationAttemptId: "attempt-1",
+								retryable: true,
+							},
+						},
+					},
+				})
+			)
+		);
+		const manager = createManager({
+			stateReader,
+			stateWriter,
+			hotState,
+			capabilities,
+			entryManager,
+			connectionManager,
+		});
+
+		const result = await manager.createSession({ projectPath, agentId }, createMockEventHandler());
+
+		expect(result.isErr()).toBe(true);
+		const error = result._unsafeUnwrapErr();
+		expect(error).toBeInstanceOf(CreationFailureError);
+		if (!(error instanceof CreationFailureError)) {
+			throw new Error("Expected CreationFailureError");
+		}
+		expect(error.kind).toBe("provider_failed_before_id");
+		expect(error.creationAttemptId).toBe("attempt-1");
+		expect(error.retryable).toBe(true);
+		expect(stateWriter.addSession).not.toHaveBeenCalled();
+		expect(hotState.initializeHotState).not.toHaveBeenCalled();
+	});
+
 	it("stores sequenceId returned by the backend on the new cold session", async () => {
 		newSession.mockReturnValue(
 			okAsync({
@@ -1599,6 +1702,10 @@ describe("SessionConnectionManager.createSession", () => {
 
 		const result = await manager.createSession({ projectPath, agentId }, createMockEventHandler());
 		const created = result._unsafeUnwrap();
+		expect(created.kind).toBe("ready");
+		if (created.kind !== "ready") {
+			throw new Error("Expected ready session creation");
+		}
 		const session = created.session;
 
 		expect(stateWriter.addSession).toHaveBeenCalled();
