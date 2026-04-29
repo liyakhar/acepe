@@ -1,5 +1,6 @@
 ---
 module: acp-session-architecture
+last_updated: 2026-04-29
 tags:
   - final-god
   - session-graph
