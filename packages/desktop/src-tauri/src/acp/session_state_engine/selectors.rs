@@ -319,7 +319,7 @@ pub fn select_session_graph_activity(
 mod tests {
     use super::{
         select_session_graph_activity, SessionGraphActivityKind, SessionGraphCapabilities,
-        SessionGraphLifecycle,
+        SessionGraphLifecycle, SessionRecommendedAction,
     };
     use crate::acp::lifecycle::{DetachedReason, FailureReason, LifecycleStatus};
     use crate::acp::projections::{
@@ -528,6 +528,19 @@ mod tests {
         let failed = SessionGraphLifecycle::failed(FailureReason::ResumeFailed, None);
         assert_eq!(failed.status, LifecycleStatus::Failed);
         assert!(failed.actionability.can_retry);
+
+        let session_gone =
+            SessionGraphLifecycle::failed(FailureReason::SessionGoneUpstream, None);
+        assert_eq!(session_gone.status, LifecycleStatus::Failed);
+        assert!(
+            !session_gone.actionability.can_retry,
+            "SessionGoneUpstream is terminal — retry would not recover"
+        );
+        assert_eq!(
+            session_gone.actionability.recommended_action,
+            SessionRecommendedAction::Archive,
+            "Failed sessions that cannot retry recommend archiving"
+        );
 
         let archived = SessionGraphLifecycle::archived();
         assert_eq!(archived.status, LifecycleStatus::Archived);

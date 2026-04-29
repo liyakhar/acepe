@@ -29,6 +29,7 @@ pub enum FailureReason {
     DeterministicRestoreFault,
     ActivationFailed,
     ResumeFailed,
+    SessionGoneUpstream,
     ProviderSessionMismatch,
     CorruptedPersistedState,
     ExplicitErrorHandlingRequired,
