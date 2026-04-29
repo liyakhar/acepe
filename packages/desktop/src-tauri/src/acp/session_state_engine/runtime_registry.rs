@@ -552,9 +552,13 @@ impl SessionGraphRuntimeSnapshot {
                     autonomous_enabled: *autonomous_enabled,
                 };
             }
-            SessionUpdate::ConnectionFailed { error, .. } => {
+            SessionUpdate::ConnectionFailed {
+                error,
+                failure_reason,
+                ..
+            } => {
                 self.lifecycle = SessionGraphLifecycle::from_lifecycle_state(
-                    LifecycleState::failed(FailureReason::ResumeFailed, Some(error.clone())),
+                    LifecycleState::failed(*failure_reason, Some(error.clone())),
                 );
             }
             SessionUpdate::TurnError { error, .. } => {
@@ -1317,6 +1321,36 @@ mod tests {
 
         assert_eq!(graph_revision, 13);
         assert_eq!(registry.snapshot_for_session(session_id).graph_revision, 13);
+    }
+
+    #[test]
+    fn connection_failed_envelope_failure_reason_propagates_to_lifecycle() {
+        // GOD: lifecycle.failure_reason MUST come from the envelope, not be
+        // hard-coded. Verifies both terminal (SessionGoneUpstream) and
+        // retryable (ResumeFailed) classifications round-trip cleanly.
+        for reason in [
+            crate::acp::lifecycle::FailureReason::ResumeFailed,
+            crate::acp::lifecycle::FailureReason::SessionGoneUpstream,
+        ] {
+            let registry = SessionGraphRuntimeRegistry::new();
+            registry.apply_session_update(
+                "session-1",
+                &SessionUpdate::ConnectionFailed {
+                    session_id: "session-1".to_string(),
+                    attempt_id: 1,
+                    error: "boom".to_string(),
+                    failure_reason: reason,
+                },
+            );
+
+            let snapshot = registry.snapshot_for_session("session-1");
+            assert_eq!(
+                snapshot.lifecycle.failure_reason,
+                Some(reason),
+                "failure_reason must be carried through from envelope, not hard-coded"
+            );
+            assert_eq!(snapshot.lifecycle.error_message.as_deref(), Some("boom"));
+        }
     }
 
     #[test]
