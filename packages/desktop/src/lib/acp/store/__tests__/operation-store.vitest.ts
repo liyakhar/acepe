@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { OperationSnapshot } from "../../../services/acp-types.js";
 import type { ToolCallData } from "../../../services/converted-session-types.js";
+import { createLongSessionFixture } from "../../testing/long-session-fixture.js";
 import {
 	buildCanonicalOperationId,
 	buildOperationId,
@@ -131,6 +132,36 @@ describe("OperationStore", () => {
 		expect(child?.command).toBe("go test ./...");
 	});
 
+	it("materializes root session tool calls with nested children for operation-backed projections", () => {
+		const operationStore = new OperationStore();
+		const entryStore = new SessionEntryStore(operationStore);
+
+		entryStore.createToolCallEntry("session-1", {
+			id: "task-parent",
+			name: "task",
+			arguments: { kind: "other", raw: {} },
+			status: "completed",
+			result: null,
+			kind: "task",
+			title: "Task",
+			locations: null,
+			skillMeta: null,
+			awaitingPlanApproval: false,
+			taskChildren: [
+				createExecuteToolCall("task-child", "go test ./...", {
+					parentToolUseId: "task-parent",
+					status: "completed",
+				}),
+			],
+		});
+
+		const toolCalls = operationStore.getSessionToolCalls("session-1");
+
+		expect(toolCalls).toHaveLength(1);
+		expect(toolCalls[0]?.id).toBe("task-parent");
+		expect(toolCalls[0]?.taskChildren?.[0]?.id).toBe("task-child");
+	});
+
 	it("does not hydrate canonical operations from preloaded transcript entries", () => {
 		const operationStore = new OperationStore();
 		const entryStore = new SessionEntryStore(operationStore);
@@ -241,6 +272,71 @@ describe("OperationStore", () => {
 		expect(operationStore.getLastToolCall("session-1")?.id).toBe("tool-2");
 		expect(operationStore.getCurrentStreamingToolCall("session-1")?.id).toBe("tool-2");
 		expect(operationStore.getCurrentToolKind("session-1")).toBe("other");
+	});
+
+	it("resolves the current streaming operation without materializing the full session operation list", () => {
+		const operationStore = new OperationStore();
+		operationStore.replaceSessionOperations("session-1", [
+			{
+				id: "op-1",
+				session_id: "session-1",
+				tool_call_id: "tool-1",
+				name: "bash",
+				kind: "execute",
+				provider_status: "completed",
+				title: "First",
+				arguments: { kind: "execute", command: "pwd" },
+				progressive_arguments: null,
+				result: "done",
+				command: "pwd",
+				normalized_todos: null,
+				parent_tool_call_id: null,
+				parent_operation_id: null,
+				child_tool_call_ids: [],
+				child_operation_ids: [],
+			},
+			{
+				id: "op-2",
+				session_id: "session-1",
+				tool_call_id: "tool-2",
+				name: "bash",
+				kind: "execute",
+				provider_status: "in_progress",
+				title: "Second",
+				arguments: { kind: "execute", command: "bun test" },
+				progressive_arguments: null,
+				result: null,
+				command: "bun test",
+				normalized_todos: null,
+				parent_tool_call_id: null,
+				parent_operation_id: null,
+				child_tool_call_ids: [],
+				child_operation_ids: [],
+			},
+		]);
+		operationStore.getSessionOperations = () => {
+			throw new Error("current streaming lookup must not materialize every operation");
+		};
+
+		expect(operationStore.getCurrentStreamingOperation("session-1")?.id).toBe("op-2");
+		expect(operationStore.getCurrentStreamingToolCall("session-1")?.id).toBe("tool-2");
+	});
+
+	it("feeds long-session fixture operations into current-streaming lookup without materialization", () => {
+		const fixture = createLongSessionFixture({
+			scale: "long",
+			sessionId: "session-1",
+		});
+		const operationStore = new OperationStore();
+		operationStore.replaceSessionOperations("session-1", fixture.operationSnapshots);
+		operationStore.getSessionOperations = () => {
+			throw new Error("fixture-backed current streaming lookup must not materialize every operation");
+		};
+
+		expect(operationStore.getCurrentStreamingOperation("session-1")?.id).toBe(
+			fixture.activeStreamingOperationId
+		);
+		expect(operationStore.getCurrentStreamingToolCall("session-1")?.id).toBe("active-tool-call");
 	});
 
 	it("materializes normalized results from canonical operations", () => {

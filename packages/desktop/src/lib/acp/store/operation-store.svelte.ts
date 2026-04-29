@@ -112,6 +112,7 @@ export class OperationStore {
 	private readonly operationIdByProvenanceKey = new SvelteMap<string, string>();
 	private readonly operationIdByEntryKey = new SvelteMap<string, string>();
 	private readonly sessionOperationIds = new SvelteMap<string, Array<string>>();
+	private readonly currentStreamingOperationIdBySession = new SvelteMap<string, string>();
 
 	upsertFromToolCall(
 		sessionId: string,
@@ -183,6 +184,22 @@ export class OperationStore {
 		return operations;
 	}
 
+	getSessionToolCalls(sessionId: string): Array<ToolCall> {
+		const operationIds = this.sessionOperationIds.get(sessionId) ?? [];
+		const toolCalls: Array<ToolCall> = [];
+		for (const operationId of operationIds) {
+			const operation = this.operationsById.get(operationId);
+			if (operation == null || operation.parentOperationId !== null) {
+				continue;
+			}
+			const toolCall = this.materializeToolCall(operation.id, new Set<string>());
+			if (toolCall !== null) {
+				toolCalls.push(toolCall);
+			}
+		}
+		return toolCalls;
+	}
+
 	getCurrentStreamingToolCall(sessionId: string): ToolCall | null {
 		const operation = this.getCurrentStreamingOperation(sessionId);
 		if (operation !== null) {
@@ -196,15 +213,17 @@ export class OperationStore {
 	}
 
 	getCurrentStreamingOperation(sessionId: string): Operation | null {
-		const operations = this.getSessionOperations(sessionId);
-		for (let index = operations.length - 1; index >= 0; index -= 1) {
-			const operation = operations[index];
-			if (isStreamingOperationState(operation.operationState)) {
-				return operation;
-			}
+		const operationId = this.currentStreamingOperationIdBySession.get(sessionId);
+		if (operationId === undefined) {
+			return null;
 		}
 
-		return null;
+		const operation = this.operationsById.get(operationId);
+		if (operation !== undefined && isStreamingOperationState(operation.operationState)) {
+			return operation;
+		}
+
+		return this.recomputeCurrentStreamingOperation(sessionId);
 	}
 
 	getLastToolCall(sessionId: string): ToolCall | null {
@@ -259,18 +278,28 @@ export class OperationStore {
 		}
 
 		this.sessionOperationIds.delete(sessionId);
+		this.currentStreamingOperationIdBySession.delete(sessionId);
 	}
 
 	replaceSessionOperations(sessionId: string, snapshots: ReadonlyArray<OperationSnapshot>): void {
 		this.clearSession(sessionId);
 		const nextSessionOperationIds: Array<string> = [];
+		let currentStreamingOperationId: string | null = null;
 		for (const snapshot of snapshots) {
 			const operation = this.operationFromSnapshot(snapshot);
 			this.operationsById.set(operation.id, operation);
 			this.indexOperation(operation);
 			nextSessionOperationIds.push(operation.id);
+			if (isStreamingOperationState(operation.operationState)) {
+				currentStreamingOperationId = operation.id;
+			}
 		}
 		this.sessionOperationIds.set(sessionId, nextSessionOperationIds);
+		if (currentStreamingOperationId === null) {
+			this.currentStreamingOperationIdBySession.delete(sessionId);
+		} else {
+			this.currentStreamingOperationIdBySession.set(sessionId, currentStreamingOperationId);
+		}
 	}
 
 	applySessionOperationPatches(
@@ -295,6 +324,7 @@ export class OperationStore {
 				nextSessionOperationIds.push(operation.id);
 				this.sessionOperationIds.set(sessionId, nextSessionOperationIds);
 			}
+			this.updateCurrentStreamingOperation(sessionId, operation);
 		}
 	}
 
@@ -439,8 +469,35 @@ export class OperationStore {
 			nextSessionOperationIds.push(operationId);
 			this.sessionOperationIds.set(sessionId, nextSessionOperationIds);
 		}
+		this.updateCurrentStreamingOperation(sessionId, nextOperation);
 
 		return nextOperation;
+	}
+
+	private updateCurrentStreamingOperation(sessionId: string, operation: Operation): void {
+		if (isStreamingOperationState(operation.operationState)) {
+			this.currentStreamingOperationIdBySession.set(sessionId, operation.id);
+			return;
+		}
+
+		if (this.currentStreamingOperationIdBySession.get(sessionId) === operation.id) {
+			this.recomputeCurrentStreamingOperation(sessionId);
+		}
+	}
+
+	private recomputeCurrentStreamingOperation(sessionId: string): Operation | null {
+		const operationIds = this.sessionOperationIds.get(sessionId) ?? [];
+		for (let index = operationIds.length - 1; index >= 0; index -= 1) {
+			const operationId = operationIds[index];
+			const operation = this.operationsById.get(operationId);
+			if (operation !== undefined && isStreamingOperationState(operation.operationState)) {
+				this.currentStreamingOperationIdBySession.set(sessionId, operation.id);
+				return operation;
+			}
+		}
+
+		this.currentStreamingOperationIdBySession.delete(sessionId);
+		return null;
 	}
 
 	private materializeToolCall(operationId: string, visited: Set<string>): ToolCall | null {

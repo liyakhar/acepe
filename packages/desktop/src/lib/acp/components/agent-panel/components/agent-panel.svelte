@@ -34,7 +34,7 @@ import AgentSelector from "../../agent-selector.svelte";
 import { shouldDisableSendForFailedFirstSend } from "../../agent-input/logic/first-send-recovery.js";
 import type { Attachment } from "../../agent-input/types/attachment.js";
 import { CheckpointTimeline } from "../../checkpoint/index.js";
-import { aggregateFileEdits } from "../../modified-files/logic/aggregate-file-edits.js";
+import { aggregateFileEditsFromToolCalls } from "../../modified-files/logic/aggregate-file-edits.js";
 import type { PrGenerationConfig } from "../../modified-files/types/pr-generation-config.js";
 import * as agentModelPrefs from "../../../store/agent-model-preferences-store.svelte.js";
 import {
@@ -239,13 +239,6 @@ const interactionSnapshot = $derived.by(() =>
 			}
 );
 
-// Computed from granular data
-const FILE_MODIFYING_KINDS = new Set(["edit", "delete", "move"]);
-const hasEdits = $derived(
-	sessionEntries.some(
-		(e) => e.type === "tool_call" && e.message.kind && FILE_MODIFYING_KINDS.has(e.message.kind)
-	)
-);
 const hasMessages = $derived(sessionEntries.length > 0);
 const sessionProjectPath = $derived(sessionIdentity?.projectPath ?? null);
 const sessionAgentId = $derived(sessionIdentity?.agentId ?? null);
@@ -1008,7 +1001,7 @@ const debugPanelState = $derived.by(() => {
 	};
 });
 
-// Pure derivation of modified files from session entries.
+// Pure derivation of modified files from canonical operations.
 //
 // Previously computed via `$effect` + `setTimeout(0)` to defer aggregation
 // off the current reactive cascade. That pattern had two problems:
@@ -1022,15 +1015,18 @@ const debugPanelState = $derived.by(() => {
 //      visible flicker in `ModifiedFilesHeader` and the files list
 //      across every sibling agent panel.
 //
-// Making this a `$derived` keeps the value synchronously consistent
-// with `sessionEntries` — Svelte 5 re-runs it only when its reactive
-// reads actually change, so unrelated panel-close cascades do not
-// touch it, and there is no in-between null state.
+// Making this a `$derived` keeps the value synchronously consistent.
+// Reading operationStore instead of sessionEntries prevents unrelated
+// assistant/transcript updates from rescanning the full conversation.
 const modifiedFilesState = $derived.by<ModifiedFilesState | null>(() => {
-	if (viewState.kind !== "conversation" || sessionEntries.length === 0) {
+	if (viewState.kind !== "conversation" || sessionId === null) {
 		return null;
 	}
-	const state = aggregateFileEdits(sessionEntries);
+	const toolCalls = operationStore.getSessionToolCalls(sessionId);
+	if (toolCalls.length === 0) {
+		return null;
+	}
+	const state = aggregateFileEditsFromToolCalls(toolCalls);
 	return state.fileCount > 0 ? state : null;
 });
 

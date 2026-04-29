@@ -105,49 +105,70 @@ type FileAccumulator = {
 };
 
 /**
- * Aggregates all edit tool calls from session entries into per-file statistics.
+ * Aggregates edit tool calls into per-file statistics.
  */
-export function aggregateFileEdits(entries: ReadonlyArray<SessionEntry>): ModifiedFilesState {
+export function aggregateFileEditsFromToolCalls(
+	toolCalls: ReadonlyArray<ToolCall>
+): ModifiedFilesState {
 	const fileMap = new Map<string, FileAccumulator>();
-	const allToolCalls = collectAllToolCalls(entries);
-	const editToolCalls = allToolCalls.filter((toolCall) => toolCall.kind === "edit");
+	const visitedToolCallIds = new Set<string>();
 	let validEditToolCallCount = 0;
 
-	for (const toolCall of editToolCalls) {
+	function visitToolCall(toolCall: ToolCall): void {
+		if (visitedToolCallIds.has(toolCall.id)) {
+			return;
+		}
+		visitedToolCallIds.add(toolCall.id);
+
+		if (toolCall.kind !== "edit") {
+			for (const child of toolCall.taskChildren ?? []) {
+				visitToolCall(child);
+			}
+			return;
+		}
 		const editEntries = extractEditEntries(toolCall);
-		if (editEntries.length === 0) continue;
-		validEditToolCallCount += 1;
+		if (editEntries.length > 0) {
+			validEditToolCallCount += 1;
 
-		for (const edit of editEntries) {
-			const filePath = edit.filePath;
-			if (!filePath) continue;
+			for (const edit of editEntries) {
+				const filePath = edit.filePath;
+				if (!filePath) continue;
 
-			const oldStringValue = edit.oldString ?? null;
-			const newStringValue = edit.newString ?? edit.content ?? null;
+				const oldStringValue = edit.oldString ?? null;
+				const newStringValue = edit.newString ?? edit.content ?? null;
 
-			const diffStats = calculateDiffStats(edit);
-			const linesAdded = diffStats?.added ?? 0;
-			const linesRemoved = diffStats?.removed ?? 0;
+				const diffStats = calculateDiffStats(edit);
+				const linesAdded = diffStats?.added ?? 0;
+				const linesRemoved = diffStats?.removed ?? 0;
 
-			const existing = fileMap.get(filePath);
+				const existing = fileMap.get(filePath);
 
-			if (existing) {
-				existing.totalAdded += linesAdded;
-				existing.totalRemoved += linesRemoved;
-				existing.finalContent = newStringValue;
-				existing.editCount += 1;
-			} else {
-				fileMap.set(filePath, {
-					filePath,
-					fileName: getFileName(filePath),
-					totalAdded: linesAdded,
-					totalRemoved: linesRemoved,
-					originalContent: oldStringValue,
-					finalContent: newStringValue,
-					editCount: 1,
-				});
+				if (existing) {
+					existing.totalAdded += linesAdded;
+					existing.totalRemoved += linesRemoved;
+					existing.finalContent = newStringValue;
+					existing.editCount += 1;
+				} else {
+					fileMap.set(filePath, {
+						filePath,
+						fileName: getFileName(filePath),
+						totalAdded: linesAdded,
+						totalRemoved: linesRemoved,
+						originalContent: oldStringValue,
+						finalContent: newStringValue,
+						editCount: 1,
+					});
+				}
 			}
 		}
+
+		for (const child of toolCall.taskChildren ?? []) {
+			visitToolCall(child);
+		}
+	}
+
+	for (const toolCall of toolCalls) {
+		visitToolCall(toolCall);
 	}
 
 	// Build both array and map in single pass
@@ -176,4 +197,11 @@ export function aggregateFileEdits(entries: ReadonlyArray<SessionEntry>): Modifi
 		fileCount: files.length,
 		totalEditCount: validEditToolCallCount,
 	};
+}
+
+/**
+ * Aggregates all edit tool calls from session entries into per-file statistics.
+ */
+export function aggregateFileEdits(entries: ReadonlyArray<SessionEntry>): ModifiedFilesState {
+	return aggregateFileEditsFromToolCalls(collectAllToolCalls(entries));
 }
