@@ -1,6 +1,6 @@
 import { getContext, setContext } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
-import type { OperationSnapshot } from "../../services/acp-types.js";
+import type { OperationSnapshot, OperationSourceLink } from "../../services/acp-types.js";
 import type { ToolArguments } from "../../services/converted-session-types.js";
 import type { Operation, OperationState } from "../types/operation.js";
 import type { ToolCall } from "../types/tool-call.js";
@@ -108,6 +108,29 @@ function isStreamingOperationState(state: OperationState): boolean {
 
 function shouldPreserveOperationStateAgainstToolCall(state: OperationState | undefined): boolean {
 	return state === "blocked" || isTerminalOperationState(state);
+}
+
+function transcriptSourceEntryId(sourceLink: OperationSourceLink): string | null {
+	return sourceLink.kind === "transcript_linked" ? sourceLink.entry_id : null;
+}
+
+function sourceLinkFromRawToolCall(
+	sourceEntryId: string | null,
+	existingSourceLink: OperationSourceLink | undefined
+): OperationSourceLink {
+	if (sourceEntryId !== null) {
+		return {
+			kind: "transcript_linked",
+			entry_id: sourceEntryId,
+		};
+	}
+
+	return (
+		existingSourceLink ?? {
+			kind: "synthetic",
+			reason: "raw_tool_call",
+		}
+	);
 }
 
 export class OperationStore {
@@ -280,13 +303,7 @@ export class OperationStore {
 			}
 
 			this.operationsById.delete(operationId);
-			this.operationIdByToolCallKey.delete(createSessionToolKey(sessionId, operation.toolCallId));
-			this.operationIdByProvenanceKey.delete(
-				createSessionToolKey(sessionId, operation.operationProvenanceKey ?? operation.toolCallId)
-			);
-			if (operation.sourceEntryId != null) {
-				this.operationIdByEntryKey.delete(createSessionToolKey(sessionId, operation.sourceEntryId));
-			}
+			this.unindexOperation(operation);
 		}
 
 		this.sessionOperationIds.delete(sessionId);
@@ -328,6 +345,9 @@ export class OperationStore {
 			) {
 				continue;
 			}
+			if (existingOperation !== undefined) {
+				this.unindexOperation(existingOperation);
+			}
 			this.operationsById.set(operation.id, operation);
 			this.indexOperation(operation);
 			const sessionOperationIds = this.sessionOperationIds.get(sessionId) ?? [];
@@ -346,7 +366,7 @@ export class OperationStore {
 			id: snapshot.id,
 			sessionId: snapshot.session_id,
 			toolCallId: snapshot.tool_call_id,
-			sourceEntryId: snapshot.source_entry_id ?? null,
+			sourceLink: snapshot.source_link,
 			name: snapshot.name,
 			kind: snapshot.kind,
 			status: providerStatus,
@@ -374,6 +394,22 @@ export class OperationStore {
 		};
 	}
 
+	private unindexOperation(operation: Operation): void {
+		this.operationIdByToolCallKey.delete(
+			createSessionToolKey(operation.sessionId, operation.toolCallId)
+		);
+		this.operationIdByProvenanceKey.delete(
+			createSessionToolKey(
+				operation.sessionId,
+				operation.operationProvenanceKey ?? operation.toolCallId
+			)
+		);
+		const transcriptEntryId = transcriptSourceEntryId(operation.sourceLink);
+		if (transcriptEntryId !== null) {
+			this.operationIdByEntryKey.delete(createSessionToolKey(operation.sessionId, transcriptEntryId));
+		}
+	}
+
 	private indexOperation(operation: Operation): void {
 		this.operationIdByToolCallKey.set(
 			createSessionToolKey(operation.sessionId, operation.toolCallId),
@@ -386,9 +422,10 @@ export class OperationStore {
 			),
 			operation.id
 		);
-		if (operation.sourceEntryId != null) {
+		const transcriptEntryId = transcriptSourceEntryId(operation.sourceLink);
+		if (transcriptEntryId !== null) {
 			this.operationIdByEntryKey.set(
-				createSessionToolKey(operation.sessionId, operation.sourceEntryId),
+				createSessionToolKey(operation.sessionId, transcriptEntryId),
 				operation.id
 			);
 		}
@@ -403,7 +440,7 @@ export class OperationStore {
 	): Operation {
 		const operationId = buildOperationId(sessionId, toolCall.id);
 		const existingOperation = this.operationsById.get(operationId);
-		const nextSourceEntryId = sourceEntryId ?? existingOperation?.sourceEntryId ?? null;
+		const nextSourceLink = sourceLinkFromRawToolCall(sourceEntryId, existingOperation?.sourceLink);
 		const nextParentToolCallId = toolCall.parentToolUseId ?? parentToolCallId ?? null;
 		const derivedOperationState = operationStateFromRawToolCall(toolCall.status, toolCall.kind);
 		const existingOperationState = existingOperation?.operationState;
@@ -431,7 +468,7 @@ export class OperationStore {
 			id: operationId,
 			sessionId,
 			toolCallId: toolCall.id,
-			sourceEntryId: nextSourceEntryId,
+			sourceLink: nextSourceLink,
 			name: toolCall.name,
 			kind: toolCall.kind,
 			status: toolCall.status,
@@ -464,15 +501,11 @@ export class OperationStore {
 					: null,
 		};
 
-		this.operationsById.set(operationId, nextOperation);
-		this.operationIdByToolCallKey.set(createSessionToolKey(sessionId, toolCall.id), operationId);
-		this.operationIdByProvenanceKey.set(createSessionToolKey(sessionId, toolCall.id), operationId);
-		if (nextSourceEntryId != null) {
-			this.operationIdByEntryKey.set(
-				createSessionToolKey(sessionId, nextSourceEntryId),
-				operationId
-			);
+		if (existingOperation !== undefined) {
+			this.unindexOperation(existingOperation);
 		}
+		this.operationsById.set(operationId, nextOperation);
+		this.indexOperation(nextOperation);
 
 		const sessionOperationIds = this.sessionOperationIds.get(sessionId) ?? [];
 		if (!sessionOperationIds.includes(operationId)) {

@@ -53,7 +53,10 @@ export function createCompatibilityOperation(toolCall: ToolCall): Operation {
 		sessionId: "",
 		toolCallId: toolCall.id,
 		operationProvenanceKey: toolCall.id,
-		sourceEntryId: null,
+		sourceLink: {
+			kind: "synthetic",
+			reason: "compatibility_operation",
+		},
 		name: toolCall.name,
 		kind: toolCall.kind,
 		status: toolCall.status,

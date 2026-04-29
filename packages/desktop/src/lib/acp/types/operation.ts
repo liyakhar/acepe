@@ -1,4 +1,7 @@
-import type { OperationDegradationReason } from "../../services/acp-types.js";
+import type {
+	OperationDegradationReason,
+	OperationSourceLink,
+} from "../../services/acp-types.js";
 import type {
 	JsonValue,
 	QuestionAnswer,
@@ -46,7 +49,7 @@ export interface Operation {
 	readonly id: string;
 	readonly sessionId: string;
 	readonly toolCallId: string;
-	readonly sourceEntryId: string | null;
+	readonly sourceLink: OperationSourceLink;
 	readonly name: string;
 	readonly kind: OperationKind;
 	/** Provider-layer provenance status. Use operationState for all canonical state decisions. */

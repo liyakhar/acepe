@@ -107,7 +107,10 @@ function createOperationSnapshot(overrides: Partial<OperationSnapshot> = {}): Op
 		plan_approval_request_id: overrides.plan_approval_request_id ?? null,
 		started_at_ms: overrides.started_at_ms ?? null,
 		completed_at_ms: overrides.completed_at_ms ?? null,
-		source_entry_id: overrides.source_entry_id ?? "tool-1",
+		source_link: overrides.source_link ?? {
+			kind: "transcript_linked",
+			entry_id: "tool-1",
+		},
 		degradation_reason: overrides.degradation_reason ?? null,
 	};
 }
@@ -311,6 +314,43 @@ describe("agent panel graph materializer", () => {
 		});
 	});
 
+	it("does not join transcript rows through coincidental operation ids", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("tool-coincidental", "tool", "Provider said a tool ran"),
+			]),
+			operations: [
+				createOperationSnapshot({
+					id: "tool-coincidental",
+					tool_call_id: "tool-coincidental",
+					operation_provenance_key: "tool-coincidental",
+					source_link: {
+						kind: "synthetic",
+						reason: "synthetic_test_operation",
+					},
+				}),
+			],
+			turnState: "Completed",
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toMatchObject({
+			id: "tool-coincidental",
+			type: "tool_call",
+			kind: "other",
+			status: "degraded",
+			title: "Unresolved tool",
+			presentationState: "degraded_operation",
+		});
+	});
+
 	it("uses canonical operation state instead of provider status for presentation", () => {
 		const graph = createGraph({
 			transcriptSnapshot: createTranscriptSnapshot([
@@ -403,7 +443,10 @@ describe("agent panel graph materializer", () => {
 			child_tool_call_ids: ["child-tool"],
 			child_operation_ids: ["operation-child"],
 			operation_provenance_key: "task-tool",
-			source_entry_id: "task-entry",
+			source_link: {
+				kind: "transcript_linked",
+				entry_id: "task-entry",
+			},
 		});
 		const childOperation = createOperationSnapshot({
 			id: "operation-child",
@@ -419,7 +462,10 @@ describe("agent panel graph materializer", () => {
 			child_tool_call_ids: [],
 			child_operation_ids: [],
 			operation_provenance_key: "child-tool",
-			source_entry_id: null,
+			source_link: {
+				kind: "synthetic",
+				reason: "task_child_operation",
+			},
 		});
 		const graph = createGraph({
 			transcriptSnapshot,

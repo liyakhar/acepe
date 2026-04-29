@@ -19,8 +19,8 @@ use crate::acp::model_display::{
 use crate::acp::projections::{
     InteractionKind, InteractionPayload, InteractionResponse, InteractionSnapshot,
     InteractionState, OperationDegradationCode, OperationDegradationReason, OperationSnapshot,
-    OperationState, PlanApprovalSource, SessionProjectionSnapshot, SessionSnapshot,
-    SessionTurnState, TurnFailureSnapshot,
+    OperationSourceLink, OperationState, PlanApprovalSource, SessionProjectionSnapshot,
+    SessionSnapshot, SessionTurnState, TurnFailureSnapshot,
 };
 use crate::acp::session_open_snapshot::{
     SessionOpenError, SessionOpenErrorReason, SessionOpenFound, SessionOpenMissing,
@@ -424,6 +424,7 @@ pub fn export_all_types() {
     export_acp_type!(OperationState);
     export_acp_type!(OperationDegradationCode);
     export_acp_type!(OperationDegradationReason);
+    export_acp_type!(OperationSourceLink);
     export_acp_type!(OperationSnapshot);
     export_acp_type!(InteractionKind);
     export_acp_type!(InteractionState);

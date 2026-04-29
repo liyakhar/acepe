@@ -256,7 +256,7 @@ mod tests {
             plan_approval_request_id: None,
             started_at_ms: None,
             completed_at_ms: None,
-            source_entry_id: None,
+            source_link: crate::acp::projections::OperationSourceLink::synthetic("reducer_test"),
             degradation_reason: None,
         }
     }
@@ -455,7 +455,7 @@ mod tests {
             plan_approval_request_id: None,
             started_at_ms: None,
             completed_at_ms: None,
-            source_entry_id: None,
+            source_link: crate::acp::projections::OperationSourceLink::synthetic("reducer_test"),
             degradation_reason: None,
         };
         graph.operations.push(op);
@@ -501,7 +501,7 @@ mod tests {
             plan_approval_request_id: None,
             started_at_ms: None,
             completed_at_ms: None,
-            source_entry_id: None,
+            source_link: crate::acp::projections::OperationSourceLink::synthetic("reducer_test"),
             degradation_reason: None,
         };
         graph2.operations.push(op2);

@@ -129,6 +129,7 @@ describe("operation association", () => {
 				kind: "execute",
 				provider_status: "pending",
 				operation_state: "pending",
+				source_link: { kind: "transcript_linked", entry_id: "stored-tool-1" },
 				title: "Run command",
 				arguments: { kind: "execute", command: "mkdir demo" },
 				progressive_arguments: null,

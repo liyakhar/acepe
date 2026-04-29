@@ -51,6 +51,7 @@ function createRunningOperation(): OperationSnapshot {
 		child_tool_call_ids: [],
 		child_operation_ids: [],
 		operation_state: "blocked",
+		source_link: { kind: "transcript_linked", entry_id: "tool-1" },
 	};
 }
 

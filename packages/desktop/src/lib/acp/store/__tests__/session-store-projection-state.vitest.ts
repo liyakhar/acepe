@@ -64,6 +64,10 @@ function createOperationSnapshot(overrides: Partial<OperationSnapshot> = {}): Op
 		child_tool_call_ids: overrides.child_tool_call_ids ?? [],
 		child_operation_ids: overrides.child_operation_ids ?? [],
 		operation_state: overrides.operation_state ?? "running",
+		source_link: overrides.source_link ?? {
+			kind: "transcript_linked",
+			entry_id: overrides.tool_call_id ?? "tool-1",
+		},
 	};
 }
 
@@ -1293,6 +1297,7 @@ describe("SessionStore.applySessionStateEnvelope", () => {
 							kind: "execute",
 							provider_status: "completed",
 							operation_state: "completed",
+							source_link: { kind: "transcript_linked", entry_id: "tool-1" },
 							title: "Run command",
 							arguments: {
 								kind: "execute",

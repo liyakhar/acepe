@@ -369,7 +369,7 @@ mod tests {
             plan_approval_request_id: None,
             started_at_ms: None,
             completed_at_ms: None,
-            source_entry_id: None,
+            source_link: crate::acp::projections::OperationSourceLink::synthetic("selector_test"),
             degradation_reason: None,
         }
     }

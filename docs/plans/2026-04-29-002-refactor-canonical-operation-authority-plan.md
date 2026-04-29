@@ -353,7 +353,7 @@ Unit 1 is a shippable correctness milestone once Unit 0 makes `Blocked` producti
 - `operation_state` is required at the generated type boundary.
 - Unit 2 lands and passes before Unit 3 edits `session_loading.rs` for source-link changes.
 
-- [ ] **Unit 3: Replace ambiguous transcript-operation joins with explicit source links**
+- [x] **Unit 3: Replace ambiguous transcript-operation joins with explicit source links**
 
 **Goal:** Remove the product rendering need for a four-key fallback join by making operation source linkage explicit and typed.
 

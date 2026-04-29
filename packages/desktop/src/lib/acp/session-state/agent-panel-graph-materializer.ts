@@ -59,9 +59,7 @@ export interface AgentPanelGraphMaterializerInput {
 
 interface OperationIndex {
 	readonly byOperationId: Map<string, OperationSnapshot>;
-	readonly bySourceEntryId: Map<string, OperationSnapshot>;
-	readonly byToolCallId: Map<string, OperationSnapshot>;
-	readonly byProvenanceKey: Map<string, OperationSnapshot>;
+	readonly byTranscriptSourceEntryId: Map<string, OperationSnapshot>;
 }
 
 function segmentText(entry: TranscriptEntry): string {
@@ -89,43 +87,26 @@ function truncateDisplayText(
 
 function buildOperationIndex(operations: readonly OperationSnapshot[]): OperationIndex {
 	const byOperationId = new Map<string, OperationSnapshot>();
-	const bySourceEntryId = new Map<string, OperationSnapshot>();
-	const byToolCallId = new Map<string, OperationSnapshot>();
-	const byProvenanceKey = new Map<string, OperationSnapshot>();
+	const byTranscriptSourceEntryId = new Map<string, OperationSnapshot>();
 
 	for (const operation of operations) {
 		byOperationId.set(operation.id, operation);
-		byToolCallId.set(operation.tool_call_id, operation);
-		if (
-			operation.operation_provenance_key !== null &&
-			operation.operation_provenance_key !== undefined
-		) {
-			byProvenanceKey.set(operation.operation_provenance_key, operation);
-		}
-		if (operation.source_entry_id !== null && operation.source_entry_id !== undefined) {
-			bySourceEntryId.set(operation.source_entry_id, operation);
+		if (operation.source_link.kind === "transcript_linked") {
+			byTranscriptSourceEntryId.set(operation.source_link.entry_id, operation);
 		}
 	}
 
 	return {
 		byOperationId,
-		bySourceEntryId,
-		byToolCallId,
-		byProvenanceKey,
+		byTranscriptSourceEntryId,
 	};
 }
 
-function findOperationForTranscriptEntry(
-	entry: TranscriptEntry,
+function findOperationForTranscriptSourceEntry(
+	entryId: string,
 	index: OperationIndex
 ): OperationSnapshot | null {
-	return (
-		index.bySourceEntryId.get(entry.entryId) ??
-		index.byToolCallId.get(entry.entryId) ??
-		index.byProvenanceKey.get(entry.entryId) ??
-		index.byOperationId.get(entry.entryId) ??
-		null
-	);
+	return index.byTranscriptSourceEntryId.get(entryId) ?? null;
 }
 
 function mapOperationStateToToolStatus(state: OperationState): AgentToolStatus {
@@ -297,15 +278,6 @@ function collectChildOperations(
 
 	for (const operationId of operation.child_operation_ids) {
 		const child = index.byOperationId.get(operationId);
-		if (child === undefined || seenOperationIds.has(child.id)) {
-			continue;
-		}
-		children.push(child);
-		seenOperationIds.add(child.id);
-	}
-
-	for (const toolCallId of operation.child_tool_call_ids) {
-		const child = index.byToolCallId.get(toolCallId);
 		if (child === undefined || seenOperationIds.has(child.id)) {
 			continue;
 		}
@@ -490,7 +462,7 @@ function materializeTranscriptEntry(
 	}
 
 	if (entry.role === "tool") {
-		const operation = findOperationForTranscriptEntry(entry, index);
+		const operation = findOperationForTranscriptSourceEntry(entry.entryId, index);
 		if (operation === null) {
 			return materializeMissingToolEntry(entry, graph);
 		}

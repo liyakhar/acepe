@@ -332,6 +332,7 @@ describe("SessionOpenHydrator", () => {
 			kind: "read" as const,
 			provider_status: "in_progress" as const,
 			operation_state: "running" as const,
+			source_link: { kind: "transcript_linked" as const, entry_id: "tool-read-entry-1" },
 			title: "Read /repo/src/main.ts",
 			arguments: { kind: "read" as const, file_path: "/repo/src/main.ts" },
 			progressive_arguments: null,

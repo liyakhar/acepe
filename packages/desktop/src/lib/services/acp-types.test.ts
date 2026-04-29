@@ -255,6 +255,7 @@ describe("session-state protocol graph contract", () => {
 					child_tool_call_ids: [],
 					child_operation_ids: [],
 					operation_state: "running",
+					source_link: { kind: "transcript_linked", entry_id: "tool-1" },
 				},
 			],
 			interactions: [],

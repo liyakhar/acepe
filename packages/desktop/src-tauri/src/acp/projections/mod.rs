@@ -80,6 +80,30 @@ pub struct OperationDegradationReason {
     pub detail: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OperationSourceLink {
+    TranscriptLinked { entry_id: String },
+    Synthetic { reason: String },
+    Degraded { reason: OperationDegradationReason },
+}
+
+impl OperationSourceLink {
+    pub(crate) fn transcript_linked(entry_id: String) -> Self {
+        Self::TranscriptLinked { entry_id }
+    }
+
+    pub(crate) fn synthetic(reason: &str) -> Self {
+        Self::Synthetic {
+            reason: reason.to_string(),
+        }
+    }
+
+    pub(crate) fn degraded(reason: OperationDegradationReason) -> Self {
+        Self::Degraded { reason }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvenanceValidationError {
     Empty,
@@ -164,8 +188,7 @@ pub struct OperationSnapshot {
     pub started_at_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub completed_at_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub source_entry_id: Option<String>,
+    pub source_link: OperationSourceLink,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub degradation_reason: Option<OperationDegradationReason>,
 }
@@ -458,6 +481,7 @@ impl ProjectionRegistry {
                     tool_call,
                     None,
                     tool_call.parent_tool_use_id.clone(),
+                    OperationSourceLink::synthetic("live_tool_call"),
                 );
                 self.register_plan_approval_interaction(session_id, tool_call);
                 if !preserves_failed_turn(&snapshot) {
@@ -700,7 +724,7 @@ impl ProjectionRegistry {
                     snapshot.message_count = snapshot.message_count.saturating_add(1);
                     snapshot.last_agent_message_id = Some(id.clone());
                 }
-                StoredEntry::ToolCall { message, .. } => {
+                StoredEntry::ToolCall { id, message, .. } => {
                     if snapshot.active_turn_failure.is_some() {
                         start_running_turn(&mut snapshot);
                     }
@@ -714,6 +738,7 @@ impl ProjectionRegistry {
                         message,
                         None,
                         message.parent_tool_use_id.clone(),
+                        OperationSourceLink::transcript_linked(id.clone()),
                     );
                     self.register_plan_approval_interaction(session_id, message);
                     self.register_converted_question_interaction(
@@ -747,6 +772,7 @@ impl ProjectionRegistry {
         tool_call: &ToolCallData,
         parent_operation_id: Option<String>,
         parent_tool_call_id: Option<String>,
+        source_link: OperationSourceLink,
     ) -> OperationSnapshot {
         let Ok(operation_id) = build_validated_canonical_operation_id(session_id, &tool_call.id)
         else {
@@ -759,6 +785,7 @@ impl ProjectionRegistry {
                     code: OperationDegradationCode::InvalidProvenanceKey,
                     detail: Some("Operation provenance key failed validation".to_string()),
                 },
+                source_link,
             );
         };
         let existing = self
@@ -777,6 +804,7 @@ impl ProjectionRegistry {
                         "Session operation limit of {MAX_SESSION_OPERATIONS} was reached"
                     )),
                 },
+                source_link,
             );
         }
         let resolved_parent_tool_call_id =
@@ -791,6 +819,7 @@ impl ProjectionRegistry {
                     child,
                     Some(operation_id.clone()),
                     Some(tool_call.id.clone()),
+                    OperationSourceLink::synthetic("task_child_operation"),
                 );
                 child_tool_call_ids.push(child.id.clone());
                 child_operation_ids.push(child_operation.id);
@@ -866,7 +895,7 @@ impl ProjectionRegistry {
             plan_approval_request_id: tool_call.plan_approval_request_id,
             started_at_ms: None,
             completed_at_ms: None,
-            source_entry_id: None,
+            source_link,
             degradation_reason,
         };
 
@@ -980,7 +1009,7 @@ impl ProjectionRegistry {
             plan_approval_request_id: existing.plan_approval_request_id,
             started_at_ms: existing.started_at_ms,
             completed_at_ms: existing.completed_at_ms,
-            source_entry_id: existing.source_entry_id.clone(),
+            source_link: existing.source_link.clone(),
             degradation_reason: existing.degradation_reason.clone(),
         };
         let merged_operation = merge_operation_snapshot_evidence(&existing, updated_operation);
@@ -1049,7 +1078,7 @@ impl ProjectionRegistry {
             plan_approval_request_id: existing.plan_approval_request_id,
             started_at_ms: existing.started_at_ms,
             completed_at_ms: existing.completed_at_ms,
-            source_entry_id: existing.source_entry_id.clone(),
+            source_link: existing.source_link.clone(),
             degradation_reason: existing.degradation_reason.clone(),
         };
         self.operations_by_id
@@ -1345,7 +1374,17 @@ fn rejected_operation_snapshot(
     parent_operation_id: Option<String>,
     parent_tool_call_id: Option<String>,
     degradation_reason: OperationDegradationReason,
+    source_link: OperationSourceLink,
 ) -> OperationSnapshot {
+    let source_link = match source_link {
+        OperationSourceLink::TranscriptLinked { entry_id } => {
+            OperationSourceLink::TranscriptLinked { entry_id }
+        }
+        OperationSourceLink::Synthetic { .. } | OperationSourceLink::Degraded { .. } => {
+            OperationSourceLink::degraded(degradation_reason.clone())
+        }
+    };
+
     OperationSnapshot {
         id: build_canonical_operation_id(session_id, "rejected-operation"),
         session_id: session_id.to_string(),
@@ -1377,7 +1416,7 @@ fn rejected_operation_snapshot(
         plan_approval_request_id: tool_call.plan_approval_request_id,
         started_at_ms: None,
         completed_at_ms: None,
-        source_entry_id: None,
+        source_link,
         degradation_reason: Some(degradation_reason),
     }
 }
@@ -1510,6 +1549,27 @@ fn merge_unique_strings(existing: &[String], incoming: Vec<String>) -> Vec<Strin
     merged
 }
 
+fn merge_operation_source_link(
+    existing: &OperationSourceLink,
+    incoming: OperationSourceLink,
+) -> OperationSourceLink {
+    match (existing, incoming) {
+        (OperationSourceLink::TranscriptLinked { entry_id }, _) => {
+            OperationSourceLink::TranscriptLinked {
+                entry_id: entry_id.clone(),
+            }
+        }
+        (_, OperationSourceLink::TranscriptLinked { entry_id }) => {
+            OperationSourceLink::TranscriptLinked { entry_id }
+        }
+        (_, OperationSourceLink::Degraded { reason }) => OperationSourceLink::Degraded { reason },
+        (OperationSourceLink::Degraded { reason }, _) => OperationSourceLink::Degraded {
+            reason: reason.clone(),
+        },
+        (_, OperationSourceLink::Synthetic { reason }) => OperationSourceLink::Synthetic { reason },
+    }
+}
+
 pub(crate) fn merge_operation_snapshot_evidence(
     existing: &OperationSnapshot,
     mut incoming: OperationSnapshot,
@@ -1581,9 +1641,17 @@ pub(crate) fn merge_operation_snapshot_evidence(
         .or(existing.plan_approval_request_id);
     incoming.started_at_ms = incoming.started_at_ms.or(existing.started_at_ms);
     incoming.completed_at_ms = incoming.completed_at_ms.or(existing.completed_at_ms);
-    incoming.source_entry_id = incoming
-        .source_entry_id
-        .or_else(|| existing.source_entry_id.clone());
+    incoming.source_link = if conflicts {
+        OperationSourceLink::degraded(OperationDegradationReason {
+            code: OperationDegradationCode::ImpossibleTransition,
+            detail: Some(
+                "Conflicting operation evidence prevents a trustworthy transcript source link."
+                    .to_string(),
+            ),
+        })
+    } else {
+        merge_operation_source_link(&existing.source_link, incoming.source_link)
+    };
     if !conflicts {
         incoming.degradation_reason = incoming
             .degradation_reason
@@ -2201,7 +2269,7 @@ mod tests {
                 plan_approval_request_id: None,
                 started_at_ms: None,
                 completed_at_ms: None,
-                source_entry_id: None,
+                source_link: OperationSourceLink::transcript_linked("tool-1".to_string()),
                 degradation_reason: None,
             }],
             interactions: vec![InteractionSnapshot {
@@ -2360,6 +2428,18 @@ mod tests {
         assert_eq!(session.message_count, 2);
         assert_eq!(session.turn_state, SessionTurnState::Running);
         assert_eq!(projection.operations.len(), 2);
+
+        let question_operation = projection
+            .operations
+            .iter()
+            .find(|operation| operation.tool_call_id == "tool-question")
+            .expect("expected imported question operation");
+        assert_eq!(
+            question_operation.source_link,
+            OperationSourceLink::TranscriptLinked {
+                entry_id: "tool-question-entry".to_string()
+            }
+        );
 
         let answered_question = projection
             .interactions
@@ -3332,6 +3412,76 @@ mod tests {
             op.operation_state,
             OperationState::Completed,
             "terminal state must not regress from a stale full tool-call projection"
+        );
+    }
+
+    #[test]
+    fn live_tool_call_patch_preserves_restored_transcript_source_link() {
+        let registry = ProjectionRegistry::new();
+        let operation_id = build_canonical_operation_id("session-1", "tool-restored");
+        registry.restore_session_projection(SessionProjectionSnapshot {
+            session: Some(SessionSnapshot::new(
+                "session-1".to_string(),
+                Some(CanonicalAgentId::ClaudeCode),
+            )),
+            operations: vec![OperationSnapshot {
+                id: operation_id,
+                session_id: "session-1".to_string(),
+                tool_call_id: "tool-restored".to_string(),
+                name: "bash".to_string(),
+                kind: Some(ToolKind::Execute),
+                provider_status: ToolCallStatus::Completed,
+                title: Some("Run command".to_string()),
+                arguments: ToolArguments::Execute {
+                    command: Some("pwd".to_string()),
+                },
+                progressive_arguments: None,
+                result: Some(json!("done")),
+                command: Some("pwd".to_string()),
+                normalized_todos: None,
+                parent_tool_call_id: None,
+                parent_operation_id: None,
+                child_tool_call_ids: vec![],
+                child_operation_ids: vec![],
+                operation_provenance_key: Some("tool-restored".to_string()),
+                operation_state: OperationState::Completed,
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+                started_at_ms: None,
+                completed_at_ms: None,
+                source_link: OperationSourceLink::TranscriptLinked {
+                    entry_id: "transcript-tool-entry".to_string(),
+                },
+                degradation_reason: None,
+            }],
+            interactions: vec![],
+            runtime: None,
+        });
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-restored",
+                    "pwd",
+                    ToolCallStatus::Completed,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", "tool-restored")
+            .expect("expected restored operation");
+        assert_eq!(
+            operation.source_link,
+            OperationSourceLink::TranscriptLinked {
+                entry_id: "transcript-tool-entry".to_string()
+            }
         );
     }
 }

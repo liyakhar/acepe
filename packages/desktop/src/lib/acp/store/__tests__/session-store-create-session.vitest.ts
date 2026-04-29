@@ -223,6 +223,7 @@ describe("SessionStore.createSession", () => {
 					kind: "read",
 					provider_status: "completed",
 					operation_state: "completed",
+					source_link: { kind: "transcript_linked", entry_id: "tc-1" },
 					title: "Read file.ts",
 					arguments: { kind: "read", file_path: "file.ts" },
 					progressive_arguments: null,

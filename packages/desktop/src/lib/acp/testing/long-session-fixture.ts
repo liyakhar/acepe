@@ -225,7 +225,10 @@ function createOperationSnapshot(
 		started_at_ms:
 			status === "in_progress" ? ACTIVE_OPERATION_STARTED_AT_MS : BASE_TIMESTAMP_MS + index * 1_000,
 		completed_at_ms: status === "completed" ? BASE_TIMESTAMP_MS + index * 1_000 + 500 : null,
-		source_entry_id: null,
+		source_link: {
+			kind: "synthetic",
+			reason: "long_session_fixture",
+		},
 		degradation_reason: null,
 	};
 }
