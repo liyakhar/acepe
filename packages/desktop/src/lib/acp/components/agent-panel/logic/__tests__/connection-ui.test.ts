@@ -14,6 +14,8 @@ describe("derivePanelErrorInfo", () => {
 			},
 			sessionConnectionError: null,
 			activeTurnError: null,
+			sessionFailureReason: null,
+			agentId: null,
 		});
 
 		expect(result.showError).toBe(true);
@@ -22,6 +24,7 @@ describe("derivePanelErrorInfo", () => {
 		expect(result.details).toBe("npm error 404");
 		expect(result.referenceId).toBe("ref-123");
 		expect(result.referenceSearchable).toBe(true);
+		expect(result.failureReason).toBeNull();
 	});
 
 	it("returns session error details when session connection fails", () => {
@@ -30,6 +33,8 @@ describe("derivePanelErrorInfo", () => {
 			panelConnectionError: null,
 			sessionConnectionError: "Failed to resume session",
 			activeTurnError: null,
+			sessionFailureReason: null,
+			agentId: null,
 		});
 
 		expect(result.showError).toBe(true);
@@ -37,6 +42,38 @@ describe("derivePanelErrorInfo", () => {
 		expect(result.summary).toBe("Failed to resume session");
 		expect(result.details).toBe("Failed to resume session");
 		expect(result.referenceId).toBeNull();
+		expect(result.failureReason).toBeNull();
+	});
+
+	it("substitutes curated copy when canonical lifecycle classifies the failure", () => {
+		const result = derivePanelErrorInfo({
+			panelConnectionState: PanelConnectionState.CONNECTING,
+			panelConnectionError: null,
+			sessionConnectionError: "JSON-RPC error -32002 Resource not found Session abc",
+			activeTurnError: null,
+			sessionFailureReason: "sessionGoneUpstream",
+			agentId: "copilot",
+		});
+
+		expect(result.showError).toBe(true);
+		expect(result.details).toBe(
+			"This GitHub Copilot session is no longer available to reopen. Start a new session to continue."
+		);
+		expect(result.failureReason).toBe("sessionGoneUpstream");
+	});
+
+	it("falls back to raw text when the failure reason has no curated copy", () => {
+		const result = derivePanelErrorInfo({
+			panelConnectionState: PanelConnectionState.CONNECTING,
+			panelConnectionError: null,
+			sessionConnectionError: "Transient connection blip",
+			activeTurnError: null,
+			sessionFailureReason: "resumeFailed",
+			agentId: "copilot",
+		});
+
+		expect(result.details).toBe("Transient connection blip");
+		expect(result.failureReason).toBe("resumeFailed");
 	});
 
 	it("prefers panel error details when both are present", () => {
@@ -50,6 +87,8 @@ describe("derivePanelErrorInfo", () => {
 				content: "Rate limited",
 				kind: "recoverable",
 			},
+			sessionFailureReason: null,
+			agentId: null,
 		});
 
 		expect(result.showError).toBe(true);
@@ -63,12 +102,15 @@ describe("derivePanelErrorInfo", () => {
 			panelConnectionError: null,
 			sessionConnectionError: null,
 			activeTurnError: null,
+			sessionFailureReason: null,
+			agentId: null,
 		});
 
 		expect(result.showError).toBe(false);
 		expect(result.summary).toBe(null);
 		expect(result.details).toBe(null);
 		expect(result.referenceId).toBeNull();
+		expect(result.failureReason).toBeNull();
 	});
 
 	it("returns turn error details when the latest turn failed", () => {
@@ -85,6 +127,8 @@ describe("derivePanelErrorInfo", () => {
 				referenceSearchable: false,
 				source: "json_rpc",
 			},
+			sessionFailureReason: null,
+			agentId: null,
 		});
 
 		expect(result.showError).toBe(true);

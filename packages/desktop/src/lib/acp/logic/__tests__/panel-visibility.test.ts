@@ -35,6 +35,7 @@ const NO_ERROR: PanelErrorInfo = {
 	details: null,
 	referenceId: null,
 	referenceSearchable: false,
+	failureReason: null,
 };
 const HAS_ERROR: PanelErrorInfo = {
 	showError: true,
@@ -43,6 +44,7 @@ const HAS_ERROR: PanelErrorInfo = {
 	details: "Connection failed",
 	referenceId: null,
 	referenceSearchable: false,
+	failureReason: null,
 };
 
 function makeInput(overrides: Partial<Parameters<typeof derivePanelViewState>[0]> = {}) {
@@ -93,6 +95,7 @@ describe("derivePanelViewState", () => {
 					details: null,
 					referenceId: null,
 					referenceSearchable: false,
+					failureReason: null,
 				},
 				entriesCount: 0,
 			})

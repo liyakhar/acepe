@@ -5,7 +5,7 @@ import ArrowUp from "@lucide/svelte/icons/arrow-up";
 import { Clock } from "phosphor-svelte";
 import { onDestroy, tick } from "svelte";
 import { toast } from "svelte-sonner";
-import { createLocalReferenceDetails } from "$lib/errors/error-reference.js";
+import { deriveLocalReferenceId } from "$lib/errors/error-reference.js";
 import type { SessionTurnState } from "../../../../services/acp-types.js";
 import type { TurnState } from "../../../store/types.js";
 import type { MergeStrategy } from "$lib/utils/tauri-client/git.js";
@@ -278,9 +278,11 @@ let contentIsAtTop = $state(true);
 let contentIsStreaming = $state(false);
 let panelConnectionState = $state<PanelConnectionState | null>(null);
 let panelConnectionError = $state<PanelConnectionErrorDetails | null>(null);
-let errorDismissed = $state(false);
-let fallbackInlineErrorReferenceId = $state<string | null>(null);
-let fallbackInlineErrorFingerprint = $state<string | null>(null);
+// Dismiss tracking: store the error fingerprint that the user dismissed.
+// `errorDismissed` is a $derived comparison against the current fingerprint —
+// when the error key changes (different failureReason or details), the
+// dismissal is automatically lifted without any $effect.
+let dismissedErrorKey = $state<string | null>(null);
 
 // Checkpoint timeline state
 let showCheckpointTimeline = $state(false);
@@ -445,6 +447,9 @@ const sessionShowStop = $derived(runtimeState?.showStop ?? false);
 const sessionConnectionError = $derived(
 	sessionId ? sessionStore.getSessionConnectionError(sessionId) : null
 );
+const sessionFailureReason = $derived(
+	sessionId ? sessionStore.getSessionLifecycleFailureReason(sessionId) : null
+);
 const activeTurnError = $derived.by(() => {
 	const activeTurnFailure = sessionId ? sessionStore.getSessionActiveTurnFailure(sessionId) : null;
 	if (activeTurnFailure) {
@@ -473,46 +478,40 @@ const errorInfo = $derived.by(() =>
 		sessionConnectionError,
 		sessionTurnState: sessionTurnState,
 		activeTurnError,
+		sessionFailureReason,
+		agentId: sessionAgentId,
 	})
 );
+// Deterministic local reference id derived purely from error content.
+// When `errorInfo.referenceId` exists (panel-level error with an upstream id),
+// we use it directly; otherwise we mint a stable id from the (title, details)
+// fingerprint so the same error keeps the same id without an $effect.
+const fallbackInlineErrorReferenceId = $derived.by(() => {
+	if (!errorInfo.showError || errorInfo.details === null) {
+		return null;
+	}
+	if (errorInfo.referenceId !== null) {
+		return null;
+	}
+	return deriveLocalReferenceId(`${errorInfo.title}|${errorInfo.details}`);
+});
 const inlineErrorReferenceId = $derived(errorInfo.referenceId ?? fallbackInlineErrorReferenceId);
 const inlineErrorReferenceSearchable = $derived(
 	errorInfo.referenceId !== null ? errorInfo.referenceSearchable : false
 );
 
-// Reset dismiss state when error content changes so a new error is always visible
-$effect(() => {
-	const _details = errorInfo.details;
-	if (!errorInfo.showError) {
-		errorDismissed = false;
-	}
-});
-
-$effect(() => {
-	const details = errorInfo.details;
-	if (!errorInfo.showError || details === null) {
-		fallbackInlineErrorReferenceId = null;
-		fallbackInlineErrorFingerprint = null;
-		return;
-	}
-
-	if (errorInfo.referenceId !== null) {
-		fallbackInlineErrorReferenceId = null;
-		fallbackInlineErrorFingerprint = null;
-		return;
-	}
-
-	const nextFingerprint = `${errorInfo.title}|${details}`;
-	if (
-		fallbackInlineErrorFingerprint === nextFingerprint &&
-		fallbackInlineErrorReferenceId !== null
-	) {
-		return;
-	}
-
-	fallbackInlineErrorFingerprint = nextFingerprint;
-	fallbackInlineErrorReferenceId = createLocalReferenceDetails().referenceId;
-});
+// Dismissal key: errors with the same (failureReason, details) pair are the
+// same logical error; if the user dismisses one, they dismiss the same error
+// across reactive reads. New failureReason or new details ⇒ new key ⇒ the
+// dismissal is automatically lifted (no $effect needed).
+const errorDismissalKey = $derived(
+	errorInfo.showError
+		? `${errorInfo.failureReason ?? "none"}::${errorInfo.details ?? ""}`
+		: null
+);
+const errorDismissed = $derived(
+	errorDismissalKey !== null && dismissedErrorKey === errorDismissalKey
+);
 
 const showInlineErrorCard = $derived(errorInfo.showError && !errorDismissed);
 const visibleSessionEntries = $derived.by(() =>
@@ -1554,7 +1553,7 @@ function handleRetryConnection() {
 		project,
 		effectivePanelAgentId,
 		onClearErrorDismissed: () => {
-			errorDismissed = false;
+			dismissedErrorKey = null;
 		},
 		onSendCancelToPanel: (id) => {
 			connectionStore.send(id, { type: PanelConnectionEvent.CANCEL });
@@ -1594,7 +1593,7 @@ function handleCancelConnection() {
 }
 
 function handleDismissError() {
-	errorDismissed = true;
+	dismissedErrorKey = errorDismissalKey;
 }
 
 function handleCopyInlineErrorReference() {

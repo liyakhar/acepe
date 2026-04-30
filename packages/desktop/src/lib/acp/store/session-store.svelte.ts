@@ -22,6 +22,7 @@ import {
 import type {
 	ConfigOptionData as CanonicalConfigOptionData,
 	ConfigOptionValue as CanonicalConfigOptionValue,
+	FailureReason,
 	InteractionSnapshot,
 	JsonValue,
 	OperationSnapshot,
@@ -1310,6 +1311,23 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 			return null;
 		}
 		return connectionErrorFromGraphState(projection.lifecycle, projection.activeTurnFailure);
+	}
+
+	/**
+	 * Canonical lifecycle failure classification, or null when the lifecycle is
+	 * not in a failed state. Used by the panel error UI to compose curated
+	 * user-facing copy keyed on `(agentId, failureReason)` while keeping the
+	 * raw provider text under `getSessionConnectionError` for debug surfaces.
+	 */
+	getSessionLifecycleFailureReason(sessionId: string): FailureReason | null {
+		const lifecycle = this.canonicalProjections.get(sessionId)?.lifecycle ?? null;
+		if (lifecycle === null) {
+			return null;
+		}
+		if (lifecycle.status !== "failed" && lifecycle.status !== "detached") {
+			return null;
+		}
+		return lifecycle.failureReason ?? null;
 	}
 
 	/**
