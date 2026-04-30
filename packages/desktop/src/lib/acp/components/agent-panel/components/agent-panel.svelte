@@ -513,7 +513,6 @@ const errorDismissed = $derived(
 	errorDismissalKey !== null && dismissedErrorKey === errorDismissalKey
 );
 
-const showInlineErrorCard = $derived(errorInfo.showError && !errorDismissed);
 const visibleSessionEntries = $derived.by(() =>
 	resolveVisibleSessionEntries({
 		sessionEntries,
@@ -533,6 +532,15 @@ const viewStateInput = $derived({
 });
 const viewState = $derived(derivePanelViewState(viewStateInput));
 const panelViewKind = $derived(viewState.kind);
+
+// Suppress the inline error card when the big-page error variant is
+// rendering for the same failure — otherwise the user sees the duplicated
+// "Unable to load session" page AND a red inline card. The big page is
+// the primary treatment when there are no entries; the inline card is
+// the single surface inside an active conversation.
+const showInlineErrorCard = $derived(
+	errorInfo.showError && !errorDismissed && viewState.kind !== "error"
+);
 const worktreePending = $derived(
 	resolveAgentPanelWorktreePending({
 		activeWorktreePath: effectiveActiveWorktreePath,
