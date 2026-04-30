@@ -128,6 +128,33 @@ function isTerminalOperationState(state: OperationState | undefined): boolean {
 - `checkpoint.rs` uses only `LifecycleState` / `SessionGraphLifecycle` — no four-state collapse method.
 - Test `lifecycle_actionability_uses_seven_state_contract` at `selectors.rs:515` exercises the full lifecycle contract.
 
+**Update (2026-04-30): Canonical reattach failure classification.**
+
+The lifecycle now carries a typed `FailureReason` taxonomy (`acp/lifecycle/state.rs`):
+
+```rust
+pub enum FailureReason {
+    DeterministicRestoreFault,
+    ActivationFailed,
+    ResumeFailed,
+    SessionGoneUpstream,
+    ProviderSessionMismatch,
+    CorruptedPersistedState,
+    ExplicitErrorHandlingRequired,
+    LegacyIrrecoverable,
+}
+```
+
+`SessionUpdate::ConnectionFailed` carries a required `failure_reason: FailureReason` field. The resume-boundary classifier (`acp/resume_failure_classifier.rs`) maps `SerializableAcpError` → `FailureReason`, recognizing both Cursor's `-32602 Session not found` and Copilot's `-32002 Resource not found Session …` as `SessionGoneUpstream` via the consolidated `client_errors::is_session_not_found_error` predicate. `apply_update` propagates the envelope's `failure_reason` into canonical lifecycle state — no more hard-coded `ResumeFailed` fallback.
+
+`is_retryable_failure` matches only `ActivationFailed | ResumeFailed`, so `SessionGoneUpstream` automatically yields `actionability.canRetry == false` and `recommendedAction == Archive` without a carve-out.
+
+User-facing English copy lives only in TypeScript via `failureCopy(agentId, failureReason)` in `packages/desktop/src/lib/acp/components/agent-panel/logic/failure-copy.ts`. The TypeScript canonical reader (`derivePanelErrorInfo`) substitutes curated copy when classified, and falls back to `lifecycle.errorMessage` (raw provider text) otherwise. i18n-ready: a single keyed table.
+
+The duplicate "Unable to load session" page + inline card has been collapsed into a single surface — `showInlineErrorCard` is suppressed when `viewState.kind === "error"`.
+
+The pre-canonical `localPersistedSessionProbeStatus` / `setSessionOpenMissing` / `isPermanentLocalReattachFailure` parallel TS gate has been deleted; the canonical lifecycle is the only authority for reattach failure classification.
+
 ---
 
 ### ⚠️ R13: `SessionHotState` / `SessionTransientProjection` is non-authoritative (config/telemetry only)

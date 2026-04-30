@@ -36,7 +36,6 @@ Rust emits bounded canonical envelopes for live tool updates and capability chan
 - `modelPerMode` for local preference memory,
 - `usageTelemetry` for local telemetry display snapshots,
 - `pendingSendIntent` for immediate send-click disablement while canonical envelopes catch up,
-- `localPersistedSessionProbeStatus` for the pre-canonical local-created reattach gate,
 - `capabilityMutationState` for local capability mutation progress.
 
 These fields must never assert lifecycle, activity, failure, mode/model, command, config, autonomous, provider metadata, or model-display truth.
