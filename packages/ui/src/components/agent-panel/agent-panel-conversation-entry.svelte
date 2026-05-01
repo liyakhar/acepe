@@ -20,9 +20,9 @@
 	import AgentToolTask from "./agent-tool-task.svelte";
 	import AgentToolTodo from "./agent-tool-todo.svelte";
 	import AgentToolWebSearch from "./agent-tool-web-search.svelte";
+	import AgentThinkingSceneEntry from "./agent-thinking-scene-entry.svelte";
 	import AgentUserMessage from "./agent-user-message.svelte";
 	import AgentMissingSceneEntry from "./agent-missing-scene-entry.svelte";
-	import { getPlanningPlaceholderLabel } from "./planning-label.js";
 
 	export interface EditToolTheme {
 		theme?: "light" | "dark";
@@ -89,7 +89,7 @@
 		renderBlock={renderAssistantBlock}
 	/>
 {:else if entry.type === "thinking"}
-	<AgentToolRow title={getPlanningPlaceholderLabel(entry.durationMs)} status="running" padded={false} />
+	<AgentThinkingSceneEntry durationMs={entry.durationMs} startedAtMs={entry.startedAtMs} />
 {:else if entry.type === "missing"}
 	<AgentMissingSceneEntry
 		title={entry.title}

@@ -395,7 +395,7 @@ Target split:
 - The old `VirtualizedEntryList` is deleted or reduced to a temporary compatibility wrapper with no domain/render logic.
 - Viewport code is small enough that virtualization/fallback/follow behavior is inspectable in isolation.
 
-- [ ] **Unit 6: Tighten scroll-follow, thinking timer isolation, and real-component coverage**
+- [x] **Unit 6: Tighten scroll-follow, thinking timer isolation, and real-component coverage**
 
 **Goal:** Close remaining reliability gaps after the viewport rewrite.
 

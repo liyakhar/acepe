@@ -61,6 +61,7 @@ export { default as AgentPanelFooterChrome } from "./agent-panel-footer-chrome.s
 export { default as AgentPanelHeader } from "./agent-panel-header.svelte";
 export { default as AgentPanelLayout } from "./agent-panel-layout.svelte";
 export { default as AgentMissingSceneEntry } from "./agent-missing-scene-entry.svelte";
+export { default as AgentThinkingSceneEntry } from "./agent-thinking-scene-entry.svelte";
 export { default as AgentPanelModifiedFileRow } from "./agent-panel-modified-file-row.svelte";
 export { default as AgentPanelModifiedFilesTrailingControls } from "./agent-panel-modified-files-trailing-controls.svelte";
 export { default as AgentPanelPrCard } from "./agent-panel-pr-card.svelte";
@@ -93,6 +94,7 @@ export { default as AgentToolTodo } from "./agent-tool-todo.svelte";
 export { default as AgentToolWebSearch } from "./agent-tool-web-search.svelte";
 export { default as ToolKindIcon } from "./tool-kind-icon.svelte";
 export { default as ToolHeaderLeading } from "./tool-header-leading.svelte";
+export { resolveThinkingDurationMs, shouldRunThinkingTimer } from "./thinking-duration.js";
 export { default as AgentUserMessage } from "./agent-user-message.svelte";
 export { default as AgentPanelBrowserPanel } from "./browser-panel.svelte";
 export { default as AgentCompactToolDisplay } from "./compact-tool-display.svelte";

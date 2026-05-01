@@ -104,21 +104,6 @@ const editToolTheme = $derived({
 });
 let thinkingNowMs = $state(Date.now());
 
-$effect(() => {
-	if (!isWaitingForResponse) {
-		return;
-	}
-
-	thinkingNowMs = Date.now();
-	const intervalId = window.setInterval(() => {
-		thinkingNowMs = Date.now();
-	}, 1000);
-
-	return () => {
-		window.clearInterval(intervalId);
-	};
-});
-
 // ===== ICON CONTEXT (for nested components) =====
 setIconConfig({ basePath: "/svgs/icons" });
 
@@ -437,6 +422,25 @@ function reportMissingSceneEntry(
 
 // ===== DISPLAY ENTRIES =====
 const mergedEntries = $derived(buildSceneDisplayRows(sceneEntries ?? []));
+const hasMergedAssistantDisplayRows = $derived(
+	mergedEntries.some((entry) => entry.type === "assistant_merged")
+);
+
+$effect(() => {
+	if (!isWaitingForResponse || !hasMergedAssistantDisplayRows) {
+		return;
+	}
+
+	thinkingNowMs = Date.now();
+	const intervalId = window.setInterval(() => {
+		thinkingNowMs = Date.now();
+	}, 1000);
+
+	return () => {
+		window.clearInterval(intervalId);
+	};
+});
+
 const thinkingIndicatorStartedAtMs = $derived.by(() => {
 	if (!isWaitingForResponse) {
 		return null;
