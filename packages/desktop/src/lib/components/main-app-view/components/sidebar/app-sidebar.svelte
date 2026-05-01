@@ -4,6 +4,10 @@ import { ResultAsync } from "neverthrow";
 import { toast } from "svelte-sonner";
 import { copySessionToClipboard } from "$lib/acp/components/agent-panel/logic/clipboard-manager.js";
 import { SessionList } from "$lib/acp/components/index.js";
+import {
+	buildSessionSummaryFromCold,
+	deriveSessionListStateFromCanonical,
+} from "$lib/acp/application/dto/session-summary.js";
 import ProjectIconPickerDialog from "$lib/acp/components/project-icon-picker-dialog.svelte";
 import type { SessionListItem } from "$lib/acp/components/session-list/session-list-types.js";
 import type { SessionDisplayItem } from "$lib/acp/types/thread-display-item.js";
@@ -421,7 +425,7 @@ function handleBrowseProjectIcon() {
 	});
 }
 
-// Performance: Only read hot state (changes infrequently — on connection/turn transitions).
+// Performance: Only read canonical projection summary state here.
 // Do NOT read sessionStore.getEntries() here — entries change every rAF during streaming,
 // which would mark this derived dirty on every frame, cascading to ALL SessionItem components.
 const visibleSessions = $derived.by(() => {
@@ -429,14 +433,14 @@ const visibleSessions = $derived.by(() => {
 	return coldSessions
 		.filter((cold) => !archiveStore.isArchived(cold))
 		.map((cold) => {
-			const hot = sessionStore.getHotState(cold.id);
-			return {
-				...cold,
-				status: hot.status,
+			const listState = deriveSessionListStateFromCanonical(
+				sessionStore.getCanonicalSessionProjection(cold.id)
+			);
+			return buildSessionSummaryFromCold({
+				cold,
+				listState,
 				entryCount: 0,
-				isConnected: hot.isConnected,
-				isStreaming: hot.turnState === "streaming",
-			};
+			});
 		});
 });
 </script>

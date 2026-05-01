@@ -109,7 +109,7 @@ describe("groupAllPanelsByProject", () => {
 		]);
 	});
 
-	it("keeps unsequenced agent panels after sequenced panels without changing their relative order", () => {
+	it("places unsequenced agent panels before sequenced panels while keeping their relative order", () => {
 		const groups = groupAllPanelsByProject(
 			[
 				{
@@ -144,9 +144,9 @@ describe("groupAllPanelsByProject", () => {
 		);
 
 		expect(groups[0]?.agentPanels.map((panel) => panel.id)).toEqual([
-			"sequenced",
 			"unsequenced-a",
 			"unsequenced-b",
+			"sequenced",
 		]);
 	});
 
@@ -242,6 +242,23 @@ describe("sortProjectGroupsForMultiLayout", () => {
 		const snapshot = input.map((g) => g.projectPath);
 		sortProjectGroupsForMultiLayout(input);
 		expect(input.map((g) => g.projectPath)).toEqual(snapshot);
+	});
+
+	it("pins the selected project group first when requested", () => {
+		const sorted = sortProjectGroupsForMultiLayout(
+			[
+				makeGroup("/tmp/zulu", "zulu"),
+				makeGroup("/tmp/alpha", "Alpha"),
+				makeGroup("/tmp/bravo", "bravo"),
+			],
+			{ pinnedProjectPath: "/tmp/zulu" }
+		);
+
+		expect(sorted.map((g) => g.projectPath)).toEqual([
+			"/tmp/zulu",
+			"/tmp/alpha",
+			"/tmp/bravo",
+		]);
 	});
 });
 

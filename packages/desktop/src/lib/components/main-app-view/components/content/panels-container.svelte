@@ -277,7 +277,21 @@ const isMultiCardsMode = $derived(
 
 // Explicitly-sorted groups for true multi-project rendering. project/single modes keep
 // reading `allGroups` so focused-project switching and fallback semantics stay intact.
-const sortedGroupsForMulti = $derived(sortProjectGroupsForMultiLayout(allGroups));
+const pinnedMultiProjectPath = $derived.by(() => {
+	const frontPanel = panelsWithState[0];
+	if (!frontPanel) {
+		return null;
+	}
+	// Pin only unsaved/empty composer panels so project switching does not
+	// reshuffle the active panel in multi mode.
+	if (frontPanel.sessionId !== null || frontPanel.sessionSequenceId !== null) {
+		return null;
+	}
+	return frontPanel.sessionProjectPath;
+});
+const sortedGroupsForMulti = $derived(
+	sortProjectGroupsForMultiLayout(allGroups, { pinnedProjectPath: pinnedMultiProjectPath })
+);
 
 // Hide the embedded project badge only when the outer ProjectCard wrapper already
 // provides project identity (project mode with multiple groups). In multi-cards mode

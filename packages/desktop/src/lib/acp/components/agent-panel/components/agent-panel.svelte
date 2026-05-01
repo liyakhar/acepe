@@ -28,6 +28,7 @@ import { extractAttachmentsFromChunks } from "../../../utils/extract-content-att
 import { createLogger } from "../../../utils/logger.js";
 import AgentInput from "../../agent-input/agent-input-ui.svelte";
 import AgentSelector from "../../agent-selector.svelte";
+import ProjectSelector from "../../project-selector.svelte";
 import { shouldDisableSendForFailedFirstSend } from "../../agent-input/logic/first-send-recovery.js";
 import type { Attachment } from "../../agent-input/types/attachment.js";
 import { CheckpointTimeline } from "../../checkpoint/index.js";
@@ -222,9 +223,9 @@ const sessionAgentId = $derived(sessionIdentity?.agentId ?? null);
 const sessionWorktreePath = $derived(sessionIdentity?.worktreePath ?? null);
 const sessionTitle = $derived(sessionMetadata?.title ?? null);
 
-// Current model from session hot state (for PR popover default)
+// Current model from canonical capabilities (for PR popover default)
 const sessionCurrentModelId = $derived(
-	sessionId ? (sessionStore.getHotState(sessionId)?.currentModel?.id ?? null) : null
+	sessionId ? sessionStore.getSessionCurrentModelId(sessionId) : null
 );
 
 // ✅ State manager for local UI state only (drag, dialog)
@@ -375,6 +376,12 @@ const effectiveProjectName = $derived(
 		? project?.name
 		: (project?.name ?? (projectCount === 1 ? allProjects[0].name : undefined))
 );
+const preSessionSelectedProject = $derived.by(() => {
+	if (!worktreeToggleProjectPath) {
+		return null;
+	}
+	return allProjects.find((candidate) => candidate.path === worktreeToggleProjectPath) ?? null;
+});
 
 // ✅ Derived values from granular session data
 const effectivePanelAgentId = $derived(selectedAgentId ?? sessionAgentId);
@@ -658,6 +665,7 @@ const displayTitle = $derived.by(() => {
 		sessionEntries,
 	});
 });
+const graphHeaderTitle = $derived(displayTitle ?? "");
 const sessionDiffStats = $derived.by(() => {
 	if (!sessionId) return { insertions: 0, deletions: 0 };
 	const checkpoints = checkpointStore.getCheckpoints(sessionId);
@@ -673,7 +681,7 @@ const graphMaterializedScene = $derived(
 		panelId: effectivePanelId,
 		graph: sessionStateGraph,
 		header: {
-			title: displayTitle,
+			title: graphHeaderTitle,
 			subtitle: sessionTitle,
 			agentIconSrc,
 			agentLabel: agentName,
@@ -1200,6 +1208,15 @@ function handleProjectAgentSelected(project: Project, agentId: string) {
 
 function handleProjectSelected(project: Project) {
 	onCreateSessionForProject?.(project);
+}
+
+function handleComposerProjectSelected(project: Project) {
+	if (panelId) {
+		panelStore.setPanelProjectPath(panelId, project.path);
+		panelStore.movePanelToFront(panelId);
+		return;
+	}
+	handleProjectSelected(project);
 }
 
 function installAgentThenCreateSession(project: Project, agentId: string) {
@@ -2055,11 +2072,19 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 				>
 					{#key inputRenderKey}
 						{#snippet preSessionAgentPicker()}
-							<AgentSelector
-								{availableAgents}
-								currentAgentId={effectivePanelAgentId}
-								{onAgentChange}
-							/>
+							<div class="flex items-center">
+								<AgentSelector
+									{availableAgents}
+									currentAgentId={effectivePanelAgentId}
+									{onAgentChange}
+								/>
+								<div class="mx-1.5 h-4 w-px bg-border/50"></div>
+								<ProjectSelector
+									selectedProject={preSessionSelectedProject}
+									recentProjects={allProjects}
+									onProjectChange={handleComposerProjectSelected}
+								/>
+							</div>
 						{/snippet}
 						<AgentInput
 							bind:this={agentInputRef}

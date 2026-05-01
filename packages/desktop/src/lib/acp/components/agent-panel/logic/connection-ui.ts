@@ -1,4 +1,4 @@
-import type { CanonicalAgentId, FailureReason } from "$lib/services/acp-types.js";
+import type { FailureReason } from "$lib/services/acp-types.js";
 import type { TurnState } from "../../../store/types.js";
 import type { ErrorMessage } from "../../../types/error-message.js";
 import type { PanelConnectionErrorDetails } from "../../../types/panel-connection-state";
@@ -37,7 +37,7 @@ interface PanelErrorInputs {
 	 * Active session's agent id — used to key curated copy. Optional only for
 	 * pre-session call sites (where no session-level error can be present).
 	 */
-	readonly agentId: CanonicalAgentId | null;
+	readonly agentId: string | null;
 }
 
 function summarize(details: string | null): string | null {

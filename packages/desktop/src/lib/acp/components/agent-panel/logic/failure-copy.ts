@@ -1,4 +1,4 @@
-import type { CanonicalAgentId, FailureReason } from "$lib/services/acp-types.js";
+import type { FailureReason } from "$lib/services/acp-types.js";
 
 /**
  * Curated user-facing copy for canonical lifecycle failures, keyed on
@@ -12,7 +12,7 @@ import type { CanonicalAgentId, FailureReason } from "$lib/services/acp-types.js
  * owns the user-facing words. i18n later = a single keyed table here.
  */
 export function failureCopy(
-	agentId: CanonicalAgentId,
+	agentId: string,
 	failureReason: FailureReason
 ): string | null {
 	if (failureReason === "sessionGoneUpstream") {
@@ -25,7 +25,7 @@ export function failureCopy(
 	return null;
 }
 
-function sessionGoneUpstreamCopy(agentId: CanonicalAgentId): string {
+function sessionGoneUpstreamCopy(agentId: string): string {
 	if (agentId === "copilot") {
 		return "This GitHub Copilot session is no longer available to reopen. Start a new session to continue.";
 	}

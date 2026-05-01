@@ -16,10 +16,10 @@ import SelectorCheck from "./selector-check.svelte";
 
 interface ProjectSelectorProps {
 	selectedProject: Project | null;
-	recentProjects: Project[];
+	recentProjects: readonly Project[];
 	missingProjectPaths?: ReadonlySet<string>;
 	onProjectChange: (project: Project) => void;
-	onBrowse: () => void;
+	onBrowse?: () => void;
 	onImport?: () => void | Promise<void>;
 	onManageProjects?: () => void;
 	isLoading?: boolean;
@@ -147,11 +147,15 @@ function handleOpenChange(open: boolean) {
 		{/each}
 	{/if}
 
-	<DropdownMenu.Separator />
+	{#if onBrowse || onImport || onManageProjects}
+		<DropdownMenu.Separator />
+	{/if}
 
-	<DropdownMenu.Item onSelect={onBrowse} class="cursor-pointer">
-		<span>Browse for folder...</span>
-	</DropdownMenu.Item>
+	{#if onBrowse}
+		<DropdownMenu.Item onSelect={onBrowse} class="cursor-pointer">
+			<span>Browse for folder...</span>
+		</DropdownMenu.Item>
+	{/if}
 
 	{#if onImport}
 		{@const importIcon = getAgentIcon("claude-code", themeState.effectiveTheme)}

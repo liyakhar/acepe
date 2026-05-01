@@ -202,14 +202,16 @@ function compareAgentPanelSequence<
 	const leftSequenceId = left.sessionSequenceId ?? null;
 	const rightSequenceId = right.sessionSequenceId ?? null;
 
-	if (leftSequenceId !== null && rightSequenceId !== null) {
-		return rightSequenceId - leftSequenceId;
-	}
-	if (leftSequenceId !== null) {
+	// Spawned composer panels have no session sequence yet; prioritize them so they
+	// render on the left before established session-backed panels.
+	if (leftSequenceId === null && rightSequenceId !== null) {
 		return -1;
 	}
-	if (rightSequenceId !== null) {
+	if (leftSequenceId !== null && rightSequenceId === null) {
 		return 1;
+	}
+	if (leftSequenceId !== null && rightSequenceId !== null) {
+		return rightSequenceId - leftSequenceId;
 	}
 	return 0;
 }
@@ -232,8 +234,19 @@ export function sortProjectGroupsForMultiLayout<
 		readonly projectPath: string;
 		readonly projectName: string;
 	},
->(groups: readonly G[]): G[] {
+>(
+	groups: readonly G[],
+	options: { readonly pinnedProjectPath?: string | null } = {}
+): G[] {
+	const pinnedProjectPath = options.pinnedProjectPath ?? null;
 	return [...groups].sort((a, b) => {
+		if (pinnedProjectPath !== null && pinnedProjectPath !== "") {
+			const aPinned = a.projectPath === pinnedProjectPath;
+			const bPinned = b.projectPath === pinnedProjectPath;
+			if (aPinned && !bPinned) return -1;
+			if (!aPinned && bPinned) return 1;
+		}
+
 		const aEmpty = a.projectPath === "";
 		const bEmpty = b.projectPath === "";
 		if (aEmpty && !bEmpty) return 1;
