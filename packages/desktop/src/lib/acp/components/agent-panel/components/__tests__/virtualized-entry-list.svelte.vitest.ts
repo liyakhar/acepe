@@ -2,10 +2,8 @@ import { cleanup, fireEvent, render } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionEntry } from "../../../../application/dto/session.js";
+import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import type { TurnState } from "../../../../store/types.js";
-import type { ToolCall } from "../../../../types/tool-call.js";
-import { createLongSessionFixture } from "../../../../testing/long-session-fixture.js";
 
 import {
 	clearHistory,
@@ -41,63 +39,35 @@ class TestResizeObserver {
 
 const resizeObservers: TestResizeObserver[] = [];
 
-function createUserEntry(id: string, text: string): SessionEntry {
-	return {
-		id,
-		type: "user",
-		message: {
-			content: { type: "text", text },
-			chunks: [{ type: "text", text }],
-		},
-	};
+function createUserSceneEntry(id: string, text: string): AgentPanelSceneEntryModel {
+	return { id, type: "user", text };
 }
 
-function createAssistantEntry(id: string, text: string): SessionEntry {
-	return {
-		id,
-		type: "assistant",
-		message: {
-			chunks: [{ type: "message", block: { type: "text", text } }],
-		},
-	};
+function createAssistantSceneEntry(id: string, markdown: string): AgentPanelSceneEntryModel {
+	return { id, type: "assistant", markdown };
 }
 
-function createUserEntries(count: number): SessionEntry[] {
-	const entries: SessionEntry[] = [];
+function createToolCallSceneEntry(id: string): AgentPanelSceneEntryModel {
+	return { id, type: "tool_call", title: "tool", status: "done" };
+}
+
+function createManyUserSceneEntries(count: number): AgentPanelSceneEntryModel[] {
+	const entries: AgentPanelSceneEntryModel[] = [];
 	for (let index = 0; index < count; index += 1) {
-		entries.push(createUserEntry(`user-${index}`, `message ${index}`));
+		entries.push(createUserSceneEntry(`user-${index}`, `message ${index}`));
 	}
 	return entries;
 }
 
-function createToolCallEntry(id: string, result: string | null): SessionEntry {
-	const toolCall: ToolCall = {
-		id,
-		name: "execute",
-		kind: "execute",
-		status: result === null ? "in_progress" : "completed",
-		title: "tool",
-		arguments: { kind: "execute", command: "echo hi" },
-		result,
-		awaitingPlanApproval: false,
-	};
-
-	return {
-		id,
-		type: "tool_call",
-		message: toolCall,
-	};
-}
-
 function renderList(props?: {
-	entries?: readonly SessionEntry[];
+	sceneEntries?: readonly AgentPanelSceneEntryModel[];
 	turnState?: TurnState;
 	isWaitingForResponse?: boolean;
 	sessionId?: string;
 }): ReturnType<typeof render> {
 	return render(VirtualizedEntryList, {
 		panelId: "panel-1",
-		entries: props?.entries ?? [createUserEntry("user-1", "hello")],
+		sceneEntries: props?.sceneEntries ?? [createUserSceneEntry("user-1", "hello")],
 		turnState: props?.turnState ?? "idle",
 		isWaitingForResponse: props?.isWaitingForResponse ?? false,
 		projectPath: undefined,
@@ -168,10 +138,6 @@ vi.mock("../../../messages/error-message.svelte", async () => ({
 	default: (await import("./fixtures/user-message-stub.svelte")).default,
 }));
 
-vi.mock("../../../tool-calls/index.js", async () => ({
-	ToolCallRouter: (await import("./fixtures/user-message-stub.svelte")).default,
-}));
-
 vi.mock("@acepe/ui", async () => ({
 	AgentPanelConversationEntry: (await import("./fixtures/user-message-stub.svelte")).default,
 	AgentPanelSceneEntry: (await import("./fixtures/user-message-stub.svelte")).default,
@@ -214,7 +180,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("mounts with empty VList data before hydrating restored entries on the next frame", async () => {
 		renderList({
-			entries: [createUserEntry("user-1", "hello"), createUserEntry("user-2", "world")],
+			sceneEntries: [createUserSceneEntry("user-1", "hello"), createUserSceneEntry("user-2", "world")],
 		});
 		await tick();
 
@@ -228,7 +194,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("switches sessions without re-entering empty hydration and still reveals the latest entry", async () => {
 		const view = renderList({
-			entries: [createUserEntry("user-1", "hello"), createUserEntry("user-2", "world")],
+			sceneEntries: [createUserSceneEntry("user-1", "hello"), createUserSceneEntry("user-2", "world")],
 			sessionId: "session-1",
 		});
 		await tick();
@@ -241,7 +207,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [createUserEntry("user-3", "next"), createUserEntry("user-4", "session")],
+			sceneEntries: [createUserSceneEntry("user-3", "next"), createUserSceneEntry("user-4", "session")],
 			turnState: "idle",
 			isWaitingForResponse: false,
 			projectPath: undefined,
@@ -265,7 +231,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 		setDefaultViewportSize(0);
 
 		const view = renderList({
-			entries: [createUserEntry("user-1", "hello"), createUserEntry("user-2", "world")],
+			sceneEntries: [createUserSceneEntry("user-1", "hello"), createUserSceneEntry("user-2", "world")],
 		});
 		await tick();
 
@@ -284,7 +250,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 		setSuppressRenderedChildren(true);
 
 		const view = renderList({
-			entries: [createUserEntry("user-1", "hello"), createUserEntry("user-2", "world")],
+			sceneEntries: [createUserSceneEntry("user-1", "hello"), createUserSceneEntry("user-2", "world")],
 		});
 		await tick();
 
@@ -298,7 +264,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("renders user entries via Virtua VList", async () => {
 		const view = renderList({
-			entries: [createUserEntry("user-1", "hello"), createUserEntry("user-2", "world")],
+			sceneEntries: [createUserSceneEntry("user-1", "hello"), createUserSceneEntry("user-2", "world")],
 		});
 		await flushAnimationFrames();
 		await tick();
@@ -310,9 +276,9 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("ignores transient undefined rows from Virtua during data churn", async () => {
 		const view = renderList({
-			entries: [
-				createAssistantEntry("assistant-1", "first"),
-				createAssistantEntry("assistant-2", "second"),
+			sceneEntries: [
+				createAssistantSceneEntry("assistant-1", "first"),
+				createAssistantSceneEntry("assistant-2", "second"),
 			],
 		});
 		await flushAnimationFrames();
@@ -323,7 +289,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [createAssistantEntry("assistant-2", "second")],
+			sceneEntries: [createAssistantSceneEntry("assistant-2", "second")],
 			turnState: "idle",
 			isWaitingForResponse: false,
 			projectPath: undefined,
@@ -343,7 +309,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 		setUseIndexKeys(true);
 
 		const view = renderList({
-			entries: [createAssistantEntry("assistant-1", "first")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "first")],
 		});
 		await flushAnimationFrames();
 		await tick();
@@ -355,7 +321,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [createAssistantEntry("assistant-1", "first")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "first")],
 			turnState: "idle",
 			isWaitingForResponse: false,
 			projectPath: undefined,
@@ -370,7 +336,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("appends thinking indicator when waiting for response", async () => {
 		const view = renderList({
-			entries: [createUserEntry("user-1", "hello")],
+			sceneEntries: [createUserSceneEntry("user-1", "hello")],
 			isWaitingForResponse: true,
 		});
 		await flushAnimationFrames();
@@ -388,7 +354,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 		setDefaultViewportSize(0);
 
 		const view = renderList({
-			entries: createUserEntries(250),
+			sceneEntries: createManyUserSceneEntries(250),
 		});
 		await tick();
 
@@ -405,10 +371,10 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("keeps native fallback bounded with the shared long-session fixture", async () => {
 		setDefaultViewportSize(0);
-		const fixture = createLongSessionFixture({ scale: "long" });
+		const longSessionEntries = createManyUserSceneEntries(320);
 
 		const view = renderList({
-			entries: fixture.entries,
+			sceneEntries: longSessionEntries,
 		});
 		await tick();
 
@@ -418,7 +384,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 		expect(view.queryByTestId("native-fallback")).not.toBeNull();
 		const renderedRows = view.container.querySelectorAll("[data-entry-key]");
-		expect(renderedRows.length).toBeLessThan(fixture.entries.length);
+		expect(renderedRows.length).toBeLessThan(longSessionEntries.length);
 		expect(renderedRows.length).toBeLessThanOrEqual(80);
 	});
 
@@ -444,7 +410,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("force-follows a new user message even after the user detached", async () => {
 		const view = renderList({
-			entries: [createAssistantEntry("assistant-1", "latest")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "latest")],
 		});
 		await flushAnimationFrames();
 		await tick();
@@ -463,7 +429,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [createAssistantEntry("assistant-1", "latest"), createUserEntry("user-1", "sent")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "latest"), createUserSceneEntry("user-1", "sent")],
 			turnState: "idle",
 			isWaitingForResponse: false,
 			projectPath: undefined,
@@ -479,7 +445,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("reveals the trailing thinking indicator after a user message is sent", async () => {
 		const view = renderList({
-			entries: [createAssistantEntry("assistant-1", "latest")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "latest")],
 		});
 		await flushAnimationFrames();
 		await tick();
@@ -491,7 +457,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [createAssistantEntry("assistant-1", "latest"), createUserEntry("user-1", "sent")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "latest"), createUserSceneEntry("user-1", "sent")],
 			turnState: "idle",
 			isWaitingForResponse: true,
 			projectPath: undefined,
@@ -511,7 +477,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("does not force-follow a non-user latest update after the user detached", async () => {
 		const view = renderList({
-			entries: [createAssistantEntry("assistant-1", "first")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "first")],
 		});
 		await flushAnimationFrames();
 		await tick();
@@ -528,7 +494,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 		// Re-render with updated assistant content (no force reveal requested)
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [createAssistantEntry("assistant-1", "second")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "second")],
 			turnState: "idle",
 			isWaitingForResponse: false,
 			projectPath: undefined,
@@ -544,23 +510,24 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("renders tool call entries", async () => {
 		const view = renderList({
-			entries: [createToolCallEntry("tool-1", "result")],
+			sceneEntries: [createToolCallSceneEntry("tool-1")],
 		});
 		await flushAnimationFrames();
 		await tick();
 		await tick();
 
-		// ToolCallRouter is stubbed with user-message-stub
+		// Tool calls render via AgentPanelConversationEntry (stubbed with user-message-stub)
 		const stubs = view.container.querySelectorAll("[data-testid='user-message-stub']");
 		expect(stubs.length).toBeGreaterThanOrEqual(1);
 	});
 
 	it("reveals a growing tool call while the thinking indicator trails it", async () => {
 		const view = renderList({
-			entries: [createAssistantEntry("assistant-1", "latest")],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "latest")],
 			isWaitingForResponse: true,
 		});
 		await flushAnimationFrames();
+		await tick();
 		await tick();
 		await tick();
 
@@ -568,7 +535,7 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [createAssistantEntry("assistant-1", "latest"), createToolCallEntry("tool-1", null)],
+			sceneEntries: [createAssistantSceneEntry("assistant-1", "latest"), createToolCallSceneEntry("tool-1")],
 			turnState: "idle",
 			isWaitingForResponse: true,
 			projectPath: undefined,
@@ -586,10 +553,10 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("observes resize only for the latest reveal target", async () => {
 		renderList({
-			entries: [
-				createUserEntry("user-1", "hello"),
-				createAssistantEntry("assistant-1", "latest"),
-				createToolCallEntry("tool-1", null),
+			sceneEntries: [
+				createUserSceneEntry("user-1", "hello"),
+				createAssistantSceneEntry("assistant-1", "latest"),
+				createToolCallSceneEntry("tool-1"),
 			],
 			isWaitingForResponse: true,
 		});
@@ -607,9 +574,9 @@ describe("VirtualizedEntryList auto-scroll", () => {
 
 	it("tracks last assistant id for streaming indicator", async () => {
 		const view = renderList({
-			entries: [
-				createUserEntry("user-1", "hello"),
-				createAssistantEntry("assistant-1", "response"),
+			sceneEntries: [
+				createUserSceneEntry("user-1", "hello"),
+				createAssistantSceneEntry("assistant-1", "response"),
 			],
 			turnState: "streaming",
 		});
@@ -620,10 +587,10 @@ describe("VirtualizedEntryList auto-scroll", () => {
 		// Re-render with a second assistant entry to verify tracking updates
 		await view.rerender({
 			panelId: "panel-1",
-			entries: [
-				createUserEntry("user-1", "hello"),
-				createAssistantEntry("assistant-1", "response"),
-				createAssistantEntry("assistant-2", "another response"),
+			sceneEntries: [
+				createUserSceneEntry("user-1", "hello"),
+				createAssistantSceneEntry("assistant-1", "response"),
+				createAssistantSceneEntry("assistant-2", "another response"),
 			],
 			turnState: "streaming",
 			isWaitingForResponse: false,

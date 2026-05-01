@@ -3,7 +3,6 @@ import { AgentPanelConversationEntry, setIconConfig } from "@acepe/ui";
 import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import { setContext, untrack } from "svelte";
 import { VList, type VListHandle } from "virtua/svelte";
-import type { SessionEntry } from "../../../application/dto/session.js";
 import { SESSION_CONTEXT_KEY_EXPORT } from "../../../hooks/use-session-context.js";
 import { getChatPreferencesStore } from "../../../store/chat-preferences-store.svelte.js";
 import type { TurnState } from "../../../store/types.js";
@@ -12,7 +11,6 @@ import { DEFAULT_STREAMING_ANIMATION_MODE } from "../../../types/streaming-anima
 import AssistantMessage from "../../messages/assistant-message.svelte";
 import MessageWrapper from "../../messages/message-wrapper.svelte";
 import UserMessage from "../../messages/user-message.svelte";
-import { ToolCallRouter } from "../../tool-calls/index.js";
 import {
 	createAutoScroll,
 	type ScrollPositionProvider,
@@ -36,7 +34,6 @@ import {
 	THINKING_DISPLAY_ENTRY,
 	type VirtualizedDisplayEntry,
 } from "../logic/virtualized-entry-display.js";
-import { shouldUseOptimisticDesktopToolRenderer } from "../logic/tool-renderer-routing.js";
 import { mapVirtualizedDisplayEntryToConversationEntry } from "../scene/desktop-agent-panel-scene.js";
 
 const MAX_VIEWPORT_RECOVERY_FRAMES = 8;
@@ -45,7 +42,6 @@ const NATIVE_FALLBACK_ENTRY_LIMIT = 80;
 
 type VirtualizedEntryListProps = {
 	panelId: string;
-	entries: readonly SessionEntry[];
 	sceneEntries?: readonly AgentPanelSceneEntryModel[];
 	turnState: TurnState;
 	isWaitingForResponse: boolean;
@@ -63,7 +59,6 @@ type VirtualizedEntryListProps = {
 };
 
 type AssistantDisplayEntry = Extract<VirtualizedDisplayEntry, { type: "assistant" }>;
-type ToolCallDisplayEntry = Extract<VirtualizedDisplayEntry, { type: "tool_call" }>;
 type UserDisplayEntry = Extract<VirtualizedDisplayEntry, { type: "user" }>;
 type IndexedDisplayEntry = {
 	entry: VirtualizedDisplayEntry;
@@ -77,20 +72,9 @@ const EMPTY_USER_MESSAGE: UserDisplayEntry["message"] = {
 	content: { type: "text", text: "" },
 	chunks: [],
 };
-const EMPTY_TOOL_CALL_MESSAGE: ToolCallDisplayEntry["message"] = {
-	id: "missing-tool-call",
-	name: "missing-tool-call",
-	arguments: { kind: "execute", command: "" },
-	status: "completed",
-	result: "",
-	kind: "execute",
-	title: "Missing tool call",
-	awaitingPlanApproval: false,
-};
 
 let {
 	panelId,
-	entries,
 	sceneEntries,
 	turnState,
 	isWaitingForResponse,
@@ -269,12 +253,6 @@ function getMergedAssistantMessage(
 	};
 }
 
-function getToolCallMessage(
-	entry: VirtualizedDisplayEntry | undefined
-): ToolCallDisplayEntry["message"] {
-	return entry?.type === "tool_call" ? entry.message : EMPTY_TOOL_CALL_MESSAGE;
-}
-
 function getSharedEntry(
 	entry: VirtualizedDisplayEntry | undefined,
 	thinkingDurationMs: number | null
@@ -300,14 +278,6 @@ function getGraphSceneEntry(
 	entry: VirtualizedDisplayEntry | undefined
 ): AgentPanelSceneEntryModel | undefined {
 	return findGraphSceneEntryForDisplayEntry(entry, sceneEntriesById);
-}
-
-function shouldRenderDesktopTool(entry: VirtualizedDisplayEntry): boolean {
-	return (
-		getGraphSceneEntry(entry) === undefined &&
-		entry.type === "tool_call" &&
-		shouldUseOptimisticDesktopToolRenderer(entry, sceneEntries !== undefined)
-	);
 }
 
 function isStreamingAssistantEntry(
@@ -799,9 +769,7 @@ export function scrollToTop() {
 						{projectPath}
 						{streamingAnimationMode}
 					/>
-				{:else if shouldRenderDesktopTool(entry)}
-					<ToolCallRouter toolCall={getToolCallMessage(entry)} {turnState} {projectPath} />
-				{:else}
+					{:else}
 					<AgentPanelConversationEntry entry={sharedEntry} iconBasePath="/svgs/icons" />
 				{/if}
 			</MessageWrapper>

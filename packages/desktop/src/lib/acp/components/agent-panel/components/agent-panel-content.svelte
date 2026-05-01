@@ -193,7 +193,6 @@ export function scrollToTop() {
 				<VirtualizedEntryList
 					bind:this={virtualizedListRef}
 					{panelId}
-					entries={sessionEntries}
 					{sceneEntries}
 					{sessionId}
 					{turnState}

@@ -123,10 +123,6 @@ vi.mock("../virtualized-entry-list.svelte", async () => ({
 	default: (await import("./fixtures/virtualized-entry-list-stub.svelte")).default,
 }));
 
-vi.mock("../../tool-calls/index.js", () => ({
-	ToolCallRouter: () => null,
-}));
-
 import AgentPanelContent from "../agent-panel-content.svelte";
 
 function createUserEntry(id: string, text: string): SessionEntry {
