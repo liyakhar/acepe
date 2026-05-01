@@ -1,3 +1,7 @@
+import type {
+	AgentAssistantEntry,
+	AgentPanelSceneEntryModel,
+} from "@acepe/ui/agent-panel";
 import type { SessionEntry } from "../../../application/dto/session.js";
 import type { AssistantMessage } from "../../../types/assistant-message.js";
 
@@ -130,6 +134,117 @@ export function buildVirtualizedDisplayEntries(
 	}
 
 	return merged;
+}
+
+// ===== SCENE-NATIVE MERGING =====
+
+function createMergedAssistantDisplayEntryFromScene(
+	entry: AgentAssistantEntry
+): MergedAssistantDisplayEntry {
+	return {
+		type: "assistant_merged",
+		key: entry.id,
+		memberIds: [entry.id],
+		message: {
+			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
+		},
+		timestamp: undefined,
+		latestTimestamp: undefined,
+		isStreaming: entry.isStreaming,
+	};
+}
+
+function mergeSceneAssistantEntry(
+	previous: MergedAssistantDisplayEntry,
+	entry: AgentAssistantEntry
+): MergedAssistantDisplayEntry {
+	return {
+		type: "assistant_merged",
+		key: previous.key,
+		memberIds: previous.memberIds.concat(entry.id),
+		message: mergeAssistantMessages(previous.message, {
+			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
+		}),
+		timestamp: previous.timestamp,
+		latestTimestamp: previous.latestTimestamp,
+		isStreaming: previous.isStreaming || entry.isStreaming,
+	};
+}
+
+/**
+ * Builds virtualized display entries from scene-model entries.
+ *
+ * Produces the same `VirtualizedDisplayEntry[]` shape as `buildVirtualizedDisplayEntries`,
+ * so `VList` keying and the streaming-indicator state machine are unchanged.
+ * Consecutive assistant entries are merged into a single `MergedAssistantDisplayEntry`.
+ * User and tool entries pass through as synthetic `SessionEntry`-compatible objects
+ * (content sourced from scene fields; the actual render is either the legacy desktop
+ * `UserMessage`/`AssistantMessage` component or `AgentPanelConversationEntry` for tools).
+ */
+export function buildVirtualizedDisplayEntriesFromScene(
+	sceneEntries: readonly AgentPanelSceneEntryModel[]
+): VirtualizedDisplayEntry[] {
+	const merged: VirtualizedDisplayEntry[] = [];
+
+	for (const entry of sceneEntries) {
+		if (entry.type === "assistant") {
+			const previous = merged.at(-1);
+			if (previous !== undefined && isMergedAssistantDisplayEntry(previous)) {
+				merged[merged.length - 1] = mergeSceneAssistantEntry(previous, entry);
+				continue;
+			}
+			merged.push(createMergedAssistantDisplayEntryFromScene(entry));
+			continue;
+		}
+
+		if (entry.type === "user") {
+			const syntheticUser = {
+				id: entry.id,
+				type: "user" as const,
+				message: {
+					content: { type: "text" as const, text: entry.text },
+					chunks: [],
+				},
+			} satisfies SessionEntry;
+			merged.push(syntheticUser);
+			continue;
+		}
+
+		if (entry.type === "tool_call") {
+			// Synthetic stub — content never accessed in the scene render path because
+			// tool entries are always found in the scene index and rendered via
+			// AgentPanelConversationEntry, not getToolCallMessage.
+			const syntheticTool = {
+				id: entry.id,
+				type: "tool_call" as const,
+				message: {
+					id: entry.id,
+					name: entry.title,
+					arguments: { kind: "execute" as const },
+					status: "pending" as const,
+					awaitingPlanApproval: false,
+				},
+			} satisfies SessionEntry;
+			merged.push(syntheticTool);
+			continue;
+		}
+
+		if (entry.type === "thinking") {
+			merged.push(THINKING_DISPLAY_ENTRY);
+		}
+	}
+
+	return merged;
+}
+
+/**
+ * Returns the index of the last assistant entry in a scene entries array, or -1 if none.
+ * Scene-native equivalent of the legacy `findLastAssistantIndex(SessionEntry[])` helper.
+ */
+export function findLastAssistantSceneIndex(
+	entries: readonly AgentPanelSceneEntryModel[]
+): number {
+	return entries.findLastIndex((e) => e.type === "assistant");
 }
 
 export function getVirtualizedDisplayEntryKey(entry: VirtualizedDisplayEntry): string {

@@ -26,7 +26,8 @@ import {
 	ThreadFollowController,
 } from "../logic/thread-follow-controller.svelte.js";
 import {
-	buildVirtualizedDisplayEntries,
+	buildVirtualizedDisplayEntriesFromScene,
+	findLastAssistantSceneIndex,
 	getLatestRevealTargetKey,
 	getVirtualizedDisplayEntryKey,
 	getVirtualizedDisplayEntryTimestampMs,
@@ -232,10 +233,6 @@ $effect(() => {
 });
 
 // ===== HELPERS =====
-function findLastAssistantIndex(sessionEntries: readonly SessionEntry[]): number {
-	return sessionEntries.findLastIndex((e) => e.type === "assistant");
-}
-
 function getKey(entry: VirtualizedDisplayEntry | undefined, index?: number): string {
 	if (!entry) {
 		reportMissingVirtualizedEntry(index);
@@ -376,29 +373,34 @@ function reportMissingVirtualizedEntry(index: number | undefined): void {
 }
 
 const activeRootToolCallId = $derived.by(() => {
-	if (turnState !== "streaming" || entries.length === 0) {
+	if (turnState !== "streaming") {
 		return null;
 	}
 
-	const lastEntry = entries[entries.length - 1];
+	const sceneArr = sceneEntries ?? [];
+	if (sceneArr.length === 0) {
+		return null;
+	}
+
+	const lastEntry = sceneArr[sceneArr.length - 1];
 	if (!lastEntry || lastEntry.type !== "tool_call") {
 		return null;
 	}
 
-	const toolCall = lastEntry.message;
-	if (toolCall.status === "completed" || toolCall.status === "failed") {
+	// Use AgentToolEntry.status — "done"/"error"/"cancelled" mean the tool call is finished.
+	if (
+		lastEntry.status === "done" ||
+		lastEntry.status === "error" ||
+		lastEntry.status === "cancelled"
+	) {
 		return null;
 	}
 
-	if (toolCall.result !== null && toolCall.result !== undefined) {
-		return null;
-	}
-
-	return toolCall.id;
+	return lastEntry.id;
 });
 
 // ===== DISPLAY ENTRIES =====
-const mergedEntries = $derived(buildVirtualizedDisplayEntries(entries));
+const mergedEntries = $derived(buildVirtualizedDisplayEntriesFromScene(sceneEntries ?? []));
 const thinkingIndicatorStartedAtMs = $derived.by(() => {
 	if (!isWaitingForResponse) {
 		return null;
@@ -415,7 +417,7 @@ const thinkingIndicatorStartedAtMs = $derived.by(() => {
 		}
 	}
 
-	return entries.at(-1)?.timestamp?.getTime() ?? null;
+	return null;
 });
 // Avoid spread-based allocation on every streaming update — reuse the merged
 // reference directly when no thinking indicator is needed. When waiting, pre-allocate
@@ -710,24 +712,27 @@ function wheelAction(node: HTMLElement): { destroy: () => void } {
 // This ensures the streaming indicator shows immediately on session restore / tab switch.
 let lastAssistantId = $state<string | null>(
 	untrack(() => {
-		const idx = findLastAssistantIndex(entries);
-		return idx >= 0 ? (entries[idx]?.id ?? null) : null;
+		const sceneArr = sceneEntries ?? [];
+		const idx = findLastAssistantSceneIndex(sceneArr);
+		return idx >= 0 ? (sceneArr[idx]?.id ?? null) : null;
 	})
 );
-let lastAssistantProcessedLength = untrack(() => entries.length);
+let lastAssistantProcessedLength = untrack(() => (sceneEntries ?? []).length);
 $effect(() => {
-	const count = entries.length;
+	const sceneArr = sceneEntries ?? [];
+	const count = sceneArr.length;
 	if (count === lastAssistantProcessedLength) return;
 	if (count > lastAssistantProcessedLength) {
 		for (let i = count - 1; i >= lastAssistantProcessedLength; i--) {
-			if (entries[i].type === "assistant") {
-				lastAssistantId = entries[i].id;
+			const e = sceneArr[i];
+			if (e && e.type === "assistant") {
+				lastAssistantId = e.id;
 				break;
 			}
 		}
 	} else {
-		const idx = findLastAssistantIndex(entries);
-		lastAssistantId = idx >= 0 ? (entries[idx]?.id ?? null) : null;
+		const idx = findLastAssistantSceneIndex(sceneArr);
+		lastAssistantId = idx >= 0 ? (sceneArr[idx]?.id ?? null) : null;
 	}
 	lastAssistantProcessedLength = count;
 });

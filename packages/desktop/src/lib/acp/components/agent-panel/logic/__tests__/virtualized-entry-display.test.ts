@@ -1,10 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
+import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import type { SessionEntry } from "../../../../application/dto/session.js";
 import { createLongSessionFixture } from "../../../../testing/long-session-fixture.js";
 
 import {
 	buildVirtualizedDisplayEntries,
+	buildVirtualizedDisplayEntriesFromScene,
+	findLastAssistantSceneIndex,
 	getLatestRevealTargetKey,
 	getVirtualizedDisplayEntryKey,
 	isMergedAssistantDisplayEntry,
@@ -242,5 +245,110 @@ describe("virtualized-entry-display", () => {
 
 		expect(duration).toBe(8_000);
 		expect(numericReads).toBeLessThanOrEqual(2);
+	});
+});
+
+// ===== SCENE-NATIVE PATH TESTS =====
+
+describe("buildVirtualizedDisplayEntriesFromScene", () => {
+	it("returns empty array for empty scene", () => {
+		expect(buildVirtualizedDisplayEntriesFromScene([])).toEqual([]);
+	});
+
+	it("maps a single optimistic user entry to a user SessionEntry", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{
+				type: "user",
+				id: "u1",
+				text: "hello world",
+				isOptimistic: true,
+			},
+		];
+		const result = buildVirtualizedDisplayEntriesFromScene(scene);
+
+		expect(result).toHaveLength(1);
+		const entry = result[0]!;
+		expect(entry.type).toBe("user");
+		if (entry.type === "user") {
+			expect(entry.id).toBe("u1");
+			expect(entry.message.content).toEqual({ type: "text", text: "hello world" });
+		}
+	});
+
+	it("maps a mixed sequence of user/assistant/tool entries correctly", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{ type: "user", id: "u1", text: "prompt", isOptimistic: false },
+			{ type: "assistant", id: "a1", markdown: "# Response", isStreaming: false },
+			{
+				type: "tool_call",
+				id: "tc1",
+				title: "bash",
+				status: "done",
+			},
+		];
+
+		const result = buildVirtualizedDisplayEntriesFromScene(scene);
+
+		expect(result).toHaveLength(3);
+
+		const [user, assistant, tool] = result;
+		expect(user!.type).toBe("user");
+		expect(assistant!.type).toBe("assistant_merged");
+		expect(tool!.type).toBe("tool_call");
+
+		if (assistant!.type === "assistant_merged") {
+			expect(assistant.key).toBe("a1");
+			expect(assistant.memberIds).toEqual(["a1"]);
+			expect(assistant.isStreaming).toBe(false);
+		}
+		if (tool!.type === "tool_call") {
+			expect((tool as { id: string }).id).toBe("tc1");
+		}
+	});
+
+	it("merges consecutive assistant entries into a single MergedAssistantDisplayEntry", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{ type: "assistant", id: "a1", markdown: "first", isStreaming: false },
+			{ type: "assistant", id: "a2", markdown: "second", isStreaming: true },
+		];
+
+		const result = buildVirtualizedDisplayEntriesFromScene(scene);
+
+		expect(result).toHaveLength(1);
+		const entry = result[0]!;
+		expect(entry.type).toBe("assistant_merged");
+		if (entry.type === "assistant_merged") {
+			expect(entry.key).toBe("a1");
+			expect(entry.memberIds).toEqual(["a1", "a2"]);
+			expect(entry.isStreaming).toBe(true);
+			expect(entry.message.chunks).toHaveLength(2);
+		}
+	});
+});
+
+describe("findLastAssistantSceneIndex", () => {
+	it("returns -1 for empty array", () => {
+		expect(findLastAssistantSceneIndex([])).toBe(-1);
+	});
+
+	it("returns the index of the last assistant entry", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{ type: "user", id: "u1", text: "hi", isOptimistic: false },
+			{ type: "assistant", id: "a1", markdown: "...", isStreaming: false },
+			{
+				type: "tool_call",
+				id: "tc1",
+				title: "bash",
+				status: "done",
+			},
+		];
+		expect(findLastAssistantSceneIndex(scene)).toBe(1);
+	});
+
+	it("returns -1 when there are no assistant entries", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{ type: "user", id: "u1", text: "hi", isOptimistic: false },
+		];
+		expect(findLastAssistantSceneIndex(scene)).toBe(-1);
 	});
 });
