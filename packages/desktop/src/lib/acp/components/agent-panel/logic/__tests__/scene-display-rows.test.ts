@@ -75,4 +75,23 @@ describe("scene-display-rows", () => {
 			3_000
 		);
 	});
+
+	it("preserves rich assistant thought chunks for completed scene durations", () => {
+		const startedAtMs = Date.parse("2026-05-01T00:00:00.000Z");
+		const nextTimestampMs = startedAtMs + 5_000;
+		const rows = buildSceneDisplayRows([
+			{
+				id: "assistant-1",
+				type: "assistant",
+				markdown: "Thinking result",
+				timestampMs: startedAtMs,
+				message: {
+					chunks: [{ type: "thought", block: { type: "text", text: "Checking" } }],
+				},
+			},
+			{ id: "user-2", type: "user", text: "Next", timestampMs: nextTimestampMs },
+		]);
+
+		expect(resolveSceneDisplayRowThinkingDurationMs(rows, 0, startedAtMs + 30_000)).toBe(5_000);
+	});
 });

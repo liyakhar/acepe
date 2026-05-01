@@ -23,6 +23,16 @@ describe("thinking duration", () => {
 		).toBe(2_000);
 	});
 
+	it("prefers active start timestamp over materialized duration", () => {
+		expect(
+			resolveThinkingDurationMs({
+				startedAtMs: 1_000,
+				durationMs: 99_000,
+				nowMs: 4_500,
+			})
+		).toBe(3_500);
+	});
+
 	it("only runs a live timer for active rows with a start timestamp", () => {
 		expect(shouldRunThinkingTimer(1_000)).toBe(true);
 		expect(shouldRunThinkingTimer(null)).toBe(false);

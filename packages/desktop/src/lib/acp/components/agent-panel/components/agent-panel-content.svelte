@@ -56,13 +56,6 @@ const runtimeState = $derived(
 			? (sessionStore?.getSessionRuntimeState(sessionId) ?? null)
 			: null
 );
-const hotState = $derived(
-	turnStateProp !== undefined
-		? null
-		: sessionId
-			? (sessionStore?.getHotState(sessionId) ?? null)
-			: null
-);
 const canonicalProjection = $derived(
 	turnStateProp !== undefined || !sessionId
 		? null
@@ -108,13 +101,11 @@ const turnState = $derived<TurnState>(
 	turnStateProp ??
 		(canonicalProjection != null
 			? mapCanonicalTurnStateToHotTurnState(canonicalProjection.turnState)
-			: (hotState?.turnState ?? "idle"))
+			: "idle")
 );
 const isStreaming = $derived(turnState === "streaming");
 const isWaitingForResponse = $derived(
-	isWaitingProp ??
-		(sessionWorkProjection?.canonicalActivity === "awaiting_model" ||
-			hotState?.activity?.kind === "awaiting_model")
+	isWaitingProp ?? sessionWorkProjection?.canonicalActivity === "awaiting_model"
 );
 
 // Sync streaming state to bindable prop for parent component

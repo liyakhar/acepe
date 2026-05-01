@@ -2,7 +2,9 @@ import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
+import type { SessionGraphActivityKind } from "../../../../../services/acp-types.js";
 import type { PanelViewState } from "../../../../logic/panel-visibility.js";
+import type { CanonicalSessionProjection } from "../../../../store/canonical-session-projection.js";
 
 const storageMock: Storage = {
 	length: 0,
@@ -55,6 +57,7 @@ const sessionStoreState = vi.hoisted(() => ({
 			blockingInteractionId: string | null;
 		},
 	},
+	canonicalProjection: null as CanonicalSessionProjection | null,
 }));
 
 vi.mock(
@@ -77,7 +80,7 @@ vi.mock("../../../../store/session-store.svelte.js", () => ({
 	getSessionStore: () => ({
 		getSessionRuntimeState: () => sessionStoreState.runtimeState,
 		getHotState: () => sessionStoreState.hotState,
-		getCanonicalSessionProjection: () => null,
+		getCanonicalSessionProjection: () => sessionStoreState.canonicalProjection,
 		getSessionCurrentModeId: () => null,
 		getOperationStore: () => ({
 			getCurrentStreamingToolCall: () => null,
@@ -125,6 +128,49 @@ vi.mock("../scene-content-viewport.svelte", async () => ({
 }));
 
 import AgentPanelContent from "../agent-panel-content.svelte";
+
+function createCanonicalProjection(activityKind: SessionGraphActivityKind): CanonicalSessionProjection {
+	return {
+		lifecycle: {
+			status: "ready",
+			errorMessage: null,
+			detachedReason: null,
+			failureReason: null,
+			actionability: {
+				canSend: true,
+				canResume: false,
+				canRetry: false,
+				canArchive: true,
+				canConfigure: true,
+				recommendedAction: "send",
+				recoveryPhase: "none",
+				compactStatus: "ready",
+			},
+		},
+		activity: {
+			kind: activityKind,
+			activeOperationCount: activityKind === "running_operation" ? 2 : 0,
+			activeSubagentCount: activityKind === "running_operation" ? 1 : 0,
+			dominantOperationId: activityKind === "running_operation" ? "op-2" : null,
+			blockingInteractionId: null,
+		},
+		turnState: activityKind === "idle" ? "Idle" : "Running",
+		activeTurnFailure: null,
+		lastTerminalTurnId: null,
+		capabilities: {
+			models: null,
+			modes: null,
+			availableCommands: [],
+			configOptions: [],
+			autonomousEnabled: false,
+		},
+		revision: {
+			graphRevision: 1,
+			transcriptRevision: 1,
+			lastEventSeq: 1,
+		},
+	};
+}
 
 function createUserSceneEntry(id: string, text: string): AgentPanelSceneEntryModel {
 	return { id, type: "user", text };
@@ -174,6 +220,7 @@ describe("AgentPanelContent", () => {
 			activeTurnFailure: null,
 			activity: null,
 		};
+		sessionStoreState.canonicalProjection = null;
 	});
 
 	it("renders the virtualized conversation list for active sessions", () => {
@@ -206,20 +253,7 @@ describe("AgentPanelContent", () => {
 			showConversation: true,
 			showReadyPlaceholder: false,
 		};
-		sessionStoreState.hotState = {
-			turnState: "idle",
-			status: "ready",
-			currentMode: null,
-			connectionError: null,
-			activeTurnFailure: null,
-			activity: {
-				kind: "awaiting_model",
-				activeOperationCount: 0,
-				activeSubagentCount: 0,
-				dominantOperationId: null,
-				blockingInteractionId: null,
-			},
-		};
+		sessionStoreState.canonicalProjection = createCanonicalProjection("awaiting_model");
 
 		const view = renderContent({ kind: "conversation", errorDetails: null });
 
@@ -241,20 +275,7 @@ describe("AgentPanelContent", () => {
 			showConversation: true,
 			showReadyPlaceholder: false,
 		};
-		sessionStoreState.hotState = {
-			turnState: "idle",
-			status: "ready",
-			currentMode: null,
-			connectionError: null,
-			activeTurnFailure: null,
-			activity: {
-				kind: "running_operation",
-				activeOperationCount: 2,
-				activeSubagentCount: 1,
-				dominantOperationId: "op-2",
-				blockingInteractionId: null,
-			},
-		};
+		sessionStoreState.canonicalProjection = createCanonicalProjection("running_operation");
 
 		const view = renderContent({ kind: "conversation", errorDetails: null });
 

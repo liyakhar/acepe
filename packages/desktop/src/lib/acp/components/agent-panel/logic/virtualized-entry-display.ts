@@ -155,12 +155,26 @@ function createMergedAssistantDisplayEntryFromScene(
 		type: "assistant_merged",
 		key: entry.id,
 		memberIds: [entry.id],
-		message: {
-			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
-		},
+		message: createAssistantMessageFromSceneEntry(entry),
 		timestamp: ts,
 		latestTimestamp: ts,
 		isStreaming: entry.isStreaming,
+	};
+}
+
+function createAssistantMessageFromSceneEntry(entry: AgentAssistantEntry): AssistantMessage {
+	if (entry.message !== undefined) {
+		return {
+			chunks: entry.message.chunks,
+			model: entry.message.model,
+			displayModel: entry.message.displayModel,
+			receivedAt: entry.message.receivedAt,
+			thinkingDurationMs: entry.message.thinkingDurationMs,
+		};
+	}
+
+	return {
+		chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
 	};
 }
 
@@ -172,9 +186,7 @@ function mergeSceneAssistantEntry(
 		type: "assistant_merged",
 		key: previous.key,
 		memberIds: previous.memberIds.concat(entry.id),
-		message: mergeAssistantMessages(previous.message, {
-			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
-		}),
+		message: mergeAssistantMessages(previous.message, createAssistantMessageFromSceneEntry(entry)),
 		timestamp: previous.timestamp,
 		latestTimestamp:
 			entry.timestampMs !== undefined ? new Date(entry.timestampMs) : previous.latestTimestamp,

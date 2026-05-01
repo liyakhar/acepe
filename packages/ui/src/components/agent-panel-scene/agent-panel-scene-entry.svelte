@@ -20,6 +20,7 @@
 	import AgentToolTodo from "../agent-panel/agent-tool-todo.svelte";
 	import AgentToolWebSearch from "../agent-panel/agent-tool-web-search.svelte";
 	import AgentUserMessage from "../agent-panel/agent-user-message.svelte";
+	import AgentMissingSceneEntry from "../agent-panel/agent-missing-scene-entry.svelte";
 	import { getPlanningPlaceholderLabel } from "../agent-panel/planning-label.js";
 	import type { EditToolTheme } from "../agent-panel/agent-panel-conversation-entry.svelte";
 
@@ -67,6 +68,16 @@
 					id: child.id,
 					type: "thinking",
 					durationMs: child.durationMs
+				};
+			}
+
+			if (child.type === "missing") {
+				return {
+					id: child.id,
+					type: "missing",
+					title: child.title,
+					message: child.message,
+					diagnosticLabel: child.diagnosticLabel
 				};
 			}
 
@@ -146,6 +157,12 @@
 	/>
 {:else if entry.type === "thinking"}
 	<AgentToolRow title={getPlanningPlaceholderLabel(entry.durationMs)} status="running" padded={false} />
+{:else if entry.type === "missing"}
+	<AgentMissingSceneEntry
+		title={entry.title}
+		message={entry.message}
+		diagnosticLabel={entry.diagnosticLabel}
+	/>
 {:else if isToolCall(entry) && entry.todos && entry.todos.length > 0}
 	<AgentToolTodo
 		todos={entry.todos.map((todo) => ({

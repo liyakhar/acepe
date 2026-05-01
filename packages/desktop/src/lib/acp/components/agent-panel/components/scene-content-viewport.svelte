@@ -102,7 +102,6 @@ const editToolTheme = $derived({
 	onBeforeRender: registerCursorThemeForPierreDiffs,
 	unsafeCSS: pierreDiffsUnsafeCSS,
 });
-let thinkingNowMs = $state(Date.now());
 
 // ===== ICON CONTEXT (for nested components) =====
 setIconConfig({ basePath: "/svgs/icons" });
@@ -142,7 +141,7 @@ let wrapperRef: HTMLDivElement | null = $state(null);
 let fallbackViewportRef: HTMLDivElement | null = $state(null);
 let viewportNudgeOffsetPx = $state(0);
 let useNativeFallback = $state(false);
-let nativeFallbackReason = $state<NativeFallbackReason | null>(null);
+let nativeFallbackReason = $state<ViewportFallbackReason | null>(null);
 let nativeFallbackRetryCount = $state(0);
 const fallbackRowRefs = new Map<string, HTMLElement>();
 
@@ -350,9 +349,15 @@ function isStreamingMergedAssistantEntry(
 	return (
 		isStreaming &&
 		entry?.type === "assistant_merged" &&
-		entry.memberIds.includes(lastAssistantId ?? "") &&
+		entry.memberIds.includes(getLatestAssistantSceneId() ?? "") &&
 		index === displayEntries.length - 1
 	);
+}
+
+function getLatestAssistantSceneId(): string | null {
+	const sceneArr = sceneEntries ?? [];
+	const index = findLastAssistantSceneIndex(sceneArr);
+	return index >= 0 ? (sceneArr[index]?.id ?? null) : null;
 }
 
 let warnedMissingEntryKeys = new Set<string>();
@@ -422,24 +427,6 @@ function reportMissingSceneEntry(
 
 // ===== DISPLAY ENTRIES =====
 const mergedEntries = $derived(buildSceneDisplayRows(sceneEntries ?? []));
-const hasMergedAssistantDisplayRows = $derived(
-	mergedEntries.some((entry) => entry.type === "assistant_merged")
-);
-
-$effect(() => {
-	if (!isWaitingForResponse || !hasMergedAssistantDisplayRows) {
-		return;
-	}
-
-	thinkingNowMs = Date.now();
-	const intervalId = window.setInterval(() => {
-		thinkingNowMs = Date.now();
-	}, 1000);
-
-	return () => {
-		window.clearInterval(intervalId);
-	};
-});
 
 const thinkingIndicatorStartedAtMs = $derived.by(() => {
 	if (!isWaitingForResponse) {
@@ -531,6 +518,7 @@ $effect(() => {
 
 	lastRenderedSessionId = sessionId;
 	warnedMissingEntryKeys.clear();
+	warnedMissingSceneEntryKeys.clear();
 	autoScroll.reset();
 	followController.reset();
 	useNativeFallback = false;
@@ -787,36 +775,6 @@ function wheelAction(node: HTMLElement): { destroy: () => void } {
 	};
 }
 
-// ===== LAST ASSISTANT TRACKING (for streaming indicator) =====
-// Initialize with untrack to avoid creating reactive dependencies at init time.
-// This ensures the streaming indicator shows immediately on session restore / tab switch.
-let lastAssistantId = $state<string | null>(
-	untrack(() => {
-		const sceneArr = sceneEntries ?? [];
-		const idx = findLastAssistantSceneIndex(sceneArr);
-		return idx >= 0 ? (sceneArr[idx]?.id ?? null) : null;
-	})
-);
-let lastAssistantProcessedLength = untrack(() => (sceneEntries ?? []).length);
-$effect(() => {
-	const sceneArr = sceneEntries ?? [];
-	const count = sceneArr.length;
-	if (count === lastAssistantProcessedLength) return;
-	if (count > lastAssistantProcessedLength) {
-		for (let i = count - 1; i >= lastAssistantProcessedLength; i--) {
-			const e = sceneArr[i];
-			if (e && e.type === "assistant") {
-				lastAssistantId = e.id;
-				break;
-			}
-		}
-	} else {
-		const idx = findLastAssistantSceneIndex(sceneArr);
-		lastAssistantId = idx >= 0 ? (sceneArr[idx]?.id ?? null) : null;
-	}
-	lastAssistantProcessedLength = count;
-});
-
 // ===== PUBLIC API =====
 export function scrollToBottom(options?: { force?: boolean }) {
 	followController.requestLatestReveal({ force: options?.force });
@@ -862,8 +820,7 @@ export function scrollToTop() {
 		{#if entry}
 			{@const mergedThoughtDurationMs = resolveSceneDisplayRowThinkingDurationMs(
 				displayEntries,
-				index,
-				thinkingNowMs
+				index
 			)}
 			{@const sharedEntry = getSharedEntry(entry, mergedThoughtDurationMs, index)}
 			<MessageWrapper

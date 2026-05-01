@@ -343,6 +343,7 @@ describe("SceneContentViewport auto-scroll", () => {
 				createUserSceneEntry("user-1", "hello"),
 				createAssistantSceneEntry("assistant-1", "world"),
 				createToolCallSceneEntry("tool-1"),
+				{ id: "missing-1", type: "missing", diagnosticLabel: "missing-1" },
 			],
 			isWaitingForResponse: true,
 		});
@@ -354,6 +355,7 @@ describe("SceneContentViewport auto-scroll", () => {
 			"user",
 			"assistant",
 			"tool_call",
+			"missing",
 			"thinking",
 		]);
 		expect(conversationEntryHistory[1]).toMatchObject({
@@ -769,7 +771,51 @@ describe("SceneContentViewport auto-scroll", () => {
 		});
 		await tick();
 
-		// The test passes if no error is thrown — last assistant tracking updated correctly
+		expect(conversationEntryHistory.at(-1)).toMatchObject({
+			id: "assistant-1",
+			type: "assistant",
+			isStreaming: true,
+		});
+	});
+
+	it("resets assistant streaming tracking when switching to a same-length session", async () => {
+		const initialEntries = [
+			createUserSceneEntry("old-user-1", "old one"),
+			createUserSceneEntry("old-user-2", "old two"),
+			createAssistantSceneEntry("old-assistant", "old response"),
+		];
+		const nextEntries = [
+			createUserSceneEntry("new-user-1", "new one"),
+			createUserSceneEntry("new-user-2", "new two"),
+			createAssistantSceneEntry("new-assistant", "new response"),
+		];
+		const view = renderList({
+			sceneEntries: initialEntries,
+			turnState: "streaming",
+			sessionId: "session-1",
+		});
+		await flushAnimationFrames();
+		await tick();
+		await tick();
+		conversationEntryHistory.length = 0;
+
+		await view.rerender({
+			panelId: "panel-1",
+			sceneEntries: nextEntries,
+			turnState: "streaming",
+			isWaitingForResponse: false,
+			projectPath: undefined,
+			sessionId: "session-2",
+			isFullscreen: false,
+			onNearBottomChange: undefined,
+		});
+		await tick();
+
+		expect(conversationEntryHistory.find((entry) => entry.id === "new-assistant")).toMatchObject({
+			id: "new-assistant",
+			type: "assistant",
+			isStreaming: true,
+		});
 	});
 
 	it("provides scrollToBottom export", async () => {

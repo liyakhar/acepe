@@ -130,6 +130,7 @@ export { default as TodoNumberIcon } from "./todo-number-icon.svelte";
 export { default as ToolTally } from "./tool-tally.svelte";
 export type {
 	AgentAssistantEntry,
+	AssistantRenderBlockContext,
 	AgentPanelActionabilityModel,
 	AgentPanelActionCallbacks,
 	AgentPanelActionDescriptor,

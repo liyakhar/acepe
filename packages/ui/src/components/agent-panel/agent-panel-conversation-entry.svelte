@@ -1,8 +1,10 @@
 <script lang="ts">
 	import type { WorkerPoolManager } from "@pierre/diffs/worker";
 	import type { Snippet } from "svelte";
-	import type { AgentPanelConversationEntry } from "./types.js";
-	import type { ChunkGroup } from "../../lib/assistant-message/assistant-chunk-grouper.js";
+	import type {
+		AgentPanelConversationEntry,
+		AssistantRenderBlockContext,
+	} from "./types.js";
 	import type { StreamingAnimationMode } from "../../lib/assistant-message/types.js";
 
 	import AgentAssistantMessage from "./agent-assistant-message.svelte";
@@ -30,15 +32,6 @@
 		workerPool?: WorkerPoolManager;
 		onBeforeRender?: () => Promise<void>;
 		unsafeCSS?: string;
-	}
-
-	export interface AssistantRenderBlockContext {
-		group: ChunkGroup;
-		isStreaming?: boolean;
-		revealKey?: string;
-		projectPath?: string;
-		streamingAnimationMode?: StreamingAnimationMode;
-		onRevealActivityChange?: (active: boolean) => void;
 	}
 
 	interface Props {

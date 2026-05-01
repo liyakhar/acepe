@@ -7,7 +7,11 @@ export function resolveThinkingDurationMs(input: {
 		return Math.max(0, input.nowMs - input.startedAtMs);
 	}
 
-	return input.durationMs ?? null;
+	if (input.durationMs !== null && input.durationMs !== undefined) {
+		return input.durationMs;
+	}
+
+	return null;
 }
 
 export function shouldRunThinkingTimer(startedAtMs?: number | null): boolean {

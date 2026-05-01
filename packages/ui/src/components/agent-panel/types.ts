@@ -3,6 +3,8 @@
  * No Tauri, store, or desktop dependencies.
  */
 import type { AssistantMessage } from "../../lib/assistant-message/types.js";
+import type { ChunkGroup } from "../../lib/assistant-message/assistant-chunk-grouper.js";
+import type { StreamingAnimationMode } from "../../lib/assistant-message/types.js";
 
 export type AgentSessionStatus =
 	| "empty"
@@ -64,6 +66,15 @@ export interface AgentAssistantEntry {
 	isStreaming?: boolean;
 	revealMessageKey?: string;
 	timestampMs?: number;
+}
+
+export interface AssistantRenderBlockContext {
+	group: ChunkGroup;
+	isStreaming?: boolean;
+	revealKey?: string;
+	projectPath?: string;
+	streamingAnimationMode?: StreamingAnimationMode;
+	onRevealActivityChange?: (active: boolean) => void;
 }
 
 /** One file/replace hunk in an edit tool — used by {@link AgentToolEdit}. */
