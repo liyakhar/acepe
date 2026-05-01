@@ -10,6 +10,7 @@ import {
 	findLastAssistantSceneIndex,
 	getLatestRevealTargetKey,
 	getVirtualizedDisplayEntryKey,
+	getVirtualizedDisplayEntryTimestampMs,
 	isMergedAssistantDisplayEntry,
 	resolveDisplayEntryThinkingDurationMs,
 	shouldObserveRevealResize,
@@ -323,6 +324,41 @@ describe("buildVirtualizedDisplayEntriesFromScene", () => {
 			expect(entry.isStreaming).toBe(true);
 			expect(entry.message.chunks).toHaveLength(2);
 		}
+	});
+
+	it("preserves timestampMs from scene assistant entry as a Date timestamp", () => {
+		const knownMs = Date.parse("2026-06-01T00:00:00.000Z");
+		const scene: AgentPanelSceneEntryModel[] = [
+			{ type: "assistant", id: "a1", markdown: "hello", isStreaming: false, timestampMs: knownMs },
+		];
+
+		const result = buildVirtualizedDisplayEntriesFromScene(scene);
+
+		expect(result).toHaveLength(1);
+		const entry = result[0]!;
+		expect(getVirtualizedDisplayEntryTimestampMs(entry)).toBe(knownMs);
+	});
+
+	it("resolveDisplayEntryThinkingDurationMs returns non-null durationMs when scene entries carry a timestamp", () => {
+		const startMs = Date.parse("2026-06-01T00:00:00.000Z");
+		const scene: AgentPanelSceneEntryModel[] = [
+			{
+				type: "assistant",
+				id: "a1",
+				markdown: "thinking result",
+				isStreaming: false,
+				timestampMs: startMs,
+			},
+		];
+		const display = buildVirtualizedDisplayEntriesFromScene(scene);
+		display.push({
+			type: "thinking",
+			id: "thinking-indicator",
+			startedAtMs: startMs,
+		});
+
+		const nowMs = startMs + 6_000;
+		expect(resolveDisplayEntryThinkingDurationMs(display, 1, nowMs)).toBe(6_000);
 	});
 });
 

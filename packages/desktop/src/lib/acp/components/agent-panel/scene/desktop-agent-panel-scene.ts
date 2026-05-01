@@ -1048,6 +1048,7 @@ export function mapSessionEntryToConversationEntry(
 			type: "user",
 			text: contentBlocksToText(entry.message.chunks),
 			isOptimistic: options?.isOptimistic === true ? true : undefined,
+			timestampMs: entry.timestamp?.getTime(),
 		};
 	}
 
@@ -1057,6 +1058,7 @@ export function mapSessionEntryToConversationEntry(
 			type: "assistant",
 			markdown: extractAssistantMarkdown(entry),
 			isStreaming: entry.isStreaming,
+			timestampMs: entry.timestamp?.getTime(),
 		};
 	}
 

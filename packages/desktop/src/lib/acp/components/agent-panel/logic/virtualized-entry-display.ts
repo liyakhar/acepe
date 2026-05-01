@@ -141,6 +141,7 @@ export function buildVirtualizedDisplayEntries(
 function createMergedAssistantDisplayEntryFromScene(
 	entry: AgentAssistantEntry
 ): MergedAssistantDisplayEntry {
+	const ts = entry.timestampMs !== undefined ? new Date(entry.timestampMs) : undefined;
 	return {
 		type: "assistant_merged",
 		key: entry.id,
@@ -148,8 +149,8 @@ function createMergedAssistantDisplayEntryFromScene(
 		message: {
 			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
 		},
-		timestamp: undefined,
-		latestTimestamp: undefined,
+		timestamp: ts,
+		latestTimestamp: ts,
 		isStreaming: entry.isStreaming,
 	};
 }
@@ -166,7 +167,8 @@ function mergeSceneAssistantEntry(
 			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
 		}),
 		timestamp: previous.timestamp,
-		latestTimestamp: previous.latestTimestamp,
+		latestTimestamp:
+			entry.timestampMs !== undefined ? new Date(entry.timestampMs) : previous.latestTimestamp,
 		isStreaming: previous.isStreaming || entry.isStreaming,
 	};
 }
@@ -201,6 +203,7 @@ export function buildVirtualizedDisplayEntriesFromScene(
 			const syntheticUser = {
 				id: entry.id,
 				type: "user" as const,
+				timestamp: entry.timestampMs !== undefined ? new Date(entry.timestampMs) : undefined,
 				message: {
 					content: { type: "text" as const, text: entry.text },
 					chunks: [],

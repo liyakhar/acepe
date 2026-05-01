@@ -52,6 +52,7 @@ export interface AgentUserEntry {
 	type: "user";
 	text: string;
 	isOptimistic?: boolean;
+	timestampMs?: number;
 }
 
 export interface AgentAssistantEntry {
@@ -59,6 +60,7 @@ export interface AgentAssistantEntry {
 	type: "assistant";
 	markdown: string;
 	isStreaming?: boolean;
+	timestampMs?: number;
 }
 
 /** One file/replace hunk in an edit tool — used by {@link AgentToolEdit}. */
