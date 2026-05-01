@@ -12,7 +12,9 @@ import type { SessionTurnState } from "../../../services/acp-types.js";
 import type { ToolCall } from "../../types/tool-call.js";
 import type { PermissionRequest } from "../../types/permission.js";
 import { Colors, COLOR_NAMES } from "../../utils/colors.js";
-import ToolCallEdit from "./tool-call-edit.svelte";
+import { AgentToolEdit } from "@acepe/ui/agent-panel";
+import { mapToolCallToSceneEntry } from "../agent-panel/scene/desktop-agent-panel-scene.js";
+import { mapCanonicalTurnStateToHotTurnState } from "../../store/canonical-turn-state-mapping.js";
 import { extractCompactPermissionDisplay } from "./permission-display.js";
 import {
 	isPermissionRepresentedByToolCall,
@@ -120,13 +122,18 @@ const showEditPreview = $derived(
 
 		{#snippet editPreview()}
 			{#if showEditPreview && currentToolCall}
-				<ToolCallEdit
-					toolCall={currentToolCall}
-					turnState={effectiveTurnState}
-					projectPath={projectPath ?? undefined}
-					pendingPermission={currentPermission}
-					defaultExpanded={false}
-				/>
+				{@const mappedTurnState = effectiveTurnState !== null ? mapCanonicalTurnStateToHotTurnState(effectiveTurnState) : undefined}
+				{@const sceneEntry = mapToolCallToSceneEntry(currentToolCall, mappedTurnState, false, null)}
+				{#if sceneEntry.type === "tool_call" && sceneEntry.editDiffs !== undefined}
+					<AgentToolEdit
+						diffs={sceneEntry.editDiffs}
+						filePath={sceneEntry.filePath}
+						status={sceneEntry.status}
+						awaitingApproval={true}
+						defaultExpanded={false}
+						iconBasePath="/svgs/icons"
+					/>
+				{/if}
 			{/if}
 		{/snippet}
 	</SharedAgentPanelPermissionBar>

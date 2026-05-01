@@ -4,7 +4,7 @@ plan_id: 003
 title: "refactor: Retire ToolCallRouter"
 slug: retire-toolcallrouter
 type: refactor
-status: active
+status: completed
 posture: deep
 ---
 
