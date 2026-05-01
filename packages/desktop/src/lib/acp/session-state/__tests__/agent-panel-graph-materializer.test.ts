@@ -912,5 +912,62 @@ describe("agent panel graph materializer", () => {
 			expect(scene.conversation.isStreaming).toBe(false);
 			expect(scene.panelId).toBe("panel-1");
 		});
+
+		it("empty graph (non-null, no entries) + optimistic → single-entry scene with isOptimistic: true", () => {
+			const graph = createGraph({ transcriptSnapshot: createTranscriptSnapshot([]) });
+			const pendingUserEntry = createOptimisticUserEntry("pending-1", "First message");
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: { pendingUserEntry },
+			});
+
+			expect(scene.conversation.entries).toHaveLength(1);
+			const entry = scene.conversation.entries[0] as AgentUserEntry;
+			expect(entry.id).toBe("pending-1");
+			expect(entry.type).toBe("user");
+			expect(entry.text).toBe("First message");
+			expect(entry.isOptimistic).toBe(true);
+		});
+
+		it("both canonical and optimistic entries appear when they have independent UUIDs", () => {
+			// Dedup contract: optimistic and canonical IDs are independent crypto.randomUUID() calls
+			// and therefore never collide. The materializer does NOT id-dedup — it trusts that
+			// clearPendingUserEntry() will be called no later than the canonical entry lands in the
+			// graph (asserted by the ordering invariant tests in send-path-ordering.vitest.ts).
+			// This test verifies the materializer's contract: when both IDs are present, both entries
+			// appear in the scene. The absence of duplicates in production is a responsibility of the
+			// send path's clearPendingUserEntry() call timing, not of id-matching logic here.
+			const canonicalEntryId = "canonical-uuid-aaaa-bbbb-cccc";
+			const optimisticEntryId = "optimistic-uuid-xxxx-yyyy-zzzz";
+
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry(canonicalEntryId, "user", "Canonical user message"),
+			]);
+			const graph = createGraph({ transcriptSnapshot });
+			const pendingUserEntry = createOptimisticUserEntry(optimisticEntryId, "Optimistic message");
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: { pendingUserEntry },
+			});
+
+			// Both entries are present — the materializer surfaces the race condition that
+			// clearPendingUserEntry() ordering is designed to prevent.
+			expect(scene.conversation.entries).toHaveLength(2);
+			const canonicalEntry = scene.conversation.entries[0] as AgentUserEntry;
+			expect(canonicalEntry.id).toBe(canonicalEntryId);
+			expect(canonicalEntry.type).toBe("user");
+			expect(canonicalEntry.isOptimistic).toBeUndefined();
+
+			const optimisticEntry = scene.conversation.entries[1] as AgentUserEntry;
+			expect(optimisticEntry.id).toBe(optimisticEntryId);
+			expect(optimisticEntry.type).toBe("user");
+			expect(optimisticEntry.isOptimistic).toBe(true);
+		});
 	});
 });
