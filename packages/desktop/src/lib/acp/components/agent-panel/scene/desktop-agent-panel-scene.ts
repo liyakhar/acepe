@@ -36,7 +36,7 @@ import { calculateDiffStats, getFileName } from "../../../utils/file-utils.js";
 import { stripAnsiCodes } from "../../../utils/ansi-utils.js";
 import { extractSkillCallInput } from "../../../utils/extract-skill-call-input.js";
 import { resolveToolCallEditDiffs } from "../../../utils/tool-call-edit/logic/resolve-tool-call-edit-diffs.js";
-import type { VirtualizedDisplayEntry } from "../logic/virtualized-entry-display.js";
+import type { SceneDisplayRow } from "../logic/scene-display-rows.js";
 
 export interface DesktopAgentPanelHeaderInput {
 	title: string;
@@ -1101,7 +1101,7 @@ export function mapSessionEntryToConversationEntry(
 }
 
 export function mapVirtualizedDisplayEntryToConversationEntry(
-	entry: VirtualizedDisplayEntry,
+	entry: SceneDisplayRow,
 	turnState: TurnState | undefined,
 	isStreamingAssistant: boolean,
 	activeToolCallId: string | null = null,

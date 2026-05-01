@@ -1,10 +1,10 @@
 import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 
-import type { VirtualizedDisplayEntry } from "./virtualized-entry-display.js";
-import { getVirtualizedDisplayEntryKey } from "./virtualized-entry-display.js";
+import type { SceneDisplayRow } from "./scene-display-rows.js";
+import { getSceneDisplayRowKey } from "./scene-display-rows.js";
 
 export function findGraphSceneEntryForDisplayEntry(
-	entry: VirtualizedDisplayEntry | undefined,
+	entry: SceneDisplayRow | undefined,
 	sceneEntriesById: ReadonlyMap<string, AgentPanelSceneEntryModel> | undefined
 ): AgentPanelSceneEntryModel | undefined {
 	if (
@@ -16,7 +16,7 @@ export function findGraphSceneEntryForDisplayEntry(
 		return undefined;
 	}
 
-	return sceneEntriesById.get(getVirtualizedDisplayEntryKey(entry));
+	return sceneEntriesById.get(getSceneDisplayRowKey(entry));
 }
 
 export function createGraphSceneEntryIndex(

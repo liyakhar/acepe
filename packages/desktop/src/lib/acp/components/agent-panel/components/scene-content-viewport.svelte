@@ -26,16 +26,22 @@ import {
 	ThreadFollowController,
 } from "../logic/thread-follow-controller.svelte.js";
 import {
-	buildVirtualizedDisplayEntriesFromScene,
 	findLastAssistantSceneIndex,
-	getLatestRevealTargetKey,
-	getVirtualizedDisplayEntryKey,
-	getVirtualizedDisplayEntryTimestampMs,
-	resolveDisplayEntryThinkingDurationMs,
-	shouldObserveRevealResize,
+	buildSceneDisplayRows,
+	getLatestSceneDisplayRevealTargetKey,
+	getSceneDisplayRowKey,
+	getSceneDisplayRowTimestampMs,
+	resolveSceneDisplayRowThinkingDurationMs,
+	shouldObserveSceneDisplayRowRevealResize,
 	THINKING_DISPLAY_ENTRY,
-	type VirtualizedDisplayEntry,
-} from "../logic/virtualized-entry-display.js";
+	type SceneDisplayRow,
+} from "../logic/scene-display-rows.js";
+import {
+	buildNativeFallbackWindow,
+	shouldRetryNativeFallback,
+	type IndexedViewportEntry,
+	type ViewportFallbackReason,
+} from "../logic/viewport-fallback-controller.svelte.js";
 import { useTheme } from "../../../../components/theme/context.svelte.js";
 import { getWorkerPool } from "../../../utils/worker-pool-singleton.js";
 import {
@@ -46,9 +52,7 @@ import {
 const MAX_VIEWPORT_RECOVERY_FRAMES = 8;
 const MAX_EMPTY_RENDER_FRAMES = 4;
 const NATIVE_FALLBACK_ENTRY_LIMIT = 80;
-type NativeFallbackReason = "zero_viewport" | "no_rendered_entries";
-
-type VirtualizedEntryListProps = {
+type SceneContentViewportProps = {
 	panelId: string;
 	sceneEntries?: readonly AgentPanelSceneEntryModel[];
 	turnState: TurnState;
@@ -66,10 +70,7 @@ type VirtualizedEntryListProps = {
 	onNearTopChange?: (isNearTop: boolean) => void;
 };
 
-type IndexedDisplayEntry = {
-	entry: VirtualizedDisplayEntry;
-	index: number;
-};
+type IndexedDisplayEntry = IndexedViewportEntry<SceneDisplayRow>;
 
 let {
 	panelId,
@@ -82,7 +83,7 @@ let {
 	modifiedFilesState = null,
 	onNearBottomChange,
 	onNearTopChange,
-}: VirtualizedEntryListProps = $props();
+}: SceneContentViewportProps = $props();
 
 // Derive isStreaming from turnState for scroll behavior
 const isStreaming = $derived(turnState === "streaming");
@@ -167,7 +168,7 @@ const followController = new ThreadFollowController({
 	isNearBottom: () => autoScroll.isNearBottom(),
 	revealListBottom: (force?: boolean) => autoScroll.revealLatest(force),
 	getLatestTargetKey: () => {
-		return getLatestRevealTargetKey(displayEntries);
+		return getLatestSceneDisplayRevealTargetKey(displayEntries);
 	},
 	getLatestUserTargetKey: () => {
 		for (let i = displayEntries.length - 1; i >= 0; i -= 1) {
@@ -227,17 +228,17 @@ $effect(() => {
 });
 
 // ===== HELPERS =====
-function getKey(entry: VirtualizedDisplayEntry | undefined, index?: number): string {
+function getKey(entry: SceneDisplayRow | undefined, index?: number): string {
 	if (!entry) {
 		reportMissingVirtualizedEntry(index);
 		return `missing-entry-${String(index ?? "unknown")}`;
 	}
 
-	return getVirtualizedDisplayEntryKey(entry);
+	return getSceneDisplayRowKey(entry);
 }
 
 function createMergedAssistantSceneEntry(
-	entry: VirtualizedDisplayEntry | undefined,
+	entry: SceneDisplayRow | undefined,
 	thinkingDurationMs: number | null,
 	index: number | undefined
 ): AgentPanelSceneEntryModel | undefined {
@@ -300,7 +301,7 @@ function assistantMessageToMarkdown(
 }
 
 function createThinkingSceneEntry(
-	entry: VirtualizedDisplayEntry | undefined,
+	entry: SceneDisplayRow | undefined,
 	thinkingDurationMs: number | null
 ): AgentPanelSceneEntryModel | undefined {
 	if (entry?.type !== "thinking") {
@@ -316,10 +317,10 @@ function createThinkingSceneEntry(
 }
 
 function createMissingSceneEntry(
-	entry: VirtualizedDisplayEntry | undefined,
+	entry: SceneDisplayRow | undefined,
 	index: number | undefined
 ): AgentPanelSceneEntryModel {
-	const displayKey = entry ? getVirtualizedDisplayEntryKey(entry) : `missing-entry-${String(index ?? "unknown")}`;
+	const displayKey = entry ? getSceneDisplayRowKey(entry) : `missing-entry-${String(index ?? "unknown")}`;
 	reportMissingSceneEntry(entry, index, displayKey);
 	return {
 		id: `missing:${displayKey}`,
@@ -329,7 +330,7 @@ function createMissingSceneEntry(
 }
 
 function getSharedEntry(
-	entry: VirtualizedDisplayEntry | undefined,
+	entry: SceneDisplayRow | undefined,
 	thinkingDurationMs: number | null,
 	index?: number
 ): AgentPanelSceneEntryModel {
@@ -352,13 +353,13 @@ function getSharedEntry(
 }
 
 function getGraphSceneEntry(
-	entry: VirtualizedDisplayEntry | undefined
+	entry: SceneDisplayRow | undefined
 ): AgentPanelSceneEntryModel | undefined {
 	return findGraphSceneEntryForDisplayEntry(entry, sceneEntriesById);
 }
 
 function isStreamingMergedAssistantEntry(
-	entry: VirtualizedDisplayEntry | undefined,
+	entry: SceneDisplayRow | undefined,
 	index: number | undefined
 ): boolean {
 	return (
@@ -391,7 +392,7 @@ function reportMissingVirtualizedEntry(index: number | undefined): void {
 
 			return {
 				type: entry.type,
-				key: getVirtualizedDisplayEntryKey(entry),
+				key: getSceneDisplayRowKey(entry),
 			};
 		});
 
@@ -410,7 +411,7 @@ function reportMissingVirtualizedEntry(index: number | undefined): void {
 let warnedMissingSceneEntryKeys = new Set<string>();
 
 function reportMissingSceneEntry(
-	entry: VirtualizedDisplayEntry | undefined,
+	entry: SceneDisplayRow | undefined,
 	index: number | undefined,
 	displayKey: string
 ): void {
@@ -435,7 +436,7 @@ function reportMissingSceneEntry(
 }
 
 // ===== DISPLAY ENTRIES =====
-const mergedEntries = $derived(buildVirtualizedDisplayEntriesFromScene(sceneEntries ?? []));
+const mergedEntries = $derived(buildSceneDisplayRows(sceneEntries ?? []));
 const thinkingIndicatorStartedAtMs = $derived.by(() => {
 	if (!isWaitingForResponse) {
 		return null;
@@ -446,7 +447,7 @@ const thinkingIndicatorStartedAtMs = $derived.by(() => {
 		if (!entry) {
 			continue;
 		}
-		const timestampMs = getVirtualizedDisplayEntryTimestampMs(entry);
+		const timestampMs = getSceneDisplayRowTimestampMs(entry);
 		if (timestampMs !== null) {
 			return timestampMs;
 		}
@@ -457,9 +458,9 @@ const thinkingIndicatorStartedAtMs = $derived.by(() => {
 // Avoid spread-based allocation on every streaming update — reuse the merged
 // reference directly when no thinking indicator is needed. When waiting, pre-allocate
 // the result array to the known size rather than using concat/spread.
-const displayEntriesRaw = $derived.by((): readonly VirtualizedDisplayEntry[] => {
+const displayEntriesRaw = $derived.by((): readonly SceneDisplayRow[] => {
 	if (!isWaitingForResponse) return mergedEntries;
-	const result: VirtualizedDisplayEntry[] = [];
+	const result: SceneDisplayRow[] = [];
 	result.length = mergedEntries.length + 1;
 	let writeIndex = 0;
 	for (const entry of mergedEntries) {
@@ -484,19 +485,10 @@ let hydrationFrameId: number | null = null;
 let initialHydrationComplete = $state(!shouldDeferInitialHydration);
 let lastRenderedSessionId = $state(untrack(() => sessionId));
 const displayEntries = $derived(
-	initialHydrationComplete ? displayEntriesRaw : ([] as readonly VirtualizedDisplayEntry[])
+	initialHydrationComplete ? displayEntriesRaw : ([] as readonly SceneDisplayRow[])
 );
 const nativeFallbackEntries = $derived.by((): readonly IndexedDisplayEntry[] => {
-	const startIndex = Math.max(0, displayEntries.length - NATIVE_FALLBACK_ENTRY_LIMIT);
-	const result: IndexedDisplayEntry[] = [];
-	for (let index = startIndex; index < displayEntries.length; index += 1) {
-		const entry = displayEntries[index];
-		if (!entry) {
-			continue;
-		}
-		result.push({ entry, index });
-	}
-	return result;
+	return buildNativeFallbackWindow(displayEntries, NATIVE_FALLBACK_ENTRY_LIMIT);
 });
 const vlistRenderKey = $derived(initialHydrationComplete ? "hydrated" : "deferred");
 const wrapperStyle = $derived(
@@ -676,8 +668,10 @@ $effect(() => {
 $effect(() => {
 	if (
 		!useNativeFallback ||
-		nativeFallbackReason !== "no_rendered_entries" ||
-		nativeFallbackRetryCount > 0
+		!shouldRetryNativeFallback({
+			reason: nativeFallbackReason,
+			retryCount: nativeFallbackRetryCount,
+		})
 	) {
 		return;
 	}
@@ -860,9 +854,9 @@ export function scrollToTop() {
 		{/if}
 	{/snippet}
 
-	{#snippet renderEntry(entry: VirtualizedDisplayEntry | undefined, index: number)}
+	{#snippet renderEntry(entry: SceneDisplayRow | undefined, index: number)}
 		{#if entry}
-			{@const mergedThoughtDurationMs = resolveDisplayEntryThinkingDurationMs(
+			{@const mergedThoughtDurationMs = resolveSceneDisplayRowThinkingDurationMs(
 				displayEntries,
 				index,
 				thinkingNowMs
@@ -873,7 +867,7 @@ export function scrollToTop() {
 				entryKey={getKey(entry, index)}
 				messageId={entry.type === "user" ? entry.id : undefined}
 				observeRevealResize={entry
-					? shouldObserveRevealResize(displayEntries, entry, isStreaming)
+					? shouldObserveSceneDisplayRowRevealResize(displayEntries, entry, isStreaming)
 					: false}
 				revealEntryIndex={revealDisplayIndex}
 				{isFullscreen}
@@ -917,7 +911,7 @@ export function scrollToTop() {
 				class="h-full"
 				style="contain: strict;"
 			>
-				{#snippet children(entry: VirtualizedDisplayEntry, index: number)}
+				{#snippet children(entry: SceneDisplayRow, index: number)}
 					{@render renderEntry(entry, index)}
 				{/snippet}
 			</VList>

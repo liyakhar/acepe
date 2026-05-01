@@ -67,7 +67,7 @@ function renderList(props?: {
 	isWaitingForResponse?: boolean;
 	sessionId?: string | null;
 }): ReturnType<typeof render> {
-	return render(VirtualizedEntryList, {
+	return render(SceneContentViewport, {
 		panelId: "panel-1",
 		sceneEntries: props?.sceneEntries ?? [createUserSceneEntry("user-1", "hello")],
 		turnState: props?.turnState ?? "idle",
@@ -129,11 +129,11 @@ vi.mock("virtua/svelte", async () => ({
 }));
 
 vi.mock("../../../messages/user-message.svelte", () => {
-	throw new Error("VirtualizedEntryList must render user rows through AgentPanelConversationEntry");
+	throw new Error("SceneContentViewport must render user rows through AgentPanelConversationEntry");
 });
 
 vi.mock("../../../messages/assistant-message.svelte", () => {
-	throw new Error("VirtualizedEntryList must render assistant rows through AgentPanelConversationEntry");
+	throw new Error("SceneContentViewport must render assistant rows through AgentPanelConversationEntry");
 });
 
 vi.mock("../../../messages/content-block-router.svelte", async () => ({
@@ -157,9 +157,9 @@ vi.stubGlobal("localStorage", {
 	removeItem: vi.fn(),
 });
 
-import VirtualizedEntryList from "../virtualized-entry-list.svelte";
+import SceneContentViewport from "../scene-content-viewport.svelte";
 
-describe("VirtualizedEntryList auto-scroll", () => {
+describe("SceneContentViewport auto-scroll", () => {
 	beforeEach(() => {
 		resizeObservers.length = 0;
 		clearHistory();

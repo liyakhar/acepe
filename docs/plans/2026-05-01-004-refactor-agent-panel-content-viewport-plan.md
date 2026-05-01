@@ -343,7 +343,7 @@ Target split:
 - The most direct blank-panel risks are covered and fixed without waiting for the full adapter rewrite.
 - Unit 5 can port or delete each Unit 4 stabilization test with an equivalent guarantee; no blank-state guarantee is allowed to disappear during the replacement.
 
-- [ ] **Unit 5: Replace `VirtualizedEntryList` with a narrow scene content viewport**
+- [x] **Unit 5: Replace `VirtualizedEntryList` with a narrow scene content viewport**
 
 **Goal:** Split viewport responsibilities into focused pieces and make virtualization/fallback behavior testable.
 

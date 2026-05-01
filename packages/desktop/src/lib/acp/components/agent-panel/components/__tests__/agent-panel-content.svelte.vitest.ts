@@ -78,6 +78,7 @@ vi.mock("../../../../store/session-store.svelte.js", () => ({
 		getSessionRuntimeState: () => sessionStoreState.runtimeState,
 		getHotState: () => sessionStoreState.hotState,
 		getCanonicalSessionProjection: () => null,
+		getSessionCurrentModeId: () => null,
 		getOperationStore: () => ({
 			getCurrentStreamingToolCall: () => null,
 		}),
@@ -119,7 +120,7 @@ vi.mock("../../ready-to-assist-placeholder.svelte", async () => ({
 	default: (await import("./fixtures/user-message-stub.svelte")).default,
 }));
 
-vi.mock("../virtualized-entry-list.svelte", async () => ({
+vi.mock("../scene-content-viewport.svelte", async () => ({
 	default: (await import("./fixtures/virtualized-entry-list-stub.svelte")).default,
 }));
 
@@ -312,7 +313,7 @@ describe("AgentPanelContent", () => {
 		expect(view.getByTestId("virtualized-entry-list-stub")).toBe(initialList);
 	});
 
-	it("renders VirtualizedEntryList pre-session with pending entry and isWaitingForResponse=true", () => {
+	it("renders SceneContentViewport pre-session with pending entry and isWaitingForResponse=true", () => {
 		const view = renderContent(
 			{ kind: "conversation", errorDetails: null },
 			{

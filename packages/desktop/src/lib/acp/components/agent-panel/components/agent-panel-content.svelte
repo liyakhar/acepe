@@ -10,7 +10,7 @@ import { createLogger } from "../../../utils/logger.js";
 import ProjectSelectionPanel from "../../project-selection-panel.svelte";
 import ReadyToAssistPlaceholder from "../../ready-to-assist-placeholder.svelte";
 import type { AgentPanelContentProps } from "../types/agent-panel-content-props.js";
-import VirtualizedEntryList from "./virtualized-entry-list.svelte";
+import SceneContentViewport from "./scene-content-viewport.svelte";
 
 let {
 	panelId,
@@ -45,8 +45,8 @@ const logger = createLogger({
 });
 let lastContentTraceSignature = $state<string | null>(null);
 
-// Reference to virtualized list for scroll control
-let virtualizedListRef: VirtualizedEntryList | null = $state(null);
+// Reference to scene viewport for scroll control
+let sceneViewportRef: SceneContentViewport | null = $state(null);
 
 // Prefer props when provided (controller pattern), fall back to store access
 const runtimeState = $derived(
@@ -112,7 +112,9 @@ const turnState = $derived<TurnState>(
 );
 const isStreaming = $derived(turnState === "streaming");
 const isWaitingForResponse = $derived(
-	isWaitingProp ?? sessionWorkProjection?.canonicalActivity === "awaiting_model"
+	isWaitingProp ??
+		(sessionWorkProjection?.canonicalActivity === "awaiting_model" ||
+			hotState?.activity?.kind === "awaiting_model")
 );
 
 // Sync streaming state to bindable prop for parent component
@@ -139,12 +141,12 @@ $effect(() => {
 	logger.info("agent panel content props changed", JSON.parse(signature) as object);
 });
 
-// Note: isAtBottom is now updated via onNearBottomChange callback from VirtualizedEntryList
+// Note: isAtBottom is now updated via onNearBottomChange callback from SceneContentViewport
 // This provides reactive updates on every scroll, not just on mount
 
 // ===== PUBLIC API =====
 export function scrollToBottom(options?: { force?: boolean }) {
-	virtualizedListRef?.scrollToBottom(options);
+	sceneViewportRef?.scrollToBottom(options);
 }
 
 export function prepareForNextUserReveal(options?: { force?: boolean }) {
@@ -156,11 +158,11 @@ export function prepareForNextUserReveal(options?: { force?: boolean }) {
 		latestEntryType: sceneEntries?.at(-1)?.type ?? null,
 		force: options?.force ?? false,
 	});
-	virtualizedListRef?.prepareForNextUserReveal(options);
+	sceneViewportRef?.prepareForNextUserReveal(options);
 }
 
 export function scrollToTop() {
-	virtualizedListRef?.scrollToTop();
+	sceneViewportRef?.scrollToTop();
 }
 </script>
 
@@ -186,8 +188,8 @@ export function scrollToTop() {
 {:else if viewState.kind === "conversation"}
 	<div class="h-full flex flex-col relative">
 		<div class="flex-1 min-h-0">
-			<VirtualizedEntryList
-				bind:this={virtualizedListRef}
+			<SceneContentViewport
+				bind:this={sceneViewportRef}
 				{panelId}
 				{sceneEntries}
 				{sessionId}

@@ -1,0 +1,11 @@
+export {
+	buildVirtualizedDisplayEntriesFromScene as buildSceneDisplayRows,
+	findLastAssistantSceneIndex,
+	getLatestRevealTargetKey as getLatestSceneDisplayRevealTargetKey,
+	getVirtualizedDisplayEntryKey as getSceneDisplayRowKey,
+	getVirtualizedDisplayEntryTimestampMs as getSceneDisplayRowTimestampMs,
+	resolveDisplayEntryThinkingDurationMs as resolveSceneDisplayRowThinkingDurationMs,
+	shouldObserveRevealResize as shouldObserveSceneDisplayRowRevealResize,
+	THINKING_DISPLAY_ENTRY,
+	type VirtualizedDisplayEntry as SceneDisplayRow,
+} from "./virtualized-entry-display.js";
