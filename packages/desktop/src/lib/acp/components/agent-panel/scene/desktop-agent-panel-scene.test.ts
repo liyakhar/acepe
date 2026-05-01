@@ -7,6 +7,7 @@ import {
 	buildDesktopComposerModel,
 	buildDesktopPlanSidebar,
 	mapSessionEntriesToConversationModel,
+	mapSessionEntryToConversationEntry,
 	mapSessionStatusToSceneStatus,
 	mapVirtualizedDisplayEntryToConversationEntry,
 } from "./desktop-agent-panel-scene.js";
@@ -1059,6 +1060,91 @@ describe("desktop agent panel scene adapter", () => {
 			type: "assistant",
 			markdown: "Thinking…Done.",
 			isStreaming: true,
+		});
+	});
+
+	describe("mapSessionEntryToConversationEntry isOptimistic threading", () => {
+		function makeUserEntry(id: string, text: string): SessionEntry {
+			return {
+				id,
+				type: "user",
+				message: {
+					content: { type: "text", text },
+					chunks: [{ type: "text", text }],
+				},
+			};
+		}
+
+		function makeToolEntry(id: string): SessionEntry {
+			return {
+				id,
+				type: "tool_call",
+				message: {
+					id,
+					name: "bash",
+					arguments: { kind: "execute", command: "bun test" },
+					rawInput: null,
+					status: "completed",
+					result: null,
+					kind: "execute",
+					title: "Run",
+					locations: null,
+					skillMeta: null,
+					normalizedResult: null,
+					normalizedQuestions: null,
+					normalizedTodos: null,
+					parentToolUseId: null,
+					taskChildren: null,
+					questionAnswer: null,
+					awaitingPlanApproval: false,
+					planApprovalRequestId: null,
+				},
+			};
+		}
+
+		it("stamps isOptimistic: true on user entries when options.isOptimistic is true", () => {
+			const entry = makeUserEntry("u1", "Hello");
+			const result = mapSessionEntryToConversationEntry(entry, undefined, null, {
+				isOptimistic: true,
+			});
+
+			expect(result.type).toBe("user");
+			if (result.type === "user") {
+				expect(result.isOptimistic).toBe(true);
+				expect(result.text).toBe("Hello");
+			}
+		});
+
+		it("leaves isOptimistic undefined on user entries when options are omitted", () => {
+			const entry = makeUserEntry("u2", "Hello default");
+			const result = mapSessionEntryToConversationEntry(entry, undefined);
+
+			expect(result.type).toBe("user");
+			if (result.type === "user") {
+				expect(result.isOptimistic).toBeUndefined();
+			}
+		});
+
+		it("leaves isOptimistic undefined on user entries when isOptimistic is false", () => {
+			const entry = makeUserEntry("u3", "Hello false");
+			const result = mapSessionEntryToConversationEntry(entry, undefined, null, {
+				isOptimistic: false,
+			});
+
+			expect(result.type).toBe("user");
+			if (result.type === "user") {
+				expect(result.isOptimistic).toBeUndefined();
+			}
+		});
+
+		it("does NOT add isOptimistic to non-user entry variants even when options flag is set", () => {
+			const toolEntry = makeToolEntry("t1");
+			const result = mapSessionEntryToConversationEntry(toolEntry, undefined, null, {
+				isOptimistic: true,
+			});
+
+			expect(result.type).toBe("tool_call");
+			expect("isOptimistic" in result).toBe(false);
 		});
 	});
 });

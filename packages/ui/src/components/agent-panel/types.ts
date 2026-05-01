@@ -51,6 +51,7 @@ export interface AgentUserEntry {
 	id: string;
 	type: "user";
 	text: string;
+	isOptimistic?: boolean;
 }
 
 export interface AgentAssistantEntry {

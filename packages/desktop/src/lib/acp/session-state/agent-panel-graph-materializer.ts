@@ -19,7 +19,8 @@ import type {
 	SessionStateGraph,
 	TranscriptEntry,
 } from "../../services/acp-types.js";
-import { mapToolCallToSceneEntry } from "../components/agent-panel/scene/desktop-agent-panel-scene.js";
+import type { SessionEntry } from "../application/dto/session-entry.js";
+import { mapSessionEntryToConversationEntry, mapToolCallToSceneEntry } from "../components/agent-panel/scene/desktop-agent-panel-scene.js";
 import { mapCanonicalTurnStateToHotTurnState } from "../store/canonical-turn-state-mapping.js";
 import { normalizeToolResult } from "../store/services/tool-result-normalizer.js";
 import type { ToolCall } from "../types/tool-call.js";
@@ -47,13 +48,14 @@ export interface AgentPanelGraphHeaderInput {
 
 export interface AgentPanelGraphMaterializerInput {
 	readonly panelId: string;
-	readonly graph: SessionStateGraph;
+	readonly graph: SessionStateGraph | null;
 	readonly header: AgentPanelGraphHeaderInput;
 	readonly composer?: AgentPanelComposerModel | null;
 	readonly strips?: readonly AgentPanelStripModel[];
 	readonly cards?: readonly AgentPanelCardModel[];
 	readonly sidebars?: AgentPanelSidebarModel | null;
 	readonly chrome?: AgentPanelChromeModel | null;
+	readonly optimistic?: { readonly pendingUserEntry: SessionEntry } | null;
 }
 
 interface OperationIndex {
@@ -466,7 +468,77 @@ function materializeConversation(graph: SessionStateGraph): {
 export function materializeAgentPanelSceneFromGraph(
 	input: AgentPanelGraphMaterializerInput
 ): AgentPanelSceneModel {
+	if (input.graph === null) {
+		const preSesssionLifecycle: AgentPanelLifecycleModel = {
+			status: "activating",
+			detachedReason: null,
+			failureReason: null,
+			errorMessage: null,
+			actionability: {
+				canSend: false,
+				canResume: false,
+				canRetry: false,
+				canArchive: false,
+				canConfigure: false,
+				recommendedAction: "wait",
+				recoveryPhase: "none",
+				compactStatus: "activating",
+			},
+		};
+
+		const optimisticEntries: AgentPanelSceneEntryModel[] = [];
+		if (input.optimistic?.pendingUserEntry != null) {
+			const mapped = mapSessionEntryToConversationEntry(
+				input.optimistic.pendingUserEntry,
+				undefined,
+				null,
+				{ isOptimistic: true }
+			);
+			optimisticEntries.push(mapped);
+		}
+
+		return {
+			panelId: input.panelId,
+			status: "warming",
+			lifecycle: preSesssionLifecycle,
+			header: {
+				title: input.header.title,
+				subtitle: input.header.subtitle ?? null,
+				status: "warming",
+				agentIconSrc: input.header.agentIconSrc ?? null,
+				agentLabel: input.header.agentLabel ?? null,
+				projectLabel: input.header.projectLabel ?? null,
+				projectColor: input.header.projectColor ?? null,
+				sequenceId: input.header.sequenceId ?? null,
+				branchLabel: input.header.branchLabel ?? null,
+				actions: input.header.actions ?? [],
+			},
+			conversation: {
+				entries: optimisticEntries,
+				isStreaming: false,
+			},
+			composer: input.composer ?? null,
+			strips: input.strips ?? [],
+			cards: input.cards ?? [],
+			sidebars: input.sidebars ?? null,
+			chrome: input.chrome ?? null,
+		};
+	}
+
 	const status = mapGraphStatus(input.graph);
+	const conversation = materializeConversation(input.graph);
+
+	const conversationEntries: AgentPanelSceneEntryModel[] = Array.from(conversation.entries);
+	if (input.optimistic?.pendingUserEntry != null) {
+		const mapped = mapSessionEntryToConversationEntry(
+			input.optimistic.pendingUserEntry,
+			undefined,
+			null,
+			{ isOptimistic: true }
+		);
+		conversationEntries.push(mapped);
+	}
+
 	return {
 		panelId: input.panelId,
 		status,
@@ -483,7 +555,10 @@ export function materializeAgentPanelSceneFromGraph(
 			branchLabel: input.header.branchLabel ?? null,
 			actions: input.header.actions ?? buildLifecycleActions(input.graph),
 		},
-		conversation: materializeConversation(input.graph),
+		conversation: {
+			entries: conversationEntries,
+			isStreaming: conversation.isStreaming,
+		},
 		composer: input.composer ?? null,
 		strips: input.strips ?? [],
 		cards: input.cards ?? [],

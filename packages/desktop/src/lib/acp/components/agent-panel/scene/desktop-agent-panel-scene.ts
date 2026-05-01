@@ -1039,13 +1039,15 @@ export function mapSessionEntriesToConversationModel(
 export function mapSessionEntryToConversationEntry(
 	entry: SessionEntry,
 	turnState: TurnState | undefined,
-	activeToolCallId: string | null = null
+	activeToolCallId: string | null = null,
+	options?: { isOptimistic?: boolean }
 ): AgentPanelSceneEntryModel {
 	if (entry.type === "user") {
 		return {
 			id: entry.id,
 			type: "user",
 			text: contentBlocksToText(entry.message.chunks),
+			isOptimistic: options?.isOptimistic === true ? true : undefined,
 		};
 	}
 

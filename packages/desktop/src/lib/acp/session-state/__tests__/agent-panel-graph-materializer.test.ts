@@ -14,7 +14,8 @@ import {
 	applySceneTextLimits,
 	materializeAgentPanelSceneFromGraph,
 } from "../agent-panel-graph-materializer.js";
-import type { AgentToolEntry } from "@acepe/ui/agent-panel";
+import type { AgentToolEntry, AgentUserEntry } from "@acepe/ui/agent-panel";
+import type { SessionEntry } from "../../application/dto/session-entry.js";
 
 function createActionability(): SessionGraphActionability {
 	return {
@@ -803,5 +804,113 @@ describe("agent panel graph materializer", () => {
 		expect(limited.editDiffs).toEqual([]);
 		expect(limited.searchFiles).toEqual([]);
 		expect(limited.todos).toEqual([]);
+	});
+
+	describe("optimistic pending entry support", () => {
+		function createOptimisticUserEntry(id: string, text: string): SessionEntry {
+			return {
+				id,
+				type: "user",
+				message: {
+					content: { type: "text", text },
+					chunks: [{ type: "text", text }],
+				},
+			};
+		}
+
+		it("appends the optimistic entry as the last entry with isOptimistic: true when graph is present", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("user-1", "user", "First message"),
+				createTranscriptEntry("assistant-1", "assistant", "Response"),
+			]);
+			const graph = createGraph({ transcriptSnapshot });
+			const pendingUserEntry = createOptimisticUserEntry("pending-1", "New pending message");
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: { pendingUserEntry },
+			});
+
+			expect(scene.conversation.entries).toHaveLength(3);
+			const last = scene.conversation.entries[2] as AgentUserEntry;
+			expect(last.id).toBe("pending-1");
+			expect(last.type).toBe("user");
+			expect(last.text).toBe("New pending message");
+			expect(last.isOptimistic).toBe(true);
+		});
+
+		it("graph + no optimistic → output identical to today (regression guard)", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("user-1", "user", "First message"),
+				createTranscriptEntry("assistant-1", "assistant", "Response"),
+			]);
+			const graph = createGraph({ transcriptSnapshot });
+
+			const sceneWithout = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const sceneWithNull = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: null,
+			});
+
+			expect(sceneWithout.conversation.entries).toHaveLength(2);
+			expect(sceneWithNull.conversation.entries).toHaveLength(2);
+			expect(sceneWithout.conversation.entries[0]).toEqual({
+				id: "user-1",
+				type: "user",
+				text: "First message",
+				isOptimistic: undefined,
+			});
+			expect(sceneWithout.conversation.entries[1]).toEqual({
+				id: "assistant-1",
+				type: "assistant",
+				markdown: "Response",
+				isStreaming: undefined,
+			});
+		});
+
+		it("graph === null + optimistic entry → single-entry scene with isOptimistic: true, warming status", () => {
+			const pendingUserEntry = createOptimisticUserEntry("pending-1", "Hello agent");
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph: null,
+				header: { title: "Pre-session" },
+				optimistic: { pendingUserEntry },
+			});
+
+			expect(scene.status).toBe("warming");
+			expect(scene.lifecycle?.status).toBe("activating");
+			expect(scene.conversation.isStreaming).toBe(false);
+			expect(scene.conversation.entries).toHaveLength(1);
+			const entry = scene.conversation.entries[0] as AgentUserEntry;
+			expect(entry.id).toBe("pending-1");
+			expect(entry.type).toBe("user");
+			expect(entry.text).toBe("Hello agent");
+			expect(entry.isOptimistic).toBe(true);
+			expect(scene.header.title).toBe("Pre-session");
+		});
+
+		it("graph === null + no optimistic → empty conversation, warming status, no crash", () => {
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph: null,
+				header: { title: "Pre-session" },
+			});
+
+			expect(scene.status).toBe("warming");
+			expect(scene.lifecycle?.status).toBe("activating");
+			expect(scene.conversation.entries).toHaveLength(0);
+			expect(scene.conversation.isStreaming).toBe(false);
+			expect(scene.panelId).toBe("panel-1");
+		});
 	});
 });
