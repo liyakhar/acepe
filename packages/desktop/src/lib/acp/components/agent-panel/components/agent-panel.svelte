@@ -358,7 +358,6 @@ const sessionTurnState = $derived(
 );
 const entriesCount = $derived(sessionEntries.length);
 const hasSession = $derived(sessionId !== null);
-const hasOptimisticPendingEntry = $derived((panelHotState?.pendingUserEntry ?? null) !== null);
 // Prefer active worktree path, then session worktree, then project paths.
 // NOTE: Must be defined before panelVisibility which uses effectiveProjectPath
 // When the worktree has been deleted, skip worktree paths so git commands
@@ -387,7 +386,7 @@ const canonicalPanelSessionState = $derived.by(() =>
 		activity: canonicalProjection?.activity ?? null,
 		turnState: canonicalProjection?.turnState ?? null,
 		hasEntries: sessionEntries.length > 0,
-		hasOptimisticPendingEntry,
+		hasOptimisticPendingEntry: (panelHotState?.pendingUserEntry ?? null) !== null,
 	})
 );
 const panelSessionStatus = $derived(canonicalPanelSessionState.sessionStatus);
@@ -677,12 +676,8 @@ const sessionCreatedAt = $derived(sessionMetadata?.createdAt ?? null);
 const sessionUpdatedAt = $derived(sessionMetadata?.updatedAt ?? null);
 
 const agentIconSrc = $derived(getAgentIcon(effectivePanelAgentId, effectiveTheme));
-const graphMaterializedScene = $derived.by(() => {
-	if (sessionStateGraph === null) {
-		return null;
-	}
-
-	return materializeAgentPanelSceneFromGraph({
+const graphMaterializedScene = $derived(
+	materializeAgentPanelSceneFromGraph({
 		panelId: effectivePanelId,
 		graph: sessionStateGraph,
 		header: {
@@ -694,11 +689,13 @@ const graphMaterializedScene = $derived.by(() => {
 			projectColor,
 			sequenceId,
 		},
-	});
-});
-const graphSceneEntries = $derived(
-	hasOptimisticPendingEntry ? undefined : graphMaterializedScene?.conversation.entries
+		optimistic:
+			panelHotState?.pendingUserEntry != null
+				? { pendingUserEntry: panelHotState.pendingUserEntry }
+				: null,
+	})
 );
+const graphSceneEntries = $derived(graphMaterializedScene.conversation.entries);
 const isConnecting = $derived(
 	panelConnectionState === PanelConnectionState.CONNECTING ||
 		(!sessionId && panelId ? panelHotState?.pendingUserEntry !== null : false)
@@ -1955,7 +1952,7 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 						{effectiveTheme}
 						{modifiedFilesState}
 						turnState={sessionTurnState}
-						isWaitingForResponse={showPlanningIndicator}
+						isWaitingForResponse={showPlanningIndicator || (panelHotState?.pendingUserEntry != null)}
 					/>
 				</div>
 				{#if viewState.kind === "conversation" && !contentIsAtTop}
