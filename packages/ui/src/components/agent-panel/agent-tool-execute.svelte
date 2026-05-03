@@ -197,7 +197,7 @@
 
 	.execute-block {
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.875rem;
+		font-size: 0.8125rem;
 		line-height: 1.4;
 		white-space: pre-wrap;
 		word-break: break-all;
@@ -257,7 +257,7 @@
 
 	.execute-output {
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.875rem;
+		font-size: 0.8125rem;
 		line-height: 1.5;
 		margin: 0;
 		white-space: pre-wrap;
@@ -280,7 +280,7 @@
 	/* Shiki-highlighted streams (log grammar, dual-theme spans) */
 	.execute-output-shiki {
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.875rem;
+		font-size: 0.8125rem;
 		line-height: 1.5;
 		margin: 0;
 		white-space: pre-wrap;

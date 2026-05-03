@@ -23,8 +23,12 @@ use super::{
 pub enum SessionUpdate {
     UserMessageChunk {
         chunk: ContentChunk,
+        #[serde(rename = "sessionId")]
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
+        #[serde(rename = "attemptId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
     },
 
     AgentMessageChunk {

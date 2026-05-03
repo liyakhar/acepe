@@ -1022,20 +1022,28 @@ describe("MarkdownText", () => {
 				expect(rendered?.textContent).toBe("bold");
 			});
 
-			expect(view.container.querySelector(".sd-word-fade")).toBeNull();
+			await waitFor(() => {
+				expect(view.container.querySelector(".sd-word-fade")).toBeNull();
+			});
 		});
 
-		it("does not restart reveal from the beginning after a remount with the same reveal key", async () => {
-			const text = "Remounted historical assistant text";
+		it("resumes a live remount without snapping to the full source", async () => {
+			const text =
+				"Remounted live assistant text should resume from cached progress instead of snapping to the full source.";
 			const firstView = render(MarkdownText, {
 				text,
 				isStreaming: true,
-				revealKey: "historical-remount-key",
+				revealKey: "live-remount-key",
 				streamingAnimationMode: "smooth",
 			});
 
+			let visibleBeforeUnmount = "";
 			await waitFor(() => {
-				expect(firstView.container.textContent).toContain("Remounted");
+				const textContent = firstView.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThan(0);
+				expect(textContent.length).toBeLessThan(text.length);
+				expect(text.startsWith(textContent)).toBe(true);
+				visibleBeforeUnmount = textContent;
 			});
 
 			firstView.unmount();
@@ -1043,14 +1051,223 @@ describe("MarkdownText", () => {
 			const remountedView = render(MarkdownText, {
 				text,
 				isStreaming: true,
-				revealKey: "historical-remount-key",
+				revealKey: "live-remount-key",
 				streamingAnimationMode: "smooth",
 			});
 
 			await waitFor(() => {
-				expect(remountedView.container.textContent).toContain(text);
-				expect(remountedView.container.textContent).not.toBe("");
+				const textContent = remountedView.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThanOrEqual(visibleBeforeUnmount.length);
+				expect(textContent.length).toBeLessThan(text.length);
+				expect(text.startsWith(textContent)).toBe(true);
 			});
+		});
+
+		it("paces a new non-prefix streaming message when reveal key changes", async () => {
+			const firstText = "Previous assistant message";
+			const nextText = "New assistant message should pace in";
+			const view = render(MarkdownText, {
+				text: firstText,
+				isStreaming: true,
+				revealKey: "assistant-previous",
+				streamingAnimationMode: "smooth",
+			});
+
+			await waitFor(() => {
+				expect(view.container.textContent).toContain(firstText);
+			});
+
+			await view.rerender({
+				text: nextText,
+				isStreaming: true,
+				revealKey: "assistant-next",
+				streamingAnimationMode: "smooth",
+			});
+
+			expect(view.container.textContent).not.toContain(nextText);
+
+			await waitFor(() => {
+				const textContent = view.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThan(0);
+				expect(textContent.length).toBeLessThan(nextText.length);
+				expect(nextText.startsWith(textContent)).toBe(true);
+			});
+		});
+
+		it("continues reveal catch-up after streaming completes with unrevealed text", async () => {
+			const text = Array.from({ length: 2 }, (_, index) => {
+				return `Gradual streaming reveal line ${index + 1}.`;
+			}).join(" ");
+			const view = render(MarkdownText, {
+				text,
+				isStreaming: true,
+				revealKey: "completion-catchup",
+				streamingAnimationMode: "smooth",
+			});
+
+			await waitFor(() => {
+				const textContent = view.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThan(0);
+				expect(textContent.length).toBeLessThan(text.length);
+			});
+
+			await view.rerender({
+				text,
+				isStreaming: false,
+				revealKey: "completion-catchup",
+				streamingAnimationMode: "smooth",
+			});
+
+			expect(view.container.textContent).not.toContain(text);
+
+			await waitFor(() => {
+				expect(view.container.textContent).toContain(text);
+			});
+		});
+
+		it("paces explicit textRevealState text even when canonical streaming is false", async () => {
+			const text =
+				"Buffered final assistant answer should not appear as one settled block on first paint.";
+			const view = render(MarkdownText, {
+				text,
+				isStreaming: false,
+				textRevealState: { policy: "pace", key: "session-1:assistant-1:message" },
+				streamingAnimationMode: "smooth",
+			});
+
+			expect(view.container.textContent).not.toContain(text);
+
+			await waitFor(() => {
+				const textContent = view.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThan(0);
+				expect(textContent.length).toBeLessThan(text.length);
+				expect(text.startsWith(textContent)).toBe(true);
+			});
+		});
+
+		it("does not seed explicit textRevealState rows from prior full-text reveal caches", async () => {
+			const text =
+				"Cached prior reveal progress must not make an explicit text reveal snap to the final source.";
+			const revealKey = "session-1:assistant-cache:message";
+			const firstView = render(MarkdownText, {
+				text,
+				isStreaming: true,
+				revealKey,
+				streamingAnimationMode: "smooth",
+			});
+
+			await waitFor(() => {
+				expect(firstView.container.textContent).toContain(text);
+			});
+			firstView.unmount();
+
+			const secondView = render(MarkdownText, {
+				text,
+				isStreaming: false,
+				revealKey,
+				textRevealState: { policy: "pace", key: revealKey },
+				streamingAnimationMode: "smooth",
+			});
+
+			expect(secondView.container.textContent).not.toContain(text);
+
+			await waitFor(() => {
+				const textContent = secondView.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThan(0);
+				expect(textContent.length).toBeLessThan(text.length);
+				expect(text.startsWith(textContent)).toBe(true);
+			});
+		});
+
+		it("paces explicit textRevealState replacements instead of snapping to a final block", async () => {
+			const revealKey = "session-1:assistant-reused-dom-node:message";
+			const transientText = "Transient partial text from a reused message row.";
+			const finalText = [
+				"Buffered final assistant answers must not appear as one settled block.",
+				"The first visible frame should be empty or a short prefix, then grow.",
+				"This catches reused DOM rows whose prior visible text is not a prefix of the final answer.",
+			].join(" ");
+			const view = render(MarkdownText, {
+				text: transientText,
+				isStreaming: false,
+				textRevealState: { policy: "pace", key: revealKey },
+				streamingAnimationMode: "smooth",
+			});
+
+			await waitFor(() => {
+				const textContent = view.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThan(0);
+				expect(textContent.length).toBeLessThan(transientText.length);
+			});
+
+			await view.rerender({
+				text: finalText,
+				isStreaming: false,
+				textRevealState: { policy: "pace", key: revealKey },
+				streamingAnimationMode: "smooth",
+			});
+
+			expect(view.container.textContent).not.toContain(finalText);
+
+			await waitFor(() => {
+				const textContent = view.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThan(0);
+				expect(textContent.length).toBeLessThan(finalText.length);
+				expect(finalText.startsWith(textContent)).toBe(true);
+			});
+		});
+
+		it("starts explicit textRevealState rows from a supplied visible prefix", async () => {
+			const revealKey = "session-1:assistant-merged-prefix:message";
+			const seedDisplayedText = "Already visible prefix. ";
+			const text = `${seedDisplayedText}Only the newly merged assistant suffix should pace in.`;
+			const view = render(MarkdownText, {
+				text,
+				isStreaming: false,
+				textRevealState: {
+					policy: "pace",
+					key: revealKey,
+					seedDisplayedText,
+				},
+				streamingAnimationMode: "smooth",
+			});
+
+			await waitFor(() => {
+				const textContent = view.container.textContent ?? "";
+				expect(textContent.startsWith(seedDisplayedText)).toBe(true);
+				expect(textContent.length).toBeGreaterThan(seedDisplayedText.length);
+				expect(textContent.length).toBeLessThan(text.length);
+			});
+		});
+
+		it("keeps a visible paced prefix through transient empty text updates", async () => {
+			const revealKey = "session-1:assistant-transient-empty:message";
+			const transientText =
+				"SENTINEL transient assistant text should stay visible through an empty intermediate update.";
+			const view = render(MarkdownText, {
+				text: transientText,
+				isStreaming: false,
+				textRevealState: { policy: "pace", key: revealKey },
+				streamingAnimationMode: "smooth",
+			});
+
+			let visiblePrefix = "";
+			await waitFor(() => {
+				const textContent = view.container.textContent ?? "";
+				expect(textContent.length).toBeGreaterThan(0);
+				expect(textContent.length).toBeLessThan(transientText.length);
+				expect(transientText.startsWith(textContent)).toBe(true);
+				visiblePrefix = textContent;
+			});
+
+			await view.rerender({
+				text: "",
+				isStreaming: false,
+				textRevealState: { policy: "pace", key: revealKey },
+				streamingAnimationMode: "smooth",
+			});
+
+			expect(view.container.textContent).toContain(visiblePrefix);
 		});
 
 		it("reports reveal activity through the paced drain window", async () => {
@@ -1086,6 +1303,52 @@ describe("MarkdownText", () => {
 			await waitFor(() => {
 				expect(activityStates.at(-1)).toBe(false);
 			});
+		});
+
+		it("does not restart reveal activity when a completed paced row clears textRevealState", async () => {
+			const activityStates: boolean[] = [];
+			const onRevealActivityChange = (active: boolean) => {
+				activityStates.push(active);
+			};
+			const text =
+				"Completed paced assistant text should not flip the scroll container after reveal state clears.";
+			const revealKey = "session-1:assistant-review:message";
+			const view = render(MarkdownText, {
+				text,
+				isStreaming: true,
+				textRevealState: { policy: "pace", key: revealKey },
+				streamingAnimationMode: "smooth",
+				onRevealActivityChange,
+			});
+
+			await view.rerender({
+				text,
+				isStreaming: false,
+				textRevealState: { policy: "pace", key: revealKey },
+				streamingAnimationMode: "smooth",
+				onRevealActivityChange,
+			});
+
+			await waitFor(() => {
+				expect(view.container.textContent).toContain(text);
+				expect(activityStates.at(-1)).toBe(false);
+			}, { timeout: 3000 });
+			await new Promise<void>((resolve) => setTimeout(resolve, 250));
+			await waitFor(() => {
+				expect(activityStates.at(-1)).toBe(false);
+			});
+			const activityCountAfterDrain = activityStates.length;
+
+			await view.rerender({
+				text,
+				isStreaming: false,
+				textRevealState: undefined,
+				streamingAnimationMode: "smooth",
+				onRevealActivityChange,
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+			expect(activityStates.slice(activityCountAfterDrain)).not.toContain(true);
 		});
 	});
 
@@ -1131,11 +1394,10 @@ describe("MarkdownText", () => {
 
 		pending.resolve("<h2>Streaming title</h2><p>Alpha body</p>");
 
-		await waitFor(() => {
-			expect(view.container.querySelector(".markdown-content h2")?.textContent).toBe(
-				"Streaming title"
-			);
-		});
+		expect(view.container.querySelector(".markdown-content h2")).toBeNull();
+		expect(view.container.querySelector(".markdown-loading")?.textContent).toContain(
+			"Streaming title"
+		);
 	});
 
 	it("defers repo-context and async markdown work until streaming settles", async () => {

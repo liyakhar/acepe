@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { CaretDown, Check, Robot } from "phosphor-svelte";
 
+	import { Button } from "../button/index.js";
 	import * as DropdownMenu from "../dropdown-menu/index.js";
 	import { BuildIcon, PlanIcon } from "../icons/index.js";
 	import { Colors } from "../../lib/colors.js";
@@ -139,10 +140,12 @@
 <DropdownMenu.Root bind:open={menuOpen}>
 	<DropdownMenu.Trigger>
 		{#snippet child({ props })}
-			<button
+			<Button
 				{...props}
 				type="button"
-				class="flex h-7 w-7 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				variant="outline"
+				size="sm"
+				class="h-7 w-7 shrink-0 cursor-pointer rounded-none border-0 p-0 text-muted-foreground"
 				aria-label={selectedOption.label}
 				title={selectedOption.label}
 			>
@@ -165,7 +168,7 @@
 						style={`color: ${modeColor(buildModeId)}`}
 					/>
 				{/if}
-			</button>
+			</Button>
 		{/snippet}
 	</DropdownMenu.Trigger>
 

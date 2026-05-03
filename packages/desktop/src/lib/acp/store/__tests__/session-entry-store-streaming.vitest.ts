@@ -605,7 +605,7 @@ describe("SessionEntryStore - Transcript Deltas", () => {
 		expect(operationStore.getSessionOperations("session-1")).toHaveLength(0);
 	});
 
-	it("reconciles a canonical user append entry onto the optimistic user row", () => {
+	it("does not reconcile canonical user append entries by matching optimistic text", () => {
 		store.addEntry("session-1", {
 			id: "optimistic-user-local",
 			type: "user",
@@ -638,17 +638,82 @@ describe("SessionEntryStore - Transcript Deltas", () => {
 
 		expect(store.getEntries("session-1")).toEqual([
 			{
-				id: "user-event-7",
+				id: "optimistic-user-local",
 				type: "user",
 				message: {
-					id: "user-event-7",
+					id: "optimistic-user-local",
 					content: { type: "text", text: "hello" },
 					chunks: [{ type: "text", text: "hello" }],
 					sentAt: new Date("2026-04-16T00:00:01.000Z"),
 				},
 				timestamp: new Date("2026-04-16T00:00:01.000Z"),
 			},
+			{
+				id: "user-event-7",
+				type: "user",
+				message: {
+					id: "user-event-7",
+					content: { type: "text", text: "hello" },
+					chunks: [{ type: "text", text: "hello" }],
+				},
+				timestamp: new Date("2026-04-16T00:00:02.000Z"),
+			},
 		]);
+	});
+
+	it("appends canonical user entries even when matching optimistic text exists before assistant output", () => {
+		store.addEntry("session-1", {
+			id: "optimistic-user-local",
+			type: "user",
+			message: {
+				id: "optimistic-user-local",
+				content: { type: "text", text: "hello" },
+				chunks: [{ type: "text", text: "hello" }],
+				sentAt: new Date("2026-04-16T00:00:01.000Z"),
+			},
+			timestamp: new Date("2026-04-16T00:00:01.000Z"),
+		});
+		store.addEntry("session-1", {
+			id: "assistant-1",
+			type: "assistant",
+			message: {
+				chunks: [
+					{
+						type: "message",
+						block: { type: "text", text: "response" },
+					},
+				],
+			},
+			timestamp: new Date("2026-04-16T00:00:02.000Z"),
+		});
+
+		const delta: TranscriptDelta = {
+			eventSeq: 7,
+			sessionId: "session-1",
+			snapshotRevision: 7,
+			operations: [
+				{
+					kind: "appendEntry",
+					entry: {
+						entryId: "user-event-7",
+						role: "user",
+						segments: [{ kind: "text", segmentId: "user-event-7:block:0", text: "hello" }],
+					},
+				},
+			],
+		};
+
+		store.applyTranscriptDelta("session-1", delta, new Date("2026-04-16T00:00:03.000Z"));
+
+		expect(store.getEntries("session-1").map((entry) => entry.id)).toEqual([
+			"optimistic-user-local",
+			"assistant-1",
+			"user-event-7",
+		]);
+		expect(store.getEntries("session-1")[2]).toMatchObject({
+			id: "user-event-7",
+			type: "user",
+		});
 	});
 });
 

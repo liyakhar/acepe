@@ -549,6 +549,7 @@ mod tests {
                             aggregation_hint: None,
                         },
                         session_id: Some(session_id.to_string()),
+                        attempt_id: None,
                     },
                 ),
                 (
@@ -842,6 +843,7 @@ mod tests {
                             aggregation_hint: None,
                         },
                         session_id: Some(session_id.to_string()),
+                        attempt_id: None,
                     },
                 ),
                 (
@@ -854,6 +856,7 @@ mod tests {
                             aggregation_hint: None,
                         },
                         session_id: Some(session_id.to_string()),
+                        attempt_id: None,
                     },
                 ),
             ],
@@ -892,6 +895,7 @@ mod tests {
                             aggregation_hint: None,
                         },
                         session_id: Some(session_id.to_string()),
+                        attempt_id: None,
                     },
                 ),
                 (

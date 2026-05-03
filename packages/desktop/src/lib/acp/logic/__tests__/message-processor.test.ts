@@ -43,7 +43,7 @@ describe("MessageProcessor", () => {
 				chunk: {
 					content: { type: "text", text: "Hello world" },
 				},
-				session_id: "session-123",
+				sessionId: "session-123",
 			};
 
 			it("creates user thread entry", () => {

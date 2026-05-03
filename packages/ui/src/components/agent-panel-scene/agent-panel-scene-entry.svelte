@@ -22,6 +22,7 @@
 	import AgentUserMessage from "../agent-panel/agent-user-message.svelte";
 	import AgentMissingSceneEntry from "../agent-panel/agent-missing-scene-entry.svelte";
 	import { getPlanningPlaceholderLabel } from "../agent-panel/planning-label.js";
+	import ToolHeaderLeading from "../agent-panel/tool-header-leading.svelte";
 	import type { EditToolTheme } from "../agent-panel/agent-panel-conversation-entry.svelte";
 
 	interface Props {
@@ -59,7 +60,8 @@
 					id: child.id,
 					type: "assistant",
 					markdown: child.markdown,
-					isStreaming: child.isStreaming
+					isStreaming: child.isStreaming,
+					textRevealState: child.textRevealState
 				};
 			}
 
@@ -153,10 +155,15 @@
 			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
 		}}
 		isStreaming={entry.isStreaming}
+		textRevealState={entry.textRevealState}
 		{iconBasePath}
 	/>
 {:else if entry.type === "thinking"}
-	<AgentToolRow title={getPlanningPlaceholderLabel(entry.durationMs)} status="running" padded={false} />
+	<div class="flex items-center gap-2 py-1 text-sm text-muted-foreground">
+		<ToolHeaderLeading kind="think" status="running">
+			{getPlanningPlaceholderLabel(entry.durationMs)}
+		</ToolHeaderLeading>
+	</div>
 {:else if entry.type === "missing"}
 	<AgentMissingSceneEntry
 		title={entry.title}

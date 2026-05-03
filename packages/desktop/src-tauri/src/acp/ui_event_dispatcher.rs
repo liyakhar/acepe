@@ -2,6 +2,7 @@ use crate::acp::domain_events::{
     SessionDomainEvent, SessionDomainEventKind, SessionDomainEventPayload,
 };
 use crate::acp::event_hub::AcpEventHubState;
+use crate::acp::journal_write_lock::JournalWriteLockRegistry;
 use crate::acp::pre_reservation_event_buffer::{
     PreReservationEventBuffer, PreReservationIngressDecision,
 };
@@ -201,6 +202,13 @@ pub(crate) async fn publish_direct_session_update<R: tauri::Runtime>(
         );
         return false;
     };
+    let Some(journal_write_lock_registry) = app.try_state::<Arc<JournalWriteLockRegistry>>() else {
+        tracing::warn!(
+            session_id = update.session_id(),
+            "Journal write lock registry unavailable; direct session update dropped"
+        );
+        return false;
+    };
 
     let Some(session_id) = update.session_id() else {
         tracing::warn!("Direct session update without session id rejected");
@@ -248,7 +256,21 @@ pub(crate) async fn publish_direct_session_update<R: tauri::Runtime>(
 
     let hub = hub_state.inner().clone();
     let db = app.try_state::<DbConn>().map(|state| state.inner().clone());
+
+    // Per-session journal write lock: serializes journal allocation, projection
+    // apply, envelope build, and event publish for the same session across
+    // concurrent Tokio tasks. Without this, the command-handler task (this
+    // function) and the streaming-bridge drain task can race on
+    // `SessionJournalEventRepository::append_session_update`'s sequence
+    // allocation and on `transcript_projection.apply_session_update`, producing
+    // out-of-order entry list updates. Concurrent sessions remain parallel
+    // because the lock is keyed by `session_id`. Plan: sub-task 1a in
+    // `docs/plans/2026-05-03-001-refactor-canonical-only-entry-list-plan.md`.
+    let session_lock = journal_write_lock_registry.inner().lock_for(session_id);
+    let _journal_guard = session_lock.lock().await;
+
     let event = AcpUiEvent::session_update(update);
+
     let dispatch_effects = persist_dispatch_event(
         db.as_ref(),
         &event,
@@ -392,6 +414,12 @@ pub struct AcpUiEventDispatcher {
     runtime_graph_registry: Arc<SessionGraphRuntimeRegistry>,
     transcript_projection_registry: Arc<TranscriptProjectionRegistry>,
     pre_reservation_event_buffer: Arc<PreReservationEventBuffer>,
+    // Held so the registry's lifetime is tied to the dispatcher; cloned into
+    // `run_dispatch_loop` and read out of Tauri state by
+    // `publish_direct_session_update`. Kept on the struct for symmetry with
+    // the other registries even though no method reads it directly.
+    #[allow(dead_code)]
+    journal_write_lock_registry: Arc<JournalWriteLockRegistry>,
     #[cfg(test)]
     bypass_pre_reservation_gate: bool,
     #[cfg(test)]
@@ -409,6 +437,7 @@ impl AcpUiEventDispatcher {
                 runtime_graph_registry: Arc::new(SessionGraphRuntimeRegistry::new()),
                 transcript_projection_registry: Arc::new(TranscriptProjectionRegistry::new()),
                 pre_reservation_event_buffer: Arc::new(PreReservationEventBuffer::new()),
+                journal_write_lock_registry: Arc::new(JournalWriteLockRegistry::new()),
                 #[cfg(test)]
                 bypass_pre_reservation_gate: false,
                 #[cfg(test)]
@@ -431,6 +460,10 @@ impl AcpUiEventDispatcher {
             .try_state::<Arc<PreReservationEventBuffer>>()
             .map(|state| state.inner().clone())
             .unwrap_or_else(|| Arc::new(PreReservationEventBuffer::new()));
+        let journal_write_lock_registry = handle
+            .try_state::<Arc<JournalWriteLockRegistry>>()
+            .map(|state| state.inner().clone())
+            .unwrap_or_else(|| Arc::new(JournalWriteLockRegistry::new()));
         let Some(hub_state) = handle.try_state::<Arc<AcpEventHubState>>() else {
             tracing::warn!("ACP event hub state unavailable; UI event dispatcher disabled");
             return Self {
@@ -440,6 +473,7 @@ impl AcpUiEventDispatcher {
                 runtime_graph_registry,
                 transcript_projection_registry,
                 pre_reservation_event_buffer,
+                journal_write_lock_registry,
                 #[cfg(test)]
                 bypass_pre_reservation_gate: false,
                 #[cfg(test)]
@@ -460,6 +494,7 @@ impl AcpUiEventDispatcher {
             projection_registry.clone(),
             runtime_graph_registry.clone(),
             transcript_projection_registry.clone(),
+            journal_write_lock_registry.clone(),
         ));
 
         Self {
@@ -469,6 +504,7 @@ impl AcpUiEventDispatcher {
             runtime_graph_registry,
             transcript_projection_registry,
             pre_reservation_event_buffer,
+            journal_write_lock_registry,
             #[cfg(test)]
             bypass_pre_reservation_gate: false,
             #[cfg(test)]
@@ -521,6 +557,7 @@ impl AcpUiEventDispatcher {
                 runtime_graph_registry: Arc::new(SessionGraphRuntimeRegistry::new()),
                 transcript_projection_registry: Arc::new(TranscriptProjectionRegistry::new()),
                 pre_reservation_event_buffer: Arc::new(PreReservationEventBuffer::new()),
+                journal_write_lock_registry: Arc::new(JournalWriteLockRegistry::new()),
                 bypass_pre_reservation_gate,
                 test_sink: Some(Arc::clone(&sink)),
             },
@@ -858,6 +895,7 @@ async fn run_dispatch_loop(
     projection_registry: Arc<ProjectionRegistry>,
     runtime_graph_registry: Arc<SessionGraphRuntimeRegistry>,
     transcript_projection_registry: Arc<TranscriptProjectionRegistry>,
+    journal_write_lock_registry: Arc<JournalWriteLockRegistry>,
 ) {
     let mut state = DispatcherState::new(policy);
 
@@ -875,6 +913,7 @@ async fn run_dispatch_loop(
                 projection_registry.as_ref(),
                 runtime_graph_registry.as_ref(),
                 transcript_projection_registry.as_ref(),
+                journal_write_lock_registry.as_ref(),
             )
             .await;
     }
@@ -886,6 +925,7 @@ async fn run_dispatch_loop(
             projection_registry.as_ref(),
             runtime_graph_registry.as_ref(),
             transcript_projection_registry.as_ref(),
+            journal_write_lock_registry.as_ref(),
         )
         .await;
 }
@@ -953,6 +993,7 @@ impl DispatcherState {
         projection_registry: &ProjectionRegistry,
         runtime_graph_registry: &SessionGraphRuntimeRegistry,
         transcript_projection_registry: &TranscriptProjectionRegistry,
+        journal_write_lock_registry: &JournalWriteLockRegistry,
     ) {
         while self.global_backlog > 0 {
             self.refill_tokens();
@@ -978,6 +1019,24 @@ impl DispatcherState {
 
                 self.tokens -= 1.0;
                 self.global_backlog = self.global_backlog.saturating_sub(1);
+
+                // Acquire the per-session journal+projection critical-section
+                // lock if this event is bound to a session. The lock is held
+                // across `persist_dispatch_event` and the subsequent
+                // `event.publish` so concurrent direct publishes (the
+                // command-handler synthetic-user path) cannot interleave their
+                // journal writes or wire emissions with ours for the same
+                // session. Plan: sub-task 1a.
+                let session_lock_guard = if let Some(session_id) = event.session_id.as_deref() {
+                    Some(journal_write_lock_registry.lock_for(session_id))
+                } else {
+                    None
+                };
+                let _journal_guard = if let Some(lock) = session_lock_guard.as_ref() {
+                    Some(lock.lock().await)
+                } else {
+                    None
+                };
 
                 let dispatch_effects = persist_dispatch_event(
                     db,
@@ -1283,8 +1342,16 @@ async fn persist_dispatch_event(
                 synthetic_event_seq.saturating_sub(1),
                 update.as_ref(),
             );
+            // Transcript revision lives in its own monotonic counter and must
+            // advance by exactly +1 per transcript-bearing event. Deriving the
+            // seq from `synthetic_event_seq` (which tracks graph_revision)
+            // inflates transcript_revision past real transcript progress and
+            // breaks the consumer-side `transcript_revision <= last_event_seq`
+            // invariant — see
+            // `synthetic_event_seq_path_must_not_inflate_transcript_revision_past_real_progress`.
+            let transcript_event_seq = previous_transcript_revision.saturating_add(1);
             let transcript_delta = transcript_projection_registry
-                .apply_session_update(synthetic_event_seq, update.as_ref());
+                .apply_session_update(transcript_event_seq, update.as_ref());
             let transcript_revision = transcript_projection_registry
                 .snapshot_for_session(session_id)
                 .map(|snapshot| snapshot.revision)
@@ -1357,6 +1424,19 @@ mod tests {
             part_id: None,
             message_id: None,
             session_id: Some(session_id.to_string()),
+        }
+    }
+
+    fn user_chunk_update(session_id: &str, text: &str) -> SessionUpdate {
+        SessionUpdate::UserMessageChunk {
+            chunk: ContentChunk {
+                content: ContentBlock::Text {
+                    text: text.to_string(),
+                },
+                aggregation_hint: None,
+            },
+            session_id: Some(session_id.to_string()),
+            attempt_id: None,
         }
     }
 
@@ -1709,7 +1789,10 @@ mod tests {
         match envelope.payload {
             crate::acp::session_state_engine::SessionStatePayload::Snapshot { graph } => {
                 assert_eq!(graph.revision.graph_revision, 1);
-                assert_eq!(graph.revision.transcript_revision, 1);
+                assert_eq!(
+                    graph.revision.transcript_revision, 0,
+                    "PermissionRequest is non-transcript-bearing and must not advance transcript_revision"
+                );
                 assert_eq!(graph.interactions.len(), 1);
                 assert_eq!(
                     graph.lifecycle.status,
@@ -1718,6 +1801,213 @@ mod tests {
             }
             other => panic!("expected snapshot payload, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn synthetic_event_seq_path_must_not_inflate_transcript_revision_past_real_progress() {
+        // REGRESSION GUARD: streaming bug where each AgentMessageChunk goes
+        // through the Ok(None) journal path. Previously, `synthetic_event_seq`
+        // was derived from `max(graph_revision, prev_transcript_revision) + 1`,
+        // so non-transcript updates (CurrentMode, Plan, telemetry, ...) that
+        // bumped graph_revision caused the very next chunk to jump
+        // transcript_revision to graph_revision + 1. After enough such updates,
+        // transcript_revision marches arbitrarily far ahead of real transcript
+        // content, breaking the consumer-side `transcript_revision <=
+        // last_event_seq` invariant and starving the live UI of progressive
+        // chunk deltas during streaming.
+        //
+        // Invariant we enforce: transcript_revision must equal the count of
+        // transcript-bearing events that have actually been applied — it must
+        // not advance for non-transcript updates and must not be lifted by
+        // graph_revision activity.
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-1",
+            "/test/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("session metadata");
+
+        let projection_registry = ProjectionRegistry::new();
+        let transcript_projection_registry = TranscriptProjectionRegistry::new();
+        let runtime_graph_registry = SessionGraphRuntimeRegistry::new();
+        seed_lifecycle(&runtime_graph_registry, "session-1");
+
+        // Five non-transcript updates (Ok(None) path: CurrentMode is not
+        // journaled by `ProjectionJournalUpdate::from_session_update`). These
+        // would each previously bump synthetic_event_seq via graph_revision.
+        for index in 0..5 {
+            let event = AcpUiEvent::session_update(current_mode_update(
+                "session-1",
+                &format!("mode-{index}"),
+            ));
+            if let AcpUiEventPayload::SessionUpdate(update) = &event.payload {
+                projection_registry.apply_session_update("session-1", update.as_ref());
+            }
+            let _ = persist_dispatch_event(
+                Some(&db),
+                &event,
+                &projection_registry,
+                &runtime_graph_registry,
+                &transcript_projection_registry,
+            )
+            .await;
+        }
+
+        let transcript_revision_after_non_transcript = transcript_projection_registry
+            .snapshot_for_session("session-1")
+            .map(|snapshot| snapshot.revision)
+            .unwrap_or(0);
+        assert_eq!(
+            transcript_revision_after_non_transcript, 0,
+            "non-transcript updates must not advance transcript_revision"
+        );
+
+        // Now a single transcript-bearing chunk arrives. transcript_revision
+        // must advance by exactly 1, not jump to graph_revision + 1.
+        let chunk_event = AcpUiEvent::session_update(chunk_update("session-1", "hello"));
+        if let AcpUiEventPayload::SessionUpdate(update) = &chunk_event.payload {
+            projection_registry.apply_session_update("session-1", update.as_ref());
+        }
+        let _ = persist_dispatch_event(
+            Some(&db),
+            &chunk_event,
+            &projection_registry,
+            &runtime_graph_registry,
+            &transcript_projection_registry,
+        )
+        .await;
+
+        let transcript_revision_after_chunk = transcript_projection_registry
+            .snapshot_for_session("session-1")
+            .map(|snapshot| snapshot.revision)
+            .unwrap_or(0);
+        assert_eq!(
+            transcript_revision_after_chunk, 1,
+            "first transcript-bearing chunk must advance transcript_revision by exactly 1, \
+             regardless of how many non-transcript updates inflated graph_revision before it"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_session_write_lock_serializes_concurrent_chunk_persistence() {
+        let db = Arc::new(setup_test_db().await);
+        SessionMetadataRepository::ensure_exists(
+            db.as_ref(),
+            "session-1",
+            "/test/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("session metadata");
+
+        let projection_registry = Arc::new(ProjectionRegistry::new());
+        let transcript_projection_registry = Arc::new(TranscriptProjectionRegistry::new());
+        let runtime_graph_registry = Arc::new(SessionGraphRuntimeRegistry::new());
+        let journal_write_lock_registry = Arc::new(JournalWriteLockRegistry::new());
+        seed_lifecycle(runtime_graph_registry.as_ref(), "session-1");
+
+        let user_event = AcpUiEvent::session_update(user_chunk_update("session-1", "hello"));
+        let assistant_event = AcpUiEvent::session_update(SessionUpdate::AgentMessageChunk {
+            chunk: ContentChunk {
+                content: ContentBlock::Text {
+                    text: "world".to_string(),
+                },
+                aggregation_hint: None,
+            },
+            part_id: Some("part-1".to_string()),
+            message_id: Some("assistant-1".to_string()),
+            session_id: Some("session-1".to_string()),
+        });
+
+        let (user_acquired_tx, user_acquired_rx) = tokio::sync::oneshot::channel();
+
+        let user_handle = {
+            let db = Arc::clone(&db);
+            let projection_registry = Arc::clone(&projection_registry);
+            let transcript_projection_registry = Arc::clone(&transcript_projection_registry);
+            let runtime_graph_registry = Arc::clone(&runtime_graph_registry);
+            let journal_write_lock_registry = Arc::clone(&journal_write_lock_registry);
+            tokio::spawn(async move {
+                if let AcpUiEventPayload::SessionUpdate(update) = &user_event.payload {
+                    projection_registry.apply_session_update("session-1", update.as_ref());
+                }
+
+                let session_lock = journal_write_lock_registry.lock_for("session-1");
+                let _guard = session_lock.lock().await;
+                user_acquired_tx.send(()).expect("signal user lock acquired");
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+                persist_dispatch_event(
+                    Some(db.as_ref()),
+                    &user_event,
+                    projection_registry.as_ref(),
+                    runtime_graph_registry.as_ref(),
+                    transcript_projection_registry.as_ref(),
+                )
+                .await
+                .session_state_envelope
+                .expect("user session state envelope")
+                .last_event_seq
+            })
+        };
+
+        let assistant_handle = {
+            let db = Arc::clone(&db);
+            let projection_registry = Arc::clone(&projection_registry);
+            let transcript_projection_registry = Arc::clone(&transcript_projection_registry);
+            let runtime_graph_registry = Arc::clone(&runtime_graph_registry);
+            let journal_write_lock_registry = Arc::clone(&journal_write_lock_registry);
+            tokio::spawn(async move {
+                user_acquired_rx.await.expect("user acquired lock");
+
+                if let AcpUiEventPayload::SessionUpdate(update) = &assistant_event.payload {
+                    projection_registry.apply_session_update("session-1", update.as_ref());
+                }
+
+                let session_lock = journal_write_lock_registry.lock_for("session-1");
+                let _guard = session_lock.lock().await;
+
+                persist_dispatch_event(
+                    Some(db.as_ref()),
+                    &assistant_event,
+                    projection_registry.as_ref(),
+                    runtime_graph_registry.as_ref(),
+                    transcript_projection_registry.as_ref(),
+                )
+                .await
+                .session_state_envelope
+                .expect("assistant session state envelope")
+                .last_event_seq
+            })
+        };
+
+        let user_last_event_seq = user_handle.await.expect("user join");
+        let assistant_last_event_seq = assistant_handle.await.expect("assistant join");
+
+        assert_eq!(user_last_event_seq, 1);
+        assert_eq!(assistant_last_event_seq, 2);
+
+        let transcript_snapshot = transcript_projection_registry
+            .snapshot_for_session("session-1")
+            .expect("transcript snapshot");
+        assert_eq!(transcript_snapshot.revision, 2);
+        assert_eq!(transcript_snapshot.entries.len(), 2);
+        assert_eq!(
+            transcript_snapshot.entries[0].role,
+            crate::acp::transcript_projection::TranscriptEntryRole::User
+        );
+        assert_eq!(
+            transcript_snapshot.entries[1].role,
+            crate::acp::transcript_projection::TranscriptEntryRole::Assistant
+        );
+
+        let runtime_snapshot = runtime_graph_registry.snapshot_for_session("session-1");
+        assert_eq!(runtime_snapshot.graph_revision, 2);
     }
 
     #[tokio::test]
@@ -1754,6 +2044,7 @@ mod tests {
                                     segment_id: "assistant-1:block:0".to_string(),
                                     text: "hello".to_string(),
                                 }],
+                                attempt_id: None,
                             },
                         },
                     ],
@@ -1811,6 +2102,7 @@ mod tests {
                         segment_id: "assistant-history-1:block:0".to_string(),
                         text: "existing answer".to_string(),
                     }],
+                    attempt_id: None,
                 }],
             },
         );
@@ -1836,6 +2128,7 @@ mod tests {
                                     segment_id: "assistant-2:block:0".to_string(),
                                     text: "broken delta".to_string(),
                                 }],
+                                attempt_id: None,
                             },
                         },
                     ],
@@ -1872,6 +2165,7 @@ mod tests {
         let projection_registry = ProjectionRegistry::new();
         let transcript_projection_registry = TranscriptProjectionRegistry::new();
         let runtime_graph_registry = SessionGraphRuntimeRegistry::new();
+        let journal_write_lock_registry = JournalWriteLockRegistry::new();
         seed_lifecycle(&runtime_graph_registry, "session-1");
         let mut state = DispatcherState::new(DispatchPolicy::default());
         state.enqueue(AcpUiEvent::session_update(
@@ -1909,6 +2203,7 @@ mod tests {
                 &projection_registry,
                 &runtime_graph_registry,
                 &transcript_projection_registry,
+                &journal_write_lock_registry,
             )
             .await;
 

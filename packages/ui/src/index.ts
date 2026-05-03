@@ -4,6 +4,8 @@ export type {
 	AgentPanelActionId,
 	AgentPanelActionState,
 	AgentAssistantEntry,
+	AgentTextRevealState,
+	AssistantRenderBlockContext,
 	AgentPanelAttachedFilePaneModel,
 	AgentPanelAttachedFileTab,
 	AgentPanelBadge,
@@ -287,7 +289,9 @@ export { GitHubBadge } from "./components/github-badge/index.js";
 export {
 	ArrowRightIcon,
 	BuildIcon,
+	DotmSquare18Spinner,
 	DotmTriangle17Spinner,
+	DotmTriangle20Spinner,
 	LoadingIcon,
 	PlanIcon,
 	RevertIcon,

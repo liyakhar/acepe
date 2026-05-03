@@ -1087,6 +1087,7 @@ async fn send_prompt_fire_and_forget_cleans_tracking_on_write_failure() {
             prompt: vec![crate::acp::types::ContentBlock::Text {
                 text: "hello".to_string(),
             }],
+            attempt_id: None,
             stream: Some(true),
         })
         .await;

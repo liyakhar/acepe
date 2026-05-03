@@ -3,6 +3,7 @@ import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
+import type { AgentTextRevealState } from "@acepe/ui/agent-panel";
 import type { TurnState } from "../../../../store/types.js";
 
 import {
@@ -45,8 +46,13 @@ function createUserSceneEntry(id: string, text: string): AgentPanelSceneEntryMod
 	return { id, type: "user", text };
 }
 
-function createAssistantSceneEntry(id: string, markdown: string): AgentPanelSceneEntryModel {
-	return { id, type: "assistant", markdown };
+function createAssistantSceneEntry(
+	id: string,
+	markdown: string,
+	isStreaming = false,
+	textRevealState?: AgentTextRevealState
+): AgentPanelSceneEntryModel {
+	return { id, type: "assistant", markdown, isStreaming, textRevealState };
 }
 
 function createToolCallSceneEntry(id: string): AgentPanelSceneEntryModel {
@@ -365,6 +371,93 @@ describe("SceneContentViewport auto-scroll", () => {
 		});
 	});
 
+	it("keeps a live assistant row out of Virtua even when the global turn state is idle", async () => {
+		const view = renderList({
+			sceneEntries: [
+				createUserSceneEntry("user-1", "hello"),
+				createAssistantSceneEntry("assistant-1", "streaming response", true),
+			],
+			turnState: "idle",
+			isWaitingForResponse: false,
+		});
+		await flushAnimationFrames();
+		await tick();
+		await tick();
+
+		expect(view.queryByTestId("native-fallback")).not.toBeNull();
+		expect(view.queryByTestId("vlist-stub")).toBeNull();
+		expect(conversationEntryHistory.at(-1)).toMatchObject({
+			id: "assistant-1",
+			type: "assistant",
+			isStreaming: true,
+		});
+	});
+
+	it("keeps a textRevealState assistant row out of Virtua even when canonical streaming is false", async () => {
+		const view = renderList({
+			sceneEntries: [
+				createUserSceneEntry("user-1", "hello"),
+				createAssistantSceneEntry("assistant-1", "completed response", false, {
+					policy: "pace",
+					key: "session-1:assistant-1:message",
+				}),
+			],
+			turnState: "idle",
+			isWaitingForResponse: false,
+		});
+		await flushAnimationFrames();
+		await tick();
+		await tick();
+
+		expect(view.queryByTestId("native-fallback")).not.toBeNull();
+		expect(view.queryByTestId("vlist-stub")).toBeNull();
+		expect(conversationEntryHistory.at(-1)).toMatchObject({
+			id: "assistant-1",
+			type: "assistant",
+			isStreaming: false,
+			textRevealState: {
+				policy: "pace",
+				key: "session-1:assistant-1:message",
+			},
+		});
+	});
+
+	it("keeps native rendering when a live assistant completes before reveal activity reports back", async () => {
+		const view = renderList({
+			sceneEntries: [
+				createUserSceneEntry("user-1", "hello"),
+				createToolCallSceneEntry("tool-1"),
+				createAssistantSceneEntry("assistant-1", "streaming response", true),
+			],
+			turnState: "streaming",
+			isWaitingForResponse: false,
+		});
+		await flushAnimationFrames();
+		await tick();
+		await tick();
+
+		expect(view.queryByTestId("native-fallback")).not.toBeNull();
+
+		await view.rerender({
+			panelId: "panel-1",
+			sceneEntries: [
+				createUserSceneEntry("user-1", "hello"),
+				createToolCallSceneEntry("tool-1"),
+				createAssistantSceneEntry("assistant-1", "completed response", false),
+			],
+			turnState: "completed",
+			isWaitingForResponse: false,
+			projectPath: undefined,
+			sessionId: "session-1",
+			isFullscreen: false,
+			onNearBottomChange: undefined,
+		});
+		await tick();
+
+		expect(view.queryByTestId("native-fallback")).not.toBeNull();
+		expect(view.queryByTestId("vlist-stub")).toBeNull();
+	});
+
 	it("ignores transient undefined rows from Virtua during data churn", async () => {
 		const view = renderList({
 			sceneEntries: [
@@ -531,7 +624,7 @@ describe("SceneContentViewport auto-scroll", () => {
 		expect(scrollToIndexCalls).toHaveLength(0);
 	});
 
-	it("force-follows a new user message even after the user detached", async () => {
+	it("does not force-follow a new user message after the user detached", async () => {
 		const view = renderList({
 			sceneEntries: [createAssistantSceneEntry("assistant-1", "latest")],
 		});
@@ -551,7 +644,7 @@ describe("SceneContentViewport auto-scroll", () => {
 		await fireEvent.scroll(viewport);
 		await flushAnimationFrames();
 
-		// Request forced user reveal (simulates sending a message)
+		// Request user reveal (simulates sending a message) after the user detached.
 		view.component.prepareForNextUserReveal({ force: true });
 
 		await view.rerender({
@@ -567,10 +660,7 @@ describe("SceneContentViewport auto-scroll", () => {
 		await tick();
 		await flushAnimationFrames();
 
-		expect(scrollToIndexCalls.at(-1)).toEqual({
-			index: 1,
-			options: { align: "end" },
-		});
+		expect(scrollToIndexCalls).toHaveLength(0);
 	});
 
 	it("reveals the trailing thinking indicator after a user message is sent", async () => {
@@ -598,10 +688,10 @@ describe("SceneContentViewport auto-scroll", () => {
 		await tick();
 		await flushAnimationFrames();
 
-		expect(scrollToIndexCalls.length).toBeGreaterThan(0);
-		expect(scrollToIndexCalls.at(-1)).toEqual({
-			index: 2,
-			options: { align: "end" },
+		expect(view.queryByTestId("native-fallback")).not.toBeNull();
+		expect(view.queryByTestId("vlist-stub")).toBeNull();
+		expect(conversationEntryHistory.at(-1)).toMatchObject({
+			type: "thinking",
 		});
 	});
 
@@ -672,9 +762,9 @@ describe("SceneContentViewport auto-scroll", () => {
 		await flushAnimationFrames();
 
 		expect(dataLengthHistory).not.toContain(0);
-		expect(scrollToIndexCalls.at(-1)).toEqual({
-			index: 2,
-			options: { align: "end" },
+		expect(view.queryByTestId("native-fallback")).not.toBeNull();
+		expect(conversationEntryHistory.at(-1)).toMatchObject({
+			type: "thinking",
 		});
 	});
 
@@ -718,7 +808,7 @@ describe("SceneContentViewport auto-scroll", () => {
 		triggerResizeObserversForEntryKey("tool-1");
 		await flushAnimationFrames();
 
-		expect(scrollToIndexCalls.length).toBeGreaterThan(0);
+		expect(view.queryByTestId("native-fallback")).not.toBeNull();
 	});
 
 	it("observes resize only for the latest reveal target", async () => {
@@ -746,7 +836,7 @@ describe("SceneContentViewport auto-scroll", () => {
 		const view = renderList({
 			sceneEntries: [
 				createUserSceneEntry("user-1", "hello"),
-				createAssistantSceneEntry("assistant-1", "response"),
+				createAssistantSceneEntry("assistant-1", "response", true),
 			],
 			turnState: "streaming",
 		});
@@ -759,8 +849,8 @@ describe("SceneContentViewport auto-scroll", () => {
 			panelId: "panel-1",
 			sceneEntries: [
 				createUserSceneEntry("user-1", "hello"),
-				createAssistantSceneEntry("assistant-1", "response"),
-				createAssistantSceneEntry("assistant-2", "another response"),
+				createAssistantSceneEntry("assistant-1", "response", true),
+				createAssistantSceneEntry("assistant-2", "another response", true),
 			],
 			turnState: "streaming",
 			isWaitingForResponse: false,
@@ -782,12 +872,12 @@ describe("SceneContentViewport auto-scroll", () => {
 		const initialEntries = [
 			createUserSceneEntry("old-user-1", "old one"),
 			createUserSceneEntry("old-user-2", "old two"),
-			createAssistantSceneEntry("old-assistant", "old response"),
+			createAssistantSceneEntry("old-assistant", "old response", true),
 		];
 		const nextEntries = [
 			createUserSceneEntry("new-user-1", "new one"),
 			createUserSceneEntry("new-user-2", "new two"),
-			createAssistantSceneEntry("new-assistant", "new response"),
+			createAssistantSceneEntry("new-assistant", "new response", true),
 		];
 		const view = renderList({
 			sceneEntries: initialEntries,

@@ -26,11 +26,19 @@ pub(crate) fn normalize_message_id(
     tracker: &mut HashMap<String, String>,
 ) -> SessionUpdate {
     match update {
-        SessionUpdate::UserMessageChunk { chunk, session_id } => {
+        SessionUpdate::UserMessageChunk {
+            chunk,
+            session_id,
+            attempt_id,
+        } => {
             if let Some(session_id) = session_id.as_ref() {
                 tracker.remove(session_id);
             }
-            SessionUpdate::UserMessageChunk { chunk, session_id }
+            SessionUpdate::UserMessageChunk {
+                chunk,
+                session_id,
+                attempt_id,
+            }
         }
         SessionUpdate::ToolCall {
             tool_call,
@@ -252,6 +260,7 @@ mod tests {
                     aggregation_hint: None,
                 },
                 session_id: Some("session-1".to_string()),
+                attempt_id: None,
             },
             &mut tracker,
         );

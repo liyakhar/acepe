@@ -253,6 +253,7 @@ pub(crate) fn convert_events_to_updates(
                     SessionUpdate::UserMessageChunk {
                         chunk: text_chunk(data.content),
                         session_id: Some(session_id.to_string()),
+                        attempt_id: None,
                     },
                 ));
             }

@@ -1,7 +1,7 @@
 <script lang="ts">
-	import AgentToolRow from "./agent-tool-row.svelte";
 	import { getPlanningPlaceholderLabel } from "./planning-label.js";
 	import { resolveThinkingDurationMs, shouldRunThinkingTimer } from "./thinking-duration.js";
+	import ToolHeaderLeading from "./tool-header-leading.svelte";
 
 	interface Props {
 		durationMs?: number | null;
@@ -35,4 +35,8 @@
 	});
 </script>
 
-<AgentToolRow title={getPlanningPlaceholderLabel(currentDurationMs)} status="running" padded={false} />
+<div class="flex items-center gap-2 py-1 text-sm text-muted-foreground">
+	<ToolHeaderLeading kind="think" status="running">
+		{getPlanningPlaceholderLabel(currentDurationMs)}
+	</ToolHeaderLeading>
+</div>

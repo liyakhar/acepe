@@ -98,13 +98,17 @@
 </script>
 
 <AgentToolCard>
-	<!-- Header: label + query/count/duration; whole row clickable when done to expand -->
-	<div class="flex items-center gap-1.5 px-2.5 py-1.5">
+	<!-- Row 1: status + result summary + duration + caret; row 2: query (always when present, including collapsed) -->
+	<div class="flex flex-col gap-1 px-2.5 py-1.5">
 		<button
 			type="button"
-			class="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 border-0 bg-transparent p-0 text-left transition-colors hover:text-foreground"
-			onclick={() => { isCollapsed = !isCollapsed; }}
-			aria-label={isCollapsed ? ariaExpandResults : ariaCollapseResults}
+			class="flex min-w-0 w-full items-center justify-between gap-2 border-0 bg-transparent p-0 text-left transition-colors {hasExpandableContent ? 'cursor-pointer hover:text-foreground' : 'cursor-default'}"
+			onclick={() => {
+				if (!hasExpandableContent) return;
+				isCollapsed = !isCollapsed;
+			}}
+			aria-label={hasExpandableContent ? (isCollapsed ? ariaExpandResults : ariaCollapseResults) : undefined}
+			aria-expanded={hasExpandableContent ? !isCollapsed : undefined}
 		>
 			<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-sm text-muted-foreground">
 				<ToolHeaderLeading kind="search" {status}>{headerLabel}</ToolHeaderLeading>
@@ -126,16 +130,16 @@
 				{/if}
 			</div>
 		</button>
+		{#if query}
+			<div class="min-w-0 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm">
+				<span class="text-sm text-muted-foreground/70">Query</span>
+				<code class="text-sm font-sans text-foreground whitespace-pre-wrap break-words">{query}</code>
+			</div>
+		{/if}
 	</div>
 
 	{#if !isCollapsed && hasExpandableContent}
 		<div class="border-t border-border px-2.5 py-2 text-sm">
-			{#if query}
-				<div class="mb-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1">
-					<span class="font-mono text-muted-foreground/70">Query</span>
-					<code class="font-mono text-foreground whitespace-pre-wrap break-words">{query}</code>
-				</div>
-			{/if}
 			{#if metadataRows.length > 0}
 				<div class="mb-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1">
 					{#each metadataRows as row (row.label)}

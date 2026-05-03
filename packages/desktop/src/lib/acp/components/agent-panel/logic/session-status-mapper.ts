@@ -16,6 +16,7 @@ export interface CanonicalSessionPresentationStatusInput {
 export interface CanonicalAgentPanelSessionStateInput
 	extends CanonicalSessionPresentationStatusInput {
 	readonly hasOptimisticPendingEntry?: boolean;
+	readonly hasLocalPendingSendIntent?: boolean;
 }
 
 export interface CanonicalAgentPanelSessionState {
@@ -127,20 +128,25 @@ export function deriveCanonicalAgentPanelSessionState(
 ): CanonicalAgentPanelSessionState {
 	const isBusy = isCanonicalBusy(input.activity, input.turnState);
 	const showPlanningIndicator =
-		input.hasOptimisticPendingEntry === true || input.activity?.kind === "awaiting_model";
-	const sessionStatus =
+		input.hasOptimisticPendingEntry === true ||
+		input.hasLocalPendingSendIntent === true ||
+		input.activity?.kind === "awaiting_model";
+	const baseStatus =
 		input.lifecycle === null || input.lifecycle === undefined
 			? input.hasOptimisticPendingEntry === true
 				? "warming"
 				: mapCanonicalSessionToPanelStatus(input)
 			: mapCanonicalSessionToPanelStatus(input);
+	const sessionStatus =
+		input.hasLocalPendingSendIntent === true && baseStatus === "done" ? "connected" : baseStatus;
 
 	return {
 		sessionStatus,
 		isConnected: input.lifecycle?.status === "ready",
 		isStreaming: isBusy,
 		showPlanningIndicator,
-		canSubmit: input.lifecycle?.actionability.canSend === true,
+		canSubmit:
+			input.hasLocalPendingSendIntent === true ? false : input.lifecycle?.actionability.canSend === true,
 		showStop: isBusy,
 	};
 }

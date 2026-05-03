@@ -2,6 +2,7 @@ export type {
 	ChunkGroup,
 	GroupedAssistantChunks,
 } from "../../lib/assistant-message/assistant-chunk-grouper.js";
+export { groupAssistantChunks } from "../../lib/assistant-message/assistant-chunk-grouper.js";
 export type {
 	AssistantMessage,
 	AssistantMessageChunk,
@@ -130,6 +131,7 @@ export { default as TodoNumberIcon } from "./todo-number-icon.svelte";
 export { default as ToolTally } from "./tool-tally.svelte";
 export type {
 	AgentAssistantEntry,
+	AgentTextRevealState,
 	AssistantRenderBlockContext,
 	AgentPanelActionabilityModel,
 	AgentPanelActionCallbacks,

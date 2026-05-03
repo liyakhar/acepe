@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from "../button/index.js";
 	import { Input } from "../input/index.js";
 	import { LoadingIcon } from "../icons/index.js";
 	import { ProviderMark } from "../provider-mark/index.js";
@@ -179,7 +180,7 @@
 			open={isPrimarySelectorOpen}
 			disabled={isLoading}
 			onOpenChange={setPrimaryOpen}
-			variant="ghost"
+			variant="outline"
 			buttonClass="group/provider-trigger"
 		>
 			{#snippet renderButton()}
@@ -227,16 +228,18 @@
 		<DropdownMenu.Root open={isVariantSelectorOpen} onOpenChange={setVariantOpen}>
 			<DropdownMenu.Trigger disabled={isLoading || !selectedReasoningGroup}>
 				{#snippet child({ props })}
-					<button
+					<Button
 						{...props}
 						type="button"
+						variant="outline"
+						size="sm"
 						disabled={isLoading || !selectedReasoningGroup}
-						class="flex h-7 w-7 items-center justify-center rounded-none transition-colors {isLoading || !selectedReasoningGroup ? 'cursor-not-allowed text-muted-foreground/50' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
+						class="h-7 w-7 shrink-0 rounded-none border-0 p-0 text-muted-foreground"
 						title={reasoningEffortTooltipLabel}
 						aria-label={reasoningEffortTooltipLabel}
 					>
 						<Brain class="size-3.5 shrink-0" weight="fill" style={`color: ${Colors.purple}`} />
-					</button>
+					</Button>
 				{/snippet}
 			</DropdownMenu.Trigger>
 
@@ -269,7 +272,7 @@
 				isOpen = open;
 				ontoggle?.(open);
 			}}
-			variant="ghost"
+			variant="outline"
 			buttonClass="group/provider-trigger"
 		>
 			{#snippet renderButton()}

@@ -1,7 +1,9 @@
 import type {
 	AgentAssistantEntry,
 	AgentPanelSceneEntryModel,
+	AgentTextRevealState,
 } from "@acepe/ui/agent-panel";
+import { groupAssistantChunks } from "@acepe/ui/agent-panel";
 import type { SessionEntry } from "../../../application/dto/session.js";
 import type { AssistantMessage } from "../../../types/assistant-message.js";
 
@@ -19,6 +21,7 @@ export type MergedAssistantDisplayEntry = {
 	timestamp?: Date;
 	latestTimestamp?: Date;
 	isStreaming?: boolean;
+	textRevealState?: AgentTextRevealState;
 };
 
 type MissingDisplayEntry = {
@@ -54,6 +57,13 @@ export function isMergedAssistantDisplayEntry(
 	return entry.type === "assistant_merged";
 }
 
+export function getMergedAssistantRevealFallbackKey(
+	entry: MergedAssistantDisplayEntry
+): string | null {
+	const textGroupIndex = getLastMessageTextGroupIndex(entry);
+	return textGroupIndex === null ? null : `${entry.key}:message:${String(textGroupIndex)}`;
+}
+
 function createMergedAssistantDisplayEntry(
 	entry: SessionEntry & { type: "assistant" }
 ): MergedAssistantDisplayEntry {
@@ -79,6 +89,27 @@ function mergeAssistantMessages(
 		receivedAt: previous.receivedAt ?? next.receivedAt,
 		thinkingDurationMs: next.thinkingDurationMs ?? previous.thinkingDurationMs,
 	};
+}
+
+function getLastMessageTextGroupIndex(entry: MergedAssistantDisplayEntry): number | null {
+	const groups = groupAssistantChunks(entry.message.chunks).messageGroups;
+	for (let index = groups.length - 1; index >= 0; index -= 1) {
+		if (groups[index]?.type === "text") {
+			return index;
+		}
+	}
+	return null;
+}
+
+function getLastMessageTextGroupText(message: AssistantMessage): string | null {
+	const groups = groupAssistantChunks(message.chunks).messageGroups;
+	for (let index = groups.length - 1; index >= 0; index -= 1) {
+		const group = groups[index];
+		if (group?.type === "text") {
+			return group.text;
+		}
+	}
+	return null;
 }
 
 function mergeAssistantEntry(
@@ -159,6 +190,7 @@ function createMergedAssistantDisplayEntryFromScene(
 		timestamp: ts,
 		latestTimestamp: ts,
 		isStreaming: entry.isStreaming,
+		textRevealState: entry.textRevealState,
 	};
 }
 
@@ -182,6 +214,30 @@ function mergeSceneAssistantEntry(
 	previous: MergedAssistantDisplayEntry,
 	entry: AgentAssistantEntry
 ): MergedAssistantDisplayEntry {
+	const nextTextRevealState = (() => {
+		if (entry.textRevealState === undefined) {
+			return previous.textRevealState;
+		}
+
+		const seedDisplayedText = getLastMessageTextGroupText(previous.message);
+		if (
+			seedDisplayedText !== null &&
+			seedDisplayedText.length > 0 &&
+			seedDisplayedText !== entry.markdown
+		) {
+			return {
+				policy: entry.textRevealState.policy,
+				key: entry.textRevealState.key,
+				seedDisplayedText,
+			} satisfies AgentTextRevealState;
+		}
+
+		return {
+			policy: entry.textRevealState.policy,
+			key: entry.textRevealState.key,
+		} satisfies AgentTextRevealState;
+	})();
+
 	return {
 		type: "assistant_merged",
 		key: previous.key,
@@ -191,6 +247,7 @@ function mergeSceneAssistantEntry(
 		latestTimestamp:
 			entry.timestampMs !== undefined ? new Date(entry.timestampMs) : previous.latestTimestamp,
 		isStreaming: previous.isStreaming || entry.isStreaming,
+		textRevealState: nextTextRevealState,
 	};
 }
 

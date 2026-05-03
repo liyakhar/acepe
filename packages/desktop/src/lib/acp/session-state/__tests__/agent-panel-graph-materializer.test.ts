@@ -62,16 +62,26 @@ function createTranscriptEntry(
 	role: TranscriptEntry["role"],
 	text: string
 ): TranscriptEntry {
+	return createTranscriptEntryFromSegments(entryId, role, [text]);
+}
+
+function createTranscriptEntryFromSegments(
+	entryId: string,
+	role: TranscriptEntry["role"],
+	segments: readonly string[],
+	attemptId?: string | null
+): TranscriptEntry {
 	return {
 		entryId,
 		role,
-		segments: [
-			{
-				kind: "text",
-				segmentId: `${entryId}-segment-1`,
+		segments: segments.map((text, index) => {
+			return {
+				kind: "text" as const,
+				segmentId: `${entryId}-segment-${index + 1}`,
 				text,
-			},
-		],
+			};
+		}),
+		attemptId: attemptId ?? null,
 	};
 }
 
@@ -122,6 +132,7 @@ function createGraph(input: {
 	transcriptSnapshot: TranscriptSnapshot;
 	operations?: OperationSnapshot[];
 	turnState?: SessionStateGraph["turnState"];
+	lastAgentMessageId?: string | null;
 	lifecycle?: SessionGraphLifecycle;
 	activity?: SessionGraphActivity;
 }): SessionStateGraph {
@@ -145,6 +156,7 @@ function createGraph(input: {
 		interactions: [],
 		turnState: input.turnState ?? "Completed",
 		messageCount: input.transcriptSnapshot.entries.length,
+		lastAgentMessageId: input.lastAgentMessageId ?? null,
 		activeTurnFailure: null,
 		lastTerminalTurnId: null,
 		lifecycle,
@@ -193,7 +205,18 @@ describe("agent panel graph materializer", () => {
 			id: "assistant-1",
 			type: "assistant",
 			markdown: "Checks are green.",
-			isStreaming: undefined,
+			message: {
+				chunks: [
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: "Checks are green.",
+						},
+					},
+				],
+			},
+			isStreaming: false,
 			revealMessageKey: "assistant-1",
 		});
 	});
@@ -340,6 +363,67 @@ describe("agent panel graph materializer", () => {
 
 		expect(scene.status).toBe("error");
 		expect(scene.header.status).toBe("error");
+	});
+
+	it("concatenates assistant transcript token segments without markdown line breaks", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntryFromSegments("assistant-1", "assistant", [
+					"The fl",
+					"icker is",
+					" caused by co",
+					"arse-grained reactivity.",
+				]),
+			]),
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toEqual({
+			id: "assistant-1",
+			type: "assistant",
+			markdown: "The flicker is caused by coarse-grained reactivity.",
+			message: {
+				chunks: [
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: "The fl",
+						},
+					},
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: "icker is",
+						},
+					},
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: " caused by co",
+						},
+					},
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: "arse-grained reactivity.",
+						},
+					},
+				],
+			},
+			isStreaming: false,
+			revealMessageKey: "assistant-1",
+		});
 	});
 
 	it("renders committed missing-operation tool rows as explicit degraded presentation", () => {
@@ -874,7 +958,18 @@ describe("agent panel graph materializer", () => {
 				id: "assistant-1",
 				type: "assistant",
 				markdown: "Response",
-				isStreaming: undefined,
+				message: {
+					chunks: [
+						{
+							type: "message",
+							block: {
+								type: "text",
+								text: "Response",
+							},
+						},
+					],
+				},
+				isStreaming: false,
 				revealMessageKey: "assistant-1",
 			});
 		});
@@ -970,6 +1065,186 @@ describe("agent panel graph materializer", () => {
 			expect(optimisticEntry.id).toBe(optimisticEntryId);
 			expect(optimisticEntry.type).toBe("user");
 			expect(optimisticEntry.isOptimistic).toBe(true);
+		});
+
+		it("surfaces only the canonical user entry once matching attemptId has landed", () => {
+			const pendingUserEntry = createOptimisticUserEntry("optimistic-uuid-1", "Hello world");
+			const graph = createGraph({
+				transcriptSnapshot: createTranscriptSnapshot([
+					createTranscriptEntryFromSegments(
+						"canonical-user-1",
+						"user",
+						["Hello world"],
+						"attempt-123"
+					),
+				]),
+			});
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: null,
+			});
+
+			expect(scene.conversation.entries).toHaveLength(1);
+			const entry = scene.conversation.entries[0] as AgentUserEntry;
+			expect(entry.id).toBe("canonical-user-1");
+			expect(entry.isOptimistic).toBeUndefined();
+			void pendingUserEntry;
+		});
+	});
+
+	describe("assistant isStreaming derivation", () => {
+		it("marks only the latest assistant entry as isStreaming when turnState is Running", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "First question"),
+				createTranscriptEntry("a1", "assistant", "First answer"),
+				createTranscriptEntry("u2", "user", "Second question"),
+				createTranscriptEntry("a2", "assistant", "Second answer still coming in"),
+			]);
+			const graph = createGraph({ transcriptSnapshot, turnState: "Running" });
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(2);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+			expect((assistantEntries[1] as { isStreaming?: boolean }).isStreaming).toBe(true);
+		});
+
+		it("marks no assistant entry as isStreaming when turnState is Completed", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Question"),
+				createTranscriptEntry("a1", "assistant", "Answer"),
+			]);
+			const graph = createGraph({ transcriptSnapshot, turnState: "Completed" });
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(1);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+		});
+
+		it("does not restart streaming reveal for the previous assistant while waiting for the next response", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "First question"),
+				createTranscriptEntry("a1", "assistant", "First answer"),
+				createTranscriptEntry("u2", "user", "repeat in french"),
+			]);
+			const graph = createGraph({ transcriptSnapshot, turnState: "Running" });
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(1);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+		});
+
+		it("marks the latest assistant as isStreaming even when tool entries follow it", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Do the thing"),
+				createTranscriptEntry("a1", "assistant", "Running the tool"),
+				createTranscriptEntry("tool-1", "tool", "result"),
+				createTranscriptEntry("a2", "assistant", "Here is what I found"),
+			]);
+			const graph = createGraph({
+				transcriptSnapshot,
+				operations: [createOperationSnapshot()],
+				turnState: "Running",
+			});
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(2);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+			expect((assistantEntries[1] as { isStreaming?: boolean }).isStreaming).toBe(true);
+		});
+
+		it("does not mark completed assistant text as streaming while a trailing tool is active", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Do the thing"),
+				createTranscriptEntry("a1", "assistant", "Running the tool"),
+				createTranscriptEntry("tool-1", "tool", "result"),
+			]);
+			const graph = createGraph({
+				transcriptSnapshot,
+				operations: [
+					createOperationSnapshot({
+						provider_status: "pending",
+						operation_state: "running",
+						result: null,
+					}),
+				],
+				turnState: "Running",
+				lastAgentMessageId: "a1",
+				activity: {
+					kind: "running_operation",
+					activeOperationCount: 1,
+					activeSubagentCount: 0,
+					dominantOperationId: "op:session-1:tool-1",
+					blockingInteractionId: null,
+				},
+			});
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(1);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+		});
+
+		it("keeps the open assistant streaming after a completed trailing tool while awaiting model text", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Do the thing"),
+				createTranscriptEntry("a1", "assistant", "Running the tool, then continuing"),
+				createTranscriptEntry("tool-1", "tool", "result"),
+			]);
+			const graph = createGraph({
+				transcriptSnapshot,
+				operations: [createOperationSnapshot()],
+				turnState: "Running",
+				lastAgentMessageId: "a1",
+				activity: {
+					kind: "awaiting_model",
+					activeOperationCount: 0,
+					activeSubagentCount: 0,
+					dominantOperationId: null,
+					blockingInteractionId: null,
+				},
+			});
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(1);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(true);
 		});
 	});
 });

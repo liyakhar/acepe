@@ -17,8 +17,7 @@
 	import AgentToolSkill from "./agent-tool-skill.svelte";
 	import AgentToolTodo from "./agent-tool-todo.svelte";
 	import AgentToolWebSearch from "./agent-tool-web-search.svelte";
-	import { TextShimmer } from "../text-shimmer/index.js";
-	import { LoadingIcon } from "../icons/index.js";
+	import ToolHeaderLeading from "./tool-header-leading.svelte";
 
 	interface Props {
 		entries: AnyAgentEntry[];
@@ -53,9 +52,12 @@
 		void entries.length;
 		const el = scrollContainer;
 		if (el) {
-			requestAnimationFrame(() => {
+			const animationFrameId = requestAnimationFrame(() => {
 				el.scrollTop = el.scrollHeight;
 			});
+			return () => {
+				cancelAnimationFrame(animationFrameId);
+			};
 		}
 	});
 </script>
@@ -171,8 +173,7 @@
 					{/if}
 				{:else if entry.type === "thinking"}
 					<div class="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-						<LoadingIcon class="shrink-0" style="width: 14px; height: 14px;" aria-label="Loading" />
-						<TextShimmer>Planning next moves…</TextShimmer>
+						<ToolHeaderLeading kind="think" status="running">Planning next moves…</ToolHeaderLeading>
 					</div>
 				{/if}
 			</div>

@@ -1,5 +1,6 @@
 <script lang="ts">
 import { useSessionContext } from "../../hooks/use-session-context.js";
+import type { AgentTextRevealState } from "@acepe/ui/agent-panel";
 import type { ContentBlock } from "../../schemas/content-block.schema.js";
 import {
 	DEFAULT_STREAMING_ANIMATION_MODE,
@@ -13,6 +14,7 @@ interface Props {
 	/** Whether this content is currently streaming */
 	isStreaming?: boolean;
 	revealKey?: string;
+	textRevealState?: AgentTextRevealState;
 	/** Project path for opening files in panels */
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
@@ -23,10 +25,12 @@ let {
 	block,
 	isStreaming = false,
 	revealKey,
+	textRevealState,
 	projectPath: propProjectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
 	onRevealActivityChange,
 }: Props = $props();
+
 
 const sessionContext = useSessionContext();
 const projectPath = $derived(propProjectPath ?? sessionContext?.projectPath);
@@ -45,6 +49,7 @@ const validationResult = $derived(validateContentBlock(block));
 			{...blockProps}
 			{isStreaming}
 			{revealKey}
+			{textRevealState}
 			{projectPath}
 			{streamingAnimationMode}
 			{onRevealActivityChange}

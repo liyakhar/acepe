@@ -144,6 +144,7 @@ async fn transport_connection_exposes_command_sink_and_event_stream() {
             prompt: vec![ContentBlock::Text {
                 text: "hello".to_string(),
             }],
+            attempt_id: None,
             stream: Some(true),
         })
         .expect("send prompt");

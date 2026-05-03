@@ -55,7 +55,7 @@
 </script>
 
 <!-- Mirrors desktop tool-call-read.svelte visual structure -->
-<div>
+<div class="text-sm">
 	<div class="flex items-start gap-1.5">
 		<div class="flex min-w-0 flex-1 items-center gap-1.5">
 			<div class="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">

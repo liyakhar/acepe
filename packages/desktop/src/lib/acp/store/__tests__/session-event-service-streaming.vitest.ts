@@ -927,7 +927,7 @@ describe("SessionEventService streaming delta handling", () => {
 	it("treats raw userMessageChunk as diagnostic without clearing assistant streaming state", () => {
 		const update: SessionUpdate = {
 			type: "userMessageChunk",
-			session_id: "session-123",
+			sessionId: "session-123",
 			chunk: {
 				content: { type: "text", text: "All I want is success" },
 			},
@@ -1807,7 +1807,7 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(
 			{
 				type: "userMessageChunk",
-				session_id: sessionId,
+				sessionId: sessionId,
 				chunk: { content: { type: "text", text: "follow-up question" } },
 			},
 			integrationHandler

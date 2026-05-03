@@ -422,6 +422,7 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
     app: &AppHandle<R>,
     session_id: String,
     request: Value,
+    attempt_id: Option<String>,
 ) -> Result<(), SerializableAcpError> {
     tracing::debug!(session_id = %session_id, "acp_send_prompt called");
 
@@ -430,6 +431,7 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
     let mut prompt_request: PromptRequest = serde_json::from_value(json!({
         "sessionId": session_id,
         "prompt": request,
+        "attemptId": attempt_id,
         "stream": true
     }))
     .map_err(|e| SerializableAcpError::SerializationError {
@@ -485,7 +487,11 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
                 message: error.to_string(),
             })?;
     }
-    let synthetic_user_update = synthetic_user_message_update(&session_id, &prompt_request.prompt);
+    let synthetic_user_update = synthetic_user_message_update(
+        &session_id,
+        &prompt_request.prompt,
+        prompt_request.attempt_id.as_deref(),
+    );
     let result = timeout(
         SESSION_CLIENT_OPERATION_TIMEOUT,
         client_guard.send_prompt_fire_and_forget(prompt_request),
@@ -557,10 +563,11 @@ pub async fn acp_send_prompt(
     app: AppHandle,
     session_id: String,
     request: Value,
+    attempt_id: Option<String>,
 ) -> CommandResult<()> {
     expected_acp_command_result(
         "acp_send_prompt",
-        send_prompt_with_app_handle(&app, session_id, request).await,
+        send_prompt_with_app_handle(&app, session_id, request, attempt_id).await,
     )
 }
 

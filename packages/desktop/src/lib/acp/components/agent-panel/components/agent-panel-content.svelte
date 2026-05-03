@@ -27,6 +27,7 @@ let {
 	onProjectSelected = () => {},
 	onRetryConnection,
 	onCancelConnection,
+	onTextRevealActivityChange,
 	agentIconSrc = "",
 	isFullscreen = false,
 	availableAgents = [],
@@ -191,6 +192,7 @@ export function scrollToTop() {
 				{modifiedFilesState}
 				onNearBottomChange={(nearBottom) => (isAtBottom = nearBottom)}
 				onNearTopChange={(nearTop) => (isAtTop = nearTop)}
+				{onTextRevealActivityChange}
 			/>
 		</div>
 	</div>

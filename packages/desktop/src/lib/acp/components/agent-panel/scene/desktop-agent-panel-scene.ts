@@ -1124,6 +1124,13 @@ export function mapVirtualizedDisplayEntryToConversationEntry(
 			id: entry.key,
 			type: "assistant",
 			markdown: contentBlocksToText(entry.message.chunks.map((chunk) => chunk.block)),
+			message: {
+				chunks: entry.message.chunks,
+				model: entry.message.model,
+				displayModel: entry.message.displayModel,
+				receivedAt: entry.message.receivedAt,
+				thinkingDurationMs: entry.message.thinkingDurationMs,
+			},
 			isStreaming: isStreamingAssistant || entry.isStreaming,
 			revealMessageKey: entry.key,
 			timestampMs: entry.timestamp?.getTime(),

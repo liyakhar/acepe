@@ -190,16 +190,10 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 				);
 				const existingIndex = appendTarget.existingIndex;
 				const convertedEntry = convertTranscriptEntryToSessionEntry(appendTarget.entry, timestamp);
-				const reconciledIndex =
-					existingIndex ?? this.findMirroredOptimisticUserEntryIndex(sessionId, convertedEntry);
-				const nextEntry = this.preserveTranscriptEntry(
-					this.getEntries(sessionId)[reconciledIndex ?? -1],
-					convertedEntry
-				);
-				if (reconciledIndex === undefined) {
-					this.addEntry(sessionId, nextEntry);
+				if (existingIndex === undefined) {
+					this.addEntry(sessionId, convertedEntry);
 				} else {
-					this.updateEntry(sessionId, reconciledIndex, nextEntry);
+					this.updateEntry(sessionId, existingIndex, convertedEntry);
 				}
 				continue;
 			}
@@ -510,62 +504,6 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 		return this.operationStore;
 	}
 
-	private preserveTranscriptEntry(
-		existingEntry: SessionEntry | undefined,
-		nextEntry: SessionEntry
-	): SessionEntry {
-		if (
-			existingEntry === undefined ||
-			existingEntry.type !== "user" ||
-			nextEntry.type !== "user" ||
-			existingEntry.message.sentAt === undefined
-		) {
-			return nextEntry;
-		}
-
-		return {
-			id: nextEntry.id,
-			type: "user",
-			message: {
-				id: nextEntry.message.id,
-				content: nextEntry.message.content,
-				chunks: nextEntry.message.chunks,
-				sentAt: existingEntry.message.sentAt,
-				checkpoint: existingEntry.message.checkpoint,
-			},
-			timestamp: existingEntry.timestamp,
-		};
-	}
-
-	private findMirroredOptimisticUserEntryIndex(
-		sessionId: string,
-		nextEntry: SessionEntry
-	): number | undefined {
-		if (nextEntry.type !== "user" || nextEntry.message.content.type !== "text") {
-			return undefined;
-		}
-
-		const entries = this.getEntries(sessionId);
-		const optimisticIndex = entries.length - 1;
-		if (optimisticIndex < 0) {
-			return undefined;
-		}
-
-		const optimisticEntry = entries[optimisticIndex];
-		if (
-			optimisticEntry?.type !== "user" ||
-			optimisticEntry.message.sentAt === undefined ||
-			optimisticEntry.message.content.type !== "text"
-		) {
-			return undefined;
-		}
-
-		if (optimisticEntry.message.content.text !== nextEntry.message.content.text) {
-			return undefined;
-		}
-
-		return optimisticIndex;
-	}
 
 	// ============================================
 	// TOOL CALLS (delegated to TranscriptToolCallBuffer)

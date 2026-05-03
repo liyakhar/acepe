@@ -29,6 +29,7 @@ describe("planning placeholder labels", () => {
 		});
 
 		expect(view.getByText("Planning next moves…")).toBeTruthy();
+		expect(view.getByRole("status", { name: "Loading" })).toBeTruthy();
 		expect(view.queryByText("Planning next moves for 4s…")).toBeNull();
 	});
 
@@ -42,6 +43,7 @@ describe("planning placeholder labels", () => {
 		});
 
 		expect(view.getByText("Planning next moves…")).toBeTruthy();
+		expect(view.getByRole("status", { name: "Loading" })).toBeTruthy();
 		expect(view.queryByText("Planning next moves for 4s…")).toBeNull();
 	});
 });

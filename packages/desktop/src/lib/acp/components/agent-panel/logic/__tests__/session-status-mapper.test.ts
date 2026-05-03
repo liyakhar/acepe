@@ -200,4 +200,23 @@ describe("deriveCanonicalAgentPanelSessionState", () => {
 			showStop: true,
 		});
 	});
+
+	it("uses local pending send intent for immediate in-session planning feedback", () => {
+		const state = deriveCanonicalAgentPanelSessionState({
+			lifecycle: lifecycle("ready", false, false, true),
+			activity: null,
+			turnState: "Completed",
+			hasEntries: true,
+			hasLocalPendingSendIntent: true,
+		});
+
+		expect(state).toEqual({
+			sessionStatus: "connected",
+			isConnected: true,
+			isStreaming: false,
+			showPlanningIndicator: true,
+			canSubmit: false,
+			showStop: false,
+		});
+	});
 });

@@ -9,6 +9,7 @@ import {
 	buildVirtualizedDisplayEntriesFromScene,
 	findLastAssistantSceneIndex,
 	getLatestRevealTargetKey,
+	getMergedAssistantRevealFallbackKey,
 	getVirtualizedDisplayEntryKey,
 	getVirtualizedDisplayEntryTimestampMs,
 	isMergedAssistantDisplayEntry,
@@ -342,6 +343,111 @@ describe("buildVirtualizedDisplayEntriesFromScene", () => {
 			expect(entry.memberIds).toEqual(["a1", "a2"]);
 			expect(entry.isStreaming).toBe(true);
 			expect(entry.message.chunks).toHaveLength(2);
+		}
+	});
+
+	it("preserves textRevealState when consecutive assistant scene entries merge", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{ type: "assistant", id: "a1", markdown: "first", isStreaming: false },
+			{
+				type: "assistant",
+				id: "a2",
+				markdown: "second",
+				isStreaming: false,
+				textRevealState: { policy: "pace", key: "session-1:a2:message" },
+			},
+		];
+
+		const result = buildVirtualizedDisplayEntriesFromScene(scene);
+
+		expect(result).toHaveLength(1);
+		const entry = result[0]!;
+		expect(entry.type).toBe("assistant_merged");
+		if (entry.type === "assistant_merged") {
+			expect(entry.textRevealState).toEqual({
+				policy: "pace",
+				key: "session-1:a2:message",
+				seedDisplayedText: "first",
+			});
+		}
+	});
+
+	it("preserves anchor textRevealState when undecorated assistant scene entries merge into it", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{
+				type: "assistant",
+				id: "a1",
+				markdown: "first",
+				isStreaming: false,
+				textRevealState: { policy: "pace", key: "session-1:a1:message" },
+			},
+			{ type: "assistant", id: "a2", markdown: "second", isStreaming: false },
+		];
+
+		const result = buildVirtualizedDisplayEntriesFromScene(scene);
+
+		expect(result).toHaveLength(1);
+		const entry = result[0]!;
+		expect(entry.type).toBe("assistant_merged");
+		if (entry.type === "assistant_merged") {
+			expect(entry.textRevealState).toEqual({
+				policy: "pace",
+				key: "session-1:a1:message",
+			});
+		}
+	});
+
+	it("uses the last grouped message text index for fallback reveal keys", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{
+				type: "assistant",
+				id: "a1",
+				isStreaming: true,
+				markdown: "",
+				message: {
+					chunks: [
+						{ type: "message", block: { type: "text", text: "first" } },
+						{
+							type: "message",
+							block: { type: "image", data: "abc", mimeType: "image/png" },
+						},
+						{ type: "message", block: { type: "text", text: "second" } },
+					],
+				},
+			},
+		];
+
+		const result = buildVirtualizedDisplayEntriesFromScene(scene);
+
+		expect(result[0]?.type).toBe("assistant_merged");
+		if (result[0]?.type === "assistant_merged") {
+			expect(getMergedAssistantRevealFallbackKey(result[0])).toBe("a1:message:2");
+		}
+	});
+
+	it("does not create fallback reveal keys for assistant rows with no message text group", () => {
+		const scene: AgentPanelSceneEntryModel[] = [
+			{
+				type: "assistant",
+				id: "a1",
+				isStreaming: true,
+				markdown: "",
+				message: {
+					chunks: [
+						{
+							type: "message",
+							block: { type: "image", data: "abc", mimeType: "image/png" },
+						},
+					],
+				},
+			},
+		];
+
+		const result = buildVirtualizedDisplayEntriesFromScene(scene);
+
+		expect(result[0]?.type).toBe("assistant_merged");
+		if (result[0]?.type === "assistant_merged") {
+			expect(getMergedAssistantRevealFallbackKey(result[0])).toBeNull();
 		}
 	});
 

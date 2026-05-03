@@ -95,9 +95,10 @@ export const acp = {
 
 	sendPrompt: (
 		sessionId: string,
-		request: ReadonlyArray<Record<string, unknown> & { type: string }>
+		request: ReadonlyArray<Record<string, unknown> & { type: string }>,
+		attemptId?: string
 	): ResultAsync<void, AppError> => {
-		return acpCommands.send_prompt.invoke<void>({ sessionId, request });
+		return acpCommands.send_prompt.invoke<void>({ sessionId, request, attemptId });
 	},
 
 	cancel: (sessionId: string): ResultAsync<void, AppError> => {

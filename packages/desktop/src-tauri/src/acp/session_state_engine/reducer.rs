@@ -153,6 +153,7 @@ fn apply_transcript_delta(
                         entry_id: entry_id.clone(),
                         role: role.clone(),
                         segments: vec![segment.clone()],
+                        attempt_id: None,
                     });
                 }
             }
@@ -206,12 +207,14 @@ mod tests {
                         segment_id: "assistant-1:segment:1".to_string(),
                         text: "hello".to_string(),
                     }],
+                    attempt_id: None,
                 }],
             },
             operations: Vec::new(),
             interactions: Vec::new(),
             turn_state: SessionTurnState::Idle,
             message_count: 1,
+            last_agent_message_id: Some("assistant-1".to_string()),
             active_turn_failure: None,
             last_terminal_turn_id: None,
             lifecycle: SessionGraphLifecycle::idle(),
@@ -309,6 +312,7 @@ mod tests {
                     segment_id: "user-2:block:0".to_string(),
                     text: "fresh".to_string(),
                 }],
+                attempt_id: None,
             }],
         };
         let delta = SessionStateDelta {

@@ -26,6 +26,10 @@ export interface AgentPanelContentProps {
 	readonly onProjectSelected?: (project: Project) => void;
 	readonly onRetryConnection?: () => void;
 	readonly onCancelConnection?: () => void;
+	readonly onTextRevealActivityChange?: (
+		revealKey: string | null | undefined,
+		active: boolean
+	) => void;
 	readonly agentIconSrc?: string;
 	readonly isFullscreen?: boolean;
 	readonly availableAgents?: AgentInfo[];

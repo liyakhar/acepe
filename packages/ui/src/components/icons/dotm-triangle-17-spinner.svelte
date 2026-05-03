@@ -137,6 +137,8 @@
 		}
 		const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
 		let raf: number | null = null;
+		let schedulingFrame = false;
+		let synchronousRafDetected = false;
 		const stopAnimation = (): void => {
 			if (raf !== null) {
 				window.cancelAnimationFrame(raf);
@@ -145,8 +147,27 @@
 		};
 		const startAnimation = (): void => {
 			if (raf === null) {
-				raf = window.requestAnimationFrame(tick);
+				requestNextFrame();
 			}
+		};
+		const requestNextFrame = (): void => {
+			if (synchronousRafDetected) {
+				return;
+			}
+			let ranSynchronously = false;
+			schedulingFrame = true;
+			const requestId = window.requestAnimationFrame((now) => {
+				ranSynchronously = true;
+				raf = null;
+				if (schedulingFrame) {
+					synchronousRafDetected = true;
+					cyclePhase = 0.12;
+					return;
+				}
+				tick(now);
+			});
+			schedulingFrame = false;
+			raf = ranSynchronously ? null : requestId;
 		};
 		const syncReduced = (): void => {
 			reducedMotion = mq.matches;
@@ -168,7 +189,7 @@
 			const cycleMs = CYCLE_MS_BASE / safeSpeed;
 			const elapsed = ((now - t0) % cycleMs + cycleMs) % cycleMs;
 			cyclePhase = elapsed / cycleMs;
-			raf = window.requestAnimationFrame(tick);
+			requestNextFrame();
 		};
 		mq.addEventListener("change", syncReduced);
 		syncReduced();

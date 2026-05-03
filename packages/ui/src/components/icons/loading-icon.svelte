@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { cn } from "../../lib/utils";
-	import DotmTriangle17Spinner from "./dotm-triangle-17-spinner.svelte";
+	import DotmTriangle20Spinner from "./dotm-triangle-20-spinner.svelte";
 
 	interface Props {
 		class?: string;
@@ -12,7 +12,7 @@
 	let { class: className = "", role, "aria-label": ariaLabel, style = "" }: Props = $props();
 </script>
 
-<DotmTriangle17Spinner
+<DotmTriangle20Spinner
 	class={cn("shrink-0", className)}
 	{style}
 	color="#bf8700"

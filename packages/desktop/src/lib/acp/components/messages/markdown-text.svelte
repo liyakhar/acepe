@@ -2,6 +2,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getContext, untrack } from "svelte";
 import type { FileGitStatus } from "$lib/services/converted-session-types.js";
+import type { AgentTextRevealState } from "@acepe/ui/agent-panel";
 import {
 	GITHUB_COMMIT_SHA_PATTERN,
 	GITHUB_GIT_REF_PATTERN,
@@ -44,7 +45,21 @@ const STREAMING_SYNC_RESULT = {
 	needsAsync: false,
 } satisfies SyncRenderResult;
 
+const MAX_REVEAL_CACHE_ENTRIES = 256;
 const revealedMessageTexts = new Map<string, string>();
+const revealedProgressTexts = new Map<string, string>();
+
+function rememberRevealText(cache: Map<string, string>, key: string, value: string): void {
+	cache.delete(key);
+	cache.set(key, value);
+	if (cache.size <= MAX_REVEAL_CACHE_ENTRIES) {
+		return;
+	}
+	const oldestKey = cache.keys().next().value;
+	if (oldestKey !== undefined) {
+		cache.delete(oldestKey);
+	}
+}
 
 // Get session context (set by VirtualizedEntryList)
 const sessionContext = useSessionContext();
@@ -64,6 +79,7 @@ interface Props {
 	/** Whether content is currently streaming */
 	isStreaming?: boolean;
 	revealKey?: string;
+	textRevealState?: AgentTextRevealState;
 	/**
 	 * Project path for opening files in panels.
 	 * If not provided, will use projectPath from session context.
@@ -93,6 +109,7 @@ let {
 	text,
 	isStreaming = false,
 	revealKey: _revealKey,
+	textRevealState,
 	projectPath: propProjectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
 	onRevealActivityChange,
@@ -100,6 +117,8 @@ let {
 
 // Use context projectPath if no prop provided, otherwise use prop (backward compatibility)
 const projectPath = $derived(propProjectPath ?? contextProjectPath);
+const shouldPaceTextReveal = $derived(textRevealState?.policy === "pace");
+const effectiveRevealKey = $derived(textRevealState?.key ?? (_revealKey?.trim() ?? ""));
 
 const panelStore = getPanelStore();
 
@@ -115,7 +134,10 @@ const reveal: StreamingRevealController = createStreamingRevealController(
 );
 let hasStreamingSession = $state(false);
 let wasStreaming = false;
+let hadPacedTextReveal = false;
+let suppressSettledRevealActivity = $state(false);
 let seedRevealFromSource = $state(false);
+let seedRevealDisplayedText = $state<string | null>(null);
 let lastRevealKey = $state("");
 
 // Fetch and cache repo context for enhancing commit badges
@@ -148,30 +170,86 @@ function htmlNeedsBadgeMount(html: string | null): boolean {
 }
 
 $effect(() => {
-	const revealKey = _revealKey?.trim() ?? "";
+	const revealKey = effectiveRevealKey;
 	if (revealKey === lastRevealKey) {
 		return;
 	}
 
+	reveal.reset();
 	lastRevealKey = revealKey;
 	if (!revealKey) {
+		if (!isStreaming && !shouldPaceTextReveal) {
+			hasStreamingSession = false;
+			wasStreaming = false;
+			suppressSettledRevealActivity = true;
+		}
 		seedRevealFromSource = false;
+		seedRevealDisplayedText = null;
+		return;
+	}
+
+	if (shouldPaceTextReveal) {
+		seedRevealFromSource = false;
+		const explicitSeed = textRevealState?.seedDisplayedText;
+		seedRevealDisplayedText =
+			explicitSeed !== undefined &&
+			explicitSeed.length > 0 &&
+			explicitSeed.length < text.length &&
+			text.startsWith(explicitSeed)
+				? explicitSeed
+				: null;
 		return;
 	}
 
 	const priorText = revealedMessageTexts.get(revealKey);
 	seedRevealFromSource =
+		!isStreaming &&
 		priorText !== undefined &&
 		(text === priorText || text.startsWith(priorText) || priorText.startsWith(text));
-	revealedMessageTexts.set(revealKey, text);
+	const priorProgressText = revealedProgressTexts.get(revealKey);
+	seedRevealDisplayedText =
+		priorProgressText !== undefined &&
+		priorProgressText.length > 0 &&
+		priorProgressText.length < text.length &&
+		text.startsWith(priorProgressText)
+			? priorProgressText
+			: null;
+	rememberRevealText(revealedMessageTexts, revealKey, text);
 });
 
 $effect(() => {
-	if (isStreaming) {
+	if (isStreaming || shouldPaceTextReveal) {
 		hasStreamingSession = true;
-		wasStreaming = true;
-		reveal.setState(text, true, { seedFromSource: seedRevealFromSource });
+		suppressSettledRevealActivity = false;
+		if (shouldPaceTextReveal) {
+			hadPacedTextReveal = true;
+		}
+		if (isStreaming) {
+			wasStreaming = true;
+		}
+		const seedOptions =
+			seedRevealDisplayedText === null
+				? {
+						seedFromSource: seedRevealFromSource,
+						paceCompletionWithStreaming: shouldPaceTextReveal,
+					}
+				: {
+						seedFromSource: seedRevealFromSource,
+						seedDisplayedText: seedRevealDisplayedText,
+						paceCompletionWithStreaming: shouldPaceTextReveal,
+					};
+		reveal.setState(text, isStreaming, seedOptions);
 		seedRevealFromSource = false;
+		seedRevealDisplayedText = null;
+		return;
+	}
+
+	if (hadPacedTextReveal) {
+		hadPacedTextReveal = false;
+		hasStreamingSession = false;
+		wasStreaming = false;
+		suppressSettledRevealActivity = true;
+		reveal.reset();
 		return;
 	}
 
@@ -182,10 +260,9 @@ $effect(() => {
 
 	if (wasStreaming) {
 		wasStreaming = false;
-		// Once the source has finished streaming, switch straight to the settled
-		// markdown pass so the final DOM is exactly what settled messages use.
-		hasStreamingSession = false;
-		reveal.reset();
+		if (reveal.displayedText !== text) {
+			reveal.setState(text, false);
+		}
 		return;
 	}
 
@@ -202,10 +279,25 @@ $effect(() => {
 	}
 });
 
-const isRenderingReveal = $derived(isStreaming || reveal.isRevealActive);
+const isRenderingReveal = $derived(isStreaming || shouldPaceTextReveal || reveal.isRevealActive);
+const isClearingRevealKeyThisRender = $derived(!effectiveRevealKey && lastRevealKey.length > 0);
+const isClearingCompletedPacedReveal = $derived(
+	!isStreaming && !shouldPaceTextReveal && hadPacedTextReveal
+);
+const isRevealActivityActive = $derived(
+	isStreaming ||
+		(!isClearingRevealKeyThisRender &&
+			!isClearingCompletedPacedReveal &&
+			!suppressSettledRevealActivity &&
+			reveal.isRevealActive)
+);
+const shouldDeferSettledRender = $derived(isStreaming || shouldPaceTextReveal);
 
 $effect(() => {
-	onRevealActivityChange?.(isRenderingReveal);
+	if (lastRevealKey && reveal.displayedText.length > 0) {
+		rememberRevealText(revealedProgressTexts, lastRevealKey, reveal.displayedText);
+	}
+	onRevealActivityChange?.(isRevealActivityActive);
 });
 
 $effect(() => {
@@ -216,7 +308,7 @@ $effect(() => {
 });
 
 $effect(() => {
-	if (!projectPath || repoContext || isRenderingReveal || !textNeedsRepoContext(text)) {
+	if (!projectPath || repoContext || shouldDeferSettledRender || !textNeedsRepoContext(text)) {
 		return;
 	}
 	// Fetch repo context once on mount
@@ -235,7 +327,7 @@ $effect(() => {
 
 // Try sync rendering first (eliminates flicker for most messages)
 const syncResult = $derived.by(() => {
-	if (isRenderingReveal) {
+	if (shouldDeferSettledRender) {
 		return STREAMING_SYNC_RESULT;
 	}
 
@@ -257,7 +349,7 @@ function getAsyncRequestKey(textValue: string, currentRepoContext: RepoContext |
 
 // Trigger async rendering when sync can't handle it - uses $effect
 $effect(() => {
-	if (isRenderingReveal) {
+	if (shouldDeferSettledRender) {
 		asyncHtml = null;
 		asyncError = null;
 		asyncPending = false;

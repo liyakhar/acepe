@@ -449,6 +449,7 @@ fn session_state_snapshot_envelope_carries_one_graph_revision_authority() {
         interactions: Vec::new(),
         turn_state: crate::acp::projections::SessionTurnState::Idle,
         message_count: 0,
+        last_agent_message_id: None,
         active_turn_failure: None,
         last_terminal_turn_id: None,
         lifecycle: SessionGraphLifecycle::ready(),
@@ -1129,6 +1130,7 @@ async fn reserved_send_prompt_emits_connection_complete_before_prompt_echo() {
         &app.handle().clone(),
         session_id.to_string(),
         request,
+        None,
     )
     .await;
 
@@ -1190,6 +1192,7 @@ async fn send_prompt_rejects_activating_session_before_transport_dispatch() {
         &app.handle().clone(),
         session_id.to_string(),
         request,
+        None,
     )
     .await
     .expect_err("activating session should reject ready-only dispatch");

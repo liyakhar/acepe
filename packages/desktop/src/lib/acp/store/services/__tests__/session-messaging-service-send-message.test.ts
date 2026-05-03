@@ -139,7 +139,7 @@ describe("SessionMessagingService.sendMessage", () => {
 		// Tokens pass through unchanged — ACP provider handles decoding
 		expect(sendPrompt).toHaveBeenCalledWith("session-1", [
 			{ type: "text", text: "@[text:aGVsbG8gd29ybGQ=]\nPlease summarize this" },
-		]);
+		], expect.any(String));
 	});
 
 	it("allows a reserved created session to activate with its first prompt", async () => {
@@ -168,7 +168,7 @@ describe("SessionMessagingService.sendMessage", () => {
 		expect(result.isOk()).toBe(true);
 		expect(sendPrompt).toHaveBeenCalledWith("session-1", [
 			{ type: "text", text: "diagnostic ping - reply ok" },
-		]);
+		], expect.any(String));
 	});
 
 	it("records a local pending send intent without writing canonical lifecycle fields", async () => {
@@ -188,11 +188,36 @@ describe("SessionMessagingService.sendMessage", () => {
 				attemptId: expect.any(String),
 				startedAt: expect.any(Number),
 				promptLength: 5,
+				optimisticEntry: {
+					id: expect.any(String),
+					type: "user",
+					message: {
+						content: { type: "text", text: "hello" },
+						chunks: [{ type: "text", text: "hello" }],
+						sentAt: expect.any(Date),
+					},
+					timestamp: expect.any(Date),
+				},
 			},
 		});
 		expectNoCanonicalOverlapHotStateWrites(
 			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
 		);
+	});
+
+	it("does not write an optimistic user row into canonical session entries", async () => {
+		const deps = createMockDeps();
+		const service = new SessionMessagingService(
+			deps.stateReader,
+			deps.hotStateManager,
+			deps.entryManager,
+			deps.connectionManager
+		);
+
+		const result = await service.sendMessage("session-1", "hello");
+
+		expect(result.isOk()).toBe(true);
+		expect(deps.entryManager.addEntry).not.toHaveBeenCalled();
 	});
 
 	it("fails closed when a created session lacks canonical lifecycle projection", async () => {
@@ -293,6 +318,16 @@ describe("SessionMessagingService.sendMessage", () => {
 				attemptId: expect.any(String),
 				startedAt: expect.any(Number),
 				promptLength: 5,
+				optimisticEntry: {
+					id: expect.any(String),
+					type: "user",
+					message: {
+						content: { type: "text", text: "hello" },
+						chunks: [{ type: "text", text: "hello" }],
+						sentAt: expect.any(Date),
+					},
+					timestamp: expect.any(Date),
+				},
 			},
 		});
 		expect(deps.hotStateManager.updateHotState).toHaveBeenLastCalledWith("pending-session", {

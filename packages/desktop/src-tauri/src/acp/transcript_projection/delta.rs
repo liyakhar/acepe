@@ -51,7 +51,11 @@ pub enum TranscriptDeltaOperation {
 impl TranscriptDeltaOperation {
     fn from_session_update(event_seq: i64, update: &SessionUpdate) -> Option<Vec<Self>> {
         match update {
-            SessionUpdate::UserMessageChunk { chunk, .. } => text_chunk_from_block(
+            SessionUpdate::UserMessageChunk {
+                chunk,
+                attempt_id,
+                ..
+            } => text_chunk_from_block(
                 &chunk.content,
                 || format!("user-event-{event_seq}"),
                 TranscriptEntryRole::User,
@@ -63,6 +67,7 @@ impl TranscriptDeltaOperation {
                         entry_id: format!("user-event-{event_seq}"),
                         role: TranscriptEntryRole::User,
                         segments: vec![segment],
+                        attempt_id: attempt_id.clone(),
                     },
                 }]
             }),
@@ -103,6 +108,7 @@ impl TranscriptDeltaOperation {
                             .clone()
                             .unwrap_or_else(|| tool_call.name.clone()),
                     }],
+                    attempt_id: None,
                 },
             }]),
             SessionUpdate::TurnError { error, turn_id, .. } => Some(vec![Self::AppendEntry {
@@ -112,6 +118,7 @@ impl TranscriptDeltaOperation {
                         .unwrap_or_else(|| format!("error-event-{event_seq}")),
                     role: TranscriptEntryRole::Error,
                     segments: vec![error_segment(event_seq, error)],
+                    attempt_id: None,
                 },
             }]),
             _ => None,

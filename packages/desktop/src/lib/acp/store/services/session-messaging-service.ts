@@ -54,6 +54,32 @@ type PromptContentBlocks = {
 	readonly contentBlocks: ReadonlyArray<{ type: string; text?: string; data?: string; mimeType?: string }>;
 };
 
+function buildOptimisticUserEntry(
+	textContent: string,
+	imageBlocks: ReadonlyArray<Extract<ContentBlock, { type: "image" }>>,
+	createdAt: Date
+): SessionEntry {
+	const textBlock = { type: "text" as const, text: textContent };
+	const chunks: ContentBlock[] = [];
+	for (const imageBlock of imageBlocks) {
+		chunks.push(imageBlock);
+	}
+	if (textContent.length > 0) {
+		chunks.push(textBlock);
+	}
+
+	return {
+		id: crypto.randomUUID(),
+		type: "user",
+		message: {
+			content: textContent.length > 0 ? textBlock : (imageBlocks[0] ?? textBlock),
+			chunks,
+			sentAt: createdAt,
+		},
+		timestamp: createdAt,
+	};
+}
+
 function matchesTurnId(
 	previousTurnId: string | null | undefined,
 	nextTurnId: string | null | undefined
@@ -125,7 +151,12 @@ export class SessionMessagingService {
 		private readonly connectionManager: IConnectionManager
 	) {}
 
-	private setPendingSendIntent(sessionId: string, attemptId: string, promptLength: number): void {
+	private setPendingSendIntent(
+		sessionId: string,
+		attemptId: string,
+		promptLength: number,
+		optimisticEntry: SessionEntry
+	): void {
 		const previousTimeout = this.pendingSendIntentTimeouts.get(sessionId);
 		if (previousTimeout !== undefined) {
 			clearTimeout(previousTimeout);
@@ -137,6 +168,7 @@ export class SessionMessagingService {
 				attemptId,
 				startedAt: Date.now(),
 				promptLength,
+				optimisticEntry,
 			},
 		});
 
@@ -205,38 +237,17 @@ export class SessionMessagingService {
 		const textContent = promptContent.textContent;
 		const imageBlocks = promptContent.imageBlocks;
 		const sendAttemptId = crypto.randomUUID();
-		this.setPendingSendIntent(sessionId, sendAttemptId, textContent.length);
+		const optimisticEntry = buildOptimisticUserEntry(textContent, imageBlocks, new Date());
+		this.setPendingSendIntent(
+			sessionId,
+			sendAttemptId,
+			textContent.length,
+			optimisticEntry
+		);
 
 		// Providers like Cursor can reuse/omit message IDs across prompts. Force the
 		// next assistant chunks into a new entry so the new answer stays after this prompt.
 		this.entryManager.startNewAssistantTurn(sessionId);
-
-		const textBlock = { type: "text" as const, text: textContent };
-		const chunks: ContentBlock[] = [];
-		for (const imageBlock of imageBlocks) {
-			chunks.push(imageBlock);
-		}
-		chunks.push(textBlock);
-		const userEntry: SessionEntry = {
-			id: crypto.randomUUID(),
-			type: "user",
-			message: {
-				content: textBlock,
-				chunks,
-				sentAt: new Date(),
-			},
-			timestamp: new Date(),
-		};
-
-		this.entryManager.addEntry(sessionId, userEntry);
-		logger.info("sendMessage: optimistic user entry added", {
-			sessionId,
-			entryId: userEntry.id,
-			entryType: userEntry.type,
-			entryCount: this.stateReader.getEntries(sessionId).length,
-			preview: textContent.slice(0, 120),
-			imageCount: imageBlocks.length,
-		});
 
 		// Start awaiting response in state machine
 		this.connectionManager.sendMessageSent(sessionId);
@@ -244,14 +255,13 @@ export class SessionMessagingService {
 		logger.debug("Sending message (optimistic)", { sessionId });
 
 		return api
-			.sendPrompt(sessionId, promptContent.contentBlocks)
+			.sendPrompt(sessionId, promptContent.contentBlocks, sendAttemptId)
 			.map(() => {
 				// Prompt sent successfully - response will arrive via Tauri events
 				// DO NOT call stream complete here - sendPrompt is fire-and-forget
 				logger.debug("Message sent successfully", { sessionId });
 			})
 			.mapErr((error) => {
-				this.entryManager.removeEntry(sessionId, userEntry.id);
 				// Transition XState machine to ERROR (fatal) — subprocess is dead and
 				// cannot accept messages. Canonical envelopes remain lifecycle authority.
 				this.connectionManager.sendTurnFailed(sessionId, {
@@ -282,10 +292,20 @@ export class SessionMessagingService {
 		}
 
 		const sendAttemptId = crypto.randomUUID();
-		this.setPendingSendIntent(sessionId, sendAttemptId, promptContent.textContent.length);
+		const optimisticEntry = buildOptimisticUserEntry(
+			promptContent.textContent,
+			promptContent.imageBlocks,
+			new Date()
+		);
+		this.setPendingSendIntent(
+			sessionId,
+			sendAttemptId,
+			promptContent.textContent.length,
+			optimisticEntry
+		);
 		this.connectionManager.sendMessageSent(sessionId);
 		return api
-			.sendPrompt(sessionId, promptContent.contentBlocks)
+			.sendPrompt(sessionId, promptContent.contentBlocks, sendAttemptId)
 			.map(() => {
 				logger.debug("Pending creation prompt sent successfully", { sessionId });
 			})

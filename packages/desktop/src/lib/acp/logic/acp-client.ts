@@ -277,9 +277,13 @@ export class AcpClient {
 	 *
 	 * @see https://agentclientprotocol.com/protocol/#prompt
 	 */
-	sendPrompt(sessionId: SessionId, content: ContentBlock[]): ResultAsync<void, AcpError> {
+	sendPrompt(
+		sessionId: SessionId,
+		content: ContentBlock[],
+		attemptId?: string
+	): ResultAsync<void, AcpError> {
 		return tauriClient.acp
-			.sendPrompt(sessionId, content)
+			.sendPrompt(sessionId, content, attemptId)
 			.mapErr((error) => this.deserializeTauriError(error, "Failed to send prompt"));
 	}
 

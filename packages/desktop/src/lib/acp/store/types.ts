@@ -78,6 +78,7 @@ export interface SessionPendingSendIntent {
 	readonly attemptId: string;
 	readonly startedAt: number;
 	readonly promptLength: number;
+	readonly optimisticEntry: _SessionEntry;
 }
 
 export interface SessionCapabilityMutationState {

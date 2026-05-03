@@ -1064,6 +1064,12 @@ describe("desktop agent panel scene adapter", () => {
 			id: "assistant-merged",
 			type: "assistant",
 			markdown: "Thinking…Done.",
+			message: {
+				chunks: [
+					{ type: "thought", block: { type: "text", text: "Thinking…" } },
+					{ type: "message", block: { type: "text", text: "Done." } },
+				],
+			},
 			isStreaming: true,
 			revealMessageKey: "assistant-merged",
 			timestampMs: undefined,

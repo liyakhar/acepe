@@ -1019,6 +1019,9 @@ pub fn run() {
             app.manage(Arc::new(SessionPolicyRegistry::new()));
             app.manage(Arc::new(ProjectionRegistry::new()));
             app.manage(Arc::new(PreReservationEventBuffer::new()));
+            app.manage(Arc::new(
+                crate::acp::journal_write_lock::JournalWriteLockRegistry::new(),
+            ));
             let session_supervisor = Arc::new(SessionSupervisor::new());
             app.manage(session_supervisor.clone());
             app.manage(Arc::new(SessionGraphRuntimeRegistry::with_supervisor(

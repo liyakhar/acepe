@@ -66,12 +66,26 @@ interface OperationIndex {
 function segmentText(entry: TranscriptEntry): string {
 	let text = "";
 	for (const segment of entry.segments) {
-		if (text.length > 0) {
+		if (text.length > 0 && entry.role !== "assistant") {
 			text += "\n";
 		}
 		text += segment.text;
 	}
 	return text;
+}
+
+function buildAssistantMessageFromTranscriptEntry(entry: TranscriptEntry) {
+	return {
+		chunks: entry.segments.map((segment) => {
+			return {
+				type: "message" as const,
+				block: {
+					type: "text" as const,
+					text: segment.text,
+				},
+			};
+		}),
+	};
 }
 
 function truncateDisplayText(
@@ -410,7 +424,8 @@ function materializeMissingToolEntry(
 function materializeTranscriptEntry(
 	entry: TranscriptEntry,
 	graph: SessionStateGraph,
-	index: OperationIndex
+	index: OperationIndex,
+	isStreaming: boolean
 ): AgentPanelSceneEntryModel {
 	if (entry.role === "user") {
 		return {
@@ -425,7 +440,8 @@ function materializeTranscriptEntry(
 			id: entry.entryId,
 			type: "assistant",
 			markdown: segmentText(entry),
-			isStreaming: undefined,
+			message: buildAssistantMessageFromTranscriptEntry(entry),
+			isStreaming: isStreaming,
 			revealMessageKey: entry.entryId,
 		};
 	}
@@ -449,20 +465,64 @@ function materializeTranscriptEntry(
 	};
 }
 
+function findAssistantEntryIdAfterLatestUser(
+	entries: readonly TranscriptEntry[],
+	entryId: string
+): string | null {
+	for (let i = entries.length - 1; i >= 0; i -= 1) {
+		const entry = entries[i];
+		if (entry?.role === "user") {
+			return null;
+		}
+		if (entry?.role === "assistant" && entry.entryId === entryId) {
+			return entry.entryId;
+		}
+	}
+	return null;
+}
+
+function findLiveAssistantEntryId(graph: SessionStateGraph): string | null {
+	const entries = graph.transcriptSnapshot.entries;
+	const tailEntry = entries[entries.length - 1];
+	if (tailEntry?.role === "assistant") {
+		return tailEntry.entryId;
+	}
+
+	if (graph.activity.kind !== "awaiting_model") {
+		return null;
+	}
+
+	const lastAgentMessageId = graph.lastAgentMessageId ?? null;
+	if (lastAgentMessageId === null) {
+		return null;
+	}
+
+	return findAssistantEntryIdAfterLatestUser(entries, lastAgentMessageId);
+}
+
 function materializeConversation(graph: SessionStateGraph): {
 	entries: readonly AgentPanelSceneEntryModel[];
 	isStreaming: boolean;
 } {
+	const isRunning = graph.turnState === "Running";
 	const index = buildOperationIndex(graph.operations);
-	const entries: AgentPanelSceneEntryModel[] = [];
+	const liveAssistantEntryId = isRunning ? findLiveAssistantEntryId(graph) : null;
 
+	const entries: AgentPanelSceneEntryModel[] = [];
 	for (const entry of graph.transcriptSnapshot.entries) {
-		entries.push(materializeTranscriptEntry(entry, graph, index));
+		entries.push(
+			materializeTranscriptEntry(
+				entry,
+				graph,
+				index,
+				isRunning && entry.entryId === liveAssistantEntryId
+			)
+		);
 	}
 
 	return {
 		entries,
-		isStreaming: graph.turnState === "Running",
+		isStreaming: isRunning,
 	};
 }
 

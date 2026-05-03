@@ -13,6 +13,7 @@ import type { ModifiedFilesState } from "../../../types/modified-files-state.js"
 import { DEFAULT_STREAMING_ANIMATION_MODE } from "../../../types/streaming-animation-mode.js";
 import ContentBlockRouter from "../../messages/content-block-router.svelte";
 import MessageWrapper from "../../messages/message-wrapper.svelte";
+import { getMergedAssistantRevealFallbackKey } from "../logic/virtualized-entry-display.js";
 import {
 	createAutoScroll,
 	type ScrollPositionProvider,
@@ -26,7 +27,6 @@ import {
 	ThreadFollowController,
 } from "../logic/thread-follow-controller.svelte.js";
 import {
-	findLastAssistantSceneIndex,
 	buildSceneDisplayRows,
 	getLatestSceneDisplayRevealTargetKey,
 	getSceneDisplayRowKey,
@@ -68,6 +68,10 @@ type SceneContentViewportProps = {
 	onNearBottomChange?: (isNearBottom: boolean) => void;
 	/** Callback fired when near-top state changes */
 	onNearTopChange?: (isNearTop: boolean) => void;
+	onTextRevealActivityChange?: (
+		revealKey: string | null | undefined,
+		active: boolean
+	) => void;
 };
 
 type IndexedDisplayEntry = IndexedViewportEntry<SceneDisplayRow>;
@@ -83,6 +87,7 @@ let {
 	modifiedFilesState = null,
 	onNearBottomChange,
 	onNearTopChange,
+	onTextRevealActivityChange,
 }: SceneContentViewportProps = $props();
 
 // Derive isStreaming from turnState for scroll behavior
@@ -141,9 +146,11 @@ let wrapperRef: HTMLDivElement | null = $state(null);
 let fallbackViewportRef: HTMLDivElement | null = $state(null);
 let viewportNudgeOffsetPx = $state(0);
 let useNativeFallback = $state(false);
+let liveRevealActive = $state(false);
 let nativeFallbackReason = $state<ViewportFallbackReason | null>(null);
 let nativeFallbackRetryCount = $state(0);
 const fallbackRowRefs = new Map<string, HTMLElement>();
+const activeRevealKeys = new Set<string>();
 
 // ===== AUTO-SCROLL =====
 const autoScroll = createAutoScroll();
@@ -199,15 +206,41 @@ function bindFallbackRow(node: HTMLElement, key: string): { destroy: () => void 
 	};
 }
 
+function syncLiveRevealActive(): void {
+	liveRevealActive = activeRevealKeys.size > 0;
+}
+
+function setLiveRevealActivity(revealKey: string | undefined, active: boolean): void {
+	if (revealKey === undefined) {
+		return;
+	}
+
+	if (active) {
+		activeRevealKeys.add(revealKey);
+	} else {
+		activeRevealKeys.delete(revealKey);
+	}
+	syncLiveRevealActive();
+}
+
 $effect(() => {
 	const provider =
-		useNativeFallback && fallbackViewportRef
+		shouldUseNativeList && fallbackViewportRef
 			? createFallbackScrollProvider(fallbackViewportRef)
 			: vlistRef;
 	autoScroll.setVListRef(provider);
 	return () => {
+		// Detach the autoScroll provider so any in-flight scroll RAF stops
+		// reading the about-to-be-stale provider. Do NOT call followController.reset()
+		// here: provider swap (e.g., VList → native fallback when streaming starts)
+		// is not a session change. Resetting drops `prepareForNextUserReveal` /
+		// pending state set by the user's send click, which produces the visible
+		// "send teleports to top, no streaming" symptom because the freshly
+		// mounted fallback never receives the pending reveal request.
+		// Targets self-clean via their action's destroy hook, and the controller's
+		// generation guard already neutralizes stale RAFs scheduled against the
+		// old provider. Reset remains owned by the session-change effect below.
 		autoScroll.setVListRef(undefined);
-		followController.reset();
 	};
 });
 
@@ -223,12 +256,13 @@ function getKey(entry: SceneDisplayRow | undefined, index?: number): string {
 
 function createMergedAssistantSceneEntry(
 	entry: SceneDisplayRow | undefined,
-	thinkingDurationMs: number | null,
-	index: number | undefined
+	thinkingDurationMs: number | null
 ): AgentPanelSceneEntryModel | undefined {
 	if (entry?.type !== "assistant_merged") {
 		return undefined;
 	}
+
+	const isStreaming = entry.isStreaming ?? false;
 
 	return {
 		id: entry.key,
@@ -241,8 +275,9 @@ function createMergedAssistantSceneEntry(
 			receivedAt: entry.message.receivedAt,
 			thinkingDurationMs: thinkingDurationMs ?? entry.message.thinkingDurationMs,
 		},
-		isStreaming: isStreamingMergedAssistantEntry(entry, index),
+		isStreaming,
 		revealMessageKey: entry.key,
+		textRevealState: entry.textRevealState,
 		timestampMs: entry.timestamp?.getTime(),
 	};
 }
@@ -323,7 +358,7 @@ function getSharedEntry(
 		return graphEntry;
 	}
 
-	const mergedAssistantEntry = createMergedAssistantSceneEntry(entry, thinkingDurationMs, index);
+	const mergedAssistantEntry = createMergedAssistantSceneEntry(entry, thinkingDurationMs);
 	if (mergedAssistantEntry !== undefined) {
 		return mergedAssistantEntry;
 	}
@@ -342,23 +377,6 @@ function getGraphSceneEntry(
 	return findGraphSceneEntryForDisplayEntry(entry, sceneEntriesById);
 }
 
-function isStreamingMergedAssistantEntry(
-	entry: SceneDisplayRow | undefined,
-	index: number | undefined
-): boolean {
-	return (
-		isStreaming &&
-		entry?.type === "assistant_merged" &&
-		entry.memberIds.includes(getLatestAssistantSceneId() ?? "") &&
-		index === displayEntries.length - 1
-	);
-}
-
-function getLatestAssistantSceneId(): string | null {
-	const sceneArr = sceneEntries ?? [];
-	const index = findLastAssistantSceneIndex(sceneArr);
-	return index >= 0 ? (sceneArr[index]?.id ?? null) : null;
-}
 
 let warnedMissingEntryKeys = new Set<string>();
 
@@ -478,6 +496,46 @@ let lastRenderedSessionId = $state(untrack(() => sessionId));
 const displayEntries = $derived(
 	initialHydrationComplete ? displayEntriesRaw : ([] as readonly SceneDisplayRow[])
 );
+const hasLiveAssistantDisplayEntry = $derived(
+	displayEntries.some(
+		(entry) =>
+			entry.type === "assistant_merged" &&
+			(entry.isStreaming === true || entry.textRevealState?.policy === "pace")
+	)
+);
+
+$effect(() => {
+	let changed = false;
+	for (const entry of displayEntries) {
+		if (
+			entry.type !== "assistant_merged" ||
+			(entry.isStreaming !== true && entry.textRevealState?.policy !== "pace")
+		) {
+			continue;
+		}
+
+		const revealKey = entry.textRevealState?.key ?? getMergedAssistantRevealFallbackKey(entry);
+		if (revealKey === null) {
+			continue;
+		}
+		if (!activeRevealKeys.has(revealKey)) {
+			activeRevealKeys.add(revealKey);
+			changed = true;
+		}
+	}
+
+	if (changed) {
+		syncLiveRevealActive();
+	}
+});
+
+const shouldUseNativeList = $derived(
+	useNativeFallback ||
+		isWaitingForResponse ||
+		isStreaming ||
+		hasLiveAssistantDisplayEntry ||
+		liveRevealActive
+);
 const nativeFallbackEntries = $derived.by((): readonly IndexedDisplayEntry[] => {
 	return buildNativeFallbackWindow(displayEntries, NATIVE_FALLBACK_ENTRY_LIMIT);
 });
@@ -521,6 +579,8 @@ $effect(() => {
 	warnedMissingSceneEntryKeys.clear();
 	autoScroll.reset();
 	followController.reset();
+	activeRevealKeys.clear();
+	liveRevealActive = false;
 	useNativeFallback = false;
 	nativeFallbackReason = null;
 	nativeFallbackRetryCount = 0;
@@ -785,7 +845,7 @@ export function prepareForNextUserReveal(options?: { force?: boolean }) {
 }
 
 export function scrollToTop() {
-	if (useNativeFallback && fallbackViewportRef) {
+	if (shouldUseNativeList && fallbackViewportRef) {
 		fallbackViewportRef.scrollTop = 0;
 		return;
 	}
@@ -807,9 +867,14 @@ export function scrollToTop() {
 				block={{ type: "text", text: context.group.text }}
 				isStreaming={context.isStreaming}
 				revealKey={context.revealKey}
+				textRevealState={context.textRevealState}
 				{projectPath}
 				{streamingAnimationMode}
-				onRevealActivityChange={context.onRevealActivityChange}
+				onRevealActivityChange={(active: boolean) => {
+					setLiveRevealActivity(context.textRevealState?.key ?? context.revealKey, active);
+					onTextRevealActivityChange?.(context.textRevealState?.key, active);
+					context.onRevealActivityChange?.(active);
+				}}
 			/>
 		{:else}
 			<ContentBlockRouter block={context.group.block} {projectPath} />
@@ -847,7 +912,7 @@ export function scrollToTop() {
 		{/if}
 	{/snippet}
 
-	{#if useNativeFallback}
+	{#if shouldUseNativeList}
 		<div
 			bind:this={fallbackViewportRef}
 			data-testid="native-fallback"

@@ -76,6 +76,7 @@
 		}}
 		isStreaming={entry.isStreaming}
 		revealMessageKey={entry.revealMessageKey}
+		textRevealState={entry.textRevealState}
 		{projectPath}
 		{streamingAnimationMode}
 		{iconBasePath}

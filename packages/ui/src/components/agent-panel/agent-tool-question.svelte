@@ -118,7 +118,7 @@
 
 {#if isAnswered || isCancelled}
 	<!-- Answered / Cancelled: compact embedded card -->
-	<div class="question-card">
+	<div class="question-card text-sm">
 		<EmbeddedPanelHeader class="bg-accent/40">
 			<HeaderTitleCell compactPadding>
 				{#if isCancelled}
@@ -156,7 +156,7 @@
 	</div>
 {:else if questions}
 	<!-- Interactive / Display question UI: embedded card -->
-	<div class="question-card">
+	<div class="question-card text-sm">
 		<!-- Header bar -->
 		<EmbeddedPanelHeader class="bg-accent/40">
 			<HeaderTitleCell compactPadding>

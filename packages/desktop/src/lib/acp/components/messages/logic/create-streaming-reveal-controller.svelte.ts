@@ -22,7 +22,15 @@ type MotionMediaQuery = Pick<
 >;
 
 export interface StreamingRevealController {
-	setState(sourceText: string, isStreaming: boolean, options?: { seedFromSource?: boolean }): void;
+	setState(
+		sourceText: string,
+		isStreaming: boolean,
+		options?: {
+			seedFromSource?: boolean;
+			seedDisplayedText?: string;
+			paceCompletionWithStreaming?: boolean;
+		}
+	): void;
 	setMode(mode: StreamingAnimationMode): void;
 	reset(): void;
 	destroy(): void;
@@ -54,7 +62,9 @@ export function createStreamingRevealController(
 	let mode = $state<RevealMode>("idle");
 	let isRevealActive = $state(false);
 	let isStreamingSource = false;
+	let useStreamingPaceForCatchup = false;
 	let prefersReducedMotion = false;
+	let holdPacedRevealActive = false;
 	let drainTimeoutId: ReturnType<typeof setTimeout> | null = null;
 	let revealTimeoutId: ReturnType<typeof setTimeout> | null = null;
 	const motionMediaQuery = getMotionMediaQuery();
@@ -74,7 +84,11 @@ export function createStreamingRevealController(
 	}
 
 	function syncRevealActivity(): void {
-		isRevealActive = isStreamingSource || revealTimeoutId !== null || drainTimeoutId !== null;
+		isRevealActive =
+			isStreamingSource ||
+			revealTimeoutId !== null ||
+			drainTimeoutId !== null ||
+			holdPacedRevealActive;
 	}
 
 	function syncMode(): void {
@@ -108,6 +122,7 @@ export function createStreamingRevealController(
 		syncRevealActivity();
 		drainTimeoutId = setTimeout(() => {
 			drainTimeoutId = null;
+			holdPacedRevealActive = false;
 			syncMode();
 			syncRevealActivity();
 		}, CSS_DRAIN_TIMEOUT_MS);
@@ -119,7 +134,7 @@ export function createStreamingRevealController(
 	}
 
 	function computeAdvanceLength(backlog: number): number {
-		if (isStreamingSource) {
+		if (isStreamingSource || useStreamingPaceForCatchup) {
 			return Math.min(
 				MAX_STREAMING_ADVANCE_CHARS,
 				Math.max(MIN_STREAMING_ADVANCE_CHARS, Math.ceil(backlog / STREAMING_BACKLOG_DIVISOR))
@@ -157,6 +172,9 @@ export function createStreamingRevealController(
 				displayedText.length + computeAdvanceLength(backlog)
 			);
 			displayedText = targetText.slice(0, nextLength);
+			if (!isStreamingSource && displayedText === targetText) {
+				useStreamingPaceForCatchup = false;
+			}
 			syncMode();
 
 			if (canPaceReveal()) {
@@ -177,23 +195,82 @@ export function createStreamingRevealController(
 	function setState(
 		sourceText: string,
 		isStreaming: boolean,
-		options?: { seedFromSource?: boolean }
+		options?: {
+			seedFromSource?: boolean;
+			seedDisplayedText?: string;
+			paceCompletionWithStreaming?: boolean;
+		}
 	): void {
 		targetText = sourceText;
 		isStreamingSource = isStreaming;
 		clearDrainTimeout();
+		if (isStreaming) {
+			useStreamingPaceForCatchup = true;
+		}
+		if (
+			options?.paceCompletionWithStreaming === true &&
+			!isStreaming &&
+			sourceText.length > displayedText.length
+		) {
+			useStreamingPaceForCatchup = true;
+		} else if (!isStreaming) {
+			useStreamingPaceForCatchup = false;
+		}
 
 		const shouldSeedFromSource = options?.seedFromSource === true;
+		const shouldHoldExplicitPacedReveal =
+			options?.paceCompletionWithStreaming === true &&
+			!prefersReducedMotion &&
+			!shouldSeedFromSource;
+		if (shouldHoldExplicitPacedReveal) {
+			holdPacedRevealActive = true;
+		} else if (!isStreaming) {
+			holdPacedRevealActive = false;
+		}
+		const seedDisplayedText = options?.seedDisplayedText;
+		if (
+			!shouldSeedFromSource &&
+			seedDisplayedText !== undefined &&
+			seedDisplayedText.length > displayedText.length &&
+			sourceText.startsWith(seedDisplayedText)
+		) {
+			displayedText = seedDisplayedText;
+		}
+		if (
+			displayedText.length > 0 &&
+			displayedText.trim().length === 0 &&
+			sourceText.trim().length > 0 &&
+			!sourceText.startsWith(displayedText)
+		) {
+			displayedText = "";
+		}
 		const hasNonPrefixRewrite = displayedText.length > 0 && !sourceText.startsWith(displayedText);
+		const shouldResetPacedReplacement =
+			shouldHoldExplicitPacedReveal && sourceText.length > 0 && hasNonPrefixRewrite;
+		if (shouldResetPacedReplacement) {
+			clearRevealTimeout();
+			displayedText = "";
+		}
 		const shouldSnapToSource =
 			shouldSeedFromSource ||
 			prefersReducedMotion ||
-			sourceText.length < displayedText.length ||
-			hasNonPrefixRewrite;
+			(!shouldHoldExplicitPacedReveal &&
+				(sourceText.length < displayedText.length || hasNonPrefixRewrite));
 
 		if (shouldSnapToSource) {
 			clearRevealTimeout();
 			displayedText = sourceText;
+			useStreamingPaceForCatchup = false;
+			holdPacedRevealActive = false;
+		}
+
+		if (shouldHoldExplicitPacedReveal && sourceText.length === 0) {
+			clearRevealTimeout();
+			targetText = displayedText;
+			useStreamingPaceForCatchup = false;
+			syncMode();
+			syncRevealActivity();
+			return;
 		}
 
 		syncMode();
@@ -202,6 +279,8 @@ export function createStreamingRevealController(
 			clearRevealTimeout();
 			displayedText = "";
 			targetText = "";
+			useStreamingPaceForCatchup = false;
+			holdPacedRevealActive = false;
 			syncMode();
 			syncRevealActivity();
 			return;
@@ -230,6 +309,8 @@ export function createStreamingRevealController(
 		displayedText = "";
 		targetText = "";
 		isStreamingSource = false;
+		useStreamingPaceForCatchup = false;
+		holdPacedRevealActive = false;
 		mode = "idle";
 		isRevealActive = false;
 	}
@@ -240,6 +321,8 @@ export function createStreamingRevealController(
 			clearRevealTimeout();
 			clearDrainTimeout();
 			displayedText = targetText;
+			useStreamingPaceForCatchup = false;
+			holdPacedRevealActive = false;
 			syncMode();
 			syncRevealActivity();
 			return;

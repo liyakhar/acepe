@@ -69,6 +69,7 @@ import { createPanelBranchLookupController } from "../logic/panel-branch-lookup.
 import type { WorktreeSetupState } from "../logic/worktree-setup-events.js";
 import { shouldAutoScrollOnPanelActivation } from "../logic/should-auto-scroll-on-panel-activation.js";
 import { deriveAgentPanelHeaderDisplayTitle } from "../logic/agent-panel-header-title.js";
+import { createAssistantTextRevealProjector } from "../logic/assistant-text-reveal-projector.svelte.js";
 import { shouldShowPreSessionWorktreeCard } from "../logic/pre-session-worktree-card-visibility.js";
 import { resolveWorktreeToggleProjectPath } from "../logic/worktree-toggle-project-path.js";
 import { AgentPanelState } from "../state/agent-panel-state.svelte";
@@ -177,6 +178,10 @@ const agentStore = getAgentStore();
 const messageQueueStore = getMessageQueueStore();
 const logger = createLogger({ id: "agent-panel-render-trace", name: "AgentPanelRenderTrace" });
 let lastPanelTraceSignature = $state<string | null>(null);
+let textRevealProjectorRevision = $state(0);
+const textRevealProjector = createAssistantTextRevealProjector(() => {
+	textRevealProjectorRevision += 1;
+});
 
 // ============================================================
 // GRANULAR SESSION DATA - Fine-grained reactivity
@@ -188,6 +193,7 @@ const sessionIdentity = $derived(sessionId ? sessionStore.getSessionIdentity(ses
 
 // Metadata: title, createdAt, updatedAt (rarely changes)
 const sessionMetadata = $derived(sessionId ? sessionStore.getSessionMetadata(sessionId) : null);
+const sessionHotState = $derived(sessionId ? sessionStore.getHotState(sessionId) : null);
 
 // Entries: conversation content (changes frequently during streaming)
 // Merges any optimistic pending entry (shown before session creation) with real entries.
@@ -196,6 +202,10 @@ const sessionMetadata = $derived(sessionId ? sessionStore.getSessionMetadata(ses
 // reviewMode, etc.), not just pendingUserEntry. This causes extra recomputations during typing,
 // but the fast path returns the same array reference so Svelte skips DOM updates. Acceptable trade-off.
 const panelHotState = $derived(panelId ? panelStore.getHotState(panelId) : null);
+const hasImmediatePendingSendIntent = $derived(
+	(sessionHotState?.pendingSendIntent ?? null) !== null ||
+		(panelHotState?.pendingUserEntry ?? null) !== null
+);
 const panelSnapshot = $derived(panelId ? panelStore.getTopLevelPanel(panelId) : null);
 const panelPendingWorktreeEnabled = $derived(
 	panelSnapshot?.kind === "agent" ? (panelSnapshot.pendingWorktreeEnabled ?? null) : null
@@ -292,7 +302,7 @@ function prepareForNextUserReveal() {
 		latestEntryId: sessionEntries.at(-1)?.id ?? null,
 		latestEntryType: sessionEntries.at(-1)?.type ?? null,
 	});
-	contentRef?.prepareForNextUserReveal({ force: true });
+	contentRef?.prepareForNextUserReveal();
 	return effectivePanelId;
 }
 
@@ -393,6 +403,7 @@ const canonicalPanelSessionState = $derived.by(() =>
 		turnState: canonicalProjection?.turnState ?? null,
 		hasEntries: sessionEntries.length > 0,
 		hasOptimisticPendingEntry: (panelHotState?.pendingUserEntry ?? null) !== null,
+		hasLocalPendingSendIntent: (sessionHotState?.pendingSendIntent ?? null) !== null,
 	})
 );
 const panelSessionStatus = $derived(canonicalPanelSessionState.sessionStatus);
@@ -676,6 +687,9 @@ const sessionCreatedAt = $derived(sessionMetadata?.createdAt ?? null);
 const sessionUpdatedAt = $derived(sessionMetadata?.updatedAt ?? null);
 
 const agentIconSrc = $derived(getAgentIcon(effectivePanelAgentId, effectiveTheme));
+const optimisticUserEntryForGraph = $derived(
+	panelHotState?.pendingUserEntry ?? sessionHotState?.pendingSendIntent?.optimisticEntry ?? null
+);
 const graphMaterializedScene = $derived(
 	materializeAgentPanelSceneFromGraph({
 		panelId: effectivePanelId,
@@ -690,12 +704,20 @@ const graphMaterializedScene = $derived(
 			sequenceId,
 		},
 		optimistic:
-			panelHotState?.pendingUserEntry != null
-				? { pendingUserEntry: panelHotState.pendingUserEntry }
+			optimisticUserEntryForGraph != null
+				? { pendingUserEntry: optimisticUserEntryForGraph }
 				: null,
 	})
 );
-const graphSceneEntries = $derived(graphMaterializedScene.conversation.entries);
+const graphSceneEntries = $derived.by(() => {
+	textRevealProjectorRevision;
+	return textRevealProjector.projectEntries(graphMaterializedScene.conversation.entries, {
+		sessionId: sessionStateGraph?.canonicalSessionId ?? sessionId,
+		turnState: sessionStateGraph?.turnState ?? null,
+		activityKind: sessionStateGraph?.activity.kind ?? null,
+		lastAgentMessageId: sessionStateGraph?.lastAgentMessageId ?? null,
+	});
+});
 const isConnecting = $derived(
 	panelConnectionState === PanelConnectionState.CONNECTING ||
 		(!sessionId && panelId ? panelHotState?.pendingUserEntry !== null : false)
@@ -1954,13 +1976,16 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 						onProjectSelected={handleProjectSelected}
 						onRetryConnection={handleRetryConnection}
 						onCancelConnection={handleCancelConnection}
+						onTextRevealActivityChange={(revealKey, active) => {
+							textRevealProjector.handleRevealActivityChange(revealKey, active);
+						}}
 						{agentIconSrc}
 						{isFullscreen}
 						{availableAgents}
 						{effectiveTheme}
 						{modifiedFilesState}
 						turnState={sessionTurnState}
-						isWaitingForResponse={showPlanningIndicator || (panelHotState?.pendingUserEntry != null)}
+						isWaitingForResponse={showPlanningIndicator || hasImmediatePendingSendIntent}
 					/>
 				</div>
 				{#if viewState.kind === "conversation" && !contentIsAtTop}
@@ -2072,13 +2097,13 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 				>
 					{#key inputRenderKey}
 						{#snippet preSessionAgentPicker()}
-							<div class="flex items-center">
+							<div class="flex h-7 shrink-0 items-center">
 								<AgentSelector
 									{availableAgents}
 									currentAgentId={effectivePanelAgentId}
 									{onAgentChange}
 								/>
-								<div class="mx-1.5 h-4 w-px bg-border/50"></div>
+								<div class="h-full w-px shrink-0 bg-border/50"></div>
 								<ProjectSelector
 									selectedProject={preSessionSelectedProject}
 									recentProjects={allProjects}

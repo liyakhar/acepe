@@ -351,7 +351,7 @@ describe("ThreadFollowController", () => {
 			const nextUserHandle = createHandle();
 			ctrl.registerTarget("entry-2", nextUserHandle);
 
-			expect(nextUserHandle.reveal).toHaveBeenCalledWith(true);
+			expect(nextUserHandle.reveal).toHaveBeenCalledWith(false);
 			expect(currentUserHandle.reveal).not.toHaveBeenCalled();
 		});
 
@@ -377,8 +377,43 @@ describe("ThreadFollowController", () => {
 			flushQueuedRAF();
 
 			expect(userHandle.reveal).not.toHaveBeenCalled();
-			expect(thinkingHandle.reveal).toHaveBeenCalledWith(true);
+			expect(thinkingHandle.reveal).toHaveBeenCalledWith(false);
 			latestUserTargetKey = "entry-2";
+		});
+
+		it("preserves pending user reveal across provider-swap target lifecycle (no reset call)", () => {
+			// Regression: when the agent panel transitions from VList to native
+			// fallback during streaming, the old MessageWrappers unmount (target
+			// unregister) and new ones mount (target register). If the controller
+			// is reset on this swap, the pending prepareForNextUserReveal is lost
+			// and the new fallback never scrolls to the user's just-sent message,
+			// producing the visible "send teleports to top, no streaming" symptom.
+			installSyncRAF();
+
+			const latestTargetKey = "thinking-indicator";
+			const userTargetKey = "user-just-sent";
+			const opts = createOptions({
+				getLatestTargetKey: () => latestTargetKey,
+				getLatestUserTargetKey: () => userTargetKey,
+			});
+			const ctrl = new ThreadFollowController(opts);
+
+			// User clicks send → prepare pending reveal for the next user target.
+			ctrl.prepareForNextUserReveal({ force: true });
+
+			// Old VList rows tear down. There were no targets registered for the
+			// new user message yet; the rows that existed simply unmount.
+
+			// Provider swap happens HERE. The controller MUST NOT be reset by the
+			// viewport on a mere provider swap — reset is reserved for session
+			// changes. The pending user-reveal request must survive.
+
+			// New native-fallback rows mount and register their targets. The user
+			// message's target registers and should consume the pending reveal.
+			const userHandle = createHandle();
+			ctrl.registerTarget(userTargetKey, userHandle);
+
+			expect(userHandle.reveal).toHaveBeenCalledWith(false);
 		});
 
 		it("does not force a later latest target after the user reveal has already flushed", () => {
@@ -399,7 +434,7 @@ describe("ThreadFollowController", () => {
 			ctrl.registerTarget("entry-2", userHandle);
 			flushQueuedRAF();
 
-			expect(userHandle.reveal).toHaveBeenCalledWith(true);
+			expect(userHandle.reveal).toHaveBeenCalledWith(false);
 
 			following = false;
 

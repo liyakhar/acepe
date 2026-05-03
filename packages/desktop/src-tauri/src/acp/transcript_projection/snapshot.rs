@@ -28,6 +28,8 @@ pub struct TranscriptEntry {
     pub entry_id: String,
     pub role: TranscriptEntryRole,
     pub segments: Vec<TranscriptSegment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
 }
 
 impl TranscriptEntry {
@@ -43,12 +45,14 @@ impl TranscriptEntry {
                     entry_id: id.clone(),
                     role: TranscriptEntryRole::User,
                     segments,
+                    attempt_id: None,
                 })
             }
             StoredEntry::Assistant { id, message, .. } => Some(Self {
                 entry_id: id.clone(),
                 role: TranscriptEntryRole::Assistant,
                 segments: segments_from_assistant_chunks(id, &message.chunks),
+                attempt_id: None,
             }),
             StoredEntry::ToolCall { id, message, .. } => {
                 let entry_id = normalize_tool_call_id(id);
@@ -62,6 +66,7 @@ impl TranscriptEntry {
                             .clone()
                             .unwrap_or_else(|| message.name.clone()),
                     }],
+                    attempt_id: None,
                 })
             }
             StoredEntry::Error { id, message, .. } => Some(Self {
@@ -71,6 +76,7 @@ impl TranscriptEntry {
                     segment_id: format!("{id}:error"),
                     text: message.content.clone(),
                 }],
+                attempt_id: None,
             }),
         }
     }

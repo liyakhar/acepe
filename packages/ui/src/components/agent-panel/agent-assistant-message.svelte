@@ -4,9 +4,8 @@ import type { Snippet } from "svelte";
 import { IconCheck } from "@tabler/icons-svelte";
 import { Copy } from "phosphor-svelte";
 import { MarkdownDisplay } from "../markdown/index.js";
-import { TextShimmer } from "../text-shimmer/index.js";
-import { LoadingIcon } from "../icons/index.js";
 import AgentToolThinking from "./agent-tool-thinking.svelte";
+import ToolHeaderLeading from "./tool-header-leading.svelte";
 import {
 groupAssistantChunks,
 type ChunkGroup,
@@ -24,6 +23,7 @@ import type {
 AssistantMessage,
 StreamingAnimationMode,
 } from "../../lib/assistant-message/types.js";
+import type { AgentTextRevealState } from "./types.js";
 
 /**
  * Context passed to the renderBlock snippet for every chunk group.
@@ -34,6 +34,7 @@ interface RenderBlockContext {
 group: ChunkGroup;
 isStreaming?: boolean;
 revealKey?: string;
+textRevealState?: AgentTextRevealState;
 projectPath?: string;
 streamingAnimationMode?: StreamingAnimationMode;
 onRevealActivityChange?: (active: boolean) => void;
@@ -43,6 +44,7 @@ interface Props {
 message: AssistantMessage;
 isStreaming?: boolean;
 revealMessageKey?: string;
+textRevealState?: AgentTextRevealState;
 projectPath?: string;
 streamingAnimationMode?: StreamingAnimationMode;
 /** Whether the thinking block starts collapsed. Defaults to false. */
@@ -63,6 +65,7 @@ let {
 message,
 isStreaming = false,
 revealMessageKey,
+textRevealState,
 projectPath,
 streamingAnimationMode = "smooth",
 initiallyCollapsed = false,
@@ -279,6 +282,7 @@ revealKey:
 isLastTextGroup && revealMessageKey
 ? `${revealMessageKey}:message:${index}`
 : undefined,
+textRevealState: isLastTextGroup ? textRevealState : undefined,
 projectPath,
 streamingAnimationMode,
 onRevealActivityChange: isLastTextGroup
@@ -290,8 +294,7 @@ isMessageTextRevealActive = active;
 {:else if group.type === "text"}
 {#if isStreaming && !group.text}
 <div class="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-<LoadingIcon class="shrink-0" style="width: 14px; height: 14px;" aria-label="Loading" />
-<TextShimmer>Planning next moves…</TextShimmer>
+<ToolHeaderLeading kind="think" status="running">Planning next moves…</ToolHeaderLeading>
 </div>
 {:else}
 <MarkdownDisplay

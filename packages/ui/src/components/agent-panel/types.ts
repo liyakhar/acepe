@@ -65,13 +65,21 @@ export interface AgentAssistantEntry {
 	message?: AssistantMessage;
 	isStreaming?: boolean;
 	revealMessageKey?: string;
+	textRevealState?: AgentTextRevealState;
 	timestampMs?: number;
+}
+
+export interface AgentTextRevealState {
+	policy: "pace";
+	key: string;
+	seedDisplayedText?: string;
 }
 
 export interface AssistantRenderBlockContext {
 	group: ChunkGroup;
 	isStreaming?: boolean;
 	revealKey?: string;
+	textRevealState?: AgentTextRevealState;
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
 	onRevealActivityChange?: (active: boolean) => void;

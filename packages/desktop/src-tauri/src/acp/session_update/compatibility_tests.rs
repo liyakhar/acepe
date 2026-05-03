@@ -146,13 +146,21 @@ fn test_session_update_user_message_chunk_camel_case() {
             "type": "text",
             "text": "Hello world"
         },
-        "sessionId": "sess-123"
+        "sessionId": "sess-123",
+        "attemptId": "attempt-123"
     });
 
     let update: SessionUpdate = serde_json::from_value(json).unwrap();
+    let serialized = serde_json::to_value(&update).unwrap();
     match update {
-        SessionUpdate::UserMessageChunk { chunk, session_id } => {
+        SessionUpdate::UserMessageChunk {
+            chunk,
+            session_id,
+            attempt_id,
+        } => {
             assert_eq!(session_id, Some("sess-123".to_string()));
+            assert_eq!(attempt_id, Some("attempt-123".to_string()));
+            assert_eq!(serialized["attemptId"], "attempt-123");
             match chunk.content {
                 ContentBlock::Text { text } => assert_eq!(text, "Hello world"),
                 _ => panic!("Expected text content"),
@@ -174,8 +182,13 @@ fn test_session_update_user_message_chunk_snake_case() {
 
     let update: SessionUpdate = serde_json::from_value(json).unwrap();
     match update {
-        SessionUpdate::UserMessageChunk { chunk, session_id } => {
+        SessionUpdate::UserMessageChunk {
+            chunk,
+            session_id,
+            attempt_id,
+        } => {
             assert_eq!(session_id, None);
+            assert_eq!(attempt_id, None);
             match chunk.content {
                 ContentBlock::Text { text } => assert_eq!(text, "Hello world"),
                 _ => panic!("Expected text content"),
@@ -202,6 +215,7 @@ fn test_session_update_nested_chunk_format() {
         SessionUpdate::UserMessageChunk {
             chunk,
             session_id: _,
+            attempt_id: _,
         } => match chunk.content {
             ContentBlock::Text { text } => assert_eq!(text, "Nested content"),
             _ => panic!("Expected text content"),
