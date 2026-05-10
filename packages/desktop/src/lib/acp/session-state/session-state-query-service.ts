@@ -25,7 +25,43 @@ export type SessionStateDeltaResolution =
 export function transcriptOperationsFromDelta(
 	delta: SessionStateDelta
 ): TranscriptDeltaOperation[] {
-	return delta.transcriptOperations ?? [];
+	const operations = delta.transcriptOperations ?? [];
+	const validOperations: TranscriptDeltaOperation[] = [];
+
+	for (const operation of operations) {
+		if (!isValidTranscriptDeltaOperation(operation)) {
+			continue;
+		}
+		validOperations.push(operation);
+	}
+
+	return validOperations;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0;
+}
+
+function isValidTranscriptDeltaOperation(
+	operation: TranscriptDeltaOperation | undefined | null
+): operation is TranscriptDeltaOperation {
+	if (!operation || typeof operation !== "object" || !("kind" in operation)) {
+		return false;
+	}
+
+	if (operation.kind === "replaceSnapshot") {
+		return true;
+	}
+
+	if (operation.kind === "appendEntry") {
+		return isNonEmptyString(operation.entry?.entryId);
+	}
+
+	if (operation.kind === "appendSegment") {
+		return isNonEmptyString(operation.entryId);
+	}
+
+	return false;
 }
 
 export function sessionStateDeltaHasAssistantMutation(delta: SessionStateDelta): boolean {

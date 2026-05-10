@@ -100,7 +100,7 @@ let {
 	workerPool,
 	onBeforeRender,
 	unsafeCSS,
-	defaultExpanded = true,
+	defaultExpanded = false,
 	editingLabel = "Editing",
 	editedLabel = "Edited",
 	awaitingApprovalLabel = "Awaiting Approval",
@@ -233,7 +233,7 @@ function expand() {
 							{pendingLabel}
 						{/if}
 					</ToolHeaderLeading>
-					<span class="truncate font-mono text-sm text-muted-foreground">
+					<span class="truncate font-sans text-sm text-muted-foreground">
 						{displayedFileCountLabel}
 					</span>
 				</div>
@@ -248,7 +248,7 @@ function expand() {
 		{#if durationLabel || (!isPending && hasContent)}
 			<div class="ml-2 flex shrink-0 items-center gap-2">
 				{#if durationLabel}
-					<span class="font-mono text-sm text-muted-foreground/70">{durationLabel}</span>
+					<span class="font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 				{/if}
 				{#if !isPending && hasContent}
 					<button
@@ -285,7 +285,7 @@ function expand() {
 							onSelect={interactive ? () => onSelect?.(diff.filePath) : undefined}
 						/>
 					{:else}
-						<span class="font-mono text-sm text-muted-foreground">
+						<span class="font-sans text-sm text-muted-foreground">
 							Edit {index + 1}
 						</span>
 					{/if}

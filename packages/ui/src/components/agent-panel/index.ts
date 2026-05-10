@@ -129,10 +129,11 @@ export { default as AgentPanelScrollToBottomButton } from "./scroll-to-bottom-bu
 export { default as AgentPanelTodoHeader } from "./todo-header.svelte";
 export { default as TodoNumberIcon } from "./todo-number-icon.svelte";
 export { default as ToolTally } from "./tool-tally.svelte";
+export { resolveVisibleAssistantMessageGroups } from "./agent-assistant-message-visible-groups.js";
 export type {
 	AgentAssistantEntry,
-	AgentTextRevealState,
 	AssistantRenderBlockContext,
+	TokenRevealCss,
 	AgentPanelActionabilityModel,
 	AgentPanelActionCallbacks,
 	AgentPanelActionDescriptor,
@@ -164,6 +165,7 @@ export type {
 	AgentPanelPrCardModel,
 	AgentPanelPrCommitItem,
 	AgentPanelQueuedMessage,
+	AgentPanelQuestionSelectEvent,
 	AgentPanelRecommendedAction,
 	AgentPanelRecoveryPhase,
 	AgentPanelReviewFileTab,

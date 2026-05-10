@@ -10,6 +10,7 @@ import CopyButton from "../../messages/copy-button.svelte";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import AttachmentChip from "../../shared/attachment-chip.svelte";
 
+import { getPreparingThreadLabel } from "../logic/agent-panel-header-labels.js";
 import type { AgentPanelHeaderProps } from "../types/agent-panel-header-props.js";
 
 const isDev = import.meta.env.DEV;
@@ -21,7 +22,7 @@ let {
 	sessionTitle,
 	sessionAgentId,
 	agentIconSrc,
-	agentName: _agentName,
+	agentName,
 	isFullscreen,
 	sessionStatus,
 	projectPath: _projectPath,
@@ -46,6 +47,7 @@ let {
 
 const hasExportSubmenu = $derived(onExportMarkdown != null || onExportJson != null);
 const hasAttachments = $derived((firstMessageAttachments?.length ?? 0) > 0);
+const preparingThreadLabel = $derived(getPreparingThreadLabel(agentName));
 </script>
 
 	<AgentPanelHeaderLayout
@@ -74,7 +76,7 @@ const hasAttachments = $derived((firstMessageAttachments?.length ?? 0) > 0);
 				status={sessionStatus}
 				{isConnecting}
 				agentId={sessionAgentId}
-				warmingLabel={sessionStatus === "running" ? "Thread is running" : "Preparing thread..."}
+				warmingLabel={sessionStatus === "running" ? "Thread is running" : preparingThreadLabel}
 				connectedLabel={sessionStatus === "idle"
 					? "Thread is detached"
 					: sessionStatus === "done"

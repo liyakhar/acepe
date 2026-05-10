@@ -65,7 +65,7 @@
 		return summaryLabel;
 	});
 
-	let isExpanded = $state(true);
+	let isExpanded = $state(false);
 
 	function toggleExpand() {
 		isExpanded = !isExpanded;
@@ -99,7 +99,7 @@
 		{#if durationLabel || (!isPending && hasContent)}
 			<div class="ml-2 flex shrink-0 items-center gap-2">
 				{#if durationLabel}
-					<span class="font-mono text-sm text-muted-foreground/70">{durationLabel}</span>
+					<span class="font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 				{/if}
 				{#if !isPending && hasContent}
 					<button
@@ -129,7 +129,7 @@
 					{#each displayDiagnostics as diag, i (i)}
 						<li class="flex flex-col gap-0.5 rounded border border-border/60 bg-muted/20 px-2 py-1.5">
 							{#if diag.filePath}
-								<span class="font-mono text-muted-foreground">{diag.filePath}</span>
+								<span class="font-sans text-muted-foreground">{diag.filePath}</span>
 							{/if}
 							{#if diag.line != null}
 								<span class="text-muted-foreground/80">Line {diag.line}</span>

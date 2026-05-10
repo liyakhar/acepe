@@ -14,6 +14,7 @@ import type {
 } from "@acepe/ui/agent-panel";
 import { AGENT_PANEL_ACTION_IDS } from "@acepe/ui/agent-panel";
 import type {
+	InteractionSnapshot,
 	OperationDegradationReason,
 	OperationSnapshot,
 	SessionStateGraph,
@@ -55,7 +56,9 @@ export interface AgentPanelGraphMaterializerInput {
 	readonly cards?: readonly AgentPanelCardModel[];
 	readonly sidebars?: AgentPanelSidebarModel | null;
 	readonly chrome?: AgentPanelChromeModel | null;
-	readonly optimistic?: { readonly pendingUserEntry: SessionEntry } | null;
+	readonly optimistic?: {
+		readonly pendingUserEntry?: SessionEntry | null;
+	} | null;
 }
 
 interface OperationIndex {
@@ -86,6 +89,22 @@ function buildAssistantMessageFromTranscriptEntry(entry: TranscriptEntry) {
 			};
 		}),
 	};
+}
+
+export function findLatestLiveAssistantEntry(
+	entries: readonly SessionEntry[]
+): Extract<SessionEntry, { type: "assistant" }> | null {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (entry?.type === "user") {
+			return null;
+		}
+		if (entry?.type === "assistant") {
+			return entry;
+		}
+	}
+
+	return null;
 }
 
 function truncateDisplayText(
@@ -442,7 +461,6 @@ function materializeTranscriptEntry(
 			markdown: segmentText(entry),
 			message: buildAssistantMessageFromTranscriptEntry(entry),
 			isStreaming: isStreaming,
-			revealMessageKey: entry.entryId,
 		};
 	}
 
@@ -462,6 +480,49 @@ function materializeTranscriptEntry(
 		title: "Error",
 		status: "error",
 		resultText: truncateDisplayText(segmentText(entry), AGENT_PANEL_SCENE_TEXT_LIMITS.result),
+	};
+}
+
+function questionInteractionToSceneEntry(
+	interaction: InteractionSnapshot,
+	graph: SessionStateGraph
+): AgentPanelSceneEntryModel | null {
+	if (interaction.kind !== "Question" || interaction.state !== "Pending") {
+		return null;
+	}
+	if (
+		graph.activity.blockingInteractionId !== null &&
+		interaction.id !== graph.activity.blockingInteractionId
+	) {
+		return null;
+	}
+	if (!("Question" in interaction.payload)) {
+		return null;
+	}
+
+	const question = interaction.payload.Question.questions[0];
+	if (question === undefined) {
+		return null;
+	}
+
+	return {
+		id: interaction.id,
+		type: "tool_call",
+		kind: "other",
+		title: "Question",
+		subtitle: question.question,
+		status: "running",
+		question: {
+			question: question.question,
+			header: question.header,
+			options: question.options.map((option) => {
+				return {
+					label: option.label,
+					description: option.description,
+				};
+			}),
+			multiSelect: question.multiSelect,
+		},
 	};
 }
 
@@ -509,15 +570,28 @@ function materializeConversation(graph: SessionStateGraph): {
 	const liveAssistantEntryId = isRunning ? findLiveAssistantEntryId(graph) : null;
 
 	const entries: AgentPanelSceneEntryModel[] = [];
+	const entryIds = new Set<string>();
 	for (const entry of graph.transcriptSnapshot.entries) {
-		entries.push(
-			materializeTranscriptEntry(
-				entry,
-				graph,
-				index,
-				isRunning && entry.entryId === liveAssistantEntryId
-			)
+		const materializedEntry = materializeTranscriptEntry(
+			entry,
+			graph,
+			index,
+			isRunning && entry.entryId === liveAssistantEntryId
 		);
+		entries.push(materializedEntry);
+		entryIds.add(materializedEntry.id);
+	}
+
+	for (const interaction of graph.interactions) {
+		if (entryIds.has(interaction.id)) {
+			continue;
+		}
+		const interactionEntry = questionInteractionToSceneEntry(interaction, graph);
+		if (interactionEntry === null) {
+			continue;
+		}
+		entries.push(interactionEntry);
+		entryIds.add(interactionEntry.id);
 	}
 
 	return {
@@ -599,7 +673,6 @@ export function materializeAgentPanelSceneFromGraph(
 		);
 		conversationEntries.push(mapped);
 	}
-
 	return {
 		panelId: input.panelId,
 		status,

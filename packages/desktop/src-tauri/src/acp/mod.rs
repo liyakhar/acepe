@@ -22,6 +22,7 @@ pub mod event_hub;
 pub mod github_commands;
 pub mod github_issues;
 pub mod inbound_request_router;
+pub mod journal_write_lock;
 pub mod lifecycle;
 pub mod model_display;
 pub mod non_streaming_batcher;

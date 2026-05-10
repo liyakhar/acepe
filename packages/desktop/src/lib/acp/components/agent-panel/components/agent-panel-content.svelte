@@ -1,5 +1,6 @@
 <script lang="ts">
-import { AgentPanelStatePanel, LoadingIcon } from "@acepe/ui";
+import { AgentPanelStatePanel } from "@acepe/ui/agent-panel";
+import { LoadingIcon } from "@acepe/ui/icons";
 import { mapCanonicalTurnStateToHotTurnState } from "../logic";
 import { getInteractionStore } from "../../../store/interaction-store.svelte.js";
 import { deriveLiveSessionWorkProjection } from "../../../store/live-session-work.js";
@@ -27,7 +28,6 @@ let {
 	onProjectSelected = () => {},
 	onRetryConnection,
 	onCancelConnection,
-	onTextRevealActivityChange,
 	agentIconSrc = "",
 	isFullscreen = false,
 	availableAgents = [],
@@ -35,6 +35,8 @@ let {
 	modifiedFilesState = null,
 	turnState: turnStateProp,
 	isWaitingForResponse: isWaitingProp,
+	waitingLabel = null,
+	onQuestionSelect,
 }: AgentPanelContentProps = $props();
 
 const sessionStore = getSessionStore();
@@ -187,12 +189,13 @@ export function scrollToTop() {
 				{sessionId}
 				{turnState}
 				{isWaitingForResponse}
+				{waitingLabel}
 				projectPath={sessionProjectPath ?? undefined}
 				{isFullscreen}
 				{modifiedFilesState}
+				{onQuestionSelect}
 				onNearBottomChange={(nearBottom) => (isAtBottom = nearBottom)}
 				onNearTopChange={(nearTop) => (isAtTop = nearTop)}
-				{onTextRevealActivityChange}
 			/>
 		</div>
 	</div>

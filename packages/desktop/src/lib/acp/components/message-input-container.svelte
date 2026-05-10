@@ -1,27 +1,36 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
 import { UserMessageContainer } from "@acepe/ui/user-message-container";
-import CopyButton from "./messages/copy-button.svelte";
+import MessageMetaPill from "./messages/message-meta-pill.svelte";
 
-let { class: className = "", children }: { class?: string; children: Snippet } = $props();
+let {
+	class: className = "",
+	timestamp,
+	children,
+}: { class?: string; timestamp?: Date | string | number; children: Snippet } = $props();
 
 let contentRef: HTMLDivElement | null = $state(null);
 </script>
 
 <UserMessageContainer class="w-full !p-0.5 {className}" contentClass="p-1.5">
 	{#snippet content()}
-		<div class="group/copy flex items-start gap-2">
+		<div class="group/copy relative">
 			<div
 				bind:this={contentRef}
-				class="text-foreground text-sm leading-relaxed break-words overflow-hidden flex-1"
+				class="text-foreground text-sm leading-relaxed break-words overflow-hidden"
 			>
 				{@render children()}
 			</div>
-			<CopyButton
-				getText={() => contentRef?.textContent ?? ""}
-				variant="inline"
-				class="opacity-0 group-hover/copy:opacity-100 transition-opacity"
-			/>
+			<div
+				class="absolute bottom-0 right-0 opacity-0 group-hover/copy:opacity-100 focus-within:opacity-100 transition-opacity duration-150 pointer-events-none group-hover/copy:pointer-events-auto"
+			>
+				<MessageMetaPill
+					getText={() => contentRef?.textContent ?? ""}
+					{timestamp}
+					variant="user"
+					class="rounded bg-background/80 backdrop-blur-sm px-1 py-0.5 shadow-sm"
+				/>
+			</div>
 		</div>
 	{/snippet}
 </UserMessageContainer>

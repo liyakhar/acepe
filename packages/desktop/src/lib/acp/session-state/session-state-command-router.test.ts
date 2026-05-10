@@ -54,6 +54,57 @@ describe("routeSessionStateEnvelope", () => {
 				turnState: "Running",
 				activeTurnFailure: null,
 				lastTerminalTurnId: null,
+				lastAgentMessageId: null,
+				operationPatches: [],
+				interactionPatches: [],
+			},
+		]);
+	});
+
+	it("routes live assistant id deltas as graph patches", () => {
+		const envelope: SessionStateEnvelope = {
+			sessionId: "session-1",
+			graphRevision: 7,
+			lastEventSeq: 9,
+			payload: {
+				kind: "delta",
+				delta: {
+					fromRevision: {
+						graphRevision: 6,
+						transcriptRevision: 4,
+						lastEventSeq: 8,
+					},
+					toRevision: {
+						graphRevision: 7,
+						transcriptRevision: 4,
+						lastEventSeq: 9,
+					},
+					activity: runningOperationActivity,
+					turnState: "Running",
+					activeTurnFailure: null,
+					lastTerminalTurnId: null,
+					lastAgentMessageId: "assistant-1",
+					transcriptOperations: [],
+					operationPatches: [],
+					interactionPatches: [],
+					changedFields: ["lastAgentMessageId"],
+				},
+			},
+		};
+
+		expect(routeSessionStateEnvelope("session-1", 4, envelope)).toEqual([
+			{
+				kind: "applyGraphPatches",
+				revision: {
+					graphRevision: 7,
+					transcriptRevision: 4,
+					lastEventSeq: 9,
+				},
+				activity: runningOperationActivity,
+				turnState: "Running",
+				activeTurnFailure: null,
+				lastTerminalTurnId: null,
+				lastAgentMessageId: "assistant-1",
 				operationPatches: [],
 				interactionPatches: [],
 			},

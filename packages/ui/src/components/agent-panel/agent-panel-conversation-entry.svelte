@@ -3,6 +3,7 @@
 	import type { Snippet } from "svelte";
 	import type {
 		AgentPanelConversationEntry,
+		AgentPanelQuestionSelectEvent,
 		AssistantRenderBlockContext,
 	} from "./types.js";
 	import type { StreamingAnimationMode } from "../../lib/assistant-message/types.js";
@@ -41,6 +42,7 @@
 		projectPath?: string;
 		streamingAnimationMode?: StreamingAnimationMode;
 		renderAssistantBlock?: Snippet<[AssistantRenderBlockContext]>;
+		onQuestionSelect?: (event: AgentPanelQuestionSelectEvent) => void;
 	}
 
 	let {
@@ -50,6 +52,7 @@
 		projectPath,
 		streamingAnimationMode = "smooth",
 		renderAssistantBlock,
+		onQuestionSelect,
 	}: Props = $props();
 
 	function isToolCall(
@@ -68,22 +71,26 @@
  </script>
 
 {#if entry.type === "user"}
-	<AgentUserMessage text={entry.text} />
+	<AgentUserMessage text={entry.text} timestampMs={entry.timestampMs} />
 {:else if entry.type === "assistant"}
-	<AgentAssistantMessage
-		message={entry.message ?? {
-			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
-		}}
-		isStreaming={entry.isStreaming}
-		revealMessageKey={entry.revealMessageKey}
-		textRevealState={entry.textRevealState}
-		{projectPath}
-		{streamingAnimationMode}
+		<AgentAssistantMessage
+			message={entry.message ?? {
+				chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
+			}}
+			isStreaming={entry.isStreaming}
+			tokenRevealCss={entry.tokenRevealCss}
+			timestampMs={entry.timestampMs}
+			{projectPath}
+			{streamingAnimationMode}
 		{iconBasePath}
 		renderBlock={renderAssistantBlock}
 	/>
 {:else if entry.type === "thinking"}
-	<AgentThinkingSceneEntry durationMs={entry.durationMs} startedAtMs={entry.startedAtMs} />
+	<AgentThinkingSceneEntry
+		durationMs={entry.durationMs}
+		startedAtMs={entry.startedAtMs}
+		label={entry.label}
+	/>
 {:else if entry.type === "missing"}
 	<AgentMissingSceneEntry
 		title={entry.title}
@@ -97,6 +104,13 @@
 		questions={[entry.question]}
 		status={entry.status}
 		isInteractive={entry.status === "running"}
+		onSelect={(questionIndex, label, multiSelect) =>
+			onQuestionSelect?.({
+				entryId: entry.id,
+				questionIndex,
+				label,
+				multiSelect,
+			})}
 	/>
 {:else if isToolCall(entry) && (entry.kind === "read_lints" || entry.lintDiagnostics !== undefined)}
 	<AgentToolReadLints

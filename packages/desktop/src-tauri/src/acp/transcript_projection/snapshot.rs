@@ -1,4 +1,5 @@
 use crate::acp::parsers::acp_fields::normalize_tool_call_id;
+use crate::acp::session_update::{ToolCallData, ToolKind};
 use crate::session_jsonl::types::{StoredAssistantChunk, StoredContentBlock, StoredEntry};
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +56,9 @@ impl TranscriptEntry {
                 attempt_id: None,
             }),
             StoredEntry::ToolCall { id, message, .. } => {
+                if should_skip_unanswered_historical_question_tool(message) {
+                    return None;
+                }
                 let entry_id = normalize_tool_call_id(id);
                 Some(Self {
                     entry_id: entry_id.clone(),
@@ -82,6 +86,10 @@ impl TranscriptEntry {
     }
 }
 
+fn should_skip_unanswered_historical_question_tool(tool_call: &ToolCallData) -> bool {
+    matches!(tool_call.kind, Some(ToolKind::Question)) && tool_call.question_answer.is_none()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum TranscriptEntryRole {
@@ -94,6 +102,7 @@ pub enum TranscriptEntryRole {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TranscriptSegment {
+    #[serde(rename_all = "camelCase")]
     Text { segment_id: String, text: String },
 }
 
@@ -254,6 +263,52 @@ mod tests {
                 segment_id: "error-1:error".to_string(),
                 text: "boom".to_string(),
             }]
+        );
+    }
+
+    #[test]
+    fn transcript_snapshot_skips_unanswered_question_tool_rows() {
+        let snapshot = TranscriptSnapshot::from_stored_entries(
+            12,
+            &[StoredEntry::ToolCall {
+                id: "question-tool".to_string(),
+                message: ToolCallData {
+                    id: "question-tool".to_string(),
+                    name: "AskUserQuestion".to_string(),
+                    arguments: ToolArguments::Other {
+                        raw: serde_json::json!({
+                            "questions": [{
+                                "question": "Pick one?",
+                                "header": "Pick",
+                                "options": [],
+                                "multiSelect": false
+                            }]
+                        }),
+                    },
+                    raw_input: None,
+                    status: ToolCallStatus::Pending,
+                    result: None,
+                    kind: Some(ToolKind::Question),
+                    title: Some("Question".to_string()),
+                    locations: None,
+                    skill_meta: None,
+                    normalized_questions: None,
+                    normalized_todos: None,
+                    normalized_todo_update: None,
+                    parent_tool_use_id: None,
+                    task_children: None,
+                    question_answer: None,
+                    awaiting_plan_approval: false,
+                    plan_approval_request_id: None,
+                },
+                timestamp: None,
+            }],
+        );
+
+        assert_eq!(snapshot.revision, 12);
+        assert!(
+            snapshot.entries.is_empty(),
+            "unanswered historical questions should not render as unresolved tool rows"
         );
     }
 

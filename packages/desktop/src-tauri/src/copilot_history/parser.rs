@@ -280,6 +280,7 @@ pub(crate) fn convert_events_to_updates(
                             part_id: None,
                             message_id: data.message_id.clone(),
                             session_id: Some(session_id.to_string()),
+                            produced_at_monotonic_ms: None,
                         },
                     ));
                 }
@@ -330,6 +331,7 @@ pub(crate) fn convert_events_to_updates(
                         part_id: None,
                         message_id: None,
                         session_id: Some(session_id.to_string()),
+                        produced_at_monotonic_ms: None,
                     },
                 ));
             }

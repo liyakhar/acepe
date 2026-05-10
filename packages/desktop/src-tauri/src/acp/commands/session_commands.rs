@@ -569,6 +569,8 @@ pub async fn acp_get_session_state(
             message_count: projection_session
                 .map(|session| session.message_count)
                 .unwrap_or(0),
+            last_agent_message_id: projection_session
+                .and_then(|session| session.last_agent_message_id.clone()),
             lifecycle: runtime_snapshot.lifecycle.clone(),
             capabilities: runtime_snapshot.capabilities.clone(),
             active_turn_failure: projection_session.and_then(|session| session.active_turn_failure.clone()),
@@ -1689,6 +1691,30 @@ async fn load_transcript_snapshot_for_resume_with_app(
                 "Failed to resolve replay context for resumed session {session_id}: {error}"
             ),
         })?;
+    if let Some(replay_context) = replay_context.as_ref() {
+        let serialized_events = SessionJournalEventRepository::list_serialized(db, session_id)
+            .await
+            .map_err(|error| SerializableAcpError::InvalidState {
+                message: format!(
+                    "Failed to load local transcript journal for resumed session {session_id}: {error}"
+                ),
+            })?;
+        let journal_events =
+            crate::acp::session_journal::decode_serialized_events(replay_context, serialized_events)
+                .map_err(|error| SerializableAcpError::InvalidState {
+                    message: format!(
+                        "Failed to decode local transcript journal for resumed session {session_id}: {error}"
+                    ),
+                })?;
+        if let Some(transcript_snapshot) =
+            crate::acp::session_journal::rebuild_completed_local_transcript_snapshot(
+                replay_context,
+                &journal_events,
+            )
+        {
+            return Ok(transcript_snapshot);
+        }
+    }
     if has_metadata && journal_max == Some(1) {
         let first_event = crate::db::entities::session_journal_event::Entity::find()
             .filter(crate::db::entities::session_journal_event::Column::SessionId.eq(session_id))
@@ -1891,6 +1917,7 @@ mod transcript_buffer_tests {
                                 turn_state: crate::acp::projections::SessionTurnState::Idle,
                                 active_turn_failure: None,
                                 last_terminal_turn_id: None,
+                                last_agent_message_id: None,
                                 transcript_operations: vec![],
                                 operation_patches: vec![],
                                 interaction_patches: vec![],
@@ -1919,6 +1946,7 @@ mod transcript_buffer_tests {
                                 turn_state: crate::acp::projections::SessionTurnState::Idle,
                                 active_turn_failure: None,
                                 last_terminal_turn_id: None,
+                                last_agent_message_id: None,
                                 transcript_operations: vec![],
                                 operation_patches: vec![],
                                 interaction_patches: vec![],
@@ -2185,9 +2213,9 @@ mod tests {
         SessionGraphCapabilities, SessionGraphLifecycle,
     };
     use crate::acp::session_state_engine::SessionGraphRuntimeRegistry;
-    use crate::acp::session_update::{PermissionData, SessionUpdate};
+    use crate::acp::session_update::{ContentChunk, PermissionData, SessionUpdate};
     use crate::acp::transcript_projection::TranscriptProjectionRegistry;
-    use crate::acp::types::CanonicalAgentId;
+    use crate::acp::types::{CanonicalAgentId, ContentBlock};
     use crate::db::migrations::Migrator;
     use crate::db::repository::{SessionJournalEventRepository, SessionMetadataRepository};
     use sea_orm::{Database, DbConn};
@@ -2326,6 +2354,126 @@ mod tests {
             .expect("load transcript snapshot");
 
         assert_eq!(transcript.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn resume_rebuilds_completed_assistant_transcript_from_local_journal() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "journal-transcript-session",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("seed metadata");
+
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "journal-transcript-session",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "Ra".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("journal-transcript-session".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        )
+        .await
+        .expect("append first assistant chunk");
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "journal-transcript-session",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "incoats survive resume".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("journal-transcript-session".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        )
+        .await
+        .expect("append second assistant chunk");
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "journal-transcript-session",
+            &SessionUpdate::TurnComplete {
+                session_id: Some("journal-transcript-session".to_string()),
+                turn_id: Some("turn-1".to_string()),
+            },
+        )
+        .await
+        .expect("append turn complete");
+
+        let transcript = load_transcript_snapshot_for_resume(&db, "journal-transcript-session")
+            .await
+            .expect("load transcript snapshot");
+        let assistant_text = transcript
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.role == crate::acp::transcript_projection::TranscriptEntryRole::Assistant
+            })
+            .flat_map(|entry| entry.segments.iter())
+            .map(|segment| match segment {
+                crate::acp::transcript_projection::TranscriptSegment::Text { text, .. } => {
+                    text.as_str()
+                }
+            })
+            .collect::<String>();
+
+        assert_eq!(assistant_text, "Raincoats survive resume");
+    }
+
+    #[tokio::test]
+    async fn resume_does_not_trust_partial_local_transcript_without_terminal_turn() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "partial-journal-transcript-session",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("seed metadata");
+
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "partial-journal-transcript-session",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "Ra".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("partial-journal-transcript-session".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        )
+        .await
+        .expect("append partial assistant chunk");
+
+        let transcript =
+            load_transcript_snapshot_for_resume(&db, "partial-journal-transcript-session")
+                .await
+                .expect("load transcript snapshot");
+
+        assert!(transcript.entries.is_empty());
     }
 
     #[tokio::test]

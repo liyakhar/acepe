@@ -1,12 +1,17 @@
 <script lang="ts">
-import { AgentPanelShell } from "@acepe/ui/agent-panel";
+import {
+	AgentPanelShell,
+	type AgentPanelQuestionSelectEvent,
+	type AgentPanelSceneEntryModel,
+	type TokenRevealCss,
+} from "@acepe/ui/agent-panel";
 import { EmbeddedIconButton } from "@acepe/ui/panel-header";
 import ArrowUp from "@lucide/svelte/icons/arrow-up";
 import { Clock } from "phosphor-svelte";
-import { onDestroy, tick } from "svelte";
+import { onDestroy, onMount, tick } from "svelte";
 import { toast } from "svelte-sonner";
 import { deriveLocalReferenceId } from "$lib/errors/error-reference.js";
-import type { SessionTurnState } from "../../../../services/acp-types.js";
+import type { SessionStateGraph, SessionTurnState } from "../../../../services/acp-types.js";
 import type { TurnState } from "../../../store/types.js";
 import type { MergeStrategy } from "$lib/utils/tauri-client/git.js";
 import AgentAttachedFilePane from "../../../../components/main-app-view/components/content/agent-attached-file-pane.svelte";
@@ -17,6 +22,8 @@ import { getConnectionStore } from "../../../store/connection-store.svelte.js";
 import { getInteractionStore } from "../../../store/interaction-store.svelte.js";
 import { getPanelStore } from "../../../store/panel-store.svelte.js";
 import { getSessionStore } from "../../../store/session-store.svelte.js";
+import { api } from "../../../store/api.js";
+import { getChatPreferencesStore } from "../../../store/chat-preferences-store.svelte.js";
 import { mergeStrategyStore } from "../../../store/merge-strategy-store.svelte.js";
 import type { ModifiedFilesState } from "../../../types/modified-files-state.js";
 import { PanelConnectionEvent } from "../../../types/panel-connection-state.js";
@@ -50,10 +57,18 @@ import {
 	createResolvedWorktreeCloseConfirmationState,
 	createWorktreeCreationState,
 	copyTextToClipboard,
+	applyAgentPanelDisplayMemory,
+	applyAgentPanelDisplayModelToSceneEntries,
+	backfillSceneEntryTimestamps,
+	buildAgentPanelBaseModel,
+	createAgentPanelDisplayMemory,
 	deriveCanonicalAgentPanelSessionState,
+	deriveEffectiveCanonicalTurnPresentation,
 	derivePanelErrorInfo,
 	mapCanonicalTurnStateToHotTurnState,
 	matchesWorktreeSetupContext,
+	resolveOptimisticUserEntryForGraph,
+	resolveVisibleEntryCount,
 	removeWorktreeAndMarkSessionWorktreeDeleted,
 	reduceWorktreeSetupEvent,
 	resolveEffectiveProjectPath,
@@ -69,11 +84,18 @@ import { createPanelBranchLookupController } from "../logic/panel-branch-lookup.
 import type { WorktreeSetupState } from "../logic/worktree-setup-events.js";
 import { shouldAutoScrollOnPanelActivation } from "../logic/should-auto-scroll-on-panel-activation.js";
 import { deriveAgentPanelHeaderDisplayTitle } from "../logic/agent-panel-header-title.js";
-import { createAssistantTextRevealProjector } from "../logic/assistant-text-reveal-projector.svelte.js";
 import { shouldShowPreSessionWorktreeCard } from "../logic/pre-session-worktree-card-visibility.js";
 import { resolveWorktreeToggleProjectPath } from "../logic/worktree-toggle-project-path.js";
+import type {
+	CanonicalSessionProjection,
+	RowTokenStream,
+} from "../../../store/canonical-session-projection.js";
 import { AgentPanelState } from "../state/agent-panel-state.svelte";
 import type { AgentPanelProps } from "../types";
+import {
+	createLegacyInteractionReplyHandler,
+	normalizeInteractionReplyHandler,
+} from "../../../types/reply-handler.js";
 import { AgentPanelFooter as SharedFooter } from "@acepe/ui/agent-panel";
 import WorktreeFooterButton from "../../shared/worktree-footer-button.svelte";
 import AgentPanelContent from "./agent-panel-content.svelte";
@@ -104,6 +126,13 @@ import {
 	removeAttachmentFromQueuedMessage,
 	sendQueuedMessageNow,
 } from "../logic/queue-strip-handlers.js";
+import {
+	TOKEN_REVEAL_FADE_MS,
+	TOKEN_REVEAL_STEP_MS,
+	resolveTokenRevealSettleDelayMs,
+	shouldKeepTokenRevealTiming,
+	type TokenRevealTiming,
+} from "../../messages/token-reveal-motion.js";
 import {
 	copyStreamingLogPathToClipboard,
 	copyThreadContentToClipboard,
@@ -171,6 +200,7 @@ let {
 // ✅ State managers (must be before derived values that use them)
 const sessionStore = getSessionStore();
 const panelStore = getPanelStore();
+const chatPreferencesStore = getChatPreferencesStore();
 const connectionStore = getConnectionStore();
 const interactionStore = getInteractionStore();
 const operationStore = sessionStore.getOperationStore();
@@ -178,9 +208,138 @@ const agentStore = getAgentStore();
 const messageQueueStore = getMessageQueueStore();
 const logger = createLogger({ id: "agent-panel-render-trace", name: "AgentPanelRenderTrace" });
 let lastPanelTraceSignature = $state<string | null>(null);
-let textRevealProjectorRevision = $state(0);
-const textRevealProjector = createAssistantTextRevealProjector(() => {
-	textRevealProjectorRevision += 1;
+let agentPanelDisplayMemory = createAgentPanelDisplayMemory();
+let prefersReducedMotion = $state(false);
+
+function findRowTokenStream(
+	projection: CanonicalSessionProjection | null,
+	rowId: string
+): RowTokenStream | null {
+	if (projection === null) {
+		return null;
+	}
+
+	for (const rowTokenStream of projection.tokenStream.values()) {
+		if (rowTokenStream.rowId === rowId) {
+			return rowTokenStream;
+		}
+	}
+
+	return null;
+}
+
+function buildTokenRevealCss(
+	rowTokenStream: RowTokenStream | null,
+	projection: CanonicalSessionProjection | null,
+	streamingAnimationMode: "smooth" | "instant",
+	reducedMotion: boolean,
+	isStreaming: boolean
+): TokenRevealCss | undefined {
+	const clockAnchor = projection?.clockAnchor;
+	if (
+		rowTokenStream === null ||
+		rowTokenStream.wordCount < 1 ||
+		clockAnchor === null ||
+		clockAnchor === undefined
+	) {
+		return undefined;
+	}
+
+	const browserNowMs = globalThis.performance?.now();
+	if (browserNowMs === undefined) {
+		return undefined;
+	}
+
+	const rustStartOffsetMs =
+		rowTokenStream.firstDeltaProducedAtMonotonicMs - clockAnchor.rustMonotonicMs;
+	const browserElapsedMs = browserNowMs - clockAnchor.browserAnchorMs;
+	const baselineMs = rustStartOffsetMs - browserElapsedMs;
+	const revealMode = reducedMotion ? "instant" : streamingAnimationMode;
+
+	const tokenRevealCss = {
+		revealCount: rowTokenStream.wordCount,
+		revealedCharCount: rowTokenStream.accumulatedText.length,
+		baselineMs,
+		tokStepMs: TOKEN_REVEAL_STEP_MS,
+		tokFadeDurMs: TOKEN_REVEAL_FADE_MS,
+		mode: revealMode,
+	};
+
+	if (
+		!shouldKeepTokenRevealTiming({
+			isStreaming,
+			timing: tokenRevealCss,
+		})
+	) {
+		return undefined;
+	}
+
+	return tokenRevealCss;
+}
+
+function copyAssistantSceneEntryWithTokenReveal(
+	entry: AgentPanelSceneEntryModel,
+	sourceEntry: AgentPanelSceneEntryModel | undefined,
+	tokenRevealCss: TokenRevealCss | undefined
+): AgentPanelSceneEntryModel {
+	if (entry.type !== "assistant") {
+		return entry;
+	}
+
+	const sourceAssistantEntry = sourceEntry?.type === "assistant" ? sourceEntry : undefined;
+
+	return {
+		id: entry.id,
+		type: "assistant",
+		markdown: sourceAssistantEntry?.markdown ?? entry.markdown,
+		message: sourceAssistantEntry?.message ?? entry.message,
+		isStreaming: entry.isStreaming,
+		tokenRevealCss,
+		timestampMs: entry.timestampMs,
+	};
+}
+
+function collectSettlingTokenRevealTimings(
+	entries: readonly AgentPanelSceneEntryModel[]
+): readonly TokenRevealTiming[] {
+	const timings: TokenRevealTiming[] = [];
+
+	for (const entry of entries) {
+		if (entry.type !== "assistant" || entry.isStreaming === true) {
+			continue;
+		}
+
+		const tokenRevealCss = entry.tokenRevealCss;
+		if (tokenRevealCss === undefined) {
+			continue;
+		}
+
+		timings.push({
+			revealCount: tokenRevealCss.revealCount,
+			baselineMs: tokenRevealCss.baselineMs,
+			tokStepMs: tokenRevealCss.tokStepMs,
+			tokFadeDurMs: tokenRevealCss.tokFadeDurMs,
+			mode: tokenRevealCss.mode,
+		});
+	}
+
+	return timings;
+}
+
+onMount(() => {
+	const mediaQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? null;
+	if (mediaQuery === null) {
+		prefersReducedMotion = false;
+		return;
+	}
+	const updateReducedMotion = (event: MediaQueryList | MediaQueryListEvent): void => {
+		prefersReducedMotion = event.matches;
+	};
+	updateReducedMotion(mediaQuery);
+	mediaQuery.addEventListener("change", updateReducedMotion);
+	return () => {
+		mediaQuery.removeEventListener("change", updateReducedMotion);
+	};
 });
 
 // ============================================================
@@ -202,9 +361,22 @@ const sessionHotState = $derived(sessionId ? sessionStore.getHotState(sessionId)
 // reviewMode, etc.), not just pendingUserEntry. This causes extra recomputations during typing,
 // but the fast path returns the same array reference so Svelte skips DOM updates. Acceptable trade-off.
 const panelHotState = $derived(panelId ? panelStore.getHotState(panelId) : null);
+const preSessionPendingUserEntry = $derived(
+	sessionId === null || sessionId === undefined ? (panelHotState?.pendingUserEntry ?? null) : null
+);
+const hasCanonicalUserEntryInGraph = $derived.by(() => {
+	const entries = presentationSessionStateGraph?.transcriptSnapshot.entries ?? [];
+	return entries.some((entry) => entry.role === "user");
+});
+const optimisticUserEntryForGraph = $derived(
+	resolveOptimisticUserEntryForGraph({
+		panelPendingUserEntry: panelHotState?.pendingUserEntry ?? null,
+		sessionPendingOptimisticEntry: sessionHotState?.pendingSendIntent?.optimisticEntry ?? null,
+		hasCanonicalUserEntry: hasCanonicalUserEntryInGraph,
+	})
+);
 const hasImmediatePendingSendIntent = $derived(
-	(sessionHotState?.pendingSendIntent ?? null) !== null ||
-		(panelHotState?.pendingUserEntry ?? null) !== null
+	(sessionHotState?.pendingSendIntent ?? null) !== null || optimisticUserEntryForGraph !== null
 );
 const panelSnapshot = $derived(panelId ? panelStore.getTopLevelPanel(panelId) : null);
 const panelPendingWorktreeEnabled = $derived(
@@ -214,7 +386,7 @@ const panelPreparedWorktreeLaunch = $derived(
 	panelSnapshot?.kind === "agent" ? (panelSnapshot.preparedWorktreeLaunch ?? null) : null
 );
 const sessionEntries = $derived.by(() => {
-	const pending = panelHotState?.pendingUserEntry ?? null;
+	const pending = preSessionPendingUserEntry;
 	const real = sessionId ? sessionStore.getEntries(sessionId) : [];
 	if (!pending) return real;
 	if (real.length > 0 && real[0]?.type === "user") return real;
@@ -227,7 +399,13 @@ const firstMessageAttachments = $derived.by(() => {
 	return extractAttachmentsFromChunks(firstUserEntry.message.chunks ?? []);
 });
 
-const hasMessages = $derived(sessionEntries.length > 0);
+const visibleEntryCount = $derived(
+	resolveVisibleEntryCount({
+		canonicalEntryCount: sessionEntries.length,
+		optimisticUserEntry: optimisticUserEntryForGraph,
+	})
+);
+const hasMessages = $derived(visibleEntryCount > 0);
 const sessionProjectPath = $derived(sessionIdentity?.projectPath ?? null);
 const sessionAgentId = $derived(sessionIdentity?.agentId ?? null);
 const sessionWorktreePath = $derived(sessionIdentity?.worktreePath ?? null);
@@ -264,6 +442,7 @@ let contentScrollViewport: HTMLElement | null = $state(null);
 let contentIsAtBottom = $state(true);
 let contentIsAtTop = $state(true);
 let contentIsStreaming = $state(false);
+let tokenRevealSettleRevision = $state(0);
 let panelConnectionState = $state<PanelConnectionState | null>(null);
 let panelConnectionError = $state<PanelConnectionErrorDetails | null>(null);
 // Dismiss tracking: store the error fingerprint that the user dismissed.
@@ -361,12 +540,40 @@ const sessionStateGraph = $derived(sessionId ? sessionStore.getSessionStateGraph
 const canonicalSessionTurnState = $derived(
 	sessionId ? sessionStore.getSessionTurnState(sessionId) : null
 );
+const hasObservedTerminalTurn = $derived((sessionHotState?.observedTerminalTurn ?? null) !== null);
+const effectiveTurnPresentation = $derived(
+	deriveEffectiveCanonicalTurnPresentation({
+		lifecycle: canonicalProjection?.lifecycle ?? null,
+		activity: sessionStateGraph?.activity ?? null,
+		turnState: sessionStateGraph?.turnState ?? null,
+		hasLocalObservedTerminalTurn: hasObservedTerminalTurn,
+	})
+);
+const presentationSessionStateGraph = $derived.by((): SessionStateGraph | null => {
+	const graph = sessionStateGraph;
+	if (graph === null || !effectiveTurnPresentation.hasTerminalOverride) {
+		return graph;
+	}
+
+	if (effectiveTurnPresentation.activity === null || effectiveTurnPresentation.activity === undefined) {
+		return graph;
+	}
+
+	return {
+		...graph,
+		activity: effectiveTurnPresentation.activity,
+		turnState: "Completed",
+	};
+});
+const effectiveCanonicalSessionTurnState = $derived(
+	(effectiveTurnPresentation.turnState ?? canonicalSessionTurnState) as SessionTurnState | null
+);
 const sessionTurnState = $derived(
-	canonicalSessionTurnState !== null
-		? mapCanonicalTurnStateToHotTurnState(canonicalSessionTurnState)
+	effectiveCanonicalSessionTurnState !== null
+		? mapCanonicalTurnStateToHotTurnState(effectiveCanonicalSessionTurnState)
 		: "idle"
 );
-const entriesCount = $derived(sessionEntries.length);
+const entriesCount = $derived(visibleEntryCount);
 const hasSession = $derived(sessionId !== null);
 // Prefer active worktree path, then session worktree, then project paths.
 // NOTE: Must be defined before panelVisibility which uses effectiveProjectPath
@@ -395,21 +602,29 @@ const preSessionSelectedProject = $derived.by(() => {
 
 // ✅ Derived values from granular session data
 const effectivePanelAgentId = $derived(selectedAgentId ?? sessionAgentId);
-const agentName = $derived(effectivePanelAgentId);
+const agentName = $derived.by(() => {
+	if (!effectivePanelAgentId) {
+		return null;
+	}
+
+	const agent = availableAgents.find((candidate) => candidate.id === effectivePanelAgentId);
+	return agent?.name ?? effectivePanelAgentId;
+});
 const canonicalPanelSessionState = $derived.by(() =>
 	deriveCanonicalAgentPanelSessionState({
 		lifecycle: canonicalProjection?.lifecycle ?? null,
-		activity: canonicalProjection?.activity ?? null,
-		turnState: canonicalProjection?.turnState ?? null,
+		activity: effectiveTurnPresentation.activity ?? canonicalProjection?.activity ?? null,
+		turnState: effectiveCanonicalSessionTurnState,
 		hasEntries: sessionEntries.length > 0,
-		hasOptimisticPendingEntry: (panelHotState?.pendingUserEntry ?? null) !== null,
+		hasOptimisticPendingEntry: preSessionPendingUserEntry !== null,
 		hasLocalPendingSendIntent: (sessionHotState?.pendingSendIntent ?? null) !== null,
+		hasLocalObservedTerminalTurn: hasObservedTerminalTurn,
 	})
 );
 const panelSessionStatus = $derived(canonicalPanelSessionState.sessionStatus);
 const sessionIsConnected = $derived(canonicalPanelSessionState.isConnected);
 const sessionIsStreaming = $derived(canonicalPanelSessionState.isStreaming);
-const isAwaitingModelResponse = $derived(canonicalProjection?.activity?.kind === "awaiting_model");
+const isAwaitingModelResponse = $derived(effectiveTurnPresentation.activity?.kind === "awaiting_model");
 const showPlanningIndicator = $derived(canonicalPanelSessionState.showPlanningIndicator);
 const sessionCanSubmit = $derived(canonicalPanelSessionState.canSubmit);
 const sessionShowStop = $derived(canonicalPanelSessionState.showStop);
@@ -687,13 +902,10 @@ const sessionCreatedAt = $derived(sessionMetadata?.createdAt ?? null);
 const sessionUpdatedAt = $derived(sessionMetadata?.updatedAt ?? null);
 
 const agentIconSrc = $derived(getAgentIcon(effectivePanelAgentId, effectiveTheme));
-const optimisticUserEntryForGraph = $derived(
-	panelHotState?.pendingUserEntry ?? sessionHotState?.pendingSendIntent?.optimisticEntry ?? null
-);
 const graphMaterializedScene = $derived(
 	materializeAgentPanelSceneFromGraph({
 		panelId: effectivePanelId,
-		graph: sessionStateGraph,
+		graph: presentationSessionStateGraph,
 		header: {
 			title: graphHeaderTitle,
 			subtitle: sessionTitle,
@@ -705,18 +917,97 @@ const graphMaterializedScene = $derived(
 		},
 		optimistic:
 			optimisticUserEntryForGraph != null
-				? { pendingUserEntry: optimisticUserEntryForGraph }
+				? {
+					pendingUserEntry: optimisticUserEntryForGraph,
+				}
 				: null,
 	})
 );
+const agentPanelBaseDisplayModel = $derived(
+	buildAgentPanelBaseModel({
+		panelId: effectivePanelId,
+		graph: presentationSessionStateGraph,
+	header: {
+		title: graphHeaderTitle,
+		agentName,
+	},
+		local: {
+			pendingUserEntry: optimisticUserEntryForGraph,
+			pendingSendIntent: hasImmediatePendingSendIntent,
+		},
+	})
+);
+const agentPanelDisplayResult = $derived.by(() => {
+	const result = applyAgentPanelDisplayMemory(
+		agentPanelDisplayMemory,
+		agentPanelBaseDisplayModel
+	);
+	agentPanelDisplayMemory = result.memory;
+	return result;
+});
+const agentPanelDisplayModel = $derived(agentPanelDisplayResult.model);
 const graphSceneEntries = $derived.by(() => {
-	textRevealProjectorRevision;
-	return textRevealProjector.projectEntries(graphMaterializedScene.conversation.entries, {
-		sessionId: sessionStateGraph?.canonicalSessionId ?? sessionId,
-		turnState: sessionStateGraph?.turnState ?? null,
-		activityKind: sessionStateGraph?.activity.kind ?? null,
-		lastAgentMessageId: sessionStateGraph?.lastAgentMessageId ?? null,
+	return backfillSceneEntryTimestamps(
+		applyAgentPanelDisplayModelToSceneEntries(
+			agentPanelDisplayModel,
+			agentPanelDisplayResult.memory,
+			graphMaterializedScene.conversation.entries
+		),
+		sessionEntries
+	);
+});
+const tokenRevealSceneEntries = $derived.by(() => {
+	tokenRevealSettleRevision;
+	const projection = canonicalProjection;
+	const streamingAnimationMode = chatPreferencesStore?.streamingAnimationMode ?? "smooth";
+	const sourceEntriesById = new Map<string, AgentPanelSceneEntryModel>();
+
+	for (const sourceEntry of graphMaterializedScene.conversation.entries) {
+		sourceEntriesById.set(sourceEntry.id, sourceEntry);
+	}
+
+	return graphSceneEntries.map((entry) => {
+		if (entry.type !== "assistant") {
+			return entry;
+		}
+
+		const tokenRevealCss = buildTokenRevealCss(
+			findRowTokenStream(projection, entry.id),
+			projection,
+			streamingAnimationMode,
+			prefersReducedMotion,
+			entry.isStreaming === true
+		);
+		if (tokenRevealCss === undefined) {
+			return entry;
+		}
+
+		return copyAssistantSceneEntryWithTokenReveal(
+			entry,
+			sourceEntriesById.get(entry.id),
+			tokenRevealCss
+		);
 	});
+});
+const tokenRevealSettleDelayMs = $derived(
+	resolveTokenRevealSettleDelayMs(collectSettlingTokenRevealTimings(tokenRevealSceneEntries))
+);
+$effect(() => {
+	const delayMs = tokenRevealSettleDelayMs;
+	if (delayMs === null) {
+		return;
+	}
+
+	const nextRevision = tokenRevealSettleRevision + 1;
+	const timeoutId = window.setTimeout(() => {
+		if (tokenRevealSettleRevision < nextRevision) {
+			tokenRevealSettleRevision = nextRevision;
+		}
+	}, delayMs);
+
+	return () => {
+		window.clearTimeout(timeoutId);
+	};
 });
 const isConnecting = $derived(
 	panelConnectionState === PanelConnectionState.CONNECTING ||
@@ -1840,6 +2131,57 @@ function handleQueueStripSendNow(messageId: string): void {
 	}
 }
 
+function handleQuestionSelect(event: AgentPanelQuestionSelectEvent): void {
+	const graph = presentationSessionStateGraph;
+	if (graph === null) {
+		toast.error("Question is not ready yet.");
+		return;
+	}
+
+	const interaction = graph.interactions.find((candidate) => candidate.id === event.entryId);
+	if (interaction === undefined || !("Question" in interaction.payload)) {
+		toast.error("Question is no longer available.");
+		return;
+	}
+
+	const payload = interaction.payload.Question;
+	const question = payload.questions[event.questionIndex];
+	if (question === undefined) {
+		toast.error("Question option is no longer available.");
+		return;
+	}
+
+	const replyHandler =
+		normalizeInteractionReplyHandler(interaction.reply_handler ?? payload.replyHandler) ??
+		createLegacyInteractionReplyHandler(interaction.id, interaction.json_rpc_request_id);
+	const answers = [
+		{
+			questionIndex: event.questionIndex,
+			answers: [event.label],
+		},
+	];
+	const answerMap: Record<string, string | string[]> = {};
+	answerMap[question.question] = question.multiSelect ? [event.label] : event.label;
+
+	void api
+		.replyInteraction({
+			sessionId: interaction.session_id,
+			interactionId: interaction.id,
+			replyHandler,
+			payload: {
+				kind: "question",
+				answers,
+				answerMap,
+			},
+		})
+		.match(
+			() => {},
+			(error) => {
+				toast.error(`Failed to answer question: ${error.message}`);
+			}
+		);
+}
+
 async function handlePlanSidebarSendMessage(sid: string, message: string): Promise<void> {
 	await sessionStore.sendMessage(sid, message).match(
 		() => {},
@@ -1970,22 +2312,21 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 						panelId={effectivePanelId}
 						{viewState}
 						{sessionId}
-						sceneEntries={graphSceneEntries}
+						sceneEntries={tokenRevealSceneEntries}
 						sessionProjectPath={effectiveProjectPath ?? sessionProjectPath}
 						{allProjects}
 						onProjectSelected={handleProjectSelected}
 						onRetryConnection={handleRetryConnection}
 						onCancelConnection={handleCancelConnection}
-						onTextRevealActivityChange={(revealKey, active) => {
-							textRevealProjector.handleRevealActivityChange(revealKey, active);
-						}}
 						{agentIconSrc}
 						{isFullscreen}
 						{availableAgents}
 						{effectiveTheme}
 						{modifiedFilesState}
-						turnState={sessionTurnState}
-						isWaitingForResponse={showPlanningIndicator || hasImmediatePendingSendIntent}
+						turnState={agentPanelDisplayModel.turnState}
+						isWaitingForResponse={agentPanelDisplayModel.waiting.show}
+						waitingLabel={agentPanelDisplayModel.waiting.label}
+						onQuestionSelect={handleQuestionSelect}
 					/>
 				</div>
 				{#if viewState.kind === "conversation" && !contentIsAtTop}

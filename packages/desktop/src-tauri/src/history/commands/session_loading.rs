@@ -102,6 +102,14 @@ pub(crate) enum ProvenanceKeyStability {
 }
 
 #[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CanonicalSafeWellFormedness {
+    WellFormed,
+    NotWellFormed,
+    Unknown,
+}
+
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderRestoreAuditCase {
     pub(crate) provider_id: String,
@@ -110,6 +118,7 @@ pub(crate) struct ProviderRestoreAuditCase {
     pub(crate) entry_count: usize,
     pub(crate) time_to_first_entry_render_ms: Option<u128>,
     pub(crate) provenance_key_stability: ProvenanceKeyStability,
+    pub(crate) canonical_safe_well_formedness: CanonicalSafeWellFormedness,
 }
 
 #[cfg(test)]
@@ -127,6 +136,7 @@ impl ProviderRestoreAuditCase {
             entry_count,
             time_to_first_entry_render_ms: Some(time_to_first_entry_render_ms),
             provenance_key_stability: ProvenanceKeyStability::Stable,
+            canonical_safe_well_formedness: CanonicalSafeWellFormedness::WellFormed,
         }
     }
 
@@ -141,6 +151,7 @@ impl ProviderRestoreAuditCase {
             entry_count: 0,
             time_to_first_entry_render_ms: None,
             provenance_key_stability: ProvenanceKeyStability::Unknown,
+            canonical_safe_well_formedness: CanonicalSafeWellFormedness::Unknown,
         }
     }
 
@@ -155,6 +166,7 @@ impl ProviderRestoreAuditCase {
             entry_count: 0,
             time_to_first_entry_render_ms: None,
             provenance_key_stability: ProvenanceKeyStability::Unknown,
+            canonical_safe_well_formedness: CanonicalSafeWellFormedness::Unknown,
         }
     }
 
@@ -169,6 +181,7 @@ impl ProviderRestoreAuditCase {
             entry_count: 0,
             time_to_first_entry_render_ms: None,
             provenance_key_stability: ProvenanceKeyStability::Unknown,
+            canonical_safe_well_formedness: CanonicalSafeWellFormedness::Unknown,
         }
     }
 }
@@ -217,6 +230,12 @@ impl ProviderRestoreAuditReport {
             let has_stable_provenance = provider_cases
                 .clone()
                 .any(|case| case.provenance_key_stability == ProvenanceKeyStability::Stable);
+            let has_any_well_formedness_verdict = provider_cases.clone().any(|case| {
+                case.canonical_safe_well_formedness != CanonicalSafeWellFormedness::Unknown
+            });
+            let has_well_formed_canonical_keys = provider_cases.clone().any(|case| {
+                case.canonical_safe_well_formedness == CanonicalSafeWellFormedness::WellFormed
+            });
 
             if !has_non_empty_restore {
                 blocking_reasons.push(format!(
@@ -236,6 +255,15 @@ impl ProviderRestoreAuditReport {
             if !has_stable_provenance {
                 blocking_reasons.push(format!(
                     "{provider_id} lacks a stable provenance-key verdict"
+                ));
+            }
+            if !has_any_well_formedness_verdict {
+                blocking_reasons.push(format!(
+                    "{provider_id} lacks a canonical-safe well-formedness verdict"
+                ));
+            } else if !has_well_formed_canonical_keys {
+                blocking_reasons.push(format!(
+                    "{provider_id} failed the canonical-safe well-formedness check"
                 ));
             }
         }
@@ -466,8 +494,9 @@ pub async fn get_session_open_result(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_session_title_metadata, history_replay_family, session_open_error_from_provider_load,
-        ProvenanceKeyStability, ProviderRestoreAuditCase, ProviderRestoreAuditReport,
+        apply_session_title_metadata, audit_session_load_timing_cli, history_replay_family,
+        session_open_error_from_provider_load, CanonicalSafeWellFormedness, ProvenanceKeyStability,
+        ProviderRestoreAuditCase, ProviderRestoreAuditReport,
     };
     use crate::acp::provider::{HistoryReplayFamily, ProviderHistoryLoadError};
     use crate::acp::session_descriptor::{SessionDescriptorCompatibility, SessionReplayContext};
@@ -717,7 +746,7 @@ mod tests {
             ProviderRestoreAuditCase::unparseable_history("claude-code", "bad-claude"),
         ]);
 
-        let gate = report.deletion_gate_status(&["claude-code", "copilot"]);
+        let gate = report.deletion_gate_status(&["claude-code", "copilot", "cursor"]);
 
         assert!(!gate.ready);
         assert!(gate
@@ -729,6 +758,21 @@ mod tests {
         assert!(gate
             .blocking_reasons
             .contains(&"copilot lacks an unparseable-history restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks a parseable non-empty restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks a missing-history restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks an unparseable-history restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks a stable provenance-key verdict".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks a canonical-safe well-formedness verdict".to_string()));
     }
 
     #[test]
@@ -749,6 +793,42 @@ mod tests {
             gate.blocking_reasons,
             vec!["copilot lacks a stable provenance-key verdict".to_string()]
         );
+    }
+
+    #[test]
+    fn restore_audit_gate_requires_canonical_safe_well_formedness_verdict() {
+        let mut cursor_happy =
+            ProviderRestoreAuditCase::happy_path("cursor", "cursor-session", 2, 90);
+        cursor_happy.canonical_safe_well_formedness = CanonicalSafeWellFormedness::NotWellFormed;
+        let report = ProviderRestoreAuditReport::new(vec![
+            cursor_happy,
+            ProviderRestoreAuditCase::missing_history("cursor", "missing-cursor"),
+            ProviderRestoreAuditCase::unparseable_history("cursor", "bad-cursor"),
+            ProviderRestoreAuditCase::provider_unavailable("cursor", "offline-cursor"),
+        ]);
+
+        let gate = report.deletion_gate_status(&["cursor"]);
+
+        assert!(!gate.ready);
+        assert_eq!(
+            gate.blocking_reasons,
+            vec!["cursor failed the canonical-safe well-formedness check".to_string()]
+        );
+    }
+
+    #[test]
+    fn restore_audit_gate_accepts_cursor_when_stable_and_well_formed() {
+        let report = ProviderRestoreAuditReport::new(vec![
+            ProviderRestoreAuditCase::happy_path("cursor", "cursor-session", 2, 90),
+            ProviderRestoreAuditCase::missing_history("cursor", "missing-cursor"),
+            ProviderRestoreAuditCase::unparseable_history("cursor", "bad-cursor"),
+            ProviderRestoreAuditCase::provider_unavailable("cursor", "offline-cursor"),
+        ]);
+
+        let gate = report.deletion_gate_status(&["cursor"]);
+
+        assert!(gate.ready);
+        assert!(gate.blocking_reasons.is_empty());
     }
 
     #[test]
@@ -796,11 +876,40 @@ mod tests {
 
         assert_eq!(revision, None);
     }
+
+    #[tokio::test]
+    #[ignore = "manual real-provider timing audit"]
+    async fn manual_real_provider_timing_audit() {
+        let session_id =
+            std::env::var("ACEPE_AUDIT_SESSION_ID").expect("ACEPE_AUDIT_SESSION_ID is required");
+        let project_path = std::env::var("ACEPE_AUDIT_PROJECT_PATH")
+            .expect("ACEPE_AUDIT_PROJECT_PATH is required");
+        let agent_id =
+            std::env::var("ACEPE_AUDIT_AGENT_ID").expect("ACEPE_AUDIT_AGENT_ID is required");
+        let source_path = std::env::var("ACEPE_AUDIT_SOURCE_PATH").ok();
+
+        let timing = audit_session_load_timing_cli(session_id, project_path, agent_id, source_path)
+            .await
+            .expect("real-provider timing audit should run");
+
+        assert!(
+            timing.ok,
+            "expected timing audit to find a restorable session"
+        );
+        assert!(
+            timing.entry_count > 0,
+            "expected timing audit to restore a non-empty session"
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&timing).expect("serialize timing audit")
+        );
+    }
 }
 
 /// Audit session load timing for performance bottleneck identification.
 ///
-/// CLI-only audit (no AppHandle). Supports Claude, Cursor, Codex. Returns error for OpenCode.
+/// CLI-only audit (no AppHandle). Supports Claude, Copilot, Cursor, Codex. Returns error for OpenCode.
 pub async fn audit_session_load_timing_cli(
     session_id: String,
     project_path: String,
@@ -811,9 +920,6 @@ pub async fn audit_session_load_timing_cli(
 
     if matches!(canonical_agent, CanonicalAgentId::OpenCode) {
         return Err("OpenCode audit requires running app (use in-app invoke)".to_string());
-    }
-    if matches!(canonical_agent, CanonicalAgentId::Copilot) {
-        return Err("Copilot audit is not implemented yet".to_string());
     }
     if matches!(canonical_agent, CanonicalAgentId::Forge) {
         return Err("Forge audit is not implemented yet".to_string());
@@ -849,6 +955,18 @@ pub async fn audit_session_load_timing_cli(
             );
             add_stage(&mut stages, "convert", t2);
 
+            Some(snapshot)
+        }
+        CanonicalAgentId::Copilot => {
+            let t0 = Instant::now();
+            let snapshot = crate::copilot_history::load_thread_snapshot_from_disk(
+                &session_id,
+                source_path.as_deref(),
+                &format!("Session {}", &session_id[..8.min(session_id.len())]),
+            )
+            .await
+            .map_err(|e| format!("Failed to parse Copilot session: {}", e))?;
+            add_stage(&mut stages, "load_session", t0);
             Some(snapshot)
         }
         CanonicalAgentId::Cursor => {
@@ -911,22 +1029,17 @@ pub async fn audit_session_load_timing_cli(
             add_stage(&mut stages, "load_session", t0);
             codex_result
         }
-        CanonicalAgentId::OpenCode
-        | CanonicalAgentId::Copilot
-        | CanonicalAgentId::Forge
-        | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode | CanonicalAgentId::Forge | CanonicalAgentId::Custom(_) => {
             unreachable!("handled above")
         }
     };
 
     let agent_name = match canonical_agent {
         CanonicalAgentId::ClaudeCode => "claude-code",
+        CanonicalAgentId::Copilot => "copilot",
         CanonicalAgentId::Cursor => "cursor",
         CanonicalAgentId::Codex => "codex",
-        CanonicalAgentId::OpenCode
-        | CanonicalAgentId::Copilot
-        | CanonicalAgentId::Forge
-        | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode | CanonicalAgentId::Forge | CanonicalAgentId::Custom(_) => {
             unreachable!()
         }
     };
@@ -960,9 +1073,6 @@ pub async fn audit_session_load_timing(
         let total_start = Instant::now();
         let canonical_agent = CanonicalAgentId::parse(&agent_id);
 
-        if matches!(canonical_agent, CanonicalAgentId::Copilot) {
-            return Err("Copilot audit is not implemented yet".to_string());
-        }
         if matches!(canonical_agent, CanonicalAgentId::Forge) {
             return Err("Forge audit is not implemented yet".to_string());
         }
@@ -993,6 +1103,18 @@ pub async fn audit_session_load_timing(
                 add_stage(&mut stages, "convert", t2);
 
                 (Some(snapshot), "claude-code".to_string())
+            }
+            CanonicalAgentId::Copilot => {
+                let t0 = Instant::now();
+                let snapshot = crate::copilot_history::load_thread_snapshot_from_disk(
+                    &session_id,
+                    source_path.as_deref(),
+                    &format!("Session {}", &session_id[..8.min(session_id.len())]),
+                )
+                .await
+                .map_err(|e| format!("Failed to parse Copilot session: {}", e))?;
+                add_stage(&mut stages, "load_session", t0);
+                (Some(snapshot), "copilot".to_string())
             }
             CanonicalAgentId::Cursor => {
                 if let Some(ref sp) = source_path {
@@ -1078,7 +1200,7 @@ pub async fn audit_session_load_timing(
             CanonicalAgentId::Custom(_) => {
                 return Err("Custom agents do not support session load audit".to_string());
             }
-            CanonicalAgentId::Copilot | CanonicalAgentId::Forge => unreachable!("handled above"),
+            CanonicalAgentId::Forge => unreachable!("handled above"),
         };
 
         let total_ms = total_start.elapsed().as_millis();

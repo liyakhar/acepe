@@ -21,8 +21,7 @@
 	import AgentToolWebSearch from "../agent-panel/agent-tool-web-search.svelte";
 	import AgentUserMessage from "../agent-panel/agent-user-message.svelte";
 	import AgentMissingSceneEntry from "../agent-panel/agent-missing-scene-entry.svelte";
-	import { getPlanningPlaceholderLabel } from "../agent-panel/planning-label.js";
-	import ToolHeaderLeading from "../agent-panel/tool-header-leading.svelte";
+	import AgentThinkingSceneEntry from "../agent-panel/agent-thinking-scene-entry.svelte";
 	import type { EditToolTheme } from "../agent-panel/agent-panel-conversation-entry.svelte";
 
 	interface Props {
@@ -61,7 +60,7 @@
 					type: "assistant",
 					markdown: child.markdown,
 					isStreaming: child.isStreaming,
-					textRevealState: child.textRevealState
+					tokenRevealCss: child.tokenRevealCss
 				};
 			}
 
@@ -69,7 +68,9 @@
 				return {
 					id: child.id,
 					type: "thinking",
-					durationMs: child.durationMs
+					durationMs: child.durationMs,
+					startedAtMs: child.startedAtMs,
+					label: child.label
 				};
 			}
 
@@ -148,22 +149,23 @@
 </script>
 
 {#if entry.type === "user"}
-	<AgentUserMessage text={entry.text} />
+	<AgentUserMessage text={entry.text} timestampMs={entry.timestampMs} />
 {:else if entry.type === "assistant"}
 	<AgentAssistantMessage
 		message={{
 			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
 		}}
 		isStreaming={entry.isStreaming}
-		textRevealState={entry.textRevealState}
+		tokenRevealCss={entry.tokenRevealCss}
+		timestampMs={entry.timestampMs}
 		{iconBasePath}
 	/>
 {:else if entry.type === "thinking"}
-	<div class="flex items-center gap-2 py-1 text-sm text-muted-foreground">
-		<ToolHeaderLeading kind="think" status="running">
-			{getPlanningPlaceholderLabel(entry.durationMs)}
-		</ToolHeaderLeading>
-	</div>
+	<AgentThinkingSceneEntry
+		durationMs={entry.durationMs}
+		startedAtMs={entry.startedAtMs}
+		label={entry.label}
+	/>
 {:else if entry.type === "missing"}
 	<AgentMissingSceneEntry
 		title={entry.title}

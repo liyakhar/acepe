@@ -17,6 +17,13 @@ export interface CanonicalAgentPanelSessionStateInput
 	extends CanonicalSessionPresentationStatusInput {
 	readonly hasOptimisticPendingEntry?: boolean;
 	readonly hasLocalPendingSendIntent?: boolean;
+	readonly hasLocalObservedTerminalTurn?: boolean;
+}
+
+export interface EffectiveCanonicalTurnPresentation {
+	readonly activity: SessionGraphActivity | null | undefined;
+	readonly turnState: SessionTurnState | null | undefined;
+	readonly hasTerminalOverride: boolean;
 }
 
 export interface CanonicalAgentPanelSessionState {
@@ -123,20 +130,43 @@ function isCanonicalBusy(
 	);
 }
 
+export function deriveEffectiveCanonicalTurnPresentation(
+	input: CanonicalAgentPanelSessionStateInput
+): EffectiveCanonicalTurnPresentation {
+	return {
+		activity: input.activity,
+		turnState: input.turnState,
+		hasTerminalOverride: false,
+	};
+}
+
 export function deriveCanonicalAgentPanelSessionState(
 	input: CanonicalAgentPanelSessionStateInput
 ): CanonicalAgentPanelSessionState {
-	const isBusy = isCanonicalBusy(input.activity, input.turnState);
+	const effectivePresentation = deriveEffectiveCanonicalTurnPresentation(input);
+	const effectiveActivity = effectivePresentation.activity;
+	const effectiveTurnState = effectivePresentation.turnState;
+	const isBusy = isCanonicalBusy(effectiveActivity, effectiveTurnState);
 	const showPlanningIndicator =
 		input.hasOptimisticPendingEntry === true ||
 		input.hasLocalPendingSendIntent === true ||
-		input.activity?.kind === "awaiting_model";
+		effectiveActivity?.kind === "awaiting_model";
 	const baseStatus =
 		input.lifecycle === null || input.lifecycle === undefined
 			? input.hasOptimisticPendingEntry === true
 				? "warming"
-				: mapCanonicalSessionToPanelStatus(input)
-			: mapCanonicalSessionToPanelStatus(input);
+				: mapCanonicalSessionToPanelStatus({
+						lifecycle: input.lifecycle,
+						activity: effectiveActivity,
+						turnState: effectiveTurnState,
+						hasEntries: input.hasEntries,
+					})
+			: mapCanonicalSessionToPanelStatus({
+					lifecycle: input.lifecycle,
+					activity: effectiveActivity,
+					turnState: effectiveTurnState,
+					hasEntries: input.hasEntries,
+				});
 	const sessionStatus =
 		input.hasLocalPendingSendIntent === true && baseStatus === "done" ? "connected" : baseStatus;
 
@@ -146,7 +176,9 @@ export function deriveCanonicalAgentPanelSessionState(
 		isStreaming: isBusy,
 		showPlanningIndicator,
 		canSubmit:
-			input.hasLocalPendingSendIntent === true ? false : input.lifecycle?.actionability.canSend === true,
+			input.hasLocalPendingSendIntent === true
+				? false
+				: !isBusy && input.lifecycle?.actionability.canSend === true,
 		showStop: isBusy,
 	};
 }

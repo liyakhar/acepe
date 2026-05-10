@@ -170,6 +170,7 @@ export class SessionMessagingService {
 				promptLength,
 				optimisticEntry,
 			},
+			observedTerminalTurn: null,
 		});
 
 		const timeoutId = setTimeout(() => {
@@ -193,6 +194,26 @@ export class SessionMessagingService {
 
 		this.hotStateManager.updateHotState(sessionId, {
 			pendingSendIntent: null,
+		});
+	}
+
+	private recordTerminalTurnForSession(
+		sessionId: string,
+		turnId: TurnCompleteUpdate["turn_id"] | undefined
+	): void {
+		this.pendingSendAttemptIds.delete(sessionId);
+		const timeoutId = this.pendingSendIntentTimeouts.get(sessionId);
+		if (timeoutId !== undefined) {
+			clearTimeout(timeoutId);
+			this.pendingSendIntentTimeouts.delete(sessionId);
+		}
+
+		this.hotStateManager.updateHotState(sessionId, {
+			pendingSendIntent: null,
+			observedTerminalTurn: {
+				turnId: turnId ?? null,
+				observedAt: Date.now(),
+			},
 		});
 	}
 
@@ -359,6 +380,7 @@ export class SessionMessagingService {
 	handleStreamComplete(sessionId: string, turnId?: TurnCompleteUpdate["turn_id"]): void {
 		const machineState = this.connectionManager.getState(sessionId);
 		const canonical = this.stateReader.getCanonicalSessionProjection?.(sessionId) ?? null;
+		this.recordTerminalTurnForSession(sessionId, turnId);
 		if (canonical?.turnState === "Completed") {
 			const connectionState = machineState?.connection ?? null;
 			if (

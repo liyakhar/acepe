@@ -1,6 +1,8 @@
 <script lang="ts">
-import { AgentPanelConversationEntry, setIconConfig } from "@acepe/ui";
+import { AgentPanelConversationEntry } from "@acepe/ui/agent-panel";
+import { setIconConfig } from "@acepe/ui/icon-context";
 import type {
+	AgentPanelQuestionSelectEvent,
 	AgentPanelSceneEntryModel,
 	AssistantRenderBlockContext,
 } from "@acepe/ui/agent-panel";
@@ -13,7 +15,6 @@ import type { ModifiedFilesState } from "../../../types/modified-files-state.js"
 import { DEFAULT_STREAMING_ANIMATION_MODE } from "../../../types/streaming-animation-mode.js";
 import ContentBlockRouter from "../../messages/content-block-router.svelte";
 import MessageWrapper from "../../messages/message-wrapper.svelte";
-import { getMergedAssistantRevealFallbackKey } from "../logic/virtualized-entry-display.js";
 import {
 	createAutoScroll,
 	type ScrollPositionProvider,
@@ -57,6 +58,7 @@ type SceneContentViewportProps = {
 	sceneEntries?: readonly AgentPanelSceneEntryModel[];
 	turnState: TurnState;
 	isWaitingForResponse: boolean;
+	waitingLabel?: string | null;
 	projectPath: string | undefined;
 	/** Session ID for detecting session changes */
 	sessionId: string | null;
@@ -68,10 +70,7 @@ type SceneContentViewportProps = {
 	onNearBottomChange?: (isNearBottom: boolean) => void;
 	/** Callback fired when near-top state changes */
 	onNearTopChange?: (isNearTop: boolean) => void;
-	onTextRevealActivityChange?: (
-		revealKey: string | null | undefined,
-		active: boolean
-	) => void;
+	onQuestionSelect?: (event: AgentPanelQuestionSelectEvent) => void;
 };
 
 type IndexedDisplayEntry = IndexedViewportEntry<SceneDisplayRow>;
@@ -81,13 +80,14 @@ let {
 	sceneEntries,
 	turnState,
 	isWaitingForResponse,
+	waitingLabel = null,
 	projectPath,
 	sessionId,
 	isFullscreen = false,
 	modifiedFilesState = null,
 	onNearBottomChange,
 	onNearTopChange,
-	onTextRevealActivityChange,
+	onQuestionSelect,
 }: SceneContentViewportProps = $props();
 
 // Derive isStreaming from turnState for scroll behavior
@@ -146,11 +146,9 @@ let wrapperRef: HTMLDivElement | null = $state(null);
 let fallbackViewportRef: HTMLDivElement | null = $state(null);
 let viewportNudgeOffsetPx = $state(0);
 let useNativeFallback = $state(false);
-let liveRevealActive = $state(false);
 let nativeFallbackReason = $state<ViewportFallbackReason | null>(null);
 let nativeFallbackRetryCount = $state(0);
 const fallbackRowRefs = new Map<string, HTMLElement>();
-const activeRevealKeys = new Set<string>();
 
 // ===== AUTO-SCROLL =====
 const autoScroll = createAutoScroll();
@@ -206,23 +204,6 @@ function bindFallbackRow(node: HTMLElement, key: string): { destroy: () => void 
 	};
 }
 
-function syncLiveRevealActive(): void {
-	liveRevealActive = activeRevealKeys.size > 0;
-}
-
-function setLiveRevealActivity(revealKey: string | undefined, active: boolean): void {
-	if (revealKey === undefined) {
-		return;
-	}
-
-	if (active) {
-		activeRevealKeys.add(revealKey);
-	} else {
-		activeRevealKeys.delete(revealKey);
-	}
-	syncLiveRevealActive();
-}
-
 $effect(() => {
 	const provider =
 		shouldUseNativeList && fallbackViewportRef
@@ -267,7 +248,7 @@ function createMergedAssistantSceneEntry(
 	return {
 		id: entry.key,
 		type: "assistant",
-		markdown: assistantMessageToMarkdown(entry.message),
+		markdown: entry.markdown,
 		message: {
 			chunks: entry.message.chunks,
 			model: entry.message.model,
@@ -276,47 +257,9 @@ function createMergedAssistantSceneEntry(
 			thinkingDurationMs: thinkingDurationMs ?? entry.message.thinkingDurationMs,
 		},
 		isStreaming,
-		revealMessageKey: entry.key,
-		textRevealState: entry.textRevealState,
+		tokenRevealCss: entry.tokenRevealCss,
 		timestampMs: entry.timestamp?.getTime(),
 	};
-}
-
-function assistantMessageToMarkdown(
-	message: Extract<AgentPanelSceneEntryModel, { type: "assistant" }>["message"]
-): string {
-	if (!message) {
-		return "";
-	}
-
-	let text = "";
-	for (const chunk of message.chunks) {
-		if (chunk.type !== "message") {
-			continue;
-		}
-
-		const block = chunk.block;
-		if (block.type === "text") {
-			text += block.text;
-			continue;
-		}
-
-		if (block.type === "resource") {
-			text += block.resource.text ?? block.resource.uri;
-			continue;
-		}
-
-		if (block.type === "image") {
-			text += block.uri ?? "[Image]";
-			continue;
-		}
-
-		if (block.type === "audio") {
-			text += "[Audio]";
-		}
-	}
-
-	return text.trim();
 }
 
 function createThinkingSceneEntry(
@@ -325,6 +268,16 @@ function createThinkingSceneEntry(
 ): AgentPanelSceneEntryModel | undefined {
 	if (entry?.type !== "thinking") {
 		return undefined;
+	}
+
+	if (entry.label !== null && entry.label !== undefined) {
+		return {
+			id: entry.id,
+			type: "thinking",
+			durationMs: thinkingDurationMs,
+			startedAtMs: entry.startedAtMs,
+			label: entry.label,
+		};
 	}
 
 	return {
@@ -480,6 +433,7 @@ const displayEntriesRaw = $derived.by((): readonly SceneDisplayRow[] => {
 		type: THINKING_DISPLAY_ENTRY.type,
 		id: THINKING_DISPLAY_ENTRY.id,
 		startedAtMs: thinkingIndicatorStartedAtMs,
+		label: waitingLabel,
 	};
 	return result;
 });
@@ -500,42 +454,16 @@ const hasLiveAssistantDisplayEntry = $derived(
 	displayEntries.some(
 		(entry) =>
 			entry.type === "assistant_merged" &&
-			(entry.isStreaming === true || entry.textRevealState?.policy === "pace")
+			(entry.isStreaming === true || entry.tokenRevealCss !== undefined)
 	)
 );
 
-$effect(() => {
-	let changed = false;
-	for (const entry of displayEntries) {
-		if (
-			entry.type !== "assistant_merged" ||
-			(entry.isStreaming !== true && entry.textRevealState?.policy !== "pace")
-		) {
-			continue;
-		}
-
-		const revealKey = entry.textRevealState?.key ?? getMergedAssistantRevealFallbackKey(entry);
-		if (revealKey === null) {
-			continue;
-		}
-		if (!activeRevealKeys.has(revealKey)) {
-			activeRevealKeys.add(revealKey);
-			changed = true;
-		}
-	}
-
-	if (changed) {
-		syncLiveRevealActive();
-	}
-});
-
-const shouldUseNativeList = $derived(
-	useNativeFallback ||
-		isWaitingForResponse ||
-		isStreaming ||
-		hasLiveAssistantDisplayEntry ||
-		liveRevealActive
-);
+let holdNativeAfterRevealHandoff = $state(false);
+const hasActiveLiveTail = $derived(isWaitingForResponse || isStreaming || hasLiveAssistantDisplayEntry);
+const shouldUseNativeListForLiveTail = $derived(useNativeFallback || hasActiveLiveTail);
+const shouldUseNativeList = $derived(shouldUseNativeListForLiveTail || holdNativeAfterRevealHandoff);
+let previousShouldUseNativeList = $state(untrack(() => shouldUseNativeList));
+let previousShouldUseNativeListForLiveTail = $state(untrack(() => shouldUseNativeListForLiveTail));
 const nativeFallbackEntries = $derived.by((): readonly IndexedDisplayEntry[] => {
 	return buildNativeFallbackWindow(displayEntries, NATIVE_FALLBACK_ENTRY_LIMIT);
 });
@@ -579,9 +507,8 @@ $effect(() => {
 	warnedMissingSceneEntryKeys.clear();
 	autoScroll.reset();
 	followController.reset();
-	activeRevealKeys.clear();
-	liveRevealActive = false;
 	useNativeFallback = false;
+	holdNativeAfterRevealHandoff = false;
 	nativeFallbackReason = null;
 	nativeFallbackRetryCount = 0;
 	viewportNudgeOffsetPx = 0;
@@ -760,6 +687,107 @@ $effect(() => {
 	};
 });
 
+$effect(() => {
+	const wasUsingNativeListForLiveTail = previousShouldUseNativeListForLiveTail;
+	previousShouldUseNativeListForLiveTail = shouldUseNativeListForLiveTail;
+
+	if (shouldUseNativeListForLiveTail) {
+		holdNativeAfterRevealHandoff = false;
+		return;
+	}
+
+	if (wasUsingNativeListForLiveTail && autoScroll.following && displayEntries.length > 0) {
+		holdNativeAfterRevealHandoff = true;
+	}
+});
+
+$effect(() => {
+	if (holdNativeAfterRevealHandoff && !autoScroll.following) {
+		holdNativeAfterRevealHandoff = false;
+	}
+});
+
+function revealLatestNativeFallbackRow(): boolean {
+	const latestIndex = displayEntries.length - 1;
+	const latestEntry = displayEntries[latestIndex];
+	if (!latestEntry) {
+		return false;
+	}
+
+	const row = fallbackRowRefs.get(getKey(latestEntry, latestIndex));
+	if (row) {
+		row.scrollIntoView({ block: "end" });
+		return true;
+	}
+
+	if (fallbackViewportRef) {
+		fallbackViewportRef.scrollTop = fallbackViewportRef.scrollHeight;
+		return true;
+	}
+
+	return false;
+}
+
+function scheduleRevealLatestAfterListMount(preferNativeFallback: boolean): () => void {
+	let cancelled = false;
+	let frameCount = 0;
+	let revealFrameId: number | null = null;
+
+	const revealAfterMount = () => {
+		if (cancelled) {
+			return;
+		}
+		frameCount += 1;
+		if (frameCount < 2) {
+			revealFrameId = requestAnimationFrame(revealAfterMount);
+			return;
+		}
+		revealFrameId = null;
+		if (preferNativeFallback && revealLatestNativeFallbackRow()) {
+			return;
+		}
+		autoScroll.revealLatest();
+	};
+
+	revealFrameId = requestAnimationFrame(revealAfterMount);
+
+	return () => {
+		cancelled = true;
+		if (revealFrameId !== null) {
+			cancelAnimationFrame(revealFrameId);
+		}
+	};
+}
+
+$effect(() => {
+	if (
+		shouldUseNativeList &&
+		hasActiveLiveTail &&
+		fallbackViewportRef &&
+		initialHydrationComplete &&
+		displayEntries.length > 0 &&
+		autoScroll.following
+	) {
+		return scheduleRevealLatestAfterListMount(true);
+	}
+});
+
+$effect(() => {
+	const wasUsingNativeList = previousShouldUseNativeList;
+	previousShouldUseNativeList = shouldUseNativeList;
+
+	if (
+		!wasUsingNativeList ||
+		shouldUseNativeList ||
+		!initialHydrationComplete ||
+		displayEntries.length === 0
+	) {
+		return;
+	}
+
+	return scheduleRevealLatestAfterListMount(false);
+});
+
 // ===== SCROLL TO BOTTOM ON HISTORICAL SESSION LOAD =====
 // When a session mounts with pre-existing entries (historical), shouldDeferInitialHydration
 // is true. Once hydration completes and VList renders, force a scroll to the bottom so the
@@ -866,15 +894,9 @@ export function scrollToTop() {
 			<ContentBlockRouter
 				block={{ type: "text", text: context.group.text }}
 				isStreaming={context.isStreaming}
-				revealKey={context.revealKey}
-				textRevealState={context.textRevealState}
+				tokenRevealCss={context.tokenRevealCss}
 				{projectPath}
 				{streamingAnimationMode}
-				onRevealActivityChange={(active: boolean) => {
-					setLiveRevealActivity(context.textRevealState?.key ?? context.revealKey, active);
-					onTextRevealActivityChange?.(context.textRevealState?.key, active);
-					context.onRevealActivityChange?.(active);
-				}}
 			/>
 		{:else}
 			<ContentBlockRouter block={context.group.block} {projectPath} />
@@ -905,6 +927,7 @@ export function scrollToTop() {
 					{projectPath}
 					{streamingAnimationMode}
 					renderAssistantBlock={renderAssistantBlock}
+					{onQuestionSelect}
 				/>
 			</MessageWrapper>
 		{:else}

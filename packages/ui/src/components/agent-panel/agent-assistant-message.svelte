@@ -1,15 +1,18 @@
 <script lang="ts">
 import { untrack } from "svelte";
 import type { Snippet } from "svelte";
-import { IconCheck } from "@tabler/icons-svelte";
-import { Copy } from "phosphor-svelte";
 import { MarkdownDisplay } from "../markdown/index.js";
 import AgentToolThinking from "./agent-tool-thinking.svelte";
+import AgentMessageMeta from "./agent-message-meta.svelte";
 import ToolHeaderLeading from "./tool-header-leading.svelte";
 import {
 groupAssistantChunks,
-type ChunkGroup,
 } from "../../lib/assistant-message/assistant-chunk-grouper.js";
+import type { ChunkGroup } from "../../lib/assistant-message/assistant-chunk-grouper.js";
+import {
+resolveVisibleAssistantMessageGroups,
+shouldStreamAssistantTextContent,
+} from "./agent-assistant-message-visible-groups.js";
 import { sanitizeAssistantText } from "../../lib/assistant-message/assistant-text-sanitizer.js";
 import {
 createRafDedupeScheduler,
@@ -20,10 +23,10 @@ DEFAULT_THINKING_VIEWPORT_POLICY,
 thinkingViewportCssText,
 } from "../../lib/assistant-message/thinking-viewport-policy.js";
 import type {
-AssistantMessage,
-StreamingAnimationMode,
+	AssistantMessage,
+	StreamingAnimationMode,
 } from "../../lib/assistant-message/types.js";
-import type { AgentTextRevealState } from "./types.js";
+import type { TokenRevealCss } from "./types.js";
 
 /**
  * Context passed to the renderBlock snippet for every chunk group.
@@ -31,95 +34,93 @@ import type { AgentTextRevealState } from "./types.js";
  * When group.type === "other", group.block is the non-text ContentBlock.
  */
 interface RenderBlockContext {
-group: ChunkGroup;
-isStreaming?: boolean;
-revealKey?: string;
-textRevealState?: AgentTextRevealState;
-projectPath?: string;
-streamingAnimationMode?: StreamingAnimationMode;
-onRevealActivityChange?: (active: boolean) => void;
+	group: ChunkGroup;
+	isStreaming?: boolean;
+	tokenRevealCss?: TokenRevealCss;
+	projectPath?: string;
+	streamingAnimationMode?: StreamingAnimationMode;
 }
 
 interface Props {
-message: AssistantMessage;
-isStreaming?: boolean;
-revealMessageKey?: string;
-textRevealState?: AgentTextRevealState;
-projectPath?: string;
-streamingAnimationMode?: StreamingAnimationMode;
-/** Whether the thinking block starts collapsed. Defaults to false. */
-initiallyCollapsed?: boolean;
-/** Base path for file type SVG icons (used by the MarkdownDisplay fallback) */
-iconBasePath?: string;
-/**
- * Optional snippet to render chunk groups.
- * When provided it is called for ALL groups (text and non-text), enabling hosts
- * like the desktop to use their own streaming-reveal renderer.
- * When omitted, text groups fall back to MarkdownDisplay and non-text groups
- * are silently skipped (appropriate for static website demos).
- */
-renderBlock?: Snippet<[RenderBlockContext]>;
+	message: AssistantMessage;
+	isStreaming?: boolean;
+	tokenRevealCss?: TokenRevealCss;
+	projectPath?: string;
+	timestampMs?: number;
+	streamingAnimationMode?: StreamingAnimationMode;
+	/** Whether the thinking block starts collapsed. Defaults to false. */
+	initiallyCollapsed?: boolean;
+	/** Base path for file type SVG icons (used by the MarkdownDisplay fallback) */
+	iconBasePath?: string;
+	/**
+	 * Optional snippet to render chunk groups.
+	 * When provided it is called for ALL groups (text and non-text), enabling hosts
+	 * like the desktop to use their own streaming-reveal renderer.
+	 * When omitted, text groups fall back to MarkdownDisplay and non-text groups
+	 * are silently skipped (appropriate for static website demos).
+	 */
+	renderBlock?: Snippet<[RenderBlockContext]>;
 }
 
 let {
-message,
-isStreaming = false,
-revealMessageKey,
-textRevealState,
-projectPath,
-streamingAnimationMode = "smooth",
-initiallyCollapsed = false,
-iconBasePath = "",
-renderBlock,
+	message,
+	isStreaming = false,
+	tokenRevealCss,
+	projectPath,
+	timestampMs,
+	streamingAnimationMode = "smooth",
+	initiallyCollapsed = false,
+	iconBasePath = "",
+	renderBlock,
 }: Props = $props();
 
 const groupedChunks = $derived.by(() => {
-const grouped = groupAssistantChunks(message.chunks);
+	const grouped = groupAssistantChunks(message.chunks);
 
-if (grouped.messageGroups.length > 0 && grouped.messageGroups[0].type === "text") {
-const firstGroup = grouped.messageGroups[0];
-const sanitized = sanitizeAssistantText(firstGroup.text);
+	if (grouped.messageGroups.length > 0 && grouped.messageGroups[0].type === "text") {
+		const firstGroup = grouped.messageGroups[0];
+		const sanitized = sanitizeAssistantText(firstGroup.text);
 
-if (sanitized.length === 0) {
-grouped.messageGroups = grouped.messageGroups.slice(1);
-} else {
-grouped.messageGroups[0] = { type: "text", text: sanitized };
-}
-}
+		if (sanitized.length === 0) {
+			grouped.messageGroups = grouped.messageGroups.slice(1);
+		} else {
+			grouped.messageGroups[0] = { type: "text", text: sanitized };
+		}
+	}
 
-return grouped;
+	return grouped;
 });
 
 const filteredThoughtGroups = $derived.by(() => {
-const hasMessageGroups = groupedChunks.messageGroups.length > 0;
-return groupedChunks.thoughtGroups.filter((group) => {
-if (group.type !== "text") return true;
-const trimmed = group.text.trim();
-if (trimmed.length === 0) return false;
-if (hasMessageGroups && !/[A-Za-z0-9]/.test(trimmed)) return false;
-return true;
-});
+	const hasMessageGroups = groupedChunks.messageGroups.length > 0;
+	return groupedChunks.thoughtGroups.filter((group) => {
+		if (group.type !== "text") return true;
+		const trimmed = group.text.trim();
+		if (trimmed.length === 0) return false;
+		if (hasMessageGroups && !/[A-Za-z0-9]/.test(trimmed)) return false;
+		return true;
+	});
 });
 
 const textContent = $derived(
-groupedChunks.messageGroups
-.filter((group) => group.type === "text")
-.map((group) => group.text)
-.join("")
+	groupedChunks.messageGroups
+		.filter((group) => group.type === "text")
+		.map((group) => group.text)
+		.join("")
 );
 
 const lastThoughtTextGroupIndex = $derived.by(() => {
-for (let index = filteredThoughtGroups.length - 1; index >= 0; index -= 1) {
-if (filteredThoughtGroups[index]?.type === "text") return index;
-}
-return -1;
+	for (let index = filteredThoughtGroups.length - 1; index >= 0; index -= 1) {
+		if (filteredThoughtGroups[index]?.type === "text") return index;
+	}
+	return -1;
 });
 
 const lastMessageTextGroupIndex = $derived.by(() => {
-for (let index = groupedChunks.messageGroups.length - 1; index >= 0; index -= 1) {
-if (groupedChunks.messageGroups[index]?.type === "text") return index;
-}
-return -1;
+	for (let index = groupedChunks.messageGroups.length - 1; index >= 0; index -= 1) {
+		if (groupedChunks.messageGroups[index]?.type === "text") return index;
+	}
+	return -1;
 });
 
 const hasThinking = $derived(filteredThoughtGroups.length > 0);
@@ -130,98 +131,72 @@ const showThinkingBlock = $derived(hasThinking && !hasMessageContent);
 let isCollapsed = $state(untrack(() => initiallyCollapsed));
 
 $effect(() => {
-isCollapsed = !isStreaming;
+	isCollapsed = !isStreaming;
 });
-
-/**
- * When renderBlock is provided, trail non-text blocks are hidden while the last
- * text group's reveal animation is active (mirrors desktop streaming UX).
- */
-let isMessageTextRevealActive = $state(false);
 
 const visibleMessageGroups = $derived.by(() => {
-if (!renderBlock || !isMessageTextRevealActive || lastMessageTextGroupIndex < 0) {
-return groupedChunks.messageGroups;
-}
-return groupedChunks.messageGroups.slice(0, lastMessageTextGroupIndex + 1);
-});
-
-$effect(() => {
-if (lastMessageTextGroupIndex < 0) {
-isMessageTextRevealActive = false;
-}
+	return resolveVisibleAssistantMessageGroups({
+		messageGroups: groupedChunks.messageGroups,
+		tokenRevealCss,
+		lastMessageTextGroupIndex,
+	});
 });
 
 const thinkingHeaderLabel = $derived.by(() => {
-const ms = message.thinkingDurationMs;
-if (isStreaming && ms != null && ms >= 0) {
-const s = Math.round(ms / 1000);
-return `Thinking for ${String(s <= 1 ? 1 : s)}s`;
-}
-if (isStreaming) return "Thinking";
-if (ms != null && ms >= 0) {
-const s = Math.round(ms / 1000);
-return `Thought for ${String(s <= 1 ? 1 : s)}s`;
-}
-return "Thought";
+	const ms = message.thinkingDurationMs;
+	if (isStreaming && ms != null && ms >= 0) {
+		const s = Math.round(ms / 1000);
+		return `Thinking for ${String(s <= 1 ? 1 : s)}s`;
+	}
+	if (isStreaming) return "Thinking";
+	if (ms != null && ms >= 0) {
+		const s = Math.round(ms / 1000);
+		return `Thought for ${String(s <= 1 ? 1 : s)}s`;
+	}
+	return "Thought";
 });
 
 let thinkingContainerRef = $state<HTMLDivElement | undefined>();
 let thinkingContentRef = $state<HTMLDivElement | undefined>();
 
 const thinkingFollowScheduler = createRafDedupeScheduler(() => {
-if (!showThinkingBlock || !isStreaming || isCollapsed) return;
-const container = thinkingContainerRef;
-if (!container) return;
-scrollTailToVisibleEnd(container, thinkingContentRef);
+	if (!showThinkingBlock || !isStreaming || isCollapsed) return;
+	const container = thinkingContainerRef;
+	if (!container) return;
+	scrollTailToVisibleEnd(container, thinkingContentRef);
 });
 
 $effect(() => {
-if (showThinkingBlock && isStreaming && !isCollapsed && thinkingContainerRef) {
-thinkingFollowScheduler.schedule();
-}
+	if (showThinkingBlock && isStreaming && !isCollapsed && thinkingContainerRef) {
+		thinkingFollowScheduler.schedule();
+	}
 });
 
 $effect(() => {
-if (!showThinkingBlock || !isStreaming || isCollapsed || !thinkingContainerRef) return;
+	if (!showThinkingBlock || !isStreaming || isCollapsed || !thinkingContainerRef) return;
 
-const content = thinkingContentRef;
-thinkingFollowScheduler.schedule();
+	const content = thinkingContentRef;
+	thinkingFollowScheduler.schedule();
 
-if (!content || typeof ResizeObserver !== "function") return;
+	if (!content || typeof ResizeObserver !== "function") return;
 
-const observer = new ResizeObserver(() => {
-thinkingFollowScheduler.schedule();
+	const observer = new ResizeObserver(() => {
+		thinkingFollowScheduler.schedule();
+	});
+	observer.observe(content);
+
+	return () => {
+		observer.disconnect();
+		thinkingFollowScheduler.cancel();
+	};
 });
-observer.observe(content);
 
+$effect(() => {
 return () => {
-observer.disconnect();
 thinkingFollowScheduler.cancel();
 };
 });
 
-$effect(() => {
-return () => {
-thinkingFollowScheduler.cancel();
-};
-});
-
-// Copy button
-let copied = $state(false);
-
-async function handleCopy(): Promise<void> {
-if (!textContent.trim()) return;
-try {
-await navigator.clipboard.writeText(textContent);
-copied = true;
-setTimeout(() => {
-copied = false;
-}, 2000);
-} catch {
-// clipboard unavailable (e.g. non-secure context)
-}
-}
 </script>
 
 {#if hasAnyContent}
@@ -246,16 +221,13 @@ bind:this={thinkingContainerRef}
 {#each filteredThoughtGroups as group, index (index)}
 {@const isLastThoughtTextGroup = index === lastThoughtTextGroupIndex}
 {#if renderBlock}
-{@render renderBlock({
-group,
-isStreaming: isStreaming && isLastThoughtTextGroup,
-revealKey:
-isLastThoughtTextGroup && revealMessageKey
-? `${revealMessageKey}:thought:${index}`
-: undefined,
-projectPath,
-streamingAnimationMode,
-})}
+				{@render renderBlock({
+								group,
+								isStreaming: isStreaming && isLastThoughtTextGroup,
+								tokenRevealCss: undefined,
+								projectPath,
+								streamingAnimationMode,
+				})}
 {:else if group.type === "text"}
 <MarkdownDisplay
 	content={group.text}
@@ -275,22 +247,16 @@ streamingAnimationMode,
 {@const isLastTextGroup = index === lastMessageTextGroupIndex}
 <div class="space-y-1.5">
 {#if renderBlock}
-{@render renderBlock({
-group,
-isStreaming: isStreaming && isLastTextGroup,
-revealKey:
-isLastTextGroup && revealMessageKey
-? `${revealMessageKey}:message:${index}`
-: undefined,
-textRevealState: isLastTextGroup ? textRevealState : undefined,
-projectPath,
-streamingAnimationMode,
-onRevealActivityChange: isLastTextGroup
-? (active) => {
-isMessageTextRevealActive = active;
-}
-: undefined,
-})}
+			{@render renderBlock({
+				group,
+				isStreaming: shouldStreamAssistantTextContent({
+					isStreaming: isStreaming && isLastTextGroup,
+					tokenRevealCss: isLastTextGroup ? tokenRevealCss : undefined,
+				}),
+				tokenRevealCss: isLastTextGroup ? tokenRevealCss : undefined,
+				projectPath,
+				streamingAnimationMode,
+			})}
 {:else if group.type === "text"}
 {#if isStreaming && !group.text}
 <div class="flex items-center gap-2 py-2 text-sm text-muted-foreground">
@@ -311,20 +277,13 @@ isMessageTextRevealActive = active;
 
 {#if hasMessageContent}
 <div
-class="pt-1 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 group-focus-within/assistant-message:opacity-100"
+class="flex justify-end pt-1 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 group-focus-within/assistant-message:opacity-100"
 >
-<button
-onclick={handleCopy}
-title={copied ? "Copied!" : "Copy"}
-class="inline-flex items-center justify-center p-0.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/50 shrink-0"
-type="button"
->
-{#if copied}
-<IconCheck size={14} stroke={2} />
-{:else}
-<Copy size={14} weight="fill" />
-{/if}
-</button>
+<AgentMessageMeta
+text={textContent}
+timestampMs={timestampMs ?? message.receivedAt?.getTime()}
+variant="assistant"
+/>
 </div>
 {/if}
 </div>

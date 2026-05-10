@@ -27,6 +27,7 @@ describe("scene-display-rows", () => {
 		expect(rows[1]?.type).toBe("assistant_merged");
 		if (rows[1]?.type === "assistant_merged") {
 			expect(rows[1].memberIds).toEqual(["assistant-1", "assistant-2"]);
+			expect(rows[1].markdown).toBe("FirstSecond");
 		}
 	});
 

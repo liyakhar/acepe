@@ -990,6 +990,51 @@ async fn persist_session_metadata_for_multiple_worktree_sessions_uses_unique_cre
 }
 
 #[tokio::test]
+async fn creation_attempt_promotion_reuses_existing_opened_placeholder_session() {
+    let db = setup_test_db().await;
+    let session_id = "session-codex-placeholder";
+    let attempt = SessionMetadataRepository::create_creation_attempt(
+        &db,
+        "/project",
+        CanonicalAgentId::Codex.as_str(),
+        None,
+    )
+    .await
+    .expect("create attempt");
+
+    SessionMetadataRepository::ensure_exists(
+        &db,
+        session_id,
+        "/project",
+        CanonicalAgentId::Codex.as_str(),
+        None,
+    )
+    .await
+    .expect("insert opened placeholder");
+
+    let promoted =
+        SessionMetadataRepository::promote_creation_attempt(&db, &attempt.id, session_id)
+            .await
+            .expect("promotion should reuse the placeholder row");
+
+    assert_eq!(promoted.id, session_id);
+    assert_eq!(
+        promoted.file_path,
+        "__session_registry__/session-codex-placeholder"
+    );
+
+    let consumed_attempt = SessionMetadataRepository::get_creation_attempt(&db, &attempt.id)
+        .await
+        .expect("load attempt")
+        .expect("attempt exists");
+    assert_eq!(consumed_attempt.status, "consumed");
+    assert_eq!(
+        consumed_attempt.provider_session_id.as_deref(),
+        Some(session_id)
+    );
+}
+
+#[tokio::test]
 async fn persist_session_metadata_for_cwd_assigns_sequence_id_immediately_for_worktree_sessions() {
     let db = setup_test_db().await;
     let temp = tempdir().expect("temp dir");

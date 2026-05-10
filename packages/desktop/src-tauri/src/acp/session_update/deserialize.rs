@@ -111,6 +111,7 @@ where
                 part_id,
                 message_id,
                 session_id,
+                produced_at_monotonic_ms: None,
             })
         }
         "agentThoughtChunk" => {

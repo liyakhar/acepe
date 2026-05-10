@@ -168,6 +168,58 @@ impl AcpUiEvent {
     }
 }
 
+fn stamp_agent_message_chunk_timestamp(
+    runtime_graph_registry: &SessionGraphRuntimeRegistry,
+    update: SessionUpdate,
+) -> SessionUpdate {
+    match update {
+        SessionUpdate::AgentMessageChunk {
+            chunk,
+            part_id,
+            message_id,
+            session_id: Some(session_id),
+            produced_at_monotonic_ms: None,
+        } => SessionUpdate::AgentMessageChunk {
+            chunk,
+            part_id,
+            message_id,
+            session_id: Some(session_id.clone()),
+            produced_at_monotonic_ms: Some(
+                runtime_graph_registry.record_chunk_timestamp(&session_id),
+            ),
+        },
+        other => other,
+    }
+}
+
+fn stamp_session_update_event(
+    runtime_graph_registry: &SessionGraphRuntimeRegistry,
+    event: AcpUiEvent,
+) -> AcpUiEvent {
+    let AcpUiEvent {
+        session_id,
+        event_name,
+        payload,
+        priority,
+        droppable,
+        created_at,
+    } = event;
+    let payload = match payload {
+        AcpUiEventPayload::SessionUpdate(update) => AcpUiEventPayload::SessionUpdate(Box::new(
+            stamp_agent_message_chunk_timestamp(runtime_graph_registry, *update),
+        )),
+        other => other,
+    };
+    AcpUiEvent {
+        session_id,
+        event_name,
+        payload,
+        priority,
+        droppable,
+        created_at,
+    }
+}
+
 pub(crate) async fn publish_direct_session_update<R: tauri::Runtime>(
     app: &AppHandle<R>,
     update: SessionUpdate,
@@ -210,6 +262,7 @@ pub(crate) async fn publish_direct_session_update<R: tauri::Runtime>(
         return false;
     };
 
+    let update = stamp_agent_message_chunk_timestamp(runtime_graph_registry.inner(), update);
     let Some(session_id) = update.session_id() else {
         tracing::warn!("Direct session update without session id rejected");
         return false;
@@ -291,32 +344,36 @@ pub(crate) async fn publish_direct_session_update<R: tauri::Runtime>(
     }
 
     if let Some(envelope) = dispatch_effects.session_state_envelope {
-        let session_state_payload = serde_json::to_value(&envelope).unwrap_or_else(|error| {
-            tracing::error!(
-                %error,
-                session_id = %envelope.session_id,
-                graph_revision = envelope.graph_revision,
-                last_event_seq = envelope.last_event_seq,
-                "Failed to serialize direct ACP session state envelope"
+        let mut envelopes = vec![envelope];
+        envelopes.extend(dispatch_effects.additional_session_state_envelopes);
+        for envelope in envelopes {
+            let session_state_payload = serde_json::to_value(&envelope).unwrap_or_else(|error| {
+                tracing::error!(
+                    %error,
+                    session_id = %envelope.session_id,
+                    graph_revision = envelope.graph_revision,
+                    last_event_seq = envelope.last_event_seq,
+                    "Failed to serialize direct ACP session state envelope"
+                );
+                Value::Null
+            });
+            let session_state_event = AcpUiEvent::json_event(
+                "acp-session-state",
+                session_state_payload,
+                Some(envelope.session_id.clone()),
+                AcpUiEventPriority::Normal,
+                false,
             );
-            Value::Null
-        });
-        let session_state_event = AcpUiEvent::json_event(
-            "acp-session-state",
-            session_state_payload,
-            Some(envelope.session_id.clone()),
-            AcpUiEventPriority::Normal,
-            false,
-        );
-        if let Err(error) = session_state_event.publish_direct(&hub) {
-            tracing::error!(
-                error = %error,
-                session_id = %envelope.session_id,
-                graph_revision = envelope.graph_revision,
-                last_event_seq = envelope.last_event_seq,
-                "Failed to publish direct ACP session state envelope"
-            );
-            return false;
+            if let Err(error) = session_state_event.publish_direct(&hub) {
+                tracing::error!(
+                    error = %error,
+                    session_id = %envelope.session_id,
+                    graph_revision = envelope.graph_revision,
+                    last_event_seq = envelope.last_event_seq,
+                    "Failed to publish direct ACP session state envelope"
+                );
+                return false;
+            }
         }
     }
 
@@ -566,6 +623,7 @@ impl AcpUiEventDispatcher {
     }
 
     pub fn enqueue(&self, event: AcpUiEvent) {
+        let event = stamp_session_update_event(self.runtime_graph_registry.as_ref(), event);
         #[cfg(test)]
         let bypass_pre_reservation_gate = self.bypass_pre_reservation_gate;
         #[cfg(not(test))]
@@ -793,6 +851,7 @@ impl AcpUiEventDispatcher {
             "turnState".to_string(),
             "activeTurnFailure".to_string(),
             "lastTerminalTurnId".to_string(),
+            "lastAgentMessageId".to_string(),
         ];
         if !operation_patches.is_empty() {
             changed_fields.insert(0, "operations".to_string());
@@ -810,6 +869,7 @@ impl AcpUiEventDispatcher {
                 turn_state: session_snapshot.turn_state,
                 active_turn_failure: session_snapshot.active_turn_failure,
                 last_terminal_turn_id: session_snapshot.last_terminal_turn_id,
+                last_agent_message_id: session_snapshot.last_agent_message_id,
             },
             transcript_operations: Vec::new(),
             operation_patches,
@@ -1056,32 +1116,36 @@ impl DispatcherState {
                     );
                 }
                 if let Some(envelope) = dispatch_effects.session_state_envelope {
-                    let session_state_payload =
-                        serde_json::to_value(&envelope).unwrap_or_else(|error| {
+                    let mut envelopes = vec![envelope];
+                    envelopes.extend(dispatch_effects.additional_session_state_envelopes);
+                    for envelope in envelopes {
+                        let session_state_payload =
+                            serde_json::to_value(&envelope).unwrap_or_else(|error| {
+                                tracing::error!(
+                                    %error,
+                                    session_id = %envelope.session_id,
+                                    graph_revision = envelope.graph_revision,
+                                    last_event_seq = envelope.last_event_seq,
+                                    "Failed to serialize ACP session state envelope"
+                                );
+                                Value::Null
+                            });
+                        let session_state_event = AcpUiEvent::json_event(
+                            "acp-session-state",
+                            session_state_payload,
+                            Some(envelope.session_id.clone()),
+                            AcpUiEventPriority::Normal,
+                            false,
+                        );
+                        if let Err(error) = session_state_event.publish(hub) {
                             tracing::error!(
-                                %error,
+                                error = %error,
                                 session_id = %envelope.session_id,
                                 graph_revision = envelope.graph_revision,
                                 last_event_seq = envelope.last_event_seq,
-                                "Failed to serialize ACP session state envelope"
+                                "Failed to emit ACP session state envelope"
                             );
-                            Value::Null
-                        });
-                    let session_state_event = AcpUiEvent::json_event(
-                        "acp-session-state",
-                        session_state_payload,
-                        Some(envelope.session_id.clone()),
-                        AcpUiEventPriority::Normal,
-                        false,
-                    );
-                    if let Err(error) = session_state_event.publish(hub) {
-                        tracing::error!(
-                            error = %error,
-                            session_id = %envelope.session_id,
-                            graph_revision = envelope.graph_revision,
-                            last_event_seq = envelope.last_event_seq,
-                            "Failed to emit ACP session state envelope"
-                        );
+                        }
                     }
                 }
 
@@ -1233,6 +1297,7 @@ impl DispatcherState {
 #[derive(Debug, Default)]
 struct DispatchPersistenceEffects {
     session_state_envelope: Option<SessionStateEnvelope>,
+    additional_session_state_envelopes: Vec<SessionStateEnvelope>,
 }
 
 async fn persist_dispatch_event(
@@ -1307,29 +1372,34 @@ async fn persist_dispatch_event(
                 transcript_revision,
                 record.event_seq,
             );
+            let request = LiveSessionStateEnvelopeRequest {
+                db,
+                session_id,
+                update: update.as_ref(),
+                previous_revision: SessionGraphRevision::new(
+                    if previous_runtime_snapshot.graph_revision > 0 {
+                        previous_runtime_snapshot.graph_revision
+                    } else {
+                        record.event_seq.saturating_sub(1)
+                    },
+                    previous_transcript_revision,
+                    record.event_seq.saturating_sub(1),
+                ),
+                revision,
+                projection_registry,
+                transcript_projection_registry,
+                transcript_delta: transcript_delta.as_ref(),
+            };
             let session_state_envelope = runtime_graph_registry
-                .build_live_session_state_envelope(LiveSessionStateEnvelopeRequest {
-                    db,
-                    session_id,
-                    update: update.as_ref(),
-                    previous_revision: SessionGraphRevision::new(
-                        if previous_runtime_snapshot.graph_revision > 0 {
-                            previous_runtime_snapshot.graph_revision
-                        } else {
-                            record.event_seq.saturating_sub(1)
-                        },
-                        previous_transcript_revision,
-                        record.event_seq.saturating_sub(1),
-                    ),
-                    revision,
-                    projection_registry,
-                    transcript_projection_registry,
-                    transcript_delta: transcript_delta.as_ref(),
-                })
+                .build_live_session_state_envelope(request)
                 .await;
-            let _ = transcript_delta;
+            let additional_session_state_envelopes = runtime_graph_registry
+                .build_assistant_text_delta_envelope(request)
+                .into_iter()
+                .collect();
             DispatchPersistenceEffects {
                 session_state_envelope,
+                additional_session_state_envelopes,
             }
         }
         Ok(None) => {
@@ -1358,29 +1428,34 @@ async fn persist_dispatch_event(
                 .unwrap_or(previous_transcript_revision);
             let revision =
                 SessionGraphRevision::new(graph_revision, transcript_revision, synthetic_event_seq);
+            let request = LiveSessionStateEnvelopeRequest {
+                db,
+                session_id,
+                update: update.as_ref(),
+                previous_revision: SessionGraphRevision::new(
+                    if previous_runtime_snapshot.graph_revision > 0 {
+                        previous_runtime_snapshot.graph_revision
+                    } else {
+                        synthetic_event_seq.saturating_sub(1)
+                    },
+                    previous_transcript_revision,
+                    synthetic_event_seq.saturating_sub(1),
+                ),
+                revision,
+                projection_registry,
+                transcript_projection_registry,
+                transcript_delta: transcript_delta.as_ref(),
+            };
             let session_state_envelope = runtime_graph_registry
-                .build_live_session_state_envelope(LiveSessionStateEnvelopeRequest {
-                    db,
-                    session_id,
-                    update: update.as_ref(),
-                    previous_revision: SessionGraphRevision::new(
-                        if previous_runtime_snapshot.graph_revision > 0 {
-                            previous_runtime_snapshot.graph_revision
-                        } else {
-                            synthetic_event_seq.saturating_sub(1)
-                        },
-                        previous_transcript_revision,
-                        synthetic_event_seq.saturating_sub(1),
-                    ),
-                    revision,
-                    projection_registry,
-                    transcript_projection_registry,
-                    transcript_delta: transcript_delta.as_ref(),
-                })
+                .build_live_session_state_envelope(request)
                 .await;
-            let _ = transcript_delta;
+            let additional_session_state_envelopes = runtime_graph_registry
+                .build_assistant_text_delta_envelope(request)
+                .into_iter()
+                .collect();
             DispatchPersistenceEffects {
                 session_state_envelope,
+                additional_session_state_envelopes,
             }
         }
         Err(error) => {
@@ -1401,13 +1476,14 @@ mod tests {
     use crate::acp::domain_events::{SessionDomainEvent, SessionDomainEventKind};
     use crate::acp::projections::SessionTurnState;
     use crate::acp::session_update::{
-        AvailableCommand, AvailableCommandsData, ContentChunk, CurrentModeData, PermissionData,
+        AvailableCommand, AvailableCommandsData, ContentChunk, CurrentModeData,
+        InteractionReplyHandler, PermissionData, QuestionData, QuestionItem, QuestionOption,
         SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus, ToolKind,
     };
     use crate::acp::transcript_projection::TranscriptDelta;
     use crate::acp::types::CanonicalAgentId;
     use crate::acp::types::ContentBlock;
-    use crate::db::repository::SessionMetadataRepository;
+    use crate::db::repository::{SessionJournalEventRepository, SessionMetadataRepository};
     use sea_orm::{Database, DbConn};
     use sea_orm_migration::MigratorTrait;
     use serde_json::json;
@@ -1424,6 +1500,26 @@ mod tests {
             part_id: None,
             message_id: None,
             session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: None,
+        }
+    }
+
+    fn chunk_update_with_timestamp(
+        session_id: &str,
+        text: &str,
+        timestamp_ms: u64,
+    ) -> SessionUpdate {
+        SessionUpdate::AgentMessageChunk {
+            chunk: ContentChunk {
+                content: ContentBlock::Text {
+                    text: text.to_string(),
+                },
+                aggregation_hint: None,
+            },
+            part_id: None,
+            message_id: None,
+            session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: Some(timestamp_ms),
         }
     }
 
@@ -1479,6 +1575,63 @@ mod tests {
             },
             session_id: Some(session_id.to_string()),
         }
+    }
+
+    #[test]
+    fn dispatcher_stamps_agent_message_chunk_timestamps() {
+        let session_id = "stream-session";
+        let (dispatcher, captured_events) = AcpUiEventDispatcher::test_sink();
+
+        dispatcher.enqueue(AcpUiEvent::session_update(chunk_update(session_id, "a")));
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        dispatcher.enqueue(AcpUiEvent::session_update(chunk_update(session_id, "b")));
+
+        let captured = captured_events.lock().expect("captured events lock");
+        let timestamps: Vec<u64> = captured
+            .iter()
+            .filter_map(|event| match &event.payload {
+                AcpUiEventPayload::SessionUpdate(update) => match update.as_ref() {
+                    SessionUpdate::AgentMessageChunk {
+                        session_id: Some(update_session_id),
+                        produced_at_monotonic_ms: Some(timestamp_ms),
+                        ..
+                    } if update_session_id == session_id => Some(*timestamp_ms),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(timestamps.len(), 2);
+        assert!(timestamps[1] >= timestamps[0]);
+    }
+
+    #[test]
+    fn dispatcher_preserves_existing_agent_message_chunk_timestamp() {
+        let session_id = "stream-session";
+        let (dispatcher, captured_events) = AcpUiEventDispatcher::test_sink();
+
+        dispatcher.enqueue(AcpUiEvent::session_update(chunk_update_with_timestamp(
+            session_id, "a", 42,
+        )));
+
+        let captured = captured_events.lock().expect("captured events lock");
+        let timestamps: Vec<u64> = captured
+            .iter()
+            .filter_map(|event| match &event.payload {
+                AcpUiEventPayload::SessionUpdate(update) => match update.as_ref() {
+                    SessionUpdate::AgentMessageChunk {
+                        session_id: Some(update_session_id),
+                        produced_at_monotonic_ms: Some(timestamp_ms),
+                        ..
+                    } if update_session_id == session_id => Some(*timestamp_ms),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(timestamps, vec![42]);
     }
 
     #[test]
@@ -1703,6 +1856,7 @@ mod tests {
             part_id: Some("part-1".to_string()),
             message_id: Some("assistant-1".to_string()),
             session_id: Some("session-1".to_string()),
+            produced_at_monotonic_ms: None,
         });
 
         let projection_registry = ProjectionRegistry::new();
@@ -1734,6 +1888,55 @@ mod tests {
                 assert_eq!(graph.transcript_snapshot.entries.len(), 1);
             }
             other => panic!("expected snapshot payload, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_dispatch_event_emits_assistant_text_delta_envelope_for_streaming_chunks() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-1",
+            "/test/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("session metadata");
+        let event =
+            AcpUiEvent::session_update(chunk_update_with_timestamp("session-1", "hello", 5));
+
+        let projection_registry = ProjectionRegistry::new();
+        if let AcpUiEventPayload::SessionUpdate(update) = &event.payload {
+            projection_registry.apply_session_update("session-1", update.as_ref());
+        }
+        let transcript_projection_registry = TranscriptProjectionRegistry::new();
+        let runtime_graph_registry = SessionGraphRuntimeRegistry::new();
+        seed_lifecycle(&runtime_graph_registry, "session-1");
+        let effects = persist_dispatch_event(
+            Some(&db),
+            &event,
+            &projection_registry,
+            &runtime_graph_registry,
+            &transcript_projection_registry,
+        )
+        .await;
+
+        assert!(
+            effects.session_state_envelope.is_some(),
+            "expected primary transcript/session envelope"
+        );
+        assert_eq!(effects.additional_session_state_envelopes.len(), 1);
+        match &effects.additional_session_state_envelopes[0].payload {
+            crate::acp::session_state_engine::SessionStatePayload::AssistantTextDelta { delta } => {
+                assert_eq!(delta.row_id, "assistant-event-1");
+                assert_eq!(delta.turn_id, "assistant-event-1");
+                assert_eq!(delta.char_offset, 0);
+                assert_eq!(delta.delta_text, "hello");
+                assert_eq!(delta.produced_at_monotonic_ms, 5);
+                assert_eq!(delta.revision, 1);
+            }
+            other => panic!("expected assistant text delta payload, got {other:?}"),
         }
     }
 
@@ -1798,6 +2001,74 @@ mod tests {
                     graph.lifecycle.status,
                     crate::acp::lifecycle::LifecycleStatus::Reserved
                 );
+            }
+            other => panic!("expected snapshot payload, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn question_request_updates_live_interactions_without_raw_journal_row() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-1",
+            "/test/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("session metadata");
+        let event = AcpUiEvent::session_update(SessionUpdate::QuestionRequest {
+            question: QuestionData {
+                id: "question-1".to_string(),
+                session_id: "session-1".to_string(),
+                json_rpc_request_id: Some(8),
+                reply_handler: Some(InteractionReplyHandler::json_rpc(8)),
+                questions: vec![QuestionItem {
+                    question: "Which archive button should get the confirm step?".to_string(),
+                    header: "Archive".to_string(),
+                    options: vec![QuestionOption {
+                        label: "Top toolbar".to_string(),
+                        description: "Add confirm to the toolbar button".to_string(),
+                    }],
+                    multi_select: false,
+                }],
+                tool: None,
+            },
+            session_id: Some("session-1".to_string()),
+        });
+
+        let projection_registry = ProjectionRegistry::new();
+        if let AcpUiEventPayload::SessionUpdate(update) = &event.payload {
+            projection_registry.apply_session_update("session-1", update.as_ref());
+        }
+        let transcript_projection_registry = TranscriptProjectionRegistry::new();
+        let runtime_graph_registry = SessionGraphRuntimeRegistry::new();
+        seed_lifecycle(&runtime_graph_registry, "session-1");
+        let effects = persist_dispatch_event(
+            Some(&db),
+            &event,
+            &projection_registry,
+            &runtime_graph_registry,
+            &transcript_projection_registry,
+        )
+        .await;
+
+        let journal_rows = SessionJournalEventRepository::list_serialized(&db, "session-1")
+            .await
+            .expect("journal rows");
+        assert!(
+            journal_rows.is_empty(),
+            "pending question requests should not be written to the raw journal"
+        );
+
+        let envelope = effects
+            .session_state_envelope
+            .expect("session state envelope");
+        match envelope.payload {
+            crate::acp::session_state_engine::SessionStatePayload::Snapshot { graph } => {
+                assert_eq!(graph.interactions.len(), 1);
+                assert_eq!(graph.interactions[0].id, "question-1");
             }
             other => panic!("expected snapshot payload, got {:?}", other),
         }
@@ -1893,6 +2164,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn no_message_id_chunks_emit_live_transcript_deltas_before_turn_complete() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-1",
+            "/test/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("session metadata");
+
+        let projection_registry = ProjectionRegistry::new();
+        let transcript_projection_registry = TranscriptProjectionRegistry::new();
+        let runtime_graph_registry = SessionGraphRuntimeRegistry::new();
+        seed_lifecycle(&runtime_graph_registry, "session-1");
+
+        let first_event = AcpUiEvent::session_update(chunk_update("session-1", "Ra"));
+        if let AcpUiEventPayload::SessionUpdate(update) = &first_event.payload {
+            projection_registry.apply_session_update("session-1", update.as_ref());
+        }
+        let first_effects = persist_dispatch_event(
+            Some(&db),
+            &first_event,
+            &projection_registry,
+            &runtime_graph_registry,
+            &transcript_projection_registry,
+        )
+        .await;
+
+        let second_event =
+            AcpUiEvent::session_update(chunk_update("session-1", "incoats keep growing"));
+        if let AcpUiEventPayload::SessionUpdate(update) = &second_event.payload {
+            projection_registry.apply_session_update("session-1", update.as_ref());
+        }
+        let second_effects = persist_dispatch_event(
+            Some(&db),
+            &second_event,
+            &projection_registry,
+            &runtime_graph_registry,
+            &transcript_projection_registry,
+        )
+        .await;
+
+        let first_envelope = first_effects
+            .session_state_envelope
+            .expect("first live transcript envelope");
+        let second_envelope = second_effects
+            .session_state_envelope
+            .expect("second live transcript envelope");
+
+        match first_envelope.payload {
+            crate::acp::session_state_engine::SessionStatePayload::Snapshot { graph } => {
+                assert_eq!(graph.transcript_snapshot.revision, 1);
+                assert_eq!(graph.transcript_snapshot.entries.len(), 1);
+            }
+            crate::acp::session_state_engine::SessionStatePayload::Delta { delta } => {
+                assert_eq!(delta.transcript_operations.len(), 1);
+                assert_eq!(delta.to_revision.transcript_revision, 1);
+            }
+            other => panic!("expected first transcript-bearing payload, got {:?}", other),
+        }
+        match second_envelope.payload {
+            crate::acp::session_state_engine::SessionStatePayload::Delta { delta } => {
+                assert_eq!(delta.transcript_operations.len(), 1);
+                assert_eq!(delta.to_revision.transcript_revision, 2);
+            }
+            other => panic!("expected second delta payload, got {:?}", other),
+        }
+
+        let snapshot = projection_registry
+            .snapshot_for_session("session-1")
+            .expect("projection snapshot");
+        assert_eq!(
+            snapshot.last_agent_message_id.as_deref(),
+            Some("assistant-event-1")
+        );
+    }
+
+    #[tokio::test]
     async fn same_session_write_lock_serializes_concurrent_chunk_persistence() {
         let db = Arc::new(setup_test_db().await);
         SessionMetadataRepository::ensure_exists(
@@ -1922,6 +2273,7 @@ mod tests {
             part_id: Some("part-1".to_string()),
             message_id: Some("assistant-1".to_string()),
             session_id: Some("session-1".to_string()),
+            produced_at_monotonic_ms: None,
         });
 
         let (user_acquired_tx, user_acquired_rx) = tokio::sync::oneshot::channel();
@@ -1939,7 +2291,9 @@ mod tests {
 
                 let session_lock = journal_write_lock_registry.lock_for("session-1");
                 let _guard = session_lock.lock().await;
-                user_acquired_tx.send(()).expect("signal user lock acquired");
+                user_acquired_tx
+                    .send(())
+                    .expect("signal user lock acquired");
                 tokio::time::sleep(std::time::Duration::from_millis(25)).await;
 
                 persist_dispatch_event(
@@ -2179,6 +2533,7 @@ mod tests {
                 part_id: Some("part-1".to_string()),
                 message_id: Some("assistant-1".to_string()),
                 session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
             },
         ));
         projection_registry.apply_session_update(
@@ -2193,6 +2548,7 @@ mod tests {
                 part_id: Some("part-1".to_string()),
                 message_id: Some("assistant-1".to_string()),
                 session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
             },
         );
 
@@ -2218,6 +2574,127 @@ mod tests {
         assert_eq!(envelope.session_id, "session-1");
         assert_eq!(envelope.graph_revision, 1);
         assert_eq!(envelope.last_event_seq, 1);
+    }
+
+    #[tokio::test]
+    async fn drain_emits_canonical_append_segments_for_same_message_id_chunks() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "session-1",
+            "/test/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("session metadata");
+
+        let hub = AcpEventHubState::new();
+        let mut receiver = hub.subscribe();
+        let projection_registry = ProjectionRegistry::new();
+        let transcript_projection_registry = TranscriptProjectionRegistry::new();
+        let runtime_graph_registry = SessionGraphRuntimeRegistry::new();
+        let journal_write_lock_registry = JournalWriteLockRegistry::new();
+        seed_lifecycle(&runtime_graph_registry, "session-1");
+        let mut state = DispatcherState::new(DispatchPolicy::default());
+        let chunks = ["In", " their", " fight"];
+
+        for text in chunks {
+            let update = SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: text.to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: Some("assistant-1".to_string()),
+                message_id: Some("assistant-1".to_string()),
+                session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
+            };
+            projection_registry.apply_session_update("session-1", &update);
+            state.enqueue(AcpUiEvent::session_update(update));
+        }
+
+        state
+            .drain(
+                &hub,
+                Some(&db),
+                &projection_registry,
+                &runtime_graph_registry,
+                &transcript_projection_registry,
+                &journal_write_lock_registry,
+            )
+            .await;
+
+        let mut state_envelopes = Vec::new();
+        while state_envelopes.len() < 3 {
+            let event = receiver.recv().await.expect("published event");
+            if event.event_name != "acp-session-state" {
+                continue;
+            }
+            state_envelopes.push(
+                serde_json::from_value::<SessionStateEnvelope>(event.payload)
+                    .expect("session state payload"),
+            );
+        }
+
+        let mut rendered = String::new();
+        for envelope in state_envelopes {
+            match envelope.payload {
+                crate::acp::session_state_engine::SessionStatePayload::Snapshot { graph } => {
+                    let Some(entry) = graph.transcript_snapshot.entries.last() else {
+                        panic!("expected assistant entry");
+                    };
+                    rendered.clear();
+                    for segment in &entry.segments {
+                        match segment {
+                            crate::acp::transcript_projection::TranscriptSegment::Text {
+                                text,
+                                ..
+                            } => {
+                                rendered.push_str(text);
+                            }
+                        }
+                    }
+                }
+                crate::acp::session_state_engine::SessionStatePayload::Delta { delta } => {
+                    assert_eq!(delta.transcript_operations.len(), 1);
+                    match &delta.transcript_operations[0] {
+                        crate::acp::transcript_projection::TranscriptDeltaOperation::AppendEntry {
+                            entry,
+                        } => {
+                            rendered.clear();
+                            for segment in &entry.segments {
+                                match segment {
+                                    crate::acp::transcript_projection::TranscriptSegment::Text {
+                                        text,
+                                        ..
+                                    } => rendered.push_str(text),
+                                }
+                            }
+                        }
+                        crate::acp::transcript_projection::TranscriptDeltaOperation::AppendSegment {
+                            entry_id,
+                            segment,
+                            ..
+                        } => {
+                            assert_eq!(entry_id, "assistant-1");
+                            match segment {
+                                crate::acp::transcript_projection::TranscriptSegment::Text {
+                                    text,
+                                    ..
+                                } => rendered.push_str(text),
+                            }
+                        }
+                        other => panic!("unexpected transcript operation: {:?}", other),
+                    }
+                }
+                other => panic!("unexpected session-state payload: {:?}", other),
+            }
+        }
+
+        assert_eq!(rendered, "In their fight");
     }
 
     #[test]
@@ -2395,6 +2872,7 @@ mod tests {
                 part_id: None,
                 message_id: Some("msg-1".to_string()),
                 session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
             },
         ));
         dispatcher.enqueue(AcpUiEvent::session_update(SessionUpdate::TurnComplete {

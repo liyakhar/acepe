@@ -119,7 +119,7 @@
 			</div>
 			<div class="flex shrink-0 items-center gap-2">
 				{#if durationLabel}
-					<span class="pt-0.5 font-mono text-sm text-muted-foreground/70">{durationLabel}</span>
+					<span class="pt-0.5 font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 				{/if}
 				{#if hasExpandableContent}
 					<CaretRight
@@ -143,8 +143,8 @@
 			{#if metadataRows.length > 0}
 				<div class="mb-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1">
 					{#each metadataRows as row (row.label)}
-						<span class="font-mono text-muted-foreground/70">{row.label}</span>
-						<code class="truncate font-mono text-foreground" title={row.value}>{row.value}</code>
+						<span class="font-sans text-muted-foreground/70">{row.label}</span>
+						<code class="truncate font-sans text-foreground" title={row.value}>{row.value}</code>
 					{/each}
 				</div>
 			{/if}
@@ -154,10 +154,10 @@
 					<table class="w-full border-collapse text-sm">
 						<thead class="sticky top-0">
 							<tr>
-								<th class="px-2 py-1 text-left font-mono text-muted-foreground/80">File</th>
-								<th class="px-2 py-1 text-left font-mono text-muted-foreground/80">Line</th>
-								<th class="px-2 py-1 text-left font-mono text-muted-foreground/80">Kind</th>
-								<th class="px-2 py-1 text-left font-mono text-muted-foreground/80">Content</th>
+								<th class="px-2 py-1 text-left font-sans text-muted-foreground/80">File</th>
+								<th class="px-2 py-1 text-left font-sans text-muted-foreground/80">Line</th>
+								<th class="px-2 py-1 text-left font-sans text-muted-foreground/80">Kind</th>
+								<th class="px-2 py-1 text-left font-sans text-muted-foreground/80">Content</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -171,11 +171,11 @@
 											interactive={false}
 										/>
 									</td>
-									<td class="px-2 py-1 font-mono text-muted-foreground">{match.lineNumber}</td>
-									<td class="px-2 py-1 font-mono text-muted-foreground">
+									<td class="px-2 py-1 font-sans text-muted-foreground">{match.lineNumber}</td>
+									<td class="px-2 py-1 font-sans text-muted-foreground">
 										{match.isMatch ? "match" : "context"}
 									</td>
-									<td class="px-2 py-1 font-mono text-foreground whitespace-pre-wrap break-words">
+									<td class="px-2 py-1 font-sans text-foreground whitespace-pre-wrap break-words">
 										{match.content}
 									</td>
 								</tr>
@@ -188,7 +188,7 @@
 					<table class="w-full border-collapse text-sm">
 						<thead class="sticky top-0">
 							<tr>
-								<th class="px-2 py-1 text-left font-mono text-muted-foreground/80">File</th>
+								<th class="px-2 py-1 text-left font-sans text-muted-foreground/80">File</th>
 							</tr>
 						</thead>
 						<tbody>

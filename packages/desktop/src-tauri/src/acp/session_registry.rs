@@ -285,7 +285,17 @@ pub async fn bind_provider_session_id_persisted(
             .try_state::<SessionRegistry>()
             .map(|state| state.inner())
     }) {
-        session_registry.bind_provider_session_id(session_id, provider_session_id)?;
+        match session_registry.bind_provider_session_id(session_id, provider_session_id) {
+            Ok(()) => {}
+            Err(AcpError::SessionNotFound(_)) => {
+                tracing::debug!(
+                    session_id = %redact_session_id(session_id),
+                    provider_session_id = %redact_session_id(provider_session_id),
+                    "Skipping in-memory provider session binding because the registry entry is not stored yet"
+                );
+            }
+            Err(error) => return Err(error),
+        }
     }
 
     if let Some(db) = db {

@@ -90,17 +90,13 @@ fn take_synthetic_tool_completions_for_resumed_tool_turn(
         synthetic_updates.push(SessionUpdate::ToolCallUpdate {
             update: ToolCallUpdateData {
                 tool_call_id: pending_tool_call.tool_call_id,
-                status: Some(if missing_result {
-                    ToolCallStatus::Failed
-                } else {
-                    ToolCallStatus::Completed
-                }),
+                status: Some(ToolCallStatus::Completed),
                 result: missing_result.then(|| {
                     serde_json::json!({
                         "stderr": MISSING_TOOL_RESULT_MESSAGE
                     })
                 }),
-                failure_reason: missing_result.then(|| MISSING_TOOL_RESULT_MESSAGE.to_string()),
+                failure_reason: None,
                 ..Default::default()
             },
             session_id: session_id.clone(),
@@ -241,6 +237,7 @@ fn translate_assistant(
                     part_id: None,
                     message_id: None,
                     session_id: session_id.clone(),
+                    produced_at_monotonic_ms: None,
                 });
             }
 
@@ -532,6 +529,7 @@ fn translate_stream_event(
                         part_id: None,
                         message_id: None,
                         session_id,
+                        produced_at_monotonic_ms: None,
                     }]
                 }
 
@@ -1472,11 +1470,12 @@ mod tests {
     }
 
     #[test]
-    fn next_message_start_fails_resultless_bash_without_callback() {
+    fn next_message_start_completes_resultless_bash_without_callback() {
         // When a tool_use is pending and the next message_start arrives without
         // a can_use_tool callback, Copilot has resumed without giving Acepe a
-        // tool-result payload. Bash/edit/write tools require observable output,
-        // so the bridge must not publish a success-shaped empty completion.
+        // tool-result payload. The bridge should complete the tool turn so the
+        // UI does not claim the command failed, while still surfacing that
+        // stdout/stderr were unavailable.
         let mut stream_state = CcSdkTurnStreamState::default();
 
         let _ = super::translate_cc_sdk_message_with_mut_turn_state(
@@ -1542,11 +1541,11 @@ mod tests {
                 update,
                 SessionUpdate::ToolCallUpdate { update, .. }
                     if update.tool_call_id == "toolu_resume_me"
-                        && update.status == Some(ToolCallStatus::Failed)
-                        && update.failure_reason.as_deref() == Some(MISSING_TOOL_RESULT_MESSAGE)
+                        && update.status == Some(ToolCallStatus::Completed)
+                        && update.failure_reason.is_none()
                         && update.result.as_ref().and_then(|result| result.get("stderr")).and_then(|value| value.as_str()) == Some(MISSING_TOOL_RESULT_MESSAGE)
             )),
-            "bridge should surface missing Bash output instead of synthesizing an empty success"
+            "bridge should complete resumed Bash tools while surfacing unavailable output"
         );
     }
 
@@ -2052,13 +2051,14 @@ mod tests {
         );
 
         if let Some(SessionUpdate::ToolCallUpdate { update, .. }) = synthetic_update {
+            assert_eq!(update.status, Some(ToolCallStatus::Completed));
+            assert_eq!(update.failure_reason, None);
             assert_eq!(
-                update.status,
-                Some(ToolCallStatus::Failed),
-                "resultless Bash should be surfaced as a provider-output failure"
-            );
-            assert_eq!(
-                update.failure_reason.as_deref(),
+                update
+                    .result
+                    .as_ref()
+                    .and_then(|result| result.get("stderr"))
+                    .and_then(|value| value.as_str()),
                 Some(MISSING_TOOL_RESULT_MESSAGE)
             );
         }

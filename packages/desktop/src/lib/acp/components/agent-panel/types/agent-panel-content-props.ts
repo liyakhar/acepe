@@ -1,4 +1,7 @@
-import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
+import type {
+	AgentPanelQuestionSelectEvent,
+	AgentPanelSceneEntryModel,
+} from "@acepe/ui/agent-panel";
 import type { AgentInfo } from "../../../logic/agent-manager.js";
 import type { PanelViewState } from "../../../logic/panel-visibility";
 import type { Project } from "../../../logic/project-manager.svelte";
@@ -26,10 +29,6 @@ export interface AgentPanelContentProps {
 	readonly onProjectSelected?: (project: Project) => void;
 	readonly onRetryConnection?: () => void;
 	readonly onCancelConnection?: () => void;
-	readonly onTextRevealActivityChange?: (
-		revealKey: string | null | undefined,
-		active: boolean
-	) => void;
 	readonly agentIconSrc?: string;
 	readonly isFullscreen?: boolean;
 	readonly availableAgents?: AgentInfo[];
@@ -37,4 +36,6 @@ export interface AgentPanelContentProps {
 	readonly modifiedFilesState?: ModifiedFilesState | null;
 	readonly turnState?: TurnState;
 	readonly isWaitingForResponse?: boolean;
+	readonly waitingLabel?: string | null;
+	readonly onQuestionSelect?: (event: AgentPanelQuestionSelectEvent) => void;
 }

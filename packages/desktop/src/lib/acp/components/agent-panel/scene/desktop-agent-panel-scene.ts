@@ -1058,7 +1058,6 @@ export function mapSessionEntryToConversationEntry(
 			type: "assistant",
 			markdown: extractAssistantMarkdown(entry),
 			isStreaming: entry.isStreaming,
-			revealMessageKey: entry.id,
 			timestampMs: entry.timestamp?.getTime(),
 		};
 	}
@@ -1108,7 +1107,7 @@ export function mapVirtualizedDisplayEntryToConversationEntry(
 	nowMs: number = Date.now()
 ): AgentPanelSceneEntryModel {
 	if (entry.type === "thinking") {
-		return {
+		const thinkingEntry: AgentPanelSceneEntryModel = {
 			id: entry.id,
 			type: "thinking",
 			durationMs:
@@ -1117,13 +1116,23 @@ export function mapVirtualizedDisplayEntryToConversationEntry(
 					: Math.max(0, nowMs - entry.startedAtMs),
 			startedAtMs: entry.startedAtMs,
 		};
+		if (entry.label !== null && entry.label !== undefined) {
+			return {
+				id: thinkingEntry.id,
+				type: thinkingEntry.type,
+				durationMs: thinkingEntry.durationMs,
+				startedAtMs: thinkingEntry.startedAtMs,
+				label: entry.label,
+			};
+		}
+		return thinkingEntry;
 	}
 
 	if (entry.type === "assistant_merged") {
 		return {
 			id: entry.key,
 			type: "assistant",
-			markdown: contentBlocksToText(entry.message.chunks.map((chunk) => chunk.block)),
+			markdown: entry.markdown,
 			message: {
 				chunks: entry.message.chunks,
 				model: entry.message.model,
@@ -1132,7 +1141,7 @@ export function mapVirtualizedDisplayEntryToConversationEntry(
 				thinkingDurationMs: entry.message.thinkingDurationMs,
 			},
 			isStreaming: isStreamingAssistant || entry.isStreaming,
-			revealMessageKey: entry.key,
+			tokenRevealCss: entry.tokenRevealCss,
 			timestampMs: entry.timestamp?.getTime(),
 		};
 	}
@@ -1151,7 +1160,7 @@ export function mapVirtualizedDisplayEntryToConversationEntry(
 			type: mapped.type,
 			markdown: mapped.markdown,
 			isStreaming: isStreamingAssistant,
-			revealMessageKey: mapped.revealMessageKey,
+			tokenRevealCss: mapped.tokenRevealCss,
 			timestampMs: mapped.timestampMs,
 		};
 	}

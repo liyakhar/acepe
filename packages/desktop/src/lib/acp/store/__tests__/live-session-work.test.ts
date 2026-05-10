@@ -95,6 +95,8 @@ function makeCanonicalProjection(
 			configOptions: [],
 			autonomousEnabled: false,
 		},
+		tokenStream: new Map(),
+		clockAnchor: null,
 		revision: {
 			graphRevision: 1,
 			transcriptRevision: 1,

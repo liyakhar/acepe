@@ -2,9 +2,11 @@
 import type { ActivityEntryQuestion } from "@acepe/ui";
 import { ActivityEntry, PrChecksSummary, ProjectLetterBadge } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
+import { IconCheck } from "@tabler/icons-svelte";
 import { IconChevronDown } from "@tabler/icons-svelte";
 import { IconChevronRight } from "@tabler/icons-svelte";
 import { IconDotsVertical } from "@tabler/icons-svelte";
+import { IconX } from "@tabler/icons-svelte";
 import { Archive } from "phosphor-svelte";
 import { Tree } from "phosphor-svelte";
 import { COLOR_NAMES, Colors } from "$lib/acp/utils/colors.js";
@@ -110,6 +112,7 @@ const QUESTION_COLORS = [
 	Colors[COLOR_NAMES.PINK],
 	Colors[COLOR_NAMES.ORANGE],
 ];
+let archiveConfirmOpen = $state(false);
 
 function getThemedAgentIcon(agentId?: string): string {
 	return getAgentIcon(agentId ?? "claude-code", themeState.effectiveTheme);
@@ -149,6 +152,22 @@ function handleChevronClick(event: MouseEvent) {
 
 async function handleArchive() {
 	await onArchive?.(session);
+	archiveConfirmOpen = false;
+}
+
+function handleArchiveClick(event: MouseEvent) {
+	event.stopPropagation();
+	archiveConfirmOpen = true;
+}
+
+function handleCancelArchive(event: MouseEvent) {
+	event.stopPropagation();
+	archiveConfirmOpen = false;
+}
+
+function handleConfirmArchive(event: MouseEvent) {
+	event.stopPropagation();
+	void handleArchive();
 }
 
 async function handleExportMarkdown() {
@@ -664,23 +683,43 @@ function handleNextQuestion() {
 				{#snippet rowActions()}
 					<div class="flex items-center shrink-0">
 						{#if onArchive}
-							<button
-								type="button"
-								class="shrink-0 h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:[&_svg]:text-foreground"
-								onclick={(e) => {
-									e.stopPropagation();
-									void handleArchive();
-								}}
-								aria-label="Archive session"
-								title="Archive"
-							>
-								<Archive
-									class="h-3.5 w-3.5 text-muted-foreground transition-colors"
-									weight="fill"
-									color="currentColor"
-									aria-hidden="true"
-								/>
-							</button>
+							{#if archiveConfirmOpen}
+								<div class="flex items-center gap-1">
+									<button
+										type="button"
+										class="shrink-0 h-5 w-5 flex items-center justify-center rounded bg-destructive/10 text-destructive hover:bg-destructive/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										onclick={handleConfirmArchive}
+										aria-label="Confirm archive session"
+										title="Confirm archive"
+									>
+										<IconCheck class="h-3.5 w-3.5" stroke={2} aria-hidden="true" />
+									</button>
+									<button
+										type="button"
+										class="shrink-0 h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring text-muted-foreground hover:text-foreground"
+										onclick={handleCancelArchive}
+										aria-label="Cancel archive session"
+										title="Cancel"
+									>
+										<IconX class="h-3.5 w-3.5" stroke={2} aria-hidden="true" />
+									</button>
+								</div>
+							{:else}
+								<button
+									type="button"
+									class="shrink-0 h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:[&_svg]:text-foreground"
+									onclick={handleArchiveClick}
+									aria-label="Archive session"
+									title="Archive"
+								>
+									<Archive
+										class="h-3.5 w-3.5 text-muted-foreground transition-colors"
+										weight="fill"
+										color="currentColor"
+										aria-hidden="true"
+									/>
+								</button>
+							{/if}
 						{/if}
 						<DropdownMenu.Root bind:open={isActionsMenuOpen}>
 							<DropdownMenu.Trigger

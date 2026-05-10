@@ -126,6 +126,7 @@ fn normalize_cursor_thought_chunk(update: SessionUpdate) -> SessionUpdate {
             part_id,
             message_id,
             session_id,
+            produced_at_monotonic_ms: _,
         } => match &chunk.content {
             crate::acp::types::ContentBlock::Text { text } if has_thought_prefix(text) => {
                 SessionUpdate::AgentThoughtChunk {
@@ -145,6 +146,7 @@ fn normalize_cursor_thought_chunk(update: SessionUpdate) -> SessionUpdate {
                 part_id,
                 message_id,
                 session_id,
+                produced_at_monotonic_ms: None,
             },
         },
         other => other,
@@ -811,6 +813,7 @@ mod tests {
             part_id: Some("part-1".to_string()),
             message_id: Some("msg-1".to_string()),
             session_id: Some("session-1".to_string()),
+            produced_at_monotonic_ms: None,
         };
 
         let enriched = enrich_cursor_session_update(update).await;

@@ -12,8 +12,9 @@ export type GitHubReference =
 /** Matches PR/Issue shorthand: owner/repo#123 */
 export const GITHUB_PR_SHORTHAND_PATTERN = /\b([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)#(\d+)\b/g;
 
-/** Matches commit SHAs: 7-40 hex characters (not preceded by @) */
-export const GITHUB_COMMIT_SHA_PATTERN = /(?<!@)\b([a-f0-9]{7,40})\b/g;
+/** Matches bare commit SHAs: 7-40 lowercase hex characters with at least one a-f letter */
+export const GITHUB_COMMIT_SHA_PATTERN =
+	/(?<!@)\b(?=[a-f0-9]{7,40}\b)(?=[a-f0-9]*[a-f][a-f0-9]*\b)([a-f0-9]{7,40})\b/g;
 
 /** Matches git references: @abc1234 */
 export const GITHUB_GIT_REF_PATTERN = /@([a-f0-9]{7,40})\b/g;
@@ -21,6 +22,13 @@ export const GITHUB_GIT_REF_PATTERN = /@([a-f0-9]{7,40})\b/g;
 /** Matches full GitHub URLs for commits and PRs */
 export const GITHUB_URL_PATTERN =
 	/https?:\/\/github\.com\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)\/(pull|commit|issues?)\/([a-zA-Z0-9]+)/gi;
+
+export function isBareCommitSHA(value: string): boolean {
+	GITHUB_COMMIT_SHA_PATTERN.lastIndex = 0;
+	const match = GITHUB_COMMIT_SHA_PATTERN.exec(value);
+	GITHUB_COMMIT_SHA_PATTERN.lastIndex = 0;
+	return match !== null && match[0] === value;
+}
 
 export function parsePRShorthand(owner: string, repo: string, number: string): GitHubReference {
 	return { type: "pr", owner, repo, number: parseInt(number, 10) };

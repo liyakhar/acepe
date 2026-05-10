@@ -28,6 +28,8 @@ pub struct SessionStateGraph {
     pub turn_state: SessionTurnState,
     pub message_count: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_agent_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub active_turn_failure: Option<TurnFailureSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_terminal_turn_id: Option<String>,

@@ -91,17 +91,17 @@
 				<ToolKindIcon kind="skill" {status} />
 
 				{#if isPending}
-					<TextShimmer class="shrink-0 font-mono text-sm font-medium text-foreground">
+					<TextShimmer class="shrink-0 font-sans text-sm font-medium text-foreground">
 						{displayName}
 					</TextShimmer>
 				{:else}
-					<span class="shrink-0 font-mono text-sm font-medium text-foreground">
+					<span class="shrink-0 font-sans text-sm font-medium text-foreground">
 						{displayName}
 					</span>
 				{/if}
 
 				{#if displayArgs}
-					<span class="truncate font-mono text-sm text-muted-foreground/70">
+					<span class="truncate font-sans text-sm text-muted-foreground/70">
 						{displayArgs}
 					</span>
 				{/if}
@@ -110,7 +110,7 @@
 			<!-- Right side: status + expand button -->
 			<div class="flex shrink-0 items-center gap-2">
 				{#if durationLabel}
-					<span class="font-mono text-sm text-muted-foreground/70">{durationLabel}</span>
+					<span class="font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 				{/if}
 				<!-- Status indicator -->
 				<div class="flex items-center gap-1 text-sm text-muted-foreground">

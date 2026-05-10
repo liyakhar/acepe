@@ -778,6 +778,19 @@ impl SessionJournalEventRepository {
         .await
     }
 
+    pub async fn append_interaction_snapshot(
+        db: &DbConn,
+        session_id: &str,
+        interaction: crate::acp::projections::InteractionSnapshot,
+    ) -> Result<SessionJournalRecord> {
+        Self::append(
+            db,
+            session_id,
+            SessionJournalEventPayload::InteractionSnapshot { interaction },
+        )
+        .await
+    }
+
     pub async fn append_materialization_barrier(
         db: &DbConn,
         session_id: &str,
@@ -1249,7 +1262,32 @@ impl SessionMetadataRepository {
             });
         }
 
-        let sequence_id = if let Some(sequence_id) = attempt.sequence_id {
+        let existing_metadata = SessionMetadata::find_by_id(provider_session_id)
+            .one(&txn)
+            .await?;
+        let sequence_id = if let Some(existing_sequence_id) = existing_metadata
+            .as_ref()
+            .and_then(|model| model.sequence_id)
+        {
+            if Self::sequence_id_taken_by_other_session(
+                &txn,
+                &attempt.project_path,
+                provider_session_id,
+                existing_sequence_id,
+            )
+            .await
+            .map_err(|error| CreationAttemptRepositoryError::InvalidState {
+                message: error.to_string(),
+            })? {
+                Self::next_sequence_id_for_project(&txn, &attempt.project_path)
+                    .await
+                    .map_err(|error| CreationAttemptRepositoryError::InvalidState {
+                        message: error.to_string(),
+                    })?
+            } else {
+                existing_sequence_id
+            }
+        } else if let Some(sequence_id) = attempt.sequence_id {
             sequence_id
         } else {
             Self::next_sequence_id_for_project(&txn, &attempt.project_path)
@@ -1260,36 +1298,92 @@ impl SessionMetadataRepository {
         };
         let now = Utc::now();
         let preview_len = 8usize.min(provider_session_id.len());
-        let metadata = session_metadata::ActiveModel {
-            id: Set(provider_session_id.to_string()),
-            display: Set(format!("Session {}", &provider_session_id[..preview_len])),
-            timestamp: Set(now.timestamp_millis()),
-            project_path: Set(attempt.project_path.clone()),
-            agent_id: Set(attempt.agent_id.clone()),
-            file_path: Set(Self::created_session_file_path(provider_session_id)),
-            file_mtime: Set(0),
-            file_size: Set(0),
-            worktree_path: Set(attempt.worktree_path.clone()),
-            pr_number: sea_orm::ActiveValue::NotSet,
-            is_acepe_managed: Set(1),
-            sequence_id: Set(Some(sequence_id)),
-            created_at: Set(now),
-            updated_at: Set(now),
+        let created_file_path = Self::created_session_file_path(provider_session_id);
+        let (metadata_model, state_model) = if let Some(existing_model) = existing_metadata {
+            if existing_model.file_path != created_file_path {
+                return Err(CreationAttemptRepositoryError::InvalidState {
+                    message: format!(
+                        "session {provider_session_id} already exists with source path {}",
+                        existing_model.file_path
+                    ),
+                });
+            }
+
+            let mut metadata: session_metadata::ActiveModel = existing_model.into();
+            metadata.display = Set(format!("Session {}", &provider_session_id[..preview_len]));
+            metadata.timestamp = Set(now.timestamp_millis());
+            metadata.project_path = Set(attempt.project_path.clone());
+            metadata.agent_id = Set(attempt.agent_id.clone());
+            metadata.file_path = Set(created_file_path);
+            metadata.file_mtime = Set(0);
+            metadata.file_size = Set(0);
+            metadata.worktree_path = Set(attempt.worktree_path.clone());
+            metadata.is_acepe_managed = Set(1);
+            metadata.sequence_id = Set(Some(sequence_id));
+            metadata.updated_at = Set(now);
+            let updated_metadata = metadata.update(&txn).await?;
+
+            let state_model = if let Some(existing_state) =
+                AcepeSessionState::find_by_id(provider_session_id)
+                    .one(&txn)
+                    .await?
+            {
+                let mut state: acepe_session_state::ActiveModel = existing_state.into();
+                state.relationship = Set(AcepeSessionRelationship::Created.as_str().to_string());
+                state.project_path = Set(attempt.project_path.clone());
+                state.worktree_path = Set(attempt.worktree_path.clone());
+                state.sequence_id = Set(Some(sequence_id));
+                state.updated_at = Set(now);
+                state.update(&txn).await?
+            } else {
+                let state = acepe_session_state::ActiveModel {
+                    session_id: Set(provider_session_id.to_string()),
+                    relationship: Set(AcepeSessionRelationship::Created.as_str().to_string()),
+                    project_path: Set(attempt.project_path.clone()),
+                    title_override: Set(None),
+                    worktree_path: Set(attempt.worktree_path.clone()),
+                    pr_number: Set(None),
+                    pr_link_mode: Set(None),
+                    sequence_id: Set(Some(sequence_id)),
+                    created_at: Set(now),
+                    updated_at: Set(now),
+                };
+                state.insert(&txn).await?
+            };
+            (updated_metadata, state_model)
+        } else {
+            let metadata = session_metadata::ActiveModel {
+                id: Set(provider_session_id.to_string()),
+                display: Set(format!("Session {}", &provider_session_id[..preview_len])),
+                timestamp: Set(now.timestamp_millis()),
+                project_path: Set(attempt.project_path.clone()),
+                agent_id: Set(attempt.agent_id.clone()),
+                file_path: Set(created_file_path),
+                file_mtime: Set(0),
+                file_size: Set(0),
+                worktree_path: Set(attempt.worktree_path.clone()),
+                pr_number: sea_orm::ActiveValue::NotSet,
+                is_acepe_managed: Set(1),
+                sequence_id: Set(Some(sequence_id)),
+                created_at: Set(now),
+                updated_at: Set(now),
+            };
+            let inserted_metadata = metadata.insert(&txn).await?;
+            let state = acepe_session_state::ActiveModel {
+                session_id: Set(provider_session_id.to_string()),
+                relationship: Set(AcepeSessionRelationship::Created.as_str().to_string()),
+                project_path: Set(attempt.project_path.clone()),
+                title_override: Set(None),
+                worktree_path: Set(attempt.worktree_path.clone()),
+                pr_number: Set(None),
+                pr_link_mode: Set(None),
+                sequence_id: Set(Some(sequence_id)),
+                created_at: Set(now),
+                updated_at: Set(now),
+            };
+            let inserted_state = state.insert(&txn).await?;
+            (inserted_metadata, inserted_state)
         };
-        let inserted_metadata = metadata.insert(&txn).await?;
-        let state = acepe_session_state::ActiveModel {
-            session_id: Set(provider_session_id.to_string()),
-            relationship: Set(AcepeSessionRelationship::Created.as_str().to_string()),
-            project_path: Set(attempt.project_path.clone()),
-            title_override: Set(None),
-            worktree_path: Set(attempt.worktree_path.clone()),
-            pr_number: Set(None),
-            pr_link_mode: Set(None),
-            sequence_id: Set(Some(sequence_id)),
-            created_at: Set(now),
-            updated_at: Set(now),
-        };
-        let inserted_state = state.insert(&txn).await?;
 
         let mut attempt_active: creation_attempt::ActiveModel = attempt.into();
         attempt_active.status = Set(CreationAttemptStatus::Consumed.as_str().to_string());
@@ -1299,8 +1393,8 @@ impl SessionMetadataRepository {
         txn.commit().await?;
 
         Ok(compose_session_metadata_row(
-            inserted_metadata,
-            Some(&inserted_state),
+            metadata_model,
+            Some(&state_model),
         ))
     }
 

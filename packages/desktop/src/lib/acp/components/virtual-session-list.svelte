@@ -139,7 +139,6 @@ function measureSessionRow(node: HTMLDivElement): { destroy: () => void } {
 						{:else if entry.type === "assistant"}
 							<AssistantMessage
 								message={entry.message as AssistantMessageType}
-								revealMessageKey={entry.id}
 								{projectPath}
 								{streamingAnimationMode}
 							/>

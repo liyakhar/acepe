@@ -1,14 +1,14 @@
 /**
- * Ordering invariant: clearPendingUserEntry() is called no later than the canonical user
- * entry being ingested into the graph.
+ * Ordering invariant: clearPendingUserEntry() is called after sendMessage has installed the
+ * session-level pendingSendIntent.
  *
  * Context: optimistic and canonical entry IDs are independent crypto.randomUUID() calls and
- * therefore never collide. The materializer does NOT id-dedup — it trusts that the send path
- * clears the pending entry before the canonical entry can land in the scene (which happens
- * asynchronously via a WebSocket push from the server, after sendMessage resolves).
+ * therefore never collide. The materializer does NOT id-dedup, so the panel must keep exactly
+ * one optimistic source visible while the first-send flow moves from panel-level pending state
+ * to session-level pending state.
  *
  * Four paths all route through AgentInputState.sendPreparedMessage:
- *   - Normal send (pre-session):   setPendingUserEntry → sendMessage → clearPendingUserEntry
+ *   - Normal send (pre-session):   setPendingUserEntry → sendMessage installs pendingSendIntent → clearPendingUserEntry
  *   - Retry:                       retrySend() → handleSend() → same path as above
  *   - Slash-command (pre-session): @[command:/name] token in content → same path as above
  *   - Voice (pre-session):         transcribed plain text in content → same path as above
@@ -115,10 +115,8 @@ describe("clearPendingUserEntry ordering invariant — normal send (pre-session)
 
 		expect(result.isOk()).toBe(true);
 		// Critical ordering: set → create → send → clear.
-		// clearPendingUserEntry fires synchronously when sendMessage resolves (in .map()).
-		// The canonical transcript entry can only arrive via WebSocket AFTER the server
-		// processes the message — i.e., strictly after sendMessage returns — so
-		// clearPendingUserEntry always precedes the canonical entry landing in the scene.
+		// sendMessage installs pendingSendIntent before it resolves, so clearing the
+		// panel-level pending entry does not produce an empty first-send panel.
 		expect(events).toEqual(["set-pending", "session-created", "send-message", "clear-pending"]);
 	});
 
@@ -300,16 +298,16 @@ describe("no duplicate user entry in materialized scene across the send lifecycl
 		}
 	});
 
-	it("step 3 — clearPendingUserEntry called, canonical not yet in graph: 0 entries (no stuck pending)", () => {
-		// This state is transient: clearPendingUserEntry has fired, WebSocket push hasn't
-		// updated the graph yet. The scene is momentarily empty, not duplicated.
+	it("step 3 — after session handoff but before canonical graph: still 1 optimistic entry", () => {
+		// This is the first-send handoff window: the panel has a session id now, but the
+		// canonical transcript has not arrived yet. The UI must not reset to an empty scene.
 		const scene = materializeAgentPanelSceneFromGraph({
 			panelId: "panel-1",
 			graph: null,
 			header,
-			optimistic: null, // clearPendingUserEntry() has been called
+			optimistic: { pendingUserEntry: pendingEntry },
 		});
-		expect(scene.conversation.entries).toHaveLength(0);
+		expect(scene.conversation.entries).toHaveLength(1);
 	});
 
 	it("step 4 — with pending cleared, canonical entry arrival cannot produce a duplicate", () => {

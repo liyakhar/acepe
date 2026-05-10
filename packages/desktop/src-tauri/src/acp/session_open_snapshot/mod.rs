@@ -219,6 +219,8 @@ pub struct SessionOpenFound {
     pub interactions: Vec<InteractionSnapshot>,
     pub turn_state: SessionTurnState,
     pub message_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_agent_message_id: Option<String>,
     // --- Canonical lifecycle/actionability authority ---
     pub lifecycle: SessionGraphLifecycle,
     pub capabilities: SessionGraphCapabilities,
@@ -444,6 +446,11 @@ pub async fn session_open_result_from_thread_snapshot(
     } else {
         session_snap.and_then(|session| session.last_terminal_turn_id.clone())
     };
+    let last_agent_message_id = if projection_is_behind_journal {
+        None
+    } else {
+        session_snap.and_then(|session| session.last_agent_message_id.clone())
+    };
     let transcript_snapshot =
         TranscriptSnapshot::from_stored_entries(last_event_seq, &snapshot.entries);
     let operations =
@@ -484,6 +491,7 @@ pub async fn session_open_result_from_thread_snapshot(
         interactions,
         turn_state,
         message_count,
+        last_agent_message_id,
         lifecycle,
         capabilities,
         active_turn_failure,
@@ -543,6 +551,7 @@ pub async fn session_open_result_for_new_session(
         interactions: vec![],
         turn_state: SessionTurnState::Idle,
         message_count: 0,
+        last_agent_message_id: None,
         lifecycle: input.lifecycle,
         capabilities: input.capabilities,
         active_turn_failure: None,

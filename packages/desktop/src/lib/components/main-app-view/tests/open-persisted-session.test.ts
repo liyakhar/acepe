@@ -298,6 +298,34 @@ describe("openPersistedSession", () => {
 		});
 	});
 
+	it("does not let a slow reconnect trip the session-open timeout after hydration", async () => {
+		sessionStore.connectSession = mock(
+			() =>
+				ResultAsync.fromSafePromise(new Promise<never>(() => {})) as unknown as ReturnType<
+					SessionOpenStore["connectSession"]
+				>
+		);
+
+		openPersistedSession({
+			panelId: "panel-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 5,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		expect(sessionOpenHydrator.clearAttempt).toHaveBeenCalledWith("panel-1");
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledTimes(1);
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.connectSession).toHaveBeenCalledWith("session-1", {
+			openToken: "open-token-1",
+		});
+	});
+
 	// ==========================================================================
 	// U7 E2E proof: canonical open path invariants
 	// ==========================================================================

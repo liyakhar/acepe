@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type {
+	InteractionSnapshot,
 	OperationSnapshot,
 	SessionGraphActionability,
 	SessionGraphActivity,
@@ -128,9 +129,69 @@ function createOperationSnapshot(overrides: Partial<OperationSnapshot> = {}): Op
 	};
 }
 
+function createQuestionInteraction(input: {
+	id: string;
+	jsonRpcRequestId: number | null;
+	replyHandler:
+		| {
+				kind: "json_rpc";
+				requestId: string;
+		  }
+		| {
+				kind: "http";
+				requestId: string;
+		  };
+}): InteractionSnapshot {
+	return {
+		id: input.id,
+		session_id: "session-1",
+		kind: "Question",
+		state: "Pending",
+		json_rpc_request_id: input.jsonRpcRequestId,
+		reply_handler: input.replyHandler,
+		tool_reference: {
+			messageId: "",
+			callId: input.id,
+		},
+		responded_at_event_seq: null,
+		response: null,
+		payload: {
+			Question: {
+				id: input.id,
+				sessionId: "session-1",
+				jsonRpcRequestId: input.jsonRpcRequestId,
+				replyHandler: input.replyHandler,
+				questions: [
+					{
+						question: "Which archive button should get the confirm step?",
+						header: "Location",
+						options: [
+							{
+								label: "Sidebar session list",
+								description: "Archive action on sessions in the left sidebar",
+							},
+							{
+								label: "Settings table",
+								description: "Archive item in the settings table",
+							},
+						],
+						multiSelect: false,
+					},
+				],
+				tool: {
+					messageId: "",
+					callId: input.id,
+				},
+			},
+		},
+		canonical_operation_id: null,
+	};
+}
+
 function createGraph(input: {
 	transcriptSnapshot: TranscriptSnapshot;
 	operations?: OperationSnapshot[];
+	interactions?: InteractionSnapshot[];
 	turnState?: SessionStateGraph["turnState"];
 	lastAgentMessageId?: string | null;
 	lifecycle?: SessionGraphLifecycle;
@@ -153,7 +214,7 @@ function createGraph(input: {
 		},
 		transcriptSnapshot: input.transcriptSnapshot,
 		operations: input.operations ?? [],
-		interactions: [],
+		interactions: input.interactions ?? [],
 		turnState: input.turnState ?? "Completed",
 		messageCount: input.transcriptSnapshot.entries.length,
 		lastAgentMessageId: input.lastAgentMessageId ?? null,
@@ -166,6 +227,73 @@ function createGraph(input: {
 }
 
 describe("agent panel graph materializer", () => {
+	it("renders only the blocking pending question interaction when duplicate question records exist", () => {
+		const transcriptSnapshot = createTranscriptSnapshot([
+			createTranscriptEntry("user-1", "user", "Can you retry the AskUserQuestion?"),
+		]);
+		const graph = createGraph({
+			transcriptSnapshot,
+			turnState: "Running",
+			activity: {
+				kind: "waiting_for_user",
+				activeOperationCount: 0,
+				activeSubagentCount: 0,
+				dominantOperationId: null,
+				blockingInteractionId: "question-1",
+			},
+			interactions: [
+				createQuestionInteraction({
+					id: "question-1",
+					jsonRpcRequestId: 1,
+					replyHandler: {
+						kind: "json_rpc",
+						requestId: "1",
+					},
+				}),
+				createQuestionInteraction({
+					id: "question-duplicate",
+					jsonRpcRequestId: null,
+					replyHandler: {
+						kind: "http",
+						requestId: "question-duplicate",
+					},
+				}),
+			],
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Question session",
+			},
+		});
+
+		expect(scene.conversation.entries).toHaveLength(2);
+		expect(scene.conversation.entries.map((entry) => entry.id)).toEqual(["user-1", "question-1"]);
+		expect(scene.conversation.entries[1]).toMatchObject({
+			id: "question-1",
+			type: "tool_call",
+			title: "Question",
+			status: "running",
+			question: {
+				question: "Which archive button should get the confirm step?",
+				header: "Location",
+				options: [
+					{
+						label: "Sidebar session list",
+						description: "Archive action on sessions in the left sidebar",
+					},
+					{
+						label: "Settings table",
+						description: "Archive item in the settings table",
+					},
+				],
+				multiSelect: false,
+			},
+		});
+	});
+
 	it("materializes rich tool entries from canonical operations instead of transcript placeholders", () => {
 		const transcriptSnapshot = createTranscriptSnapshot([
 			createTranscriptEntry("user-1", "user", "Run the checks"),
@@ -217,7 +345,6 @@ describe("agent panel graph materializer", () => {
 				],
 			},
 			isStreaming: false,
-			revealMessageKey: "assistant-1",
 		});
 	});
 
@@ -422,7 +549,6 @@ describe("agent panel graph materializer", () => {
 				],
 			},
 			isStreaming: false,
-			revealMessageKey: "assistant-1",
 		});
 	});
 
@@ -970,7 +1096,6 @@ describe("agent panel graph materializer", () => {
 					],
 				},
 				isStreaming: false,
-				revealMessageKey: "assistant-1",
 			});
 		});
 
@@ -1093,6 +1218,52 @@ describe("agent panel graph materializer", () => {
 			expect(entry.isOptimistic).toBeUndefined();
 			void pendingUserEntry;
 		});
+
+		it("rejects transient live assistant overlay while canonical transcript is still on the user turn", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("user-1", "user", "stream this reply"),
+			]);
+			const graph = createGraph({
+				transcriptSnapshot,
+				turnState: "Running",
+				activity: {
+					kind: "awaiting_model",
+					activeOperationCount: 0,
+					activeSubagentCount: 0,
+					dominantOperationId: null,
+					blockingInteractionId: null,
+				},
+				lastAgentMessageId: null,
+			});
+			const liveAssistantEntry: SessionEntry = {
+				id: "assistant-live-1",
+				type: "assistant",
+				message: {
+					chunks: [
+						{
+							type: "message",
+							block: { type: "text", text: "partial streamed answer" },
+						},
+					],
+				},
+				isStreaming: true,
+			};
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			expect(scene.conversation.entries).toHaveLength(1);
+			expect(scene.conversation.entries[0]).toEqual({
+				id: "user-1",
+				type: "user",
+				text: "stream this reply",
+				isOptimistic: undefined,
+			});
+			void liveAssistantEntry;
+		});
 	});
 
 	describe("assistant isStreaming derivation", () => {
@@ -1133,6 +1304,57 @@ describe("agent panel graph materializer", () => {
 			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
 			expect(assistantEntries).toHaveLength(1);
 			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+		});
+
+		it("does not let stale live assistant text hide a completed canonical answer", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Question"),
+				createTranscriptEntryFromSegments("a1", "assistant", [
+					"Umb",
+					"rellas",
+					" keep",
+					" you",
+					" dry",
+					" when",
+					" it",
+					" rains",
+					".",
+				]),
+			]);
+			const graph = createGraph({ transcriptSnapshot, turnState: "Completed" });
+			const staleLiveEntry: Extract<SessionEntry, { type: "assistant" }> = {
+				id: "a1",
+				type: "assistant",
+				message: {
+					chunks: [
+						{
+							type: "message",
+							block: {
+								type: "text",
+								text: "Umb",
+							},
+						},
+					],
+				},
+				isStreaming: true,
+				timestamp: new Date("2026-05-05T15:00:00.000Z"),
+			};
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			expect(scene.conversation.entries).toContainEqual(
+				expect.objectContaining({
+					id: "a1",
+					type: "assistant",
+					markdown: "Umbrellas keep you dry when it rains.",
+					isStreaming: false,
+				})
+			);
+			void staleLiveEntry;
 		});
 
 		it("does not restart streaming reveal for the previous assistant while waiting for the next response", () => {

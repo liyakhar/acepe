@@ -9,7 +9,6 @@ import {
 	buildVirtualizedDisplayEntriesFromScene,
 	findLastAssistantSceneIndex,
 	getLatestRevealTargetKey,
-	getMergedAssistantRevealFallbackKey,
 	getVirtualizedDisplayEntryKey,
 	getVirtualizedDisplayEntryTimestampMs,
 	isMergedAssistantDisplayEntry,
@@ -117,6 +116,7 @@ describe("virtualized-entry-display", () => {
 			throw new Error("expected merged display entry");
 		}
 		expect(merged.memberIds).toEqual(["a1", "a2"]);
+		expect(merged.markdown).toBe("hello world");
 		expect(
 			merged.message.chunks
 				.map((chunk) => (chunk.block.type === "text" ? chunk.block.text : ""))
@@ -346,58 +346,56 @@ describe("buildVirtualizedDisplayEntriesFromScene", () => {
 		}
 	});
 
-	it("preserves textRevealState when consecutive assistant scene entries merge", () => {
+	it("keeps an animating assistant row separate from prior assistant text", () => {
 		const scene: AgentPanelSceneEntryModel[] = [
-			{ type: "assistant", id: "a1", markdown: "first", isStreaming: false },
+			{ type: "assistant", id: "a1", markdown: "first ", isStreaming: false },
 			{
 				type: "assistant",
 				id: "a2",
-				markdown: "second",
+				markdown: "second answer",
 				isStreaming: false,
-				textRevealState: { policy: "pace", key: "session-1:a2:message" },
+				tokenRevealCss: {
+					revealCount: 2,
+					revealedCharCount: "second answer".length,
+					baselineMs: -32,
+					tokStepMs: 32,
+					tokFadeDurMs: 420,
+					mode: "smooth",
+				},
 			},
 		];
 
 		const result = buildVirtualizedDisplayEntriesFromScene(scene);
 
-		expect(result).toHaveLength(1);
-		const entry = result[0]!;
-		expect(entry.type).toBe("assistant_merged");
-		if (entry.type === "assistant_merged") {
-			expect(entry.textRevealState).toEqual({
-				policy: "pace",
-				key: "session-1:a2:message",
-				seedDisplayedText: "first",
-			});
-		}
+		expect(result).toHaveLength(2);
+		expect(result[0]).toMatchObject({ type: "assistant_merged", markdown: "first " });
+		expect(result[1]).toMatchObject({
+			type: "assistant_merged",
+			markdown: "second answer",
+			tokenRevealCss: {
+				revealCount: 2,
+				revealedCharCount: "second answer".length,
+				baselineMs: -32,
+			},
+		});
 	});
 
-	it("preserves anchor textRevealState when undecorated assistant scene entries merge into it", () => {
+	it("still merges adjacent static assistant entries", () => {
 		const scene: AgentPanelSceneEntryModel[] = [
-			{
-				type: "assistant",
-				id: "a1",
-				markdown: "first",
-				isStreaming: false,
-				textRevealState: { policy: "pace", key: "session-1:a1:message" },
-			},
-			{ type: "assistant", id: "a2", markdown: "second", isStreaming: false },
+			{ type: "assistant", id: "a1", markdown: "same", isStreaming: false },
+			{ type: "assistant", id: "a2", markdown: " same suffix", isStreaming: false },
 		];
 
 		const result = buildVirtualizedDisplayEntriesFromScene(scene);
 
-		expect(result).toHaveLength(1);
-		const entry = result[0]!;
-		expect(entry.type).toBe("assistant_merged");
-		if (entry.type === "assistant_merged") {
-			expect(entry.textRevealState).toEqual({
-				policy: "pace",
-				key: "session-1:a1:message",
-			});
+		expect(result[0]?.type).toBe("assistant_merged");
+		if (result[0]?.type === "assistant_merged") {
+			expect(result[0].markdown).toBe("same same suffix");
+			expect(result[0].tokenRevealCss).toBeUndefined();
 		}
 	});
 
-	it("uses the last grouped message text index for fallback reveal keys", () => {
+	it("uses the last merged assistant key as the latest reveal target", () => {
 		const scene: AgentPanelSceneEntryModel[] = [
 			{
 				type: "assistant",
@@ -420,12 +418,10 @@ describe("buildVirtualizedDisplayEntriesFromScene", () => {
 		const result = buildVirtualizedDisplayEntriesFromScene(scene);
 
 		expect(result[0]?.type).toBe("assistant_merged");
-		if (result[0]?.type === "assistant_merged") {
-			expect(getMergedAssistantRevealFallbackKey(result[0])).toBe("a1:message:2");
-		}
+		expect(getLatestRevealTargetKey(result)).toBe("a1");
 	});
 
-	it("does not create fallback reveal keys for assistant rows with no message text group", () => {
+	it("keeps the latest assistant key even when the row has no text message group", () => {
 		const scene: AgentPanelSceneEntryModel[] = [
 			{
 				type: "assistant",
@@ -446,9 +442,7 @@ describe("buildVirtualizedDisplayEntriesFromScene", () => {
 		const result = buildVirtualizedDisplayEntriesFromScene(scene);
 
 		expect(result[0]?.type).toBe("assistant_merged");
-		if (result[0]?.type === "assistant_merged") {
-			expect(getMergedAssistantRevealFallbackKey(result[0])).toBeNull();
-		}
+		expect(getLatestRevealTargetKey(result)).toBe("a1");
 	});
 
 	it("characterizes destructive scene-row shape changes by ordered display keys", () => {

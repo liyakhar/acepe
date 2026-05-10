@@ -1145,6 +1145,9 @@ onDestroy(() => {
 				onDevShowDesignSystem={() => {
 					viewState.designSystemOpen = true;
 				}}
+				onDevShowStreamingReproLab={() => {
+					viewState.debugPanelOpen = true;
+				}}
 			>
 				{#snippet addProjectButton()}
 					<button

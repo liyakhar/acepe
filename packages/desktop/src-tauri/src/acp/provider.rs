@@ -136,7 +136,6 @@ pub struct ProviderReconnectPolicy {
 pub struct PlanAdapterPolicy {
     pub parses_wrapper_plan_from_text_stream: bool,
     pub finalizes_wrapper_plan_on_turn_end: bool,
-    pub clears_message_tracker_on_prompt_response: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -574,12 +573,6 @@ pub trait AgentProvider: Send + Sync {
     fn uses_wrapper_plan_streaming(&self) -> bool {
         self.plan_adapter_policy()
             .parses_wrapper_plan_from_text_stream
-    }
-
-    /// Whether per-session message-id tracker should be cleared on prompt response.
-    fn clear_message_tracker_on_prompt_response(&self) -> bool {
-        self.plan_adapter_policy()
-            .clears_message_tracker_on_prompt_response
     }
 }
 

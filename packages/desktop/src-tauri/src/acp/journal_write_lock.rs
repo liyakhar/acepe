@@ -119,9 +119,9 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..16 {
             let registry = Arc::clone(&registry);
-            handles.push(tokio::spawn(async move {
-                registry.lock_for("racey-session")
-            }));
+            handles.push(tokio::spawn(
+                async move { registry.lock_for("racey-session") },
+            ));
         }
         let mut mutexes = Vec::new();
         for handle in handles {

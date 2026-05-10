@@ -11,6 +11,7 @@ pub struct DeltaSessionProjectionFields {
     pub turn_state: crate::acp::projections::SessionTurnState,
     pub active_turn_failure: Option<crate::acp::projections::TurnFailureSnapshot>,
     pub last_terminal_turn_id: Option<String>,
+    pub last_agent_message_id: Option<String>,
 }
 
 pub struct DeltaEnvelopeParts<'a> {
@@ -49,6 +50,7 @@ pub fn build_delta_envelope(parts: DeltaEnvelopeParts<'_>) -> SessionStateEnvelo
                 turn_state: parts.projection.turn_state,
                 active_turn_failure: parts.projection.active_turn_failure,
                 last_terminal_turn_id: parts.projection.last_terminal_turn_id,
+                last_agent_message_id: parts.projection.last_agent_message_id,
                 transcript_operations: parts.transcript_operations,
                 operation_patches: parts.operation_patches,
                 interaction_patches: parts.interaction_patches,
@@ -97,6 +99,7 @@ mod tests {
             interactions: Vec::new(),
             turn_state: SessionTurnState::Idle,
             message_count: 0,
+            last_agent_message_id: None,
             lifecycle: SessionGraphLifecycle::idle(),
             capabilities: SessionGraphCapabilities::empty(),
             active_turn_failure: None,
@@ -128,6 +131,7 @@ mod tests {
                 turn_state: SessionTurnState::Idle,
                 active_turn_failure: None,
                 last_terminal_turn_id: None,
+                last_agent_message_id: Some("assistant-1".to_string()),
             },
             transcript_operations: vec![TranscriptDeltaOperation::ReplaceSnapshot {
                 snapshot: TranscriptSnapshot {
@@ -147,6 +151,7 @@ mod tests {
                 assert_eq!(delta.from_revision, SessionGraphRevision::new(11, 3, 11));
                 assert_eq!(delta.to_revision, SessionGraphRevision::new(12, 4, 12));
                 assert_eq!(delta.transcript_operations.len(), 1);
+                assert_eq!(delta.last_agent_message_id.as_deref(), Some("assistant-1"));
             }
             _ => panic!("expected delta payload"),
         }

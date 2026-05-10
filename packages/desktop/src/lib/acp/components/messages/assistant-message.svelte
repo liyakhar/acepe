@@ -10,7 +10,7 @@ import {
 	type StreamingAnimationMode,
 } from "../../types/streaming-animation-mode.js";
 import ContentBlockRouter from "./content-block-router.svelte";
-import CopyButton from "./copy-button.svelte";
+import MessageMetaPill from "./message-meta-pill.svelte";
 import {
 	createRafDedupeScheduler,
 	scrollTailToVisibleEnd,
@@ -24,8 +24,6 @@ interface Props {
 	message: AssistantMessage;
 	/** Whether this message is currently streaming */
 	isStreaming?: boolean;
-	/** Stable entry key used to seed streaming reveal state across remounts */
-	revealMessageKey?: string;
 	/** Project path for opening files in panels */
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
@@ -34,7 +32,6 @@ interface Props {
 let {
 	message,
 	isStreaming = false,
-	revealMessageKey,
 	projectPath: propProjectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
 }: Props = $props();
@@ -50,7 +47,6 @@ function resolveAssistantMessage(candidate: AssistantMessage | undefined): Assis
 
 	if (import.meta.env.DEV) {
 		console.warn("[ASSISTANT_MESSAGE_INVALID_PROP]", {
-			revealMessageKey,
 			isStreaming,
 			projectPath: propProjectPath ?? sessionContext?.projectPath,
 			hasCandidate: candidate !== undefined,
@@ -127,14 +123,7 @@ const hasMessageContent = $derived(groupedChunks.messageGroups.length > 0);
 const hasAnyContent = $derived(hasThinking || hasMessageContent);
 /** Show thinking block only while there is no assistant message content yet; hide once reply text starts. */
 const showThinkingBlock = $derived(hasThinking && !hasMessageContent);
-let isMessageTextRevealActive = $state(false);
-const visibleMessageGroups = $derived.by(() => {
-	if (!isMessageTextRevealActive || lastMessageTextGroupIndex < 0) {
-		return groupedChunks.messageGroups;
-	}
-
-	return groupedChunks.messageGroups.slice(0, lastMessageTextGroupIndex + 1);
-});
+const visibleMessageGroups = $derived(groupedChunks.messageGroups);
 
 /** "Thinking" or "Thinking for Xs" while streaming, "Thought" or "Thought for Xs" when done */
 const thinkingHeaderLabel = $derived.by(() => {
@@ -190,14 +179,6 @@ $effect(() => {
 $effect(() => {
 	if (!hasInitializedCollapse) return;
 	isCollapsed = !isStreaming;
-});
-
-$effect(() => {
-	if (lastMessageTextGroupIndex >= 0) {
-		return;
-	}
-
-	isMessageTextRevealActive = false;
 });
 
 $effect(() => {
@@ -263,11 +244,6 @@ $effect(() => {
 									<ContentBlockRouter
 										block={{ type: "text", text: group.text }}
 										isStreaming={isStreaming && isLastThoughtTextGroup}
-										revealKey={
-											isLastThoughtTextGroup && revealMessageKey
-												? `${revealMessageKey}:thought:${index}`
-												: undefined
-										}
 										{projectPath}
 										{streamingAnimationMode}
 									/>
@@ -287,18 +263,8 @@ $effect(() => {
 						<ContentBlockRouter
 							block={{ type: "text", text: group.text }}
 							isStreaming={isStreaming && isLastTextGroup}
-							revealKey={
-								isLastTextGroup && revealMessageKey
-									? `${revealMessageKey}:message:${index}`
-									: undefined
-							}
 							{projectPath}
 							{streamingAnimationMode}
-							onRevealActivityChange={(active) => {
-								if (isLastTextGroup) {
-									isMessageTextRevealActive = active;
-								}
-							}}
 						/>
 					{:else}
 						<ContentBlockRouter block={group.block} {projectPath} />
@@ -308,9 +274,13 @@ $effect(() => {
 
 			{#if hasMessageContent}
 				<div
-					class="absolute bottom-0 right-0 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 group-focus-within/assistant-message:opacity-100"
+					class="flex justify-end pt-1 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 group-focus-within/assistant-message:opacity-100"
 				>
-					<CopyButton text={textContent} size={14} variant="inline" />
+					<MessageMetaPill
+						text={textContent}
+						timestamp={safeMessage.receivedAt}
+						variant="assistant"
+					/>
 				</div>
 			{/if}
 		</div>

@@ -112,7 +112,6 @@ describe("desktop agent panel scene adapter", () => {
 			type: "assistant",
 			markdown: "JWT service is ready.",
 			isStreaming: true,
-			revealMessageKey: "assistant-1",
 			timestampMs: undefined,
 		});
 	});
@@ -341,7 +340,6 @@ describe("desktop agent panel scene adapter", () => {
 			type: "assistant",
 			markdown: "Final answer",
 			isStreaming: undefined,
-			revealMessageKey: "assistant-1",
 			timestampMs: undefined,
 		});
 	});
@@ -1048,6 +1046,7 @@ describe("desktop agent panel scene adapter", () => {
 				type: "assistant_merged",
 				key: "assistant-merged",
 				memberIds: ["assistant-1", "assistant-2"],
+				markdown: "Thinking…Done.",
 				message: {
 					chunks: [
 						{ type: "thought", block: { type: "text", text: "Thinking…" } },
@@ -1071,12 +1070,11 @@ describe("desktop agent panel scene adapter", () => {
 				],
 			},
 			isStreaming: true,
-			revealMessageKey: "assistant-merged",
 			timestampMs: undefined,
 		});
 	});
 
-	it("threads reveal keys and thinking start timestamps through virtualized fallback mapping", () => {
+	it("threads thinking start timestamps through virtualized fallback mapping", () => {
 		const startedAtMs = Date.parse("2026-05-01T00:00:00.000Z");
 		const assistantEntry = mapSessionEntryToConversationEntry(
 			{
@@ -1101,9 +1099,6 @@ describe("desktop agent panel scene adapter", () => {
 		);
 
 		expect(assistantEntry.type).toBe("assistant");
-		if (assistantEntry.type === "assistant") {
-			expect(assistantEntry.revealMessageKey).toBe("assistant-1");
-		}
 		expect(thinkingEntry).toEqual({
 			id: "thinking-indicator",
 			type: "thinking",

@@ -82,7 +82,7 @@
 			</div>
 		</div>
 		{#if durationLabel}
-					<span class="shrink-0 pt-0.5 font-mono text-sm text-muted-foreground/70">
+					<span class="shrink-0 pt-0.5 font-sans text-sm text-muted-foreground/70">
 				{durationLabel}
 			</span>
 		{/if}
@@ -90,7 +90,7 @@
 	{#if sourceRangeLabel || sourceExcerpt}
 		<div class="mt-1.5 space-y-1 pl-5">
 			{#if sourceRangeLabel}
-				<div class="font-mono text-sm text-muted-foreground/70">{sourceRangeLabel}</div>
+				<div class="font-sans text-sm text-muted-foreground/70">{sourceRangeLabel}</div>
 			{/if}
 			{#if sourceExcerpt}
 				<pre class="overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 px-2 py-1 text-sm text-muted-foreground">{sourceExcerpt}</pre>

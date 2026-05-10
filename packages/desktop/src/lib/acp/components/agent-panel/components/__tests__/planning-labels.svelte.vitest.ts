@@ -74,14 +74,13 @@ describe("shared conversation row coverage", () => {
 		expect(view.getByText("Done with the review.")).toBeTruthy();
 	});
 
-	it("accepts a streaming assistant reveal key in the shared conversation dispatcher", () => {
+	it("accepts a streaming assistant entry in the shared conversation dispatcher", () => {
 		const view = render(AgentPanelConversationEntry, {
 			entry: {
 				id: "assistant-entry",
 				type: "assistant",
 				markdown: "Streaming response",
 				isStreaming: true,
-				revealMessageKey: "scene:assistant-entry",
 			},
 		});
 

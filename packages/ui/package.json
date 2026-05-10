@@ -73,6 +73,10 @@
       "svelte": "./src/components/icons/index.ts",
       "default": "./src/components/icons/index.ts"
     },
+    "./icon-context": {
+      "svelte": "./src/lib/icon-context.ts",
+      "default": "./src/lib/icon-context.ts"
+    },
     "./checkpoint": {
       "svelte": "./src/components/checkpoint/index.ts",
       "default": "./src/components/checkpoint/index.ts"

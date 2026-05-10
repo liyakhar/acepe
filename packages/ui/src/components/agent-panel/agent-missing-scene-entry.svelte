@@ -23,7 +23,7 @@
 		<div class="font-medium text-foreground/80">{title}</div>
 		<div class="mt-0.5">{message}</div>
 		{#if diagnosticLabel}
-			<div class="mt-1 font-mono text-xs text-muted-foreground/60">{diagnosticLabel}</div>
+			<div class="mt-1 font-sans text-sm text-muted-foreground/60">{diagnosticLabel}</div>
 		{/if}
 	</div>
 </AgentToolCard>

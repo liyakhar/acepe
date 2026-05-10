@@ -57,6 +57,7 @@ pub(crate) fn normalize_message_id(
             part_id,
             message_id,
             session_id,
+            produced_at_monotonic_ms: _,
         } => {
             let resolved_message_id = resolve_message_id(tracker, session_id.as_ref(), message_id);
             SessionUpdate::AgentMessageChunk {
@@ -64,6 +65,7 @@ pub(crate) fn normalize_message_id(
                 part_id,
                 message_id: resolved_message_id,
                 session_id,
+                produced_at_monotonic_ms: None,
             }
         }
         SessionUpdate::AgentThoughtChunk {
@@ -147,6 +149,7 @@ mod tests {
             part_id: None,
             message_id: None,
             session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: None,
         }
     }
 
@@ -161,6 +164,7 @@ mod tests {
             part_id: None,
             message_id: None,
             session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: None,
         }
     }
 

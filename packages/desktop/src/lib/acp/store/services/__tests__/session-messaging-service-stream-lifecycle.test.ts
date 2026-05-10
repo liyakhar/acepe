@@ -141,6 +141,8 @@ function createCanonicalProjection(
 			configOptions: [],
 			autonomousEnabled: false,
 		},
+		tokenStream: overrides.tokenStream ?? new Map(),
+		clockAnchor: overrides.clockAnchor ?? null,
 		revision: overrides.revision ?? {
 			graphRevision: 1,
 			transcriptRevision: 1,
@@ -192,7 +194,33 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 	it("does not write completed lifecycle state into hot state", () => {
 		service.handleStreamComplete(sessionId);
 
-		expect(deps.hotStateManager.updateHotState).not.toHaveBeenCalled();
+		expectNoCanonicalOverlapHotStateWrites(
+			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
+		);
+		expect(deps.hotStateManager.updateHotState).toHaveBeenCalledWith(
+			sessionId,
+			expect.objectContaining({
+				pendingSendIntent: null,
+				observedTerminalTurn: expect.objectContaining({
+					turnId: null,
+				}),
+			})
+		);
+	});
+
+	it("records the observed terminal turn id for local waiting-state cleanup", () => {
+		service.handleStreamComplete(sessionId, "turn-1");
+
+		expect(deps.hotStateManager.updateHotState).toHaveBeenCalledWith(
+			sessionId,
+			expect.objectContaining({
+				pendingSendIntent: null,
+				observedTerminalTurn: expect.objectContaining({
+					turnId: "turn-1",
+					observedAt: expect.any(Number),
+				}),
+			})
+		);
 	});
 
 	it("does not clear streaming assistant entry on turn complete", () => {
@@ -201,7 +229,7 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 		expect(deps.entryManager.clearStreamingAssistantEntry).not.toHaveBeenCalled();
 	});
 
-	it("sends the machine event without relying on a hot state write", () => {
+	it("clears local pending send before sending the machine complete event", () => {
 		const callOrder: string[] = [];
 		(deps.connectionManager.sendResponseComplete as ReturnType<typeof vi.fn>).mockImplementation(
 			() => {
@@ -214,7 +242,10 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 
 		service.handleStreamComplete(sessionId);
 
-		expect(callOrder).toEqual(["sendResponseComplete"]);
+		expect(callOrder).toEqual(["updateHotState", "sendResponseComplete"]);
+		expectNoCanonicalOverlapHotStateWrites(
+			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
+		);
 	});
 
 	it("does not let stale completed hot state suppress the stream-complete event", () => {
@@ -229,7 +260,9 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 		service.handleStreamComplete(sessionId);
 
 		expect(deps.connectionManager.sendResponseComplete).toHaveBeenCalledWith(sessionId);
-		expect(deps.hotStateManager.updateHotState).not.toHaveBeenCalled();
+		expectNoCanonicalOverlapHotStateWrites(
+			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
+		);
 		expect(deps.entryManager.finalizeStreamingEntries).toHaveBeenCalledWith(sessionId);
 	});
 
@@ -245,7 +278,9 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 		service.handleStreamComplete(sessionId);
 
 		expect(deps.connectionManager.sendResponseComplete).toHaveBeenCalledWith(sessionId);
-		expect(deps.hotStateManager.updateHotState).not.toHaveBeenCalled();
+		expectNoCanonicalOverlapHotStateWrites(
+			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
+		);
 	});
 
 	it("is idempotent when canonical turn state is already completed and machine is ready", () => {
@@ -260,7 +295,9 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 		service.handleStreamComplete(sessionId);
 
 		expect(deps.connectionManager.sendResponseComplete).not.toHaveBeenCalled();
-		expect(deps.hotStateManager.updateHotState).not.toHaveBeenCalled();
+		expectNoCanonicalOverlapHotStateWrites(
+			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
+		);
 	});
 
 	it("does not let stale failed hot state suppress a turnComplete", () => {
@@ -272,7 +309,9 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 		service.handleStreamComplete(sessionId, "turn-1");
 
 		expect(deps.connectionManager.sendResponseComplete).toHaveBeenCalledWith(sessionId);
-		expect(deps.hotStateManager.updateHotState).not.toHaveBeenCalled();
+		expectNoCanonicalOverlapHotStateWrites(
+			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
+		);
 	});
 
 	it("ignores a late turnComplete for a canonical failed turn", () => {
@@ -293,7 +332,9 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 		service.handleStreamComplete(sessionId, "turn-1");
 
 		expect(deps.connectionManager.sendResponseComplete).not.toHaveBeenCalled();
-		expect(deps.hotStateManager.updateHotState).not.toHaveBeenCalled();
+		expectNoCanonicalOverlapHotStateWrites(
+			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
+		);
 		expect(deps.entryManager.finalizeStreamingEntries).toHaveBeenCalledWith(sessionId);
 	});
 
@@ -306,7 +347,9 @@ describe("SessionMessagingService.handleStreamComplete", () => {
 		service.handleStreamComplete(sessionId);
 
 		expect(deps.connectionManager.sendResponseComplete).toHaveBeenCalledWith(sessionId);
-		expect(deps.hotStateManager.updateHotState).not.toHaveBeenCalled();
+		expectNoCanonicalOverlapHotStateWrites(
+			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
+		);
 	});
 
 	it("finalizes streaming entries so pending tool calls stop shimmering", () => {

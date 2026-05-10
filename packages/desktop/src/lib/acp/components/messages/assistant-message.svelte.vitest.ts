@@ -153,6 +153,10 @@ describe("AssistantMessage thinking auto-scroll", () => {
 			isStreaming: true,
 		});
 
+		await waitFor(() => {
+			expect(resizeObservers.length).toBeGreaterThan(0);
+		});
+
 		const thinkingContainer = view.container.querySelector(".thinking-content");
 		if (!(thinkingContainer instanceof HTMLDivElement)) {
 			throw new Error("Missing thinking content container");
@@ -179,6 +183,10 @@ describe("AssistantMessage thinking auto-scroll", () => {
 			get: () => 20,
 		});
 
+		let scrollIntoViewCalls = 0;
+		vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {
+			scrollIntoViewCalls += 1;
+		});
 		scrollWrites = 0;
 
 		await fireEvent.click(view.getByTestId("grow-line"));
@@ -190,8 +198,8 @@ describe("AssistantMessage thinking auto-scroll", () => {
 
 		await flushAnimationFrames();
 
-		expect(scrollWrites).toBe(1);
-		expect(scrollTopValue).toBe(60);
+		expect(scrollWrites).toBe(0);
+		expect(scrollIntoViewCalls).toBe(1);
 	});
 
 	it("keeps following thinking content that grows inside the existing DOM subtree", async () => {
@@ -209,6 +217,10 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		const view = render(AssistantMessageComponent, {
 			message: createStreamingThoughtMessage(),
 			isStreaming: true,
+		});
+
+		await waitFor(() => {
+			expect(resizeObservers.length).toBeGreaterThan(0);
 		});
 
 		const thinkingContainer = view.container.querySelector(".thinking-content");
@@ -230,6 +242,10 @@ describe("AssistantMessage thinking auto-scroll", () => {
 			get: () => thinkingContainer.querySelectorAll(".stub-line").length * 20,
 		});
 
+		let scrollIntoViewCalls = 0;
+		vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {
+			scrollIntoViewCalls += 1;
+		});
 		expect(thinkingContainer.querySelectorAll(".stub-line")).toHaveLength(1);
 
 		await fireEvent.click(view.getByTestId("grow-line"));
@@ -238,7 +254,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 
 		await waitFor(() => {
 			expect(thinkingContainer.querySelectorAll(".stub-line")).toHaveLength(2);
-			expect(scrollTopValue).toBe(40);
+			expect(scrollIntoViewCalls).toBe(1);
 		});
 
 		await fireEvent.click(view.getByTestId("grow-line"));
@@ -247,7 +263,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 
 		await waitFor(() => {
 			expect(thinkingContainer.querySelectorAll(".stub-line")).toHaveLength(3);
-			expect(scrollTopValue).toBe(60);
+			expect(scrollIntoViewCalls).toBe(2);
 		});
 	});
 
@@ -280,7 +296,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		);
 	});
 
-	it("keeps trailing non-text blocks hidden while the last text group is still streaming", async () => {
+	it("keeps trailing non-text blocks visible in the legacy assistant renderer", async () => {
 		const view = render(AssistantMessageComponent, {
 			message: createStreamingMessageWithTrailingBlocks("Answer"),
 			isStreaming: true,
@@ -288,7 +304,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 
 		await waitFor(() => {
 			expect(view.getByTestId("text-block").textContent).toBe("Answer");
-			expect(view.queryAllByTestId("other-block")).toHaveLength(0);
+			expect(view.queryAllByTestId("other-block")).toHaveLength(2);
 		});
 
 		await view.rerender({
@@ -301,7 +317,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		});
 	});
 
-	it("keeps trailing non-text blocks hidden until the text reveal fully settles", async () => {
+	it("does not let a child text fake control trailing block visibility", async () => {
 		const message = createStreamingMessageWithTrailingBlocks("Answer [reveal-active]");
 		const view = render(AssistantMessageComponent, {
 			message,
@@ -310,7 +326,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 
 		await waitFor(() => {
 			expect(view.getByTestId("text-block").textContent).toBe("Answer");
-			expect(view.queryAllByTestId("other-block")).toHaveLength(0);
+			expect(view.queryAllByTestId("other-block")).toHaveLength(2);
 		});
 
 		await view.rerender({
@@ -319,7 +335,7 @@ describe("AssistantMessage thinking auto-scroll", () => {
 		});
 
 		await waitFor(() => {
-			expect(view.queryAllByTestId("other-block")).toHaveLength(0);
+			expect(view.queryAllByTestId("other-block")).toHaveLength(2);
 		});
 
 		await fireEvent.click(view.getByTestId("finish-reveal"));

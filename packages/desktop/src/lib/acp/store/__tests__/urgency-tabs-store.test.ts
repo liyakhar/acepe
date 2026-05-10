@@ -148,6 +148,8 @@ function createSessionStore(input: {
 							configOptions: [],
 							autonomousEnabled: false,
 						},
+						tokenStream: new Map(),
+						clockAnchor: null,
 						revision: {
 							graphRevision: 1,
 							transcriptRevision: 1,

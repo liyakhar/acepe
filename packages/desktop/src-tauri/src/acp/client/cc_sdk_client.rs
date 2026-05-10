@@ -4204,7 +4204,10 @@ mod tests {
             .expect("list persisted interaction events");
         assert!(stored_events
             .iter()
-            .any(|event| event.event_kind == "interaction_transition"));
+            .any(|event| event.event_kind == "interaction_snapshot"));
+        assert!(stored_events
+            .iter()
+            .all(|event| event.event_kind != "projection_update"));
     }
 
     #[tokio::test]
@@ -5775,6 +5778,7 @@ mod tests {
                 part_id: None,
                 message_id: None,
                 session_id: Some("session-ask".to_string()),
+                produced_at_monotonic_ms: None,
             },
         )
         .await;
@@ -6846,7 +6850,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_streaming_bridge_fails_empty_bash_completion_when_callback_never_arrives() {
+    async fn run_streaming_bridge_completes_empty_bash_when_callback_never_arrives() {
         let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
         let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
         let context = StreamingBridgeContext {
@@ -6914,7 +6918,7 @@ mod tests {
         run_streaming_bridge(stream, "session-bridge".to_string(), context).await;
 
         let captured = sink.lock().expect("sink lock");
-        let failure = captured.iter().find_map(|event| match &event.payload {
+        let terminal_update = captured.iter().find_map(|event| match &event.payload {
             crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
                 match update.as_ref() {
                     SessionUpdate::ToolCallUpdate { update, .. }
@@ -6928,14 +6932,9 @@ mod tests {
             _ => None,
         });
 
-        let completion = failure.expect("expected a terminal bash tool update");
-        assert_eq!(completion.status, Some(ToolCallStatus::Failed));
-        assert_eq!(
-            completion.failure_reason.as_deref(),
-            Some(
-                "Result unavailable: the agent resumed after this tool call but did not provide stdout/stderr to Acepe."
-            )
-        );
+        let completion = terminal_update.expect("expected a terminal bash tool update");
+        assert_eq!(completion.status, Some(ToolCallStatus::Completed));
+        assert_eq!(completion.failure_reason, None);
         assert_eq!(
             completion
                 .result

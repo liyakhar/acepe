@@ -6,7 +6,7 @@
 	interface Props {
 		/** Visual variant: default (accent), muted (row), or card (e.g. web search). */
 		variant?: Variant;
-		/** Optional extra Tailwind classes (e.g. flex, font-mono). */
+		/** Optional extra Tailwind classes (e.g. flex, shadow-sm). */
 		class?: string;
 		dataTestid?: string;
 		children: Snippet;

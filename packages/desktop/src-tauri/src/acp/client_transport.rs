@@ -330,15 +330,27 @@ pub(crate) async fn persist_interaction_transition(
     };
 
     if let Some(db) = db {
-        if let Err(error) = SessionJournalEventRepository::append_interaction_transition(
-            db,
-            session_id,
-            interaction_id,
-            state,
-            response,
-        )
-        .await
+        let persist_result = if interaction_patch.kind == InteractionKind::Question
+            && interaction_patch.state == InteractionState::Answered
         {
+            SessionJournalEventRepository::append_interaction_snapshot(
+                db,
+                session_id,
+                interaction_patch.clone(),
+            )
+            .await
+        } else {
+            SessionJournalEventRepository::append_interaction_transition(
+                db,
+                session_id,
+                interaction_id,
+                state,
+                response,
+            )
+            .await
+        };
+
+        if let Err(error) = persist_result {
             tracing::error!(
                 error = %error,
                 session_id = %session_id,

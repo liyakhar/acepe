@@ -1,8 +1,8 @@
 <script lang="ts">
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getContext, untrack } from "svelte";
+import { getContext } from "svelte";
 import type { FileGitStatus } from "$lib/services/converted-session-types.js";
-import type { AgentTextRevealState } from "@acepe/ui/agent-panel";
+import type { TokenRevealCss } from "@acepe/ui/agent-panel";
 import {
 	GITHUB_COMMIT_SHA_PATTERN,
 	GITHUB_GIT_REF_PATTERN,
@@ -30,10 +30,6 @@ import { mountFileBadges } from "./logic/mount-file-badges.js";
 import { mountGitHubBadges } from "./logic/mount-github-badges.js";
 import { parseContentBlocks } from "./logic/parse-content-blocks.js";
 import {
-	createStreamingRevealController,
-	type StreamingRevealController,
-} from "./logic/create-streaming-reveal-controller.svelte.js";
-import {
 	DEFAULT_STREAMING_ANIMATION_MODE,
 	type StreamingAnimationMode,
 } from "../../types/streaming-animation-mode.js";
@@ -44,22 +40,6 @@ const STREAMING_SYNC_RESULT = {
 	fromCache: false,
 	needsAsync: false,
 } satisfies SyncRenderResult;
-
-const MAX_REVEAL_CACHE_ENTRIES = 256;
-const revealedMessageTexts = new Map<string, string>();
-const revealedProgressTexts = new Map<string, string>();
-
-function rememberRevealText(cache: Map<string, string>, key: string, value: string): void {
-	cache.delete(key);
-	cache.set(key, value);
-	if (cache.size <= MAX_REVEAL_CACHE_ENTRIES) {
-		return;
-	}
-	const oldestKey = cache.keys().next().value;
-	if (oldestKey !== undefined) {
-		cache.delete(oldestKey);
-	}
-}
 
 // Get session context (set by VirtualizedEntryList)
 const sessionContext = useSessionContext();
@@ -78,49 +58,39 @@ interface Props {
 	text: string;
 	/** Whether content is currently streaming */
 	isStreaming?: boolean;
-	revealKey?: string;
-	textRevealState?: AgentTextRevealState;
+	tokenRevealCss?: TokenRevealCss;
 	/**
 	 * Project path for opening files in panels.
 	 * If not provided, will use projectPath from session context.
 	 */
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
-	onRevealActivityChange?: (active: boolean) => void;
 }
-
-type StreamingWordFadeParams = {
-	active: boolean;
-	marker: string;
-	resetKey: string;
-};
-
-type TextSegment = {
-	text: string;
-	isWordLike: boolean;
-};
-
-type AppearanceRecord = {
-	length: number;
-	time: number;
-};
 
 let {
 	text,
 	isStreaming = false,
-	revealKey: _revealKey,
-	textRevealState,
+	tokenRevealCss,
 	projectPath: propProjectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
-	onRevealActivityChange,
 }: Props = $props();
 
 // Use context projectPath if no prop provided, otherwise use prop (backward compatibility)
 const projectPath = $derived(propProjectPath ?? contextProjectPath);
-const shouldPaceTextReveal = $derived(textRevealState?.policy === "pace");
-const effectiveRevealKey = $derived(textRevealState?.key ?? (_revealKey?.trim() ?? ""));
+const renderText = $derived(text);
 
 const panelStore = getPanelStore();
+const tokenRevealInlineStyle = $derived.by(() => {
+	if (tokenRevealCss === undefined) {
+		return undefined;
+	}
+
+	return [
+		`--token-reveal-baseline-ms:${String(tokenRevealCss.baselineMs)}ms`,
+		`--token-reveal-step-ms:${String(tokenRevealCss.tokStepMs)}ms`,
+		`--token-reveal-fade-ms:${String(tokenRevealCss.tokFadeDurMs)}ms`,
+	].join(";");
+});
 
 // Link preview dialog state
 
@@ -129,17 +99,6 @@ let markdownContainerRef: HTMLDivElement | null = $state(null);
 
 let gitStatusByPath = $state<ReadonlyMap<string, FileGitStatus> | null>(null);
 let lastGitStatusRequestKey = "";
-const reveal: StreamingRevealController = createStreamingRevealController(
-	untrack(() => streamingAnimationMode)
-);
-let hasStreamingSession = $state(false);
-let wasStreaming = false;
-let hadPacedTextReveal = false;
-let suppressSettledRevealActivity = $state(false);
-let seedRevealFromSource = $state(false);
-let seedRevealDisplayedText = $state<string | null>(null);
-let lastRevealKey = $state("");
-
 // Fetch and cache repo context for enhancing commit badges
 let repoContext = $state<RepoContext | null>(null);
 
@@ -169,146 +128,11 @@ function htmlNeedsBadgeMount(html: string | null): boolean {
 	return html.includes("file-path-badge-placeholder") || html.includes("github-badge-placeholder");
 }
 
-$effect(() => {
-	const revealKey = effectiveRevealKey;
-	if (revealKey === lastRevealKey) {
-		return;
-	}
-
-	reveal.reset();
-	lastRevealKey = revealKey;
-	if (!revealKey) {
-		if (!isStreaming && !shouldPaceTextReveal) {
-			hasStreamingSession = false;
-			wasStreaming = false;
-			suppressSettledRevealActivity = true;
-		}
-		seedRevealFromSource = false;
-		seedRevealDisplayedText = null;
-		return;
-	}
-
-	if (shouldPaceTextReveal) {
-		seedRevealFromSource = false;
-		const explicitSeed = textRevealState?.seedDisplayedText;
-		seedRevealDisplayedText =
-			explicitSeed !== undefined &&
-			explicitSeed.length > 0 &&
-			explicitSeed.length < text.length &&
-			text.startsWith(explicitSeed)
-				? explicitSeed
-				: null;
-		return;
-	}
-
-	const priorText = revealedMessageTexts.get(revealKey);
-	seedRevealFromSource =
-		!isStreaming &&
-		priorText !== undefined &&
-		(text === priorText || text.startsWith(priorText) || priorText.startsWith(text));
-	const priorProgressText = revealedProgressTexts.get(revealKey);
-	seedRevealDisplayedText =
-		priorProgressText !== undefined &&
-		priorProgressText.length > 0 &&
-		priorProgressText.length < text.length &&
-		text.startsWith(priorProgressText)
-			? priorProgressText
-			: null;
-	rememberRevealText(revealedMessageTexts, revealKey, text);
-});
+const isRenderingPartialText = $derived(isStreaming && tokenRevealCss === undefined);
+const shouldDeferSettledRender = $derived(isRenderingPartialText);
 
 $effect(() => {
-	if (isStreaming || shouldPaceTextReveal) {
-		hasStreamingSession = true;
-		suppressSettledRevealActivity = false;
-		if (shouldPaceTextReveal) {
-			hadPacedTextReveal = true;
-		}
-		if (isStreaming) {
-			wasStreaming = true;
-		}
-		const seedOptions =
-			seedRevealDisplayedText === null
-				? {
-						seedFromSource: seedRevealFromSource,
-						paceCompletionWithStreaming: shouldPaceTextReveal,
-					}
-				: {
-						seedFromSource: seedRevealFromSource,
-						seedDisplayedText: seedRevealDisplayedText,
-						paceCompletionWithStreaming: shouldPaceTextReveal,
-					};
-		reveal.setState(text, isStreaming, seedOptions);
-		seedRevealFromSource = false;
-		seedRevealDisplayedText = null;
-		return;
-	}
-
-	if (hadPacedTextReveal) {
-		hadPacedTextReveal = false;
-		hasStreamingSession = false;
-		wasStreaming = false;
-		suppressSettledRevealActivity = true;
-		reveal.reset();
-		return;
-	}
-
-	if (!hasStreamingSession) {
-		reveal.reset();
-		return;
-	}
-
-	if (wasStreaming) {
-		wasStreaming = false;
-		if (reveal.displayedText !== text) {
-			reveal.setState(text, false);
-		}
-		return;
-	}
-
-	if (reveal.isRevealActive) {
-		if (reveal.displayedText !== text) {
-			reveal.setState(text, false);
-		}
-		return;
-	}
-
-	if (!isStreaming) {
-		hasStreamingSession = false;
-		reveal.reset();
-	}
-});
-
-const isRenderingReveal = $derived(isStreaming || shouldPaceTextReveal || reveal.isRevealActive);
-const isClearingRevealKeyThisRender = $derived(!effectiveRevealKey && lastRevealKey.length > 0);
-const isClearingCompletedPacedReveal = $derived(
-	!isStreaming && !shouldPaceTextReveal && hadPacedTextReveal
-);
-const isRevealActivityActive = $derived(
-	isStreaming ||
-		(!isClearingRevealKeyThisRender &&
-			!isClearingCompletedPacedReveal &&
-			!suppressSettledRevealActivity &&
-			reveal.isRevealActive)
-);
-const shouldDeferSettledRender = $derived(isStreaming || shouldPaceTextReveal);
-
-$effect(() => {
-	if (lastRevealKey && reveal.displayedText.length > 0) {
-		rememberRevealText(revealedProgressTexts, lastRevealKey, reveal.displayedText);
-	}
-	onRevealActivityChange?.(isRevealActivityActive);
-});
-
-$effect(() => {
-	return () => {
-		onRevealActivityChange?.(false);
-		reveal.destroy();
-	};
-});
-
-$effect(() => {
-	if (!projectPath || repoContext || shouldDeferSettledRender || !textNeedsRepoContext(text)) {
+	if (!projectPath || repoContext || shouldDeferSettledRender || !textNeedsRepoContext(renderText)) {
 		return;
 	}
 	// Fetch repo context once on mount
@@ -331,7 +155,7 @@ const syncResult = $derived.by(() => {
 		return STREAMING_SYNC_RESULT;
 	}
 
-	return renderMarkdownSync(text, repoContext ?? undefined);
+	return renderMarkdownSync(renderText, repoContext ?? undefined);
 });
 
 // Track async state only when needed (large messages or renderer not ready)
@@ -358,7 +182,7 @@ $effect(() => {
 	}
 
 	const result = syncResult;
-	const currentText = text;
+	const currentText = renderText;
 	const currentRepoContext = repoContext;
 	const requestKey = getAsyncRequestKey(currentText, currentRepoContext);
 
@@ -426,7 +250,7 @@ $effect(() => {
 
 // Determine what to render
 const visibleHtml = $derived.by(() => {
-	if (isRenderingReveal) return null;
+	if (isRenderingPartialText) return null;
 	return syncResult.html ?? asyncHtml ?? null;
 });
 const error = $derived(asyncError);
@@ -436,9 +260,9 @@ const isLoading = $derived(syncResult.needsAsync && asyncPending);
 // File badge placeholders stay as inline <span>s — mounted as Svelte components below.
 const contentBlocks = $derived(visibleHtml ? parseContentBlocks(visibleHtml) : []);
 const hasSpecialBlocks = $derived(contentBlocks.some((block) => block.type !== "html"));
-const streamingText = $derived(isRenderingReveal ? reveal.displayedText : "");
+const streamingText = $derived(isRenderingPartialText ? renderText : "");
 const streamingSyncResult = $derived.by(() => {
-	if (!isRenderingReveal || streamingText.length === 0) {
+	if (!isRenderingPartialText || streamingText.length === 0) {
 		return STREAMING_SYNC_RESULT;
 	}
 
@@ -493,273 +317,6 @@ function isExternalUrl(href: string): boolean {
  */
 function openExternalLink(url: string) {
 	openUrl(url);
-}
-
-const STREAMING_WORD_FADE_DURATION_MS = 300;
-
-function shouldSkipWordFade(textNode: Text): boolean {
-	const parent = textNode.parentElement;
-	if (!parent) {
-		return true;
-	}
-
-	return (
-		parent.closest(
-			"[data-reveal-skip], pre, code, button, .file-path-badge, .file-path-badge-placeholder, .github-badge-placeholder"
-		) !== null
-	);
-}
-
-function segmentTextForFade(textValue: string): TextSegment[] {
-	const segments: TextSegment[] = [];
-	const parts = textValue.split(/(\s+)/);
-
-	for (const part of parts) {
-		if (part.length === 0) {
-			continue;
-		}
-
-		segments.push({
-			text: part,
-			isWordLike: /^\s+$/.test(part) === false,
-		});
-	}
-
-	return segments;
-}
-
-/**
- * Find the time at which the character at `offset` was first revealed.
- * History entries map cumulative text length to the timestamp at which that length
- * was first observed; the smallest entry whose length > offset owns that character.
- * Returns null when no entry covers the offset (i.e., it predates all retained history).
- */
-function findFirstSeenTime(history: AppearanceRecord[], offset: number): number | null {
-	let lo = 0;
-	let hi = history.length;
-	while (lo < hi) {
-		const mid = (lo + hi) >>> 1;
-		if (history[mid].length > offset) {
-			hi = mid;
-		} else {
-			lo = mid + 1;
-		}
-	}
-	return lo < history.length ? history[lo].time : null;
-}
-
-/**
- * Drop history entries that can no longer influence the visible fade window.
- * When pruning, retain a "fence" entry whose time is just past the cutoff so
- * offsets owned by pruned entries still resolve to "past the fade window"
- * instead of being inherited by the next active entry.
- */
-function pruneAppearanceHistory(history: AppearanceRecord[], now: number): AppearanceRecord[] {
-	if (history.length === 0) {
-		return history;
-	}
-
-	const cutoff = now - STREAMING_WORD_FADE_DURATION_MS;
-	let firstActive = -1;
-	for (let i = 0; i < history.length; i += 1) {
-		if (history[i].time >= cutoff) {
-			firstActive = i;
-			break;
-		}
-	}
-
-	const fenceTime = cutoff - 1;
-
-	if (firstActive === -1) {
-		const last = history[history.length - 1];
-		return [{ length: last.length, time: fenceTime }];
-	}
-
-	if (firstActive === 0) {
-		return history;
-	}
-
-	const fence = history[firstActive - 1];
-	return [{ length: fence.length, time: fenceTime }, ...history.slice(firstActive)];
-}
-
-function collectWordFadeTextNodes(node: HTMLElement): Text[] {
-	const textNodes: Text[] = [];
-	const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
-		acceptNode(textNode) {
-			return textNode instanceof Text && !shouldSkipWordFade(textNode)
-				? NodeFilter.FILTER_ACCEPT
-				: NodeFilter.FILTER_REJECT;
-		},
-	});
-
-	let currentNode = walker.nextNode();
-	while (currentNode !== null) {
-		if (currentNode instanceof Text) {
-			textNodes.push(currentNode);
-		}
-		currentNode = walker.nextNode();
-	}
-
-	return textNodes;
-}
-
-function getWordFadeTextContent(node: HTMLElement): string {
-	let combined = "";
-	for (const textNode of collectWordFadeTextNodes(node)) {
-		combined += textNode.nodeValue ?? "";
-	}
-	return combined;
-}
-
-/**
- * Wrap a single text node's contents with `.sd-word-fade` spans for words whose
- * first-appearance-time is within the current fade window. Each span carries an
- * inline `animation-delay: -Xms` so its CSS animation picks up where the prior
- * span (wiped by the canonical `{@html}` re-render) left off — making the fade
- * appear continuous across re-renders.
- */
-function wrapTextNodeWithContinuousFade(
-	textNode: Text,
-	baseOffset: number,
-	history: AppearanceRecord[],
-	now: number
-): void {
-	const textValue = textNode.nodeValue ?? "";
-	const parent = textNode.parentNode;
-	if (!parent || textValue.length === 0) {
-		return;
-	}
-
-	const segments = segmentTextForFade(textValue);
-	if (segments.length === 0) {
-		return;
-	}
-
-	const fragment = document.createDocumentFragment();
-	let offset = baseOffset;
-	let wrappedAny = false;
-
-	for (const segment of segments) {
-		if (!segment.isWordLike) {
-			fragment.append(document.createTextNode(segment.text));
-			offset += segment.text.length;
-			continue;
-		}
-
-		const firstSeen = findFirstSeenTime(history, offset);
-		const elapsed = firstSeen === null ? Number.POSITIVE_INFINITY : now - firstSeen;
-
-		if (elapsed >= STREAMING_WORD_FADE_DURATION_MS) {
-			fragment.append(document.createTextNode(segment.text));
-		} else {
-			const span = document.createElement("span");
-			span.className = "sd-word-fade";
-			// Negative delay fast-forwards the CSS animation by `elapsed` ms.
-			// Round to whole ms so identical re-renders produce identical inline styles.
-			const delayMs = Math.max(0, Math.floor(elapsed));
-			if (delayMs > 0) {
-				span.style.animationDelay = `-${delayMs}ms`;
-			}
-			span.textContent = segment.text;
-			fragment.append(span);
-			wrappedAny = true;
-		}
-
-		offset += segment.text.length;
-	}
-
-	if (wrappedAny || segments.some((s) => !s.isWordLike)) {
-		parent.replaceChild(fragment, textNode);
-	}
-}
-
-function applyStreamingWordFade(node: HTMLElement, history: AppearanceRecord[], now: number): void {
-	if (history.length === 0) {
-		return;
-	}
-
-	const textNodes = collectWordFadeTextNodes(node);
-	let cumulativeOffset = 0;
-	for (const textNode of textNodes) {
-		const textValue = textNode.nodeValue ?? "";
-		wrapTextNodeWithContinuousFade(textNode, cumulativeOffset, history, now);
-		cumulativeOffset += textValue.length;
-	}
-}
-
-function canonicalStreamingWordFade(node: HTMLElement, initialParams: StreamingWordFadeParams) {
-	let params = initialParams;
-	let lastFadeTextContent = "";
-	let lastResetKey = initialParams.resetKey;
-	let scheduledVersion = 0;
-	let history: AppearanceRecord[] = [];
-
-	function reset(): void {
-		history = [];
-		lastFadeTextContent = "";
-	}
-
-	function schedule(): void {
-		scheduledVersion += 1;
-		const version = scheduledVersion;
-		queueMicrotask(() => {
-			if (version !== scheduledVersion) {
-				return;
-			}
-
-			if (params.resetKey !== lastResetKey) {
-				reset();
-				lastResetKey = params.resetKey;
-			}
-
-			if (!params.active || params.marker.length === 0) {
-				reset();
-				return;
-			}
-
-			const currentFadeTextContent = getWordFadeTextContent(node);
-			const isPrefixGrowth = currentFadeTextContent.startsWith(lastFadeTextContent);
-
-			if (!isPrefixGrowth) {
-				history = [];
-			}
-
-			const now =
-				typeof performance !== "undefined" && typeof performance.now === "function"
-					? performance.now()
-					: Date.now();
-
-			if (currentFadeTextContent.length === 0) {
-				lastFadeTextContent = "";
-				return;
-			}
-
-			if (
-				history.length === 0 ||
-				currentFadeTextContent.length > lastFadeTextContent.length ||
-				!isPrefixGrowth
-			) {
-				history.push({ length: currentFadeTextContent.length, time: now });
-			}
-
-			history = pruneAppearanceHistory(history, now);
-			applyStreamingWordFade(node, history, now);
-			lastFadeTextContent = currentFadeTextContent;
-		});
-	}
-
-	schedule();
-
-	return {
-		update(nextParams: StreamingWordFadeParams) {
-			params = nextParams;
-			schedule();
-		},
-		destroy() {
-			scheduledVersion += 1;
-		},
-	};
 }
 
 /**
@@ -844,7 +401,7 @@ function handleKeydown(event: KeyboardEvent) {
 	<!-- Show error state -->
 	<div class="text-sm text-destructive">
 		<p>{`Markdown rendering failed: ${error}`}</p>
-		<p class="whitespace-pre-wrap mt-2">{text}</p>
+		<p class="whitespace-pre-wrap mt-2">{renderText}</p>
 	</div>
 {:else if visibleHtml}
 	{#if hasSpecialBlocks}
@@ -852,7 +409,9 @@ function handleKeydown(event: KeyboardEvent) {
 		<div
 			bind:this={markdownContainerRef}
 			class="markdown-content text-sm text-foreground"
+			data-token-reveal-mode={tokenRevealCss?.mode}
 			role="button"
+			style={tokenRevealInlineStyle}
 			tabindex="0"
 			onclick={handleClick}
 			onkeydown={handleKeydown}
@@ -864,7 +423,9 @@ function handleKeydown(event: KeyboardEvent) {
 		<div
 			bind:this={markdownContainerRef}
 			class="markdown-content text-sm text-foreground"
+			data-token-reveal-mode={tokenRevealCss?.mode}
 			role="button"
+			style={tokenRevealInlineStyle}
 			tabindex="0"
 			onclick={handleClick}
 			onkeydown={handleKeydown}
@@ -872,29 +433,28 @@ function handleKeydown(event: KeyboardEvent) {
 			{@html visibleHtml}
 		</div>
 	{/if}
-{:else if isRenderingReveal}
+{:else if isRenderingPartialText}
 	<div
 		bind:this={markdownContainerRef}
 		class="markdown-content text-sm text-foreground"
+		data-token-reveal-mode={tokenRevealCss?.mode}
 		role="button"
+		style={tokenRevealInlineStyle}
 		tabindex="0"
 		onclick={handleClick}
 		onkeydown={handleKeydown}
-		use:canonicalStreamingWordFade={{
-			active: isRenderingReveal && streamingHtml !== null && !streamingHasSpecialBlocks,
-			marker: streamingHtml ?? "",
-			resetKey: lastRevealKey,
-		}}
 	>
 		{#if streamingHtml}
-			{#if streamingHasSpecialBlocks}
-				<ContentBlockRenderer
-					blocks={streamingContentBlocks}
-					repoContext={repoContext ?? undefined}
-				/>
-			{:else}
-				{@html streamingHtml}
-			{/if}
+			{#key streamingHtml}
+				{#if streamingHasSpecialBlocks}
+					<ContentBlockRenderer
+						blocks={streamingContentBlocks}
+						repoContext={repoContext ?? undefined}
+					/>
+				{:else}
+					{@html streamingHtml}
+				{/if}
+			{/key}
 		{:else}
 			<div class="markdown-loading text-sm text-foreground whitespace-pre-wrap">
 				{streamingText}
@@ -904,12 +464,12 @@ function handleKeydown(event: KeyboardEvent) {
 {:else if isLoading}
 	<!-- Show plain text with min-height while async rendering (rare: large messages only) -->
 	<div class="markdown-loading text-sm text-foreground whitespace-pre-wrap">
-		{text}
+		{renderText}
 	</div>
 {:else}
 	<!-- Fallback: show plain text -->
 	<p class="text-sm text-foreground whitespace-pre-wrap">
-		{text}
+		{renderText}
 	</p>
 {/if}
 

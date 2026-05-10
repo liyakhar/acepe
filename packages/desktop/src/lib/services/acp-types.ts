@@ -289,7 +289,7 @@ export type TranscriptEntryRole = "user" | "assistant" | "tool" | "error"
 
 export type TranscriptSegment = { kind: "text"; segmentId: string; text: string }
 
-export type TranscriptEntry = { entryId: string; role: TranscriptEntryRole; segments: TranscriptSegment[] }
+export type TranscriptEntry = { entryId: string; role: TranscriptEntryRole; segments: TranscriptSegment[]; attemptId?: string | null }
 
 export type TranscriptSnapshot = { revision: number; entries: TranscriptEntry[] }
 
@@ -455,7 +455,7 @@ graphRevision: number;
  * reservation until the token is claimed (Unit 3) or expires after 30 s
  * of inactivity.
  */
-openToken: string; agentId: CanonicalAgentId; projectPath: string; worktreePath: string | null; sourcePath: string | null; transcriptSnapshot: TranscriptSnapshot; sessionTitle: string; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; turnState: SessionTurnState; messageCount: number; lifecycle: SessionGraphLifecycle; capabilities: SessionGraphCapabilities; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null }
+openToken: string; agentId: CanonicalAgentId; projectPath: string; worktreePath: string | null; sourcePath: string | null; transcriptSnapshot: TranscriptSnapshot; sessionTitle: string; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; turnState: SessionTurnState; messageCount: number; lastAgentMessageId?: string | null; lifecycle: SessionGraphLifecycle; capabilities: SessionGraphCapabilities; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null }
 
 /**
  * Payload for the `missing` outcome — no persisted content was found for the
@@ -498,13 +498,15 @@ export type SessionGraphActivityKind = "awaiting_model" | "running_operation" | 
 
 export type SessionGraphActivity = { kind: SessionGraphActivityKind; activeOperationCount: number; activeSubagentCount: number; dominantOperationId?: string | null; blockingInteractionId?: string | null }
 
-export type SessionStateGraph = { requestedSessionId: string; canonicalSessionId: string; isAlias: boolean; agentId: CanonicalAgentId; projectPath: string; worktreePath?: string | null; sourcePath?: string | null; revision: SessionGraphRevision; transcriptSnapshot: TranscriptSnapshot; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; turnState: SessionTurnState; messageCount: number; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null; lifecycle: SessionGraphLifecycle; activity: SessionGraphActivity; capabilities: SessionGraphCapabilities }
+export type SessionStateGraph = { requestedSessionId: string; canonicalSessionId: string; isAlias: boolean; agentId: CanonicalAgentId; projectPath: string; worktreePath?: string | null; sourcePath?: string | null; revision: SessionGraphRevision; transcriptSnapshot: TranscriptSnapshot; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; turnState: SessionTurnState; messageCount: number; lastAgentMessageId?: string | null; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null; lifecycle: SessionGraphLifecycle; activity: SessionGraphActivity; capabilities: SessionGraphCapabilities }
 
 export type SessionStateSnapshotMaterialization = { graph: SessionStateGraph }
 
-export type SessionStateDelta = { fromRevision: SessionGraphRevision; toRevision: SessionGraphRevision; activity: SessionGraphActivity; turnState: SessionTurnState; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null; transcriptOperations: TranscriptDeltaOperation[]; operationPatches: OperationSnapshot[]; interactionPatches: InteractionSnapshot[]; changedFields?: string[] }
+export type SessionStateDelta = { fromRevision: SessionGraphRevision; toRevision: SessionGraphRevision; activity: SessionGraphActivity; turnState: SessionTurnState; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null; lastAgentMessageId?: string | null; transcriptOperations: TranscriptDeltaOperation[]; operationPatches: OperationSnapshot[]; interactionPatches: InteractionSnapshot[]; changedFields?: string[] }
 
-export type SessionStatePayload = { kind: "snapshot"; graph: SessionStateGraph } | { kind: "delta"; delta: SessionStateDelta } | { kind: "lifecycle"; lifecycle: SessionGraphLifecycle; revision: SessionGraphRevision } | { kind: "capabilities"; capabilities: SessionGraphCapabilities; revision: SessionGraphRevision; pending_mutation_id?: string | null; preview_state: CapabilityPreviewState } | { kind: "telemetry"; telemetry: UsageTelemetryData; revision: SessionGraphRevision } | { kind: "plan"; plan: PlanData; revision: SessionGraphRevision }
+export type AssistantTextDeltaPayload = { turnId: string; rowId: string; charOffset: number; deltaText: string; producedAtMonotonicMs: number; revision: number }
+
+export type SessionStatePayload = { kind: "snapshot"; graph: SessionStateGraph } | { kind: "delta"; delta: SessionStateDelta } | { kind: "lifecycle"; lifecycle: SessionGraphLifecycle; revision: SessionGraphRevision } | { kind: "capabilities"; capabilities: SessionGraphCapabilities; revision: SessionGraphRevision; pending_mutation_id?: string | null; preview_state: CapabilityPreviewState } | { kind: "telemetry"; telemetry: UsageTelemetryData; revision: SessionGraphRevision } | { kind: "plan"; plan: PlanData; revision: SessionGraphRevision } | { kind: "assistantTextDelta"; delta: AssistantTextDeltaPayload }
 
 export type SessionStateEnvelope = { sessionId: string; graphRevision: number; lastEventSeq: number; payload: SessionStatePayload }
 

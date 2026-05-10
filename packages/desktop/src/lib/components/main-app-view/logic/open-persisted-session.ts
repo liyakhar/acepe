@@ -32,6 +32,15 @@ interface OpenPersistedSessionOptions {
 	readonly source: "initialization-manager" | "session-handler";
 }
 
+interface HydratedReconnectOptions {
+	readonly source: OpenPersistedSessionOptions["source"];
+	readonly panelId: string;
+	readonly requestedSessionId: string;
+	readonly canonicalSessionId: string;
+	readonly openToken: string;
+	readonly sessionStore: SessionOpenStore;
+}
+
 function isProviderHistoryBackedSession(session: ReturnType<SessionOpenStore["getSessionCold"]>): boolean {
 	return session?.sessionLifecycleState !== "created" || Boolean(session.sourcePath);
 }
@@ -67,6 +76,30 @@ function reattachLocalCreatedSession(input: {
 			});
 			return okAsync(undefined);
 		});
+}
+
+function reconnectHydratedSession(input: HydratedReconnectOptions): void {
+	const { source, panelId, requestedSessionId, canonicalSessionId, openToken, sessionStore } = input;
+	const reconnect = sessionStore
+		.connectSession(canonicalSessionId, {
+			openToken,
+		})
+		.orElse((error) => {
+			logger.error("Failed to reconnect hydrated session", {
+				source,
+				panelId,
+				requestedSessionId,
+				canonicalSessionId,
+				error,
+			});
+			return okAsync(undefined);
+		})
+		.match(
+			() => undefined,
+			() => undefined
+		);
+
+	void reconnect;
 }
 
 export function openPersistedSession(options: OpenPersistedSessionOptions): void {
@@ -174,21 +207,15 @@ export function openPersistedSession(options: OpenPersistedSessionOptions): void
 
 					sessionStore.setSessionLoaded(hydration.canonicalSessionId);
 					sessionOpenHydrator.clearAttempt(panelId);
-					return sessionStore
-						.connectSession(hydration.canonicalSessionId, {
-							openToken: hydration.openToken,
-						})
-						.orElse((error) => {
-							logger.error("Failed to reconnect hydrated session", {
-								source,
-								panelId,
-								requestedSessionId: sessionId,
-								canonicalSessionId: hydration.canonicalSessionId,
-								error,
-							});
-							return okAsync(undefined);
-						})
-						.map(() => undefined);
+					reconnectHydratedSession({
+						source,
+						panelId,
+						requestedSessionId: sessionId,
+						canonicalSessionId: hydration.canonicalSessionId,
+						openToken: hydration.openToken,
+						sessionStore,
+					});
+					return okAsync(undefined);
 				});
 		})
 		.match(

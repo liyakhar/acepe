@@ -43,7 +43,7 @@
 {#if shouldShow}
 	<Tooltip.Provider delayDuration={0}>
 		<div class="flex h-7 w-7 shrink-0 items-center justify-center">
-			{#if isConnecting || status === "warming" || status === "running"}
+			{#if isConnecting || status === "warming"}
 				<Tooltip.Root>
 					<Tooltip.Trigger>
 						<div class="animate-in fade-in duration-150">
@@ -59,7 +59,7 @@
 						</Tooltip.Content>
 					</Tooltip.Portal>
 				</Tooltip.Root>
-			{:else if status === "connected" || status === "done" || status === "idle"}
+			{:else if status === "connected" || status === "done" || status === "idle" || status === "running"}
 				<Tooltip.Root>
 					<Tooltip.Trigger>
 						<div

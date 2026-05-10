@@ -16,7 +16,9 @@ use crate::session_jsonl::types::{
 };
 use chrono::{TimeZone, Utc};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use tauri::AppHandle;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopilotListedSession {
@@ -67,17 +69,18 @@ pub async fn load_thread_snapshot(
     _cwd: &str,
     title: &str,
 ) -> Result<Option<SessionThreadSnapshot>, String> {
-    let session_state_root = parser::resolve_copilot_session_state_root()?;
-    let transcript_path = resolve_transcript_path(&session_state_root, replay_context);
-
-    match parser::parse_copilot_session_at_root(&session_state_root, &transcript_path, title).await
+    match load_thread_snapshot_from_disk(
+        &replay_context.history_session_id,
+        replay_context.source_path.as_deref(),
+        title,
+    )
+    .await
     {
         Ok(snapshot) => Ok(Some(snapshot)),
         Err(error) => {
             tracing::info!(
                 session_id = %replay_context.local_session_id,
                 history_session_id = %replay_context.history_session_id,
-                transcript_path = %transcript_path.display(),
                 error = %error,
                 "Copilot session disk parse failed"
             );
@@ -86,6 +89,23 @@ pub async fn load_thread_snapshot(
     }
 }
 
+pub async fn load_thread_snapshot_from_disk(
+    session_id: &str,
+    source_path: Option<&str>,
+    title: &str,
+) -> Result<SessionThreadSnapshot, String> {
+    let session_state_root = parser::resolve_copilot_session_state_root()?;
+    let transcript_path = match source_path {
+        Some(path) if !path.is_empty() && !parser::is_missing_transcript_marker(path) => {
+            PathBuf::from(path)
+        }
+        _ => events_jsonl_path_for_session(&session_state_root, session_id),
+    };
+
+    parser::parse_copilot_session_at_root(&session_state_root, &transcript_path, title).await
+}
+
+#[cfg(test)]
 fn resolve_transcript_path(
     session_state_root: &Path,
     replay_context: &SessionReplayContext,
@@ -564,6 +584,7 @@ mod tests {
                         part_id: None,
                         message_id: Some("assistant-1".to_string()),
                         session_id: Some(session_id.to_string()),
+                        produced_at_monotonic_ms: None,
                     },
                 ),
                 (
@@ -807,6 +828,7 @@ mod tests {
                         part_id: None,
                         message_id: Some("assistant-1".to_string()),
                         session_id: Some(session_id.to_string()),
+                        produced_at_monotonic_ms: None,
                     },
                 ),
             ],
@@ -910,6 +932,7 @@ mod tests {
                         part_id: None,
                         message_id: None,
                         session_id: Some(session_id.to_string()),
+                        produced_at_monotonic_ms: None,
                     },
                 ),
                 (

@@ -91,9 +91,7 @@ fn prompt_display_text(prompt: &[ContentBlock]) -> Option<String> {
 
 fn session_text_pair(update: &SessionUpdate) -> Option<(String, String)> {
     let SessionUpdate::UserMessageChunk {
-        chunk,
-        session_id,
-        ..
+        chunk, session_id, ..
     } = update
     else {
         return None;

@@ -5,6 +5,7 @@ use crate::acp::projections::{ProjectionRegistry, SessionSnapshot};
 use crate::acp::session_state_engine::frontier::{
     decide_frontier_transition, SessionFrontierDecision,
 };
+use crate::acp::session_state_engine::protocol::AssistantTextDeltaPayload;
 use crate::acp::session_state_engine::selectors::{
     select_session_graph_activity, SessionGraphCapabilities, SessionGraphLifecycle,
 };
@@ -13,12 +14,35 @@ use crate::acp::session_state_engine::{
     SessionGraphRevision, SessionStateEnvelope, SessionStatePayload,
 };
 use crate::acp::session_update::{sanitize_config_options_for_canonical, SessionUpdate};
-use crate::acp::transcript_projection::{TranscriptDelta, TranscriptProjectionRegistry};
+use crate::acp::transcript_projection::{
+    TranscriptDelta, TranscriptDeltaOperation, TranscriptEntry, TranscriptEntryRole,
+    TranscriptProjectionRegistry, TranscriptSegment, TranscriptSnapshot,
+};
 use crate::acp::types::CanonicalAgentId;
 use crate::db::repository::SessionMetadataRepository;
 use sea_orm::DbConn;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+#[derive(Debug)]
+struct SessionAnchor {
+    started_at: Instant,
+}
+
+impl SessionAnchor {
+    fn new() -> Self {
+        Self {
+            started_at: Instant::now(),
+        }
+    }
+
+    fn elapsed_ms(&self) -> u64 {
+        let elapsed = self.started_at.elapsed();
+        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct SessionGraphRuntimeSnapshot {
@@ -40,8 +64,10 @@ impl Default for SessionGraphRuntimeSnapshot {
 #[derive(Debug, Clone)]
 pub struct SessionGraphRuntimeRegistry {
     supervisor: Arc<SessionSupervisor>,
+    session_anchors: Arc<Mutex<HashMap<String, Arc<SessionAnchor>>>>,
 }
 
+#[derive(Clone, Copy)]
 pub struct LiveSessionStateEnvelopeRequest<'a> {
     pub db: &'a DbConn,
     pub session_id: &'a str,
@@ -61,7 +87,27 @@ impl SessionGraphRuntimeRegistry {
 
     #[must_use]
     pub fn with_supervisor(supervisor: Arc<SessionSupervisor>) -> Self {
-        Self { supervisor }
+        Self {
+            supervisor,
+            session_anchors: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Returns ms elapsed since the session anchor (created on first call).
+    /// Monotonic per session under a single registry instance.
+    pub fn record_chunk_timestamp(&self, session_id: &str) -> u64 {
+        self.anchor_for(session_id).elapsed_ms()
+    }
+
+    fn anchor_for(&self, session_id: &str) -> Arc<SessionAnchor> {
+        let mut guard = self
+            .session_anchors
+            .lock()
+            .expect("session_anchors mutex poisoned");
+        guard
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(SessionAnchor::new()))
+            .clone()
     }
 
     #[must_use]
@@ -307,6 +353,7 @@ impl SessionGraphRuntimeRegistry {
                         "turnState".to_string(),
                         "activeTurnFailure".to_string(),
                         "lastTerminalTurnId".to_string(),
+                        "lastAgentMessageId".to_string(),
                     ];
                     if is_transcript_bearing {
                         changed_fields.push("transcriptSnapshot".to_string());
@@ -356,6 +403,23 @@ impl SessionGraphRuntimeRegistry {
             )),
             SessionFrontierDecision::AcceptDelta { .. } => None,
         }
+    }
+
+    #[must_use]
+    pub fn build_assistant_text_delta_envelope(
+        &self,
+        request: LiveSessionStateEnvelopeRequest<'_>,
+    ) -> Option<SessionStateEnvelope> {
+        let snapshot = request
+            .transcript_projection_registry
+            .snapshot_for_session(request.session_id)?;
+        build_assistant_text_delta_from_components(
+            request.session_id,
+            request.update,
+            request.transcript_delta?,
+            &snapshot,
+            request.revision,
+        )
     }
 
     pub async fn build_snapshot_envelope_for_session(
@@ -412,6 +476,7 @@ impl SessionGraphRuntimeRegistry {
                     "turnState".to_string(),
                     "activeTurnFailure".to_string(),
                     "lastTerminalTurnId".to_string(),
+                    "lastAgentMessageId".to_string(),
                 ];
                 if is_transcript_bearing {
                     changed_fields.push("transcriptSnapshot".to_string());
@@ -520,6 +585,7 @@ impl SessionGraphRuntimeRegistry {
                     interactions: projection_snapshot.interactions,
                     turn_state: session_snapshot.turn_state,
                     message_count: session_snapshot.message_count,
+                    last_agent_message_id: session_snapshot.last_agent_message_id,
                     active_turn_failure: session_snapshot.active_turn_failure,
                     last_terminal_turn_id: session_snapshot.last_terminal_turn_id,
                     lifecycle: runtime_snapshot.lifecycle,
@@ -552,6 +618,7 @@ impl SessionGraphRuntimeRegistry {
             turn_state: session_snapshot.turn_state,
             active_turn_failure: session_snapshot.active_turn_failure,
             last_terminal_turn_id: session_snapshot.last_terminal_turn_id,
+            last_agent_message_id: session_snapshot.last_agent_message_id,
         }
     }
 }
@@ -681,8 +748,140 @@ fn build_live_session_state_delta_envelope(
             "turnState".to_string(),
             "activeTurnFailure".to_string(),
             "lastTerminalTurnId".to_string(),
+            "lastAgentMessageId".to_string(),
         ],
     })
+}
+
+fn build_assistant_text_delta_from_components(
+    session_id: &str,
+    update: &SessionUpdate,
+    transcript_delta: &TranscriptDelta,
+    snapshot: &TranscriptSnapshot,
+    revision: SessionGraphRevision,
+) -> Option<SessionStateEnvelope> {
+    let SessionUpdate::AgentMessageChunk {
+        chunk,
+        produced_at_monotonic_ms: Some(produced_at_monotonic_ms),
+        ..
+    } = update
+    else {
+        return None;
+    };
+    let delta_text = assistant_text_from_update_chunk(chunk)?;
+    let row_entry_id = assistant_row_entry_id(transcript_delta)?;
+    let (row_index, row_entry) = snapshot.entries.iter().enumerate().find(|(_, entry)| {
+        entry.role == TranscriptEntryRole::Assistant && entry.entry_id == row_entry_id
+    })?;
+    let total_chars = transcript_entry_text_char_count(row_entry);
+    let delta_chars = delta_text.chars().count();
+    let char_offset_chars = total_chars.checked_sub(delta_chars).unwrap_or(0);
+    let char_offset = match u32::try_from(char_offset_chars) {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::error!(
+                session_id,
+                row_entry_id,
+                char_offset_chars,
+                "Assistant text delta char offset exceeded u32::MAX; skipping envelope"
+            );
+            return None;
+        }
+    };
+    let row_id = sanitize_row_id(row_entry_id);
+    let turn_id = assistant_turn_id_from_snapshot(snapshot, row_index, &row_id);
+    Some(build_assistant_text_delta_state_envelope(
+        session_id,
+        revision,
+        AssistantTextDeltaPayload {
+            turn_id,
+            row_id,
+            char_offset,
+            delta_text: delta_text.to_string(),
+            produced_at_monotonic_ms: *produced_at_monotonic_ms,
+            revision: revision.transcript_revision,
+        },
+    ))
+}
+
+fn build_assistant_text_delta_state_envelope(
+    session_id: &str,
+    revision: SessionGraphRevision,
+    delta: AssistantTextDeltaPayload,
+) -> SessionStateEnvelope {
+    SessionStateEnvelope {
+        session_id: session_id.to_string(),
+        graph_revision: revision.graph_revision,
+        last_event_seq: revision.last_event_seq,
+        payload: SessionStatePayload::AssistantTextDelta { delta },
+    }
+}
+
+fn assistant_text_from_update_chunk(
+    chunk: &crate::acp::session_update::ContentChunk,
+) -> Option<&str> {
+    match &chunk.content {
+        crate::acp::types::ContentBlock::Text { text } => Some(text.as_str()),
+        _ => None,
+    }
+}
+
+fn assistant_row_entry_id(delta: &TranscriptDelta) -> Option<&str> {
+    delta
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            TranscriptDeltaOperation::AppendEntry { entry }
+                if entry.role == TranscriptEntryRole::Assistant =>
+            {
+                Some(entry.entry_id.as_str())
+            }
+            TranscriptDeltaOperation::AppendSegment { entry_id, role, .. }
+                if role == &TranscriptEntryRole::Assistant =>
+            {
+                Some(entry_id.as_str())
+            }
+            _ => None,
+        })
+}
+
+fn transcript_entry_text_char_count(entry: &TranscriptEntry) -> usize {
+    entry
+        .segments
+        .iter()
+        .map(|segment| {
+            let TranscriptSegment::Text { text, .. } = segment;
+            text.chars().count()
+        })
+        .sum()
+}
+
+fn assistant_turn_id_from_snapshot(
+    snapshot: &TranscriptSnapshot,
+    row_index: usize,
+    sanitized_row_id: &str,
+) -> String {
+    snapshot
+        .entries
+        .iter()
+        .take(row_index)
+        .rev()
+        .find(|entry| entry.role == TranscriptEntryRole::User)
+        .map(|entry| entry.entry_id.clone())
+        .unwrap_or_else(|| sanitized_row_id.to_string())
+}
+
+fn sanitize_row_id(row_id: &str) -> String {
+    row_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 fn current_frontier_from_previous_revision(
@@ -784,10 +983,36 @@ fn should_emit_turn_state_delta(update: &SessionUpdate) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_live_session_state_capabilities_envelope, build_live_session_state_delta_envelope,
-        build_live_session_state_telemetry_envelope, CapabilityPreviewState,
-        LiveSessionStateEnvelopeRequest, SessionGraphRuntimeRegistry,
+        build_assistant_text_delta_from_components, build_live_session_state_capabilities_envelope,
+        build_live_session_state_delta_envelope, build_live_session_state_telemetry_envelope,
+        CapabilityPreviewState, LiveSessionStateEnvelopeRequest, SessionGraphRuntimeRegistry,
     };
+
+    #[test]
+    fn record_chunk_timestamp_is_monotonic_per_session() {
+        let registry = SessionGraphRuntimeRegistry::new();
+        let session_id = "sess-mono-1";
+        let t0 = registry.record_chunk_timestamp(session_id);
+        let t1 = registry.record_chunk_timestamp(session_id);
+        let t2 = registry.record_chunk_timestamp(session_id);
+        assert!(t1 >= t0, "t1={t1} t0={t0} expected non-decreasing");
+        assert!(t2 >= t1, "t2={t2} t1={t1} expected non-decreasing");
+    }
+
+    #[test]
+    fn record_chunk_timestamp_isolates_sessions() {
+        let registry = SessionGraphRuntimeRegistry::new();
+        let _ = registry.record_chunk_timestamp("sess-a");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let a_after_sleep = registry.record_chunk_timestamp("sess-a");
+        let b_first = registry.record_chunk_timestamp("sess-b");
+        // sess-a's anchor is older, so its elapsed time should be larger than sess-b's first sample.
+        assert!(
+            a_after_sleep > b_first,
+            "a_after_sleep={a_after_sleep} b_first={b_first}"
+        );
+    }
+
     use crate::acp::client_session::{default_modes, default_session_model_state};
     use crate::acp::lifecycle::LifecycleStatus;
     use crate::acp::projections::ProjectionRegistry;
@@ -800,7 +1025,7 @@ mod tests {
         DeltaSessionProjectionFields, SessionGraphRevision, SessionStateEnvelope,
     };
     use crate::acp::session_update::{
-        AvailableCommandsData, ConfigOptionData, CurrentModeData, SessionUpdate,
+        AvailableCommandsData, ConfigOptionData, ContentChunk, CurrentModeData, SessionUpdate,
         UsageTelemetryData, UsageTelemetryTokens,
     };
     use crate::acp::session_update::{
@@ -810,7 +1035,7 @@ mod tests {
     use crate::acp::transcript_projection::{
         TranscriptDelta, TranscriptDeltaOperation, TranscriptProjectionRegistry, TranscriptSnapshot,
     };
-    use crate::acp::types::CanonicalAgentId;
+    use crate::acp::types::{CanonicalAgentId, ContentBlock};
     use crate::db::repository::SessionMetadataRepository;
     use sea_orm::{Database, DbConn};
     use sea_orm_migration::MigratorTrait;
@@ -887,6 +1112,26 @@ mod tests {
                 ..ToolCallUpdateData::default()
             },
             session_id: Some("session-1".to_string()),
+        }
+    }
+
+    fn create_agent_message_chunk_update(
+        session_id: &str,
+        message_id: Option<&str>,
+        text: &str,
+        produced_at_monotonic_ms: u64,
+    ) -> SessionUpdate {
+        SessionUpdate::AgentMessageChunk {
+            chunk: ContentChunk {
+                content: ContentBlock::Text {
+                    text: text.to_string(),
+                },
+                aggregation_hint: None,
+            },
+            part_id: None,
+            message_id: message_id.map(str::to_string),
+            session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: Some(produced_at_monotonic_ms),
         }
     }
 
@@ -1014,6 +1259,102 @@ mod tests {
             .expect("turn-state envelope")
     }
 
+    fn build_assistant_text_delta_for_update(
+        transcript_projection_registry: &TranscriptProjectionRegistry,
+        _runtime_registry: &SessionGraphRuntimeRegistry,
+        event_seq: i64,
+        update: &SessionUpdate,
+    ) -> SessionStateEnvelope {
+        let session_id = update.session_id().expect("session id on assistant chunk");
+        let transcript_delta = transcript_projection_registry
+            .apply_session_update(event_seq, update)
+            .expect("transcript delta");
+        let snapshot = transcript_projection_registry
+            .snapshot_for_session(session_id)
+            .expect("transcript snapshot");
+        build_assistant_text_delta_from_components(
+            session_id,
+            update,
+            &transcript_delta,
+            &snapshot,
+            SessionGraphRevision::new(event_seq, event_seq, event_seq),
+        )
+        .expect("assistant text delta envelope")
+    }
+
+    #[test]
+    fn assistant_text_delta_envelope_tracks_row_offsets_across_chunks() {
+        let transcript_projection_registry = TranscriptProjectionRegistry::new();
+        let runtime_registry = SessionGraphRuntimeRegistry::new();
+        let first = create_agent_message_chunk_update("session-1", Some("assistant-1"), "hello", 5);
+        let second =
+            create_agent_message_chunk_update("session-1", Some("assistant-1"), " world!", 7);
+        let third =
+            create_agent_message_chunk_update("session-1", Some("assistant-1"), " again", 9);
+
+        let first_envelope = build_assistant_text_delta_for_update(
+            &transcript_projection_registry,
+            &runtime_registry,
+            1,
+            &first,
+        );
+        let second_envelope = build_assistant_text_delta_for_update(
+            &transcript_projection_registry,
+            &runtime_registry,
+            2,
+            &second,
+        );
+        let third_envelope = build_assistant_text_delta_for_update(
+            &transcript_projection_registry,
+            &runtime_registry,
+            3,
+            &third,
+        );
+
+        let offsets = [first_envelope, second_envelope, third_envelope]
+            .into_iter()
+            .map(|envelope| match envelope.payload {
+                SessionStatePayload::AssistantTextDelta { delta } => delta.char_offset,
+                other => panic!("expected assistant text delta payload, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(offsets, vec![0, 5, 12]);
+    }
+
+    #[test]
+    fn assistant_text_delta_envelope_sanitizes_row_id_and_keeps_empty_delta() {
+        let transcript_projection_registry = TranscriptProjectionRegistry::new();
+        let runtime_registry = SessionGraphRuntimeRegistry::new();
+        let first =
+            create_agent_message_chunk_update("session-1", Some("assistant\n1"), "hello", 5);
+        let second = create_agent_message_chunk_update("session-1", Some("assistant\n1"), "", 6);
+
+        let _ = build_assistant_text_delta_for_update(
+            &transcript_projection_registry,
+            &runtime_registry,
+            1,
+            &first,
+        );
+        let second_envelope = build_assistant_text_delta_for_update(
+            &transcript_projection_registry,
+            &runtime_registry,
+            2,
+            &second,
+        );
+
+        match second_envelope.payload {
+            SessionStatePayload::AssistantTextDelta { delta } => {
+                assert_eq!(delta.row_id, "assistant-1");
+                assert_eq!(delta.turn_id, "assistant-1");
+                assert_eq!(delta.char_offset, 5);
+                assert_eq!(delta.delta_text, "");
+                assert_eq!(delta.produced_at_monotonic_ms, 6);
+            }
+            other => panic!("expected assistant text delta payload, got {other:?}"),
+        }
+    }
+
     fn assert_hot_tool_delta_contract(envelope: &SessionStateEnvelope) {
         match &envelope.payload {
             SessionStatePayload::Delta { delta } => {
@@ -1028,6 +1369,7 @@ mod tests {
                         "turnState".to_string(),
                         "activeTurnFailure".to_string(),
                         "lastTerminalTurnId".to_string(),
+                        "lastAgentMessageId".to_string(),
                     ]
                 );
             }
@@ -1432,6 +1774,7 @@ mod tests {
                 turn_state: crate::acp::projections::SessionTurnState::Idle,
                 active_turn_failure: None,
                 last_terminal_turn_id: None,
+                last_agent_message_id: Some("assistant-1".to_string()),
             },
         );
 
@@ -1444,6 +1787,7 @@ mod tests {
                     delta.turn_state,
                     crate::acp::projections::SessionTurnState::Idle
                 );
+                assert_eq!(delta.last_agent_message_id.as_deref(), Some("assistant-1"));
             }
             other => panic!("expected delta payload, got {:?}", other),
         }
@@ -1514,8 +1858,10 @@ mod tests {
                         "turnState".to_string(),
                         "activeTurnFailure".to_string(),
                         "lastTerminalTurnId".to_string(),
+                        "lastAgentMessageId".to_string(),
                     ]
                 );
+                assert!(delta.last_agent_message_id.is_none());
             }
             other => panic!("expected delta payload, got {:?}", other),
         }

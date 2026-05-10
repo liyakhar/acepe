@@ -51,7 +51,7 @@
 		{/if}
 
 		{#if durationLabel}
-			<span class="ml-auto shrink-0 font-mono text-sm text-muted-foreground/70">
+			<span class="ml-auto shrink-0 font-sans text-sm text-muted-foreground/70">
 				{durationLabel}
 			</span>
 		{/if}

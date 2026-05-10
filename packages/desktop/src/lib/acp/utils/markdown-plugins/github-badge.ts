@@ -7,6 +7,7 @@ import {
 	GITHUB_PR_SHORTHAND_PATTERN,
 	GITHUB_URL_PATTERN,
 	type GitHubReference,
+	isBareCommitSHA,
 	parseCommitSHA,
 	parseGitHubURL,
 	parsePRShorthand,
@@ -36,7 +37,7 @@ export function githubBadgePlugin(md: MarkdownIt): void {
 
 			for (const token of blockToken.children) {
 				if (token.type === "code_inline") {
-					if (/^[a-f0-9]{7,40}$/.test(token.content)) {
+					if (isBareCommitSHA(token.content)) {
 						const sha = token.content;
 						let parsedRef = parseCommitSHA(sha);
 						if (repoContext && !parsedRef.owner) {

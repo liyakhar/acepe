@@ -207,6 +207,7 @@ fn test_convert_text_part_to_agent_message_chunk() {
             part_id,
             message_id,
             session_id,
+            produced_at_monotonic_ms: _,
         } => {
             assert_eq!(part_id, None);
             assert_eq!(message_id, Some("msg_456".to_string()));
@@ -278,6 +279,7 @@ fn test_convert_text_part_falls_back_to_text_when_no_delta() {
             part_id,
             message_id,
             session_id,
+            produced_at_monotonic_ms: _,
         } => {
             assert_eq!(part_id, None);
             assert_eq!(message_id, Some("msg_456".to_string()));

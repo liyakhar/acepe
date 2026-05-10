@@ -81,7 +81,7 @@
 </script>
 
 <!-- Embedded design: contrasted header + body with border -->
-<AgentToolCard variant="card" class="flex font-mono shadow-sm">
+<AgentToolCard variant="card" class="flex font-sans shadow-sm">
 	<div class="flex min-w-0 flex-1 flex-col">
 		<!-- Header: label + query/count/duration + chevron top right -->
 		<div
@@ -90,19 +90,19 @@
 			<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
 				<ToolHeaderLeading kind="web_search" {status}>{headerLabel}</ToolHeaderLeading>
 				{#if query}
-					<code class="min-w-0 max-w-[200px] truncate rounded bg-muted px-1 py-px font-mono text-sm text-foreground" title={query}>
+					<code class="min-w-0 max-w-[200px] truncate rounded bg-muted px-1 py-px font-sans text-sm text-foreground" title={query}>
 						{query}
 					</code>
 				{/if}
 				{#if resultText}
 					<span class="text-muted-foreground/80">·</span>
-					<span class="font-mono text-sm text-muted-foreground/80">{resultText}</span>
+					<span class="font-sans text-sm text-muted-foreground/80">{resultText}</span>
 				{/if}
 				{#if isDone && !hasLinks && !hasSummary}
-					<span class="font-mono text-sm text-muted-foreground/70">{noResultsLabel}</span>
+					<span class="font-sans text-sm text-muted-foreground/70">{noResultsLabel}</span>
 				{/if}
 				{#if durationLabel}
-					<span class="shrink-0 font-mono text-sm text-muted-foreground/70">{durationLabel}</span>
+					<span class="shrink-0 font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 				{/if}
 			</div>
 			{#if hasLinks || hasSummary}

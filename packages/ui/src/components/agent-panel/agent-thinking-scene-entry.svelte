@@ -6,9 +6,10 @@
 	interface Props {
 		durationMs?: number | null;
 		startedAtMs?: number | null;
+		label?: string | null;
 	}
 
-	let { durationMs = null, startedAtMs = null }: Props = $props();
+	let { durationMs = null, startedAtMs = null, label = null }: Props = $props();
 	let nowMs = $state(Date.now());
 
 	const currentDurationMs = $derived(
@@ -18,6 +19,7 @@
 			nowMs,
 		})
 	);
+	const displayLabel = $derived(label ?? getPlanningPlaceholderLabel(currentDurationMs));
 
 	$effect(() => {
 		if (!shouldRunThinkingTimer(startedAtMs)) {
@@ -37,6 +39,6 @@
 
 <div class="flex items-center gap-2 py-1 text-sm text-muted-foreground">
 	<ToolHeaderLeading kind="think" status="running">
-		{getPlanningPlaceholderLabel(currentDurationMs)}
+		{displayLabel}
 	</ToolHeaderLeading>
 </div>

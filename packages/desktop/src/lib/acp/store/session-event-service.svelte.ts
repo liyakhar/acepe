@@ -374,7 +374,7 @@ export class SessionEventService {
 
 		// Check if session exists in store.
 		// Do NOT gate on preloaded/entries, because freshly resumed sessions can have zero entries.
-		const hasSession = this.hasKnownSession(handler, sessionId);
+		const hasSession = this.ensureKnownOrPendingCreationSession(handler, sessionId);
 
 		if (!hasSession) {
 			if (update.type === "turnError" && handler.hasPendingCreationSession?.(sessionId) === true) {
@@ -452,6 +452,7 @@ export class SessionEventService {
 					updateSessionId: update.session_id,
 					turnId: update.turn_id,
 				});
+				handler.handleStreamComplete(sessionId, update.turn_id);
 				break;
 
 			case "turnError":
@@ -528,6 +529,12 @@ export class SessionEventService {
 					this.flushPendingEvents(envelope.sessionId, handler);
 					return;
 				}
+			}
+			const materialized = handler.materializePendingCreationSession?.(envelope.sessionId);
+			if (materialized === true) {
+				handler.applySessionStateEnvelope(envelope.sessionId, envelope);
+				this.flushPendingEvents(envelope.sessionId, handler);
+				return;
 			}
 			this.bufferPendingSessionState(envelope.sessionId, envelope);
 			return;
@@ -669,6 +676,16 @@ export class SessionEventService {
 	 */
 	private hasKnownSession(handler: SessionEventHandler, sessionId: string): boolean {
 		return handler.getSessionCold(sessionId) !== undefined;
+	}
+
+	private ensureKnownOrPendingCreationSession(
+		handler: SessionEventHandler,
+		sessionId: string
+	): boolean {
+		if (this.hasKnownSession(handler, sessionId)) {
+			return true;
+		}
+		return handler.materializePendingCreationSession?.(sessionId) === true;
 	}
 
 	private advanceConnectionMaterializationWaiter(envelope: SessionStateEnvelope): void {

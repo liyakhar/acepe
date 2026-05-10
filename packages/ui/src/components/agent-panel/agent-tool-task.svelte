@@ -88,7 +88,7 @@
 	const headerContentClass = $derived(compact
 		? "flex min-w-0 flex-1 items-center justify-start gap-1"
 		: "flex min-w-0 flex-1 items-center justify-start gap-2");
-	const titleClass = $derived("font-mono text-sm");
+	const titleClass = $derived("font-sans text-sm");
 	const promptButtonClass = $derived(compact
 		? "w-full flex items-center gap-1 px-1 py-0.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
 		: "w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer");
@@ -126,7 +126,7 @@
 			</span>
 		</div>
 		{#if durationLabel}
-			<span class="shrink-0 font-mono text-sm text-muted-foreground/70">{durationLabel}</span>
+			<span class="shrink-0 font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 		{/if}
 		{#if shouldShowDoneIcon}
 			<IconCircleCheckFilled

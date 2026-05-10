@@ -4,7 +4,7 @@
 
 #[cfg(test)]
 mod session_metadata_tests {
-    use crate::acp::projections::{InteractionResponse, InteractionState};
+    use crate::acp::projections::{InteractionResponse, InteractionState, ProjectionRegistry};
     use crate::acp::session_descriptor::{
         SessionCompatibilityInput, SessionDescriptorCompatibility, SessionDescriptorMissingFact,
         SessionDescriptorResolutionError, SessionReplayContext,
@@ -210,14 +210,22 @@ mod session_metadata_tests {
         )
         .await
         .unwrap();
-        SessionJournalEventRepository::append_interaction_transition(
+        let projection_registry = ProjectionRegistry::new();
+        projection_registry.apply_session_update("session-journal", &question_update);
+        let answered_question = projection_registry
+            .resolve_interaction(
+                "session-journal",
+                "question-1",
+                InteractionState::Answered,
+                InteractionResponse::Question {
+                    answers: json!({ "Question": ["Yes"] }),
+                },
+            )
+            .expect("answered question snapshot");
+        SessionJournalEventRepository::append_interaction_snapshot(
             &db,
             "session-journal",
-            "question-1",
-            InteractionState::Answered,
-            InteractionResponse::Question {
-                answers: json!({ "Question": ["Yes"] }),
-            },
+            answered_question,
         )
         .await
         .unwrap();
@@ -227,10 +235,9 @@ mod session_metadata_tests {
             .await
             .unwrap();
         let journal = decode_serialized_events(&replay_context, serialized).unwrap();
-        assert_eq!(journal.len(), 3);
+        assert_eq!(journal.len(), 2);
         assert_eq!(journal[0].event_seq, 1);
         assert_eq!(journal[1].event_seq, 2);
-        assert_eq!(journal[2].event_seq, 3);
 
         let replayed = rebuild_session_projection(&replay_context, &journal);
 
@@ -241,13 +248,17 @@ mod session_metadata_tests {
             session.agent_id,
             Some(crate::acp::types::CanonicalAgentId::ClaudeCode)
         );
-        assert_eq!(session.last_event_seq, 3);
+        assert_eq!(session.last_event_seq, 2);
         assert_eq!(replayed.interactions.len(), 2);
+        assert!(replayed
+            .interactions
+            .iter()
+            .any(|interaction| interaction.id == "permission-1"));
         let answered_question = replayed
             .interactions
             .iter()
             .find(|interaction| interaction.id == "question-1")
-            .expect("expected replayed question interaction");
+            .expect("expected replayed answered question interaction");
         assert_eq!(answered_question.state, InteractionState::Answered);
         match answered_question.response.clone() {
             Some(InteractionResponse::Question { answers }) => {
@@ -315,6 +326,85 @@ mod session_metadata_tests {
             .await
             .expect("journal rows should load without replay parsing");
         assert!(serialized.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_session_journal_skips_question_request_persistence() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::upsert(
+            &db,
+            "session-question".to_string(),
+            "Question session".to_string(),
+            1704067200000,
+            "/Users/test/project".to_string(),
+            "claude-code".to_string(),
+            "-Users-test-project/session-question.jsonl".to_string(),
+            1704067200,
+            1024,
+        )
+        .await
+        .unwrap();
+
+        let question_update = SessionUpdate::QuestionRequest {
+            question: QuestionData {
+                id: "question-1".to_string(),
+                session_id: "session-question".to_string(),
+                json_rpc_request_id: Some(8),
+                reply_handler: Some(
+                    crate::acp::session_update::InteractionReplyHandler::json_rpc(8),
+                ),
+                questions: vec![],
+                tool: None,
+            },
+            session_id: Some("session-question".to_string()),
+        };
+        let appended = SessionJournalEventRepository::append_session_update(
+            &db,
+            "session-question",
+            &question_update,
+        )
+        .await
+        .expect("question request append should succeed");
+
+        assert!(
+            appended.is_none(),
+            "agent questions should enter the canonical graph, not the raw session-update journal"
+        );
+        let serialized_before_answer =
+            SessionJournalEventRepository::list_serialized(&db, "session-question")
+                .await
+                .expect("journal rows should load");
+        assert!(serialized_before_answer.is_empty());
+
+        let projection_registry = ProjectionRegistry::new();
+        projection_registry.apply_session_update("session-question", &question_update);
+        let answered_question = projection_registry
+            .resolve_interaction(
+                "session-question",
+                "question-1",
+                InteractionState::Answered,
+                InteractionResponse::Question {
+                    answers: json!({ "Archive": ["Top toolbar"] }),
+                },
+            )
+            .expect("answered question snapshot");
+        SessionJournalEventRepository::append_interaction_snapshot(
+            &db,
+            "session-question",
+            answered_question,
+        )
+        .await
+        .expect("answered question snapshot should persist");
+
+        let serialized_after_answer =
+            SessionJournalEventRepository::list_serialized(&db, "session-question")
+                .await
+                .expect("journal rows should load");
+        assert_eq!(serialized_after_answer.len(), 1);
+        assert_eq!(
+            serialized_after_answer[0].event_kind,
+            "interaction_snapshot"
+        );
     }
 
     // -----------------------------------------------------------------------

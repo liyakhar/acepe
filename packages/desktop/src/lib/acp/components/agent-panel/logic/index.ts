@@ -13,7 +13,25 @@ export { resolveEffectiveProjectPath } from "./effective-project-path";
 export { calculateLoadingProgress, isLoadingComplete } from "./loading-animator";
 export { loadSessionPlan } from "./plan-loader";
 export {
+	resolveOptimisticUserEntryForGraph,
+	resolveVisibleEntryCount,
+} from "./optimistic-user-entry.js";
+export {
+	applyAgentPanelDisplayMemory,
+	applyAgentPanelDisplayModelToSceneEntries,
+	buildAgentPanelBaseModel,
+	createAgentPanelDisplayMemory,
+	type AgentPanelBaseModel,
+	type AgentPanelDisplayInput,
+	type AgentPanelDisplayMemory,
+	type AgentPanelDisplayModel,
+	type AgentPanelDisplayResult,
+	type AgentPanelDisplayRow,
+} from "./agent-panel-display-model.js";
+export { backfillSceneEntryTimestamps } from "./backfill-scene-entry-timestamps.js";
+export {
 	deriveCanonicalAgentPanelSessionState,
+	deriveEffectiveCanonicalTurnPresentation,
 	mapCanonicalSessionToPanelStatus,
 	mapSessionStatusToUI,
 } from "./session-status-mapper";

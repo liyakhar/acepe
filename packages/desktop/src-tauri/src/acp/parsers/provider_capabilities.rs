@@ -95,13 +95,11 @@ const GENERIC_BACKEND_IDENTITY_POLICY: BackendIdentityPolicy = BackendIdentityPo
 const DEFAULT_PLAN_ADAPTER_POLICY: PlanAdapterPolicy = PlanAdapterPolicy {
     parses_wrapper_plan_from_text_stream: false,
     finalizes_wrapper_plan_on_turn_end: false,
-    clears_message_tracker_on_prompt_response: false,
 };
 
 const CODEX_PLAN_ADAPTER_POLICY: PlanAdapterPolicy = PlanAdapterPolicy {
     parses_wrapper_plan_from_text_stream: true,
     finalizes_wrapper_plan_on_turn_end: true,
-    clears_message_tracker_on_prompt_response: true,
 };
 
 const PROVIDER_OWNED_HISTORY_REPLAY_POLICY: HistoryReplayPolicy = HistoryReplayPolicy {
@@ -340,11 +338,6 @@ mod tests {
                 .parses_wrapper_plan_from_text_stream
         );
         assert!(codex.plan_adapter_policy.finalizes_wrapper_plan_on_turn_end);
-        assert!(
-            codex
-                .plan_adapter_policy
-                .clears_message_tracker_on_prompt_response
-        );
         assert_eq!(
             codex.frontend_projection.variant_group,
             FrontendVariantGroup::ReasoningEffort

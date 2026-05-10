@@ -75,13 +75,14 @@
 		{#each entries as entry (entry.id)}
 			<div class="py-1.5 px-3">
 				{#if entry.type === "user"}
-					<AgentUserMessage text={entry.text} />
+					<AgentUserMessage text={entry.text} timestampMs={entry.timestampMs} />
 				{:else if entry.type === "assistant"}
 					<AgentAssistantMessage
 						message={{
 							chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
 						}}
 						isStreaming={entry.isStreaming}
+						timestampMs={entry.timestampMs}
 						{iconBasePath}
 					/>
 				{:else if entry.type === "tool_call"}
@@ -173,7 +174,9 @@
 					{/if}
 				{:else if entry.type === "thinking"}
 					<div class="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-						<ToolHeaderLeading kind="think" status="running">Planning next moves…</ToolHeaderLeading>
+						<ToolHeaderLeading kind="think" status="running">
+							{entry.label ?? "Planning next moves…"}
+						</ToolHeaderLeading>
 					</div>
 				{/if}
 			</div>

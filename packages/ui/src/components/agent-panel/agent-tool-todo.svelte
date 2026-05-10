@@ -49,10 +49,10 @@
 				<div class="flex min-w-0 items-center gap-2">
 					<span class="font-medium uppercase tracking-wide">{tasksLabel}</span>
 					{#if durationLabel}
-						<span class="font-mono text-sm text-muted-foreground/70">{durationLabel}</span>
+						<span class="font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 					{/if}
 				</div>
-				<span class="font-mono">{completedCount}/{totalTasks}</span>
+				<span class="font-sans">{completedCount}/{totalTasks}</span>
 			</div>
 
 			<!-- Progress bar -->
@@ -94,7 +94,7 @@
 						</span>
 
 						<!-- Duration -->
-						<span class="shrink-0 text-right text-muted-foreground font-mono text-sm">
+						<span class="shrink-0 text-right text-muted-foreground font-sans text-sm">
 							{formatDuration(todo.duration)}
 						</span>
 					</div>

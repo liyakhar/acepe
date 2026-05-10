@@ -126,15 +126,10 @@ function createMockEventHandler(): SessionEventHandler {
 	return {
 		getSessionCold: vi.fn(),
 		isPreloaded: vi.fn(),
-		getEntries: vi.fn(),
 		getHotState: vi.fn(),
-		aggregateAssistantChunk: vi.fn(),
-		aggregateUserChunk: vi.fn(),
 		ensureStreamingState: vi.fn(),
-		handleStreamEntry: vi.fn(),
 		handleStreamComplete: vi.fn(),
 		handleTurnError: vi.fn(),
-		clearStreamingAssistantEntry: vi.fn(),
 		updateUsageTelemetry: vi.fn(),
 		applySessionStateEnvelope: vi.fn(),
 	};

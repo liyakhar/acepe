@@ -133,7 +133,7 @@
 			</HeaderTitleCell>
 			{#if durationLabel}
 				<HeaderActionCell>
-					<span class="inline-flex items-center px-2 font-mono text-sm text-muted-foreground/70">
+					<span class="inline-flex items-center px-2 font-sans text-sm text-muted-foreground/70">
 						{durationLabel}
 					</span>
 				</HeaderActionCell>
@@ -168,7 +168,7 @@
 			</HeaderTitleCell>
 			{#if durationLabel}
 				<HeaderActionCell>
-					<span class="inline-flex items-center px-2 font-mono text-sm text-muted-foreground/70">
+					<span class="inline-flex items-center px-2 font-sans text-sm text-muted-foreground/70">
 						{durationLabel}
 					</span>
 				</HeaderActionCell>
@@ -252,7 +252,7 @@
 								/>
 								<kbd
 									aria-label="Press Enter to submit"
-									class="pointer-events-none inline-flex h-5 shrink-0 items-center justify-center rounded border border-border/60 bg-background/70 px-1.5 font-mono text-sm text-muted-foreground/80"
+									class="pointer-events-none inline-flex h-5 shrink-0 items-center justify-center rounded border border-border/60 bg-background/70 px-1.5 font-sans text-sm text-muted-foreground/80"
 								>
 									Enter
 								</kbd>
@@ -294,7 +294,7 @@
 	<div class="flex w-full items-center justify-between gap-2">
 		<TextShimmer class="text-sm text-muted-foreground font-medium">{waitingLabel}</TextShimmer>
 		{#if durationLabel}
-			<span class="shrink-0 font-mono text-sm text-muted-foreground/70">{durationLabel}</span>
+			<span class="shrink-0 font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 		{/if}
 	</div>
 {/if}
@@ -310,7 +310,7 @@
 	.question-title {
 		font-size: 0.875rem;
 		font-weight: 600;
-		font-family: var(--font-mono, ui-monospace, monospace);
+		font-family: var(--font-sans, system-ui, sans-serif);
 		color: var(--foreground);
 		user-select: none;
 		line-height: 1;
@@ -322,7 +322,7 @@
 		border-radius: 0.25rem;
 		background: var(--muted);
 		color: var(--muted-foreground);
-		font-family: var(--font-mono, ui-monospace, monospace);
+		font-family: var(--font-sans, system-ui, sans-serif);
 	}
 
 	.question-body {
@@ -354,7 +354,7 @@
 		font: inherit;
 		font-size: 0.875rem;
 		font-weight: 500;
-		font-family: var(--font-mono, ui-monospace, monospace);
+		font-family: var(--font-sans, system-ui, sans-serif);
 		color: var(--muted-foreground);
 		background: transparent;
 		border: none;

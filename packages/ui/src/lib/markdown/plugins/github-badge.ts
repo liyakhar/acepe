@@ -6,6 +6,7 @@ import {
 	GITHUB_GIT_REF_PATTERN,
 	GITHUB_PR_SHORTHAND_PATTERN,
 	GITHUB_URL_PATTERN,
+	isBareCommitSHA,
 	parseCommitSHA,
 	parseGitHubURL,
 	parsePRShorthand,
@@ -30,7 +31,7 @@ export function githubBadgePlugin(md: MarkdownIt): void {
 
 			for (const token of blockToken.children) {
 				// Backtick-wrapped bare commit SHAs: `abc1234`
-				if (token.type === "code_inline" && /^[a-f0-9]{7,40}$/.test(token.content)) {
+				if (token.type === "code_inline" && isBareCommitSHA(token.content)) {
 					const htmlToken = new state.Token("html_inline", "", 0);
 					htmlToken.content = createGitHubBadgePlaceholder(parseCommitSHA(token.content));
 					newChildren.push(htmlToken);

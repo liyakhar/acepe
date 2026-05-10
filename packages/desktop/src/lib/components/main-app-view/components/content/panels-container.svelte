@@ -1,44 +1,80 @@
 <script lang="ts">
 import { AgentPanelDeck, ProjectCard } from "@acepe/ui";
 import { onMount } from "svelte";
-import { toast } from "svelte-sonner";
-import AgentErrorCard from "$lib/acp/components/agent-panel/components/agent-error-card.svelte";
-import { copyTextToClipboard } from "$lib/acp/components/agent-panel/logic/clipboard-manager.js";
-import { buildAgentErrorIssueDraft } from "$lib/acp/components/agent-panel/logic/issue-report-draft.js";
 import { BrowserPanel } from "$lib/acp/components/browser-panel/index.js";
 import { FilePanel } from "$lib/acp/components/file-panel/index.js";
 import FilePanelTabs from "$lib/acp/components/file-panel/file-panel-tabs.svelte";
-import { AgentPanel } from "$lib/acp/components/index.js";
 import { ReviewPanel } from "$lib/acp/components/review-panel/index.js";
-import { TerminalPanel, TerminalTabs } from "$lib/acp/components/terminal-panel/index.js";
+import { TerminalTabs } from "$lib/acp/components/terminal-panel/index.js";
 import type { ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
 import { getViewModeState } from "$lib/acp/logic/view-mode-state.js";
-import {
-	getAgentPreferencesStore,
-	getAgentStore,
-	getPanelStore,
-	getSessionStore,
-} from "$lib/acp/store/index.js";
+import { getAgentPreferencesStore, getAgentStore, getPanelStore } from "$lib/acp/store/index.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
-import { useTheme } from "$lib/components/theme/context.svelte.js";
-import { ensureErrorReference } from "$lib/errors/error-reference.js";
-import { resolveIssueActionLabel } from "$lib/errors/issue-report.js";
 import type { MainAppViewState } from "../../logic/main-app-view-state.svelte.js";
 import { getSpawnableSessionAgents } from "../../logic/spawnable-agents.js";
 
-import { groupAllPanelsByProject, sortProjectGroupsForMultiLayout } from "./panel-grouping.js";
+import AgentPanelHost from "./agent-panel-host.svelte";
+import {
+	groupAllPanelsByProject,
+	sortProjectGroupsForMultiLayout,
+	type ProjectPanelGroup,
+} from "./panel-grouping.js";
 import KanbanView from "./kanban-view.svelte";
 import MultiProjectGroupLabel from "./multi-project-group-label.svelte";
 
 const pcLogger = createLogger({ id: "panels-container-perf", name: "PanelsContainerPerf" });
-
-type ErrorLike = {
-	message?: unknown;
-	stack?: unknown;
-	name?: unknown;
-	backendCorrelationId?: unknown;
-	backendEventId?: unknown;
+type AgentProjectRef = {
+	readonly id: string;
+	readonly sessionProjectPath: string | null;
+	readonly sessionSequenceId: number | null;
 };
+type StableProjectGroup = ProjectPanelGroup<AgentProjectRef>;
+const stableGroupCache = new Map<string, StableProjectGroup>();
+
+function arraysMatchById<T extends { readonly id: string }>(
+	left: readonly T[],
+	right: readonly T[]
+): boolean {
+	return left.length === right.length && left.every((item, index) => item.id === right[index]?.id);
+}
+
+function agentArraysMatch(left: readonly AgentProjectRef[], right: readonly AgentProjectRef[]): boolean {
+	return (
+		left.length === right.length &&
+		left.every(
+			(item, index) =>
+				item.id === right[index]?.id &&
+				item.sessionProjectPath === right[index]?.sessionProjectPath &&
+				item.sessionSequenceId === right[index]?.sessionSequenceId
+		)
+	);
+}
+
+function stabilizeProjectGroups(nextGroups: readonly StableProjectGroup[]): StableProjectGroup[] {
+	const nextCache = new Map<string, StableProjectGroup>();
+	const stabilized = nextGroups.map((group) => {
+		const cached = stableGroupCache.get(group.projectPath);
+		const canReuse =
+			cached !== undefined &&
+			cached.projectName === group.projectName &&
+			cached.projectColor === group.projectColor &&
+			cached.projectIconSrc === group.projectIconSrc &&
+			agentArraysMatch(cached.agentPanels, group.agentPanels) &&
+			arraysMatchById(cached.filePanels, group.filePanels) &&
+			arraysMatchById(cached.reviewPanels, group.reviewPanels) &&
+			arraysMatchById(cached.terminalPanels, group.terminalPanels) &&
+			arraysMatchById(cached.browserPanels, group.browserPanels) &&
+			arraysMatchById(cached.gitPanels, group.gitPanels);
+		const value = canReuse ? cached : group;
+		nextCache.set(group.projectPath, value);
+		return value;
+	});
+	stableGroupCache.clear();
+	for (const [projectPath, group] of nextCache.entries()) {
+		stableGroupCache.set(projectPath, group);
+	}
+	return stabilized;
+}
 
 interface Props {
 	projectManager: ProjectManager;
@@ -50,7 +86,6 @@ interface Props {
 let { projectManager, state, onFocusPanel, onToggleFullscreenPanel }: Props = $props();
 
 const panelStore = getPanelStore();
-const sessionStore = getSessionStore();
 const agentStore = getAgentStore();
 const agentPreferencesStore = getAgentPreferencesStore();
 
@@ -60,161 +95,8 @@ onMount(() => {
 		t_ms: Math.round(performance.now()),
 	});
 });
-const themeState = useTheme();
 
-function normalizeBoundaryError(error: unknown): Error {
-	if (error instanceof Error) {
-		return error;
-	}
-
-	let message = "Unknown agent panel error";
-	const normalized = new Error(message);
-
-	if (typeof error === "string" && error.length > 0) {
-		return new Error(error);
-	}
-
-	if (error !== null && typeof error === "object") {
-		const errorLike = error as ErrorLike;
-		if (typeof errorLike.message === "string" && errorLike.message.length > 0) {
-			message = errorLike.message;
-		}
-
-		const nextError = new Error(message);
-		if (typeof errorLike.name === "string" && errorLike.name.length > 0) {
-			nextError.name = errorLike.name;
-		}
-		if (typeof errorLike.stack === "string" && errorLike.stack.length > 0) {
-			nextError.stack = errorLike.stack;
-		}
-		if (typeof errorLike.backendCorrelationId === "string") {
-			(nextError as Error & { backendCorrelationId?: string }).backendCorrelationId =
-				errorLike.backendCorrelationId;
-		}
-		if (typeof errorLike.backendEventId === "string") {
-			(nextError as Error & { backendEventId?: string }).backendEventId = errorLike.backendEventId;
-		}
-		return nextError;
-	}
-
-	return normalized;
-}
-
-function formatBoundaryError(error: Error): string {
-	const lines: string[] = [];
-	if (error.name && error.name !== "Error") {
-		lines.push(`${error.name}: ${error.message}`);
-	} else {
-		lines.push(error.message);
-	}
-
-	if (error.stack) {
-		const stackLines = error.stack.split("\n");
-		const firstLine = stackLines[0]?.trim() ?? "";
-		const isMessageLine =
-			firstLine === `${error.name}: ${error.message}` || firstLine === error.message;
-		const relevantLines = isMessageLine ? stackLines.slice(1) : stackLines;
-
-		if (relevantLines.length > 0) {
-			lines.push("");
-			lines.push("Stack trace:");
-			lines.push(...relevantLines.slice(0, 30));
-		}
-	}
-
-	return lines.join("\n");
-}
-
-function logAgentPanelBoundaryError(panelId: string, error: unknown): void {
-	const normalized = normalizeBoundaryError(error);
-	const reference = ensureErrorReference(normalized);
-	console.error("[boundary:agent-panel]", panelId, {
-		name: normalized.name,
-		message: normalized.message,
-		stack: normalized.stack ?? null,
-		referenceId: reference.referenceId,
-		referenceSearchable: reference.searchable,
-	});
-}
-
-function handleCopyBoundaryReference(referenceId: string | null): void {
-	if (referenceId === null) {
-		return;
-	}
-
-	void copyTextToClipboard(referenceId).match(
-		() => {
-			toast.success("Reference ID copied");
-		},
-		(error) => {
-			toast.error(error.message);
-		}
-	);
-}
-
-// Panel state with hot state - session data is resolved in AgentPanel
-// This avoids creating new object references for all panels when any session changes
-const panelsWithState = $derived.by(() => {
-	return panelStore.panels.map((panel) => {
-		const hotState = panelStore.getHotState(panel.id);
-
-		// Use getSessionIdentity for immutable data (no object churn)
-		// Identity contains: id, projectPath, agentId, worktreePath
-		const identity = panel.sessionId ? sessionStore.getSessionIdentity(panel.sessionId) : null;
-
-		// Get metadata for title (rarely changes, stable reference)
-		const metadata = panel.sessionId ? sessionStore.getSessionMetadata(panel.sessionId) : null;
-
-		// Track if we're waiting for a session to load (has ID but no data yet)
-		const isWaitingForSession = panel.sessionId !== null && identity === undefined;
-
-		const resolvedSessionProjectPath = identity?.projectPath ?? panel.projectPath ?? null;
-		return {
-			...panel,
-			...hotState,
-			// Pass primitives instead of full sessionData object
-			sessionProjectPath: resolvedSessionProjectPath,
-			sessionSequenceId: metadata?.sequenceId ?? null,
-			sessionAgentId: identity?.agentId ?? panel.agentId ?? null,
-			sessionTitle: metadata?.title ?? null,
-			selectedAgentId: panel.selectedAgentId,
-			isWaitingForSession,
-		};
-	});
-});
-
-$effect(() => {
-	if (!import.meta.env.DEV) return;
-	const panels = panelsWithState;
-	for (const panel of panels) {
-		if (panel.sessionProjectPath === null) {
-			const identity = panel.sessionId ? sessionStore.getSessionIdentity(panel.sessionId) : null;
-			pcLogger.info("[worktree-flow] panel projectPath null", {
-				panelId: panel.id,
-				sessionId: panel.sessionId ?? null,
-				identityExists: identity !== undefined && identity !== null,
-				panelProjectPath: panel.projectPath ?? null,
-			});
-		}
-	}
-});
-
-$effect(() => {
-	if (!import.meta.env.DEV) return;
-	for (const panel of panelsWithState) {
-		if (panelStore.focusedPanelId !== panel.id) {
-			continue;
-		}
-		pcLogger.info("[first-send-trace] focused panel container state", {
-			panelId: panel.id,
-			sessionId: panel.sessionId ?? null,
-			sessionProjectPath: panel.sessionProjectPath ?? null,
-			selectedAgentId: panel.selectedAgentId ?? null,
-			isWaitingForSession: panel.isWaitingForSession,
-			pendingProjectSelection: panel.pendingProjectSelection,
-		});
-	}
-});
+const agentPanelProjectRefs = $derived(panelStore.getTopLevelAgentPanelProjectRefs());
 
 // Session hydration is handled imperatively by the initialization manager:
 // - earlyPreloadPanelSessions() loads & connects sessions (Phase 2.5)
@@ -237,20 +119,22 @@ const availableAgents = $derived(
 );
 
 // Focused view: panels grouped by project (needed for view mode state and card layout)
-const allGroups = $derived(
-	groupAllPanelsByProject(
-		panelsWithState,
-		panelStore.filePanels.filter((panel) => panel.ownerPanelId === null),
-		panelStore.reviewPanels,
-		panelStore.terminalPanelGroups,
-		panelStore.browserPanels,
-		[],
-		projectManager.projects
+const allGroups = $derived.by(() =>
+	stabilizeProjectGroups(
+		groupAllPanelsByProject(
+			agentPanelProjectRefs,
+			panelStore.filePanels.filter((panel) => panel.ownerPanelId === null),
+			panelStore.reviewPanels,
+			panelStore.terminalPanelGroups,
+			panelStore.browserPanels,
+			[],
+			projectManager.projects
+		)
 	)
 );
 const topLevelPanelsWithProject = $derived.by(() => {
 	const topLevelPanels: Array<{ id: string; projectPath: string | null }> = [];
-	for (const panel of panelsWithState) {
+	for (const panel of agentPanelProjectRefs) {
 		topLevelPanels.push({ id: panel.id, projectPath: panel.sessionProjectPath });
 	}
 	for (const panel of panelStore.workspacePanels) {
@@ -278,13 +162,17 @@ const isMultiCardsMode = $derived(
 // Explicitly-sorted groups for true multi-project rendering. project/single modes keep
 // reading `allGroups` so focused-project switching and fallback semantics stay intact.
 const pinnedMultiProjectPath = $derived.by(() => {
-	const frontPanel = panelsWithState[0];
+	const frontPanel = agentPanelProjectRefs[0];
 	if (!frontPanel) {
+		return null;
+	}
+	const frontPanelState = panelStore.getTopLevelPanel(frontPanel.id);
+	if (frontPanelState?.kind !== "agent") {
 		return null;
 	}
 	// Pin only unsaved/empty composer panels so project switching does not
 	// reshuffle the active panel in multi mode.
-	if (frontPanel.sessionId !== null || frontPanel.sessionSequenceId !== null) {
+	if (frontPanelState.sessionId !== null || frontPanel.sessionSequenceId !== null) {
 		return null;
 	}
 	return frontPanel.sessionProjectPath;
@@ -310,9 +198,9 @@ const fullscreenTopLevelPanel = $derived.by(() => {
 		return null;
 	}
 
-	const agentPanel = panelsWithState.find((panel) => panel.id === fullscreenPanelRef.id);
-	if (agentPanel) {
-		return { kind: "agent", panel: agentPanel } as const;
+	const fullscreenPanel = panelStore.getTopLevelPanel(fullscreenPanelRef.id);
+	if (fullscreenPanel?.kind === "agent") {
+		return { kind: "agent", panelId: fullscreenPanel.id } as const;
 	}
 
 	const filePanel = panelStore.filePanels.find(
@@ -341,24 +229,27 @@ const fullscreenTopLevelPanel = $derived.by(() => {
 
 	return null;
 });
-const fullscreenPanelSnapshot = $derived.by(() => {
-	const panel =
-		fullscreenTopLevelPanel && fullscreenTopLevelPanel.kind === "agent"
-			? fullscreenTopLevelPanel.panel
-			: null;
-	return {
-		panelId: panel?.id ?? "",
-		sessionId: panel?.sessionId ?? null,
-		width: panel && panel.width > 0 ? panel.width : 100,
-		pendingProjectSelection: panel?.pendingProjectSelection ?? false,
-		selectedAgentId: panel?.selectedAgentId ?? null,
-		sessionProjectPath: panel?.sessionProjectPath ?? null,
-		isWaitingForSession: panel?.isWaitingForSession ?? false,
-		reviewMode: panel?.reviewMode ?? false,
-		reviewFilesState: panel?.reviewFilesState ?? null,
-		reviewFileIndex: panel?.reviewFileIndex ?? 0,
-	};
-});
+const fullscreenAgentPanelId = $derived(
+	viewModeState.isFullscreenMode && fullscreenTopLevelPanel?.kind === "agent"
+		? fullscreenTopLevelPanel.panelId
+		: null
+);
+const isAgentFullscreenActive = $derived(fullscreenAgentPanelId !== null);
+
+function isAgentPanelFullscreen(panelId: string): boolean {
+	return fullscreenAgentPanelId === panelId || panelStore.fullscreenPanelId === panelId;
+}
+
+function isAgentPanelHidden(panelId: string): boolean {
+	return fullscreenAgentPanelId !== null && fullscreenAgentPanelId !== panelId;
+}
+
+function isAgentFullscreenGroup(group: { agentPanels: readonly AgentProjectRef[] }): boolean {
+	return (
+		fullscreenAgentPanelId !== null &&
+		group.agentPanels.some((panel) => panel.id === fullscreenAgentPanelId)
+	);
+}
 
 const terminalTabsPanelStore = $derived.by(() => ({
 	fullscreenPanelId: panelStore.fullscreenPanelId,
@@ -381,128 +272,8 @@ const terminalTabsPanelStore = $derived.by(() => ({
 <AgentPanelDeck fullscreen={viewModeState.isFullscreenMode}>
 	<!-- Tabs are now rendered in parent (main-app-view.svelte) via TabBar -->
 		<!-- Fullscreen top-level panel -->
-		{#if viewModeState.isFullscreenMode && fullscreenTopLevelPanel}
-			{#if fullscreenTopLevelPanel.kind === "agent"}
-				{@const effectiveTheme = themeState.effectiveTheme}
-				{@const projectPath = fullscreenPanelSnapshot.sessionProjectPath}
-				{@const project = projectPath
-					? (projectManager.projects.find((p) => p.path === projectPath) ?? null)
-					: null}
-				{@const availableAgents = getSpawnableSessionAgents(
-					agentStore.agents,
-					agentPreferencesStore.selectedAgentIds
-				).map((a) => ({
-						id: a.id,
-						name: a.name,
-						icon: a.icon,
-						availability_kind: a.availability_kind,
-					}))}
-				{@const selectedAgentId = fullscreenPanelSnapshot.selectedAgentId
-					? availableAgents.some((agent) => agent.id === fullscreenPanelSnapshot.selectedAgentId)
-						? fullscreenPanelSnapshot.selectedAgentId
-						: null
-					: null}
-				<div class="relative h-full min-h-0 min-w-0 flex-1">
-					<svelte:boundary
-						onerror={(error) => logAgentPanelBoundaryError(fullscreenPanelSnapshot.panelId, error)}
-					>
-						<AgentPanel
-							panelId={fullscreenPanelSnapshot.panelId}
-							sessionId={fullscreenPanelSnapshot.sessionId}
-							width={fullscreenPanelSnapshot.width}
-							pendingProjectSelection={fullscreenPanelSnapshot.pendingProjectSelection}
-							isWaitingForSession={fullscreenPanelSnapshot.isWaitingForSession}
-							projectCount={projectManager.projectCount}
-							allProjects={projectManager.projects}
-							{project}
-							{selectedAgentId}
-							{availableAgents}
-							onAgentChange={(agentId) =>
-								state.handlePanelAgentChange(fullscreenPanelSnapshot.panelId, agentId)}
-							{effectiveTheme}
-							isFullscreen={true}
-							isFocused={panelStore.focusedPanelId === fullscreenPanelSnapshot.panelId}
-							onClose={() => state.handleClosePanel(fullscreenPanelSnapshot.panelId)}
-							onCreateSessionForProject={(project) =>
-								state
-									.handleCreateSessionForProject(fullscreenPanelSnapshot.panelId, project)
-									.mapErr(() => {
-										// Error handling is done in the handler
-									})}
-							onSessionCreated={(sessionId) =>
-								panelStore.updatePanelSession(fullscreenPanelSnapshot.panelId, sessionId)}
-							onResizePanel={(panelId, delta) => state.handleResizePanel(panelId, delta)}
-							onToggleFullscreen={() =>
-								onToggleFullscreenPanel
-									? onToggleFullscreenPanel(fullscreenPanelSnapshot.panelId)
-									: state.handleToggleFullscreen(fullscreenPanelSnapshot.panelId)}
-							onFocus={() =>
-								onFocusPanel
-									? onFocusPanel(fullscreenPanelSnapshot.panelId)
-									: state.handleFocusPanel(fullscreenPanelSnapshot.panelId)}
-							hideProjectBadge={hideEmbeddedProjectBadge}
-							reviewMode={fullscreenPanelSnapshot.reviewMode}
-							reviewFilesState={fullscreenPanelSnapshot.reviewFilesState}
-							reviewFileIndex={fullscreenPanelSnapshot.reviewFileIndex}
-							onEnterReviewMode={(modifiedFilesState, initialFileIndex) =>
-								panelStore.enterReviewMode(
-									fullscreenPanelSnapshot.panelId,
-									modifiedFilesState,
-									initialFileIndex
-								)}
-							onExitReviewMode={() => panelStore.exitReviewMode(fullscreenPanelSnapshot.panelId)}
-							onReviewFileIndexChange={(index) =>
-								panelStore.setReviewFileIndex(fullscreenPanelSnapshot.panelId, index)}
-							onCreateIssueReport={(draft) => state.openUserReportsWithDraft(draft)}
-							attachedFilePanels={panelStore.getAttachedFilePanels(fullscreenPanelSnapshot.panelId)}
-							activeAttachedFilePanelId={panelStore.getActiveFilePanelId(
-								fullscreenPanelSnapshot.panelId
-							)}
-							onSelectAttachedFilePanel={(ownerPanelId, panelId) =>
-								panelStore.setActiveAttachedFilePanel(ownerPanelId, panelId)}
-							onCloseAttachedFilePanel={(panelId) => panelStore.closeFilePanel(panelId)}
-							onResizeAttachedFilePanel={(panelId, delta) =>
-								panelStore.resizeFilePanel(panelId, delta)}
-						/>
-						{#snippet failed(error, reset)}
-							{@const boundaryError = normalizeBoundaryError(error)}
-							{@const boundaryReference = ensureErrorReference(boundaryError)}
-							{@const boundaryIssueDraft = buildAgentErrorIssueDraft({
-								agentId: selectedAgentId ?? "unknown",
-								sessionId: fullscreenPanelSnapshot.sessionId,
-								projectPath,
-								worktreePath: null,
-								errorSummary:
-									boundaryError.message.length > 0
-										? boundaryError.message
-										: "Agent panel crashed while rendering.",
-								errorDetails: formatBoundaryError(boundaryError),
-								referenceId: boundaryReference.referenceId,
-								referenceSearchable: boundaryReference.searchable,
-								diagnosticsSummary: boundaryError.message,
-								sessionTitle: null,
-								panelConnectionState: null,
-							})}
-							<div class="flex h-full flex-1 items-center justify-center p-4">
-								<div class="w-full max-w-3xl">
-									<AgentErrorCard
-										title="Agent panel crashed"
-										summary={boundaryError.message || "Unexpected render error"}
-										details={formatBoundaryError(boundaryError)}
-										referenceId={boundaryReference.referenceId}
-										referenceSearchable={boundaryReference.searchable}
-										onRetry={reset}
-										onCopyReferenceId={() =>
-											handleCopyBoundaryReference(boundaryReference.referenceId)}
-										issueActionLabel={resolveIssueActionLabel(boundaryIssueDraft)}
-										onIssueAction={() => state.openUserReportsWithDraft(boundaryIssueDraft)}
-									/>
-								</div>
-							</div>
-						{/snippet}
-					</svelte:boundary>
-				</div>
-			{:else if fullscreenTopLevelPanel.kind === "file"}
+		{#if viewModeState.isFullscreenMode && fullscreenTopLevelPanel && fullscreenTopLevelPanel.kind !== "agent"}
+			{#if fullscreenTopLevelPanel.kind === "file"}
 				{@const filePanel = fullscreenTopLevelPanel.panel}
 				{@const project = projectManager.projects.find((p) => p.path === filePanel.projectPath)}
 				<FilePanel
@@ -563,6 +334,7 @@ const terminalTabsPanelStore = $derived.by(() => ({
 			{@const hasAgentPanels = group.agentPanels.length > 0}
 			{@const isSingleProject = allGroups.length === 1}
 			{#snippet nonAgentPanels()}
+				{#if !isAgentFullscreenActive}
 					<!-- File panels (tabbed per project) -->
 					{#if group.filePanels.length > 0}
 						{@const project = projectManager.projects.find((p) => p.path === group.projectPath)}
@@ -620,103 +392,26 @@ const terminalTabsPanelStore = $derived.by(() => ({
 							onResize={(panelId, delta) => panelStore.resizeBrowserPanel(panelId, delta)}
 						/>
 					{/each}
+				{/if}
 			{/snippet}
 
 			{#snippet agentPanels()}
 					<!-- Agent panels -->
 					{#each group.agentPanels as panel (panel.id)}
-							{@const effectiveTheme = themeState.effectiveTheme}
-							{@const projectPath = panel.sessionProjectPath}
-							{@const project = projectPath
-								? (projectManager.projects.find((p) => p.path === projectPath) ?? null)
-								: null}
-							{@const selectedAgentId = panel.selectedAgentId
-								? availableAgents.some((agent) => agent.id === panel.selectedAgentId)
-									? panel.selectedAgentId
-									: null
-								: null}
-							<svelte:boundary onerror={(error) => logAgentPanelBoundaryError(panel.id, error)}>
-								<AgentPanel
-									panelId={panel.id}
-									sessionId={panel.sessionId}
-									width={panel.width || 100}
-									pendingProjectSelection={panel.pendingProjectSelection}
-									isWaitingForSession={panel.isWaitingForSession}
-									projectCount={projectManager.projectCount}
-									allProjects={projectManager.projects}
-									{project}
-									{selectedAgentId}
-									{availableAgents}
-									onAgentChange={(agentId) => state.handlePanelAgentChange(panel.id, agentId)}
-									{effectiveTheme}
-									isFullscreen={panelStore.fullscreenPanelId === panel.id}
-									isFocused={panelStore.focusedPanelId === panel.id}
-									onClose={() => state.handleClosePanel(panel.id)}
-									onCreateSessionForProject={(project) =>
-										state.handleCreateSessionForProject(panel.id, project).mapErr(() => {
-											// Error handling is done in the handler
-										})}
-									onSessionCreated={(sessionId) => panelStore.updatePanelSession(panel.id, sessionId)}
-									onResizePanel={(panelId, delta) => state.handleResizePanel(panelId, delta)}
-									onToggleFullscreen={() =>
-										onToggleFullscreenPanel
-											? onToggleFullscreenPanel(panel.id)
-											: state.handleToggleFullscreen(panel.id)}
-									onFocus={() => (onFocusPanel ? onFocusPanel(panel.id) : state.handleFocusPanel(panel.id))}
-									hideProjectBadge={hideEmbeddedProjectBadge}
-									reviewMode={panel.reviewMode}
-									reviewFilesState={panel.reviewFilesState}
-									reviewFileIndex={panel.reviewFileIndex}
-									onEnterReviewMode={(modifiedFilesState, initialFileIndex) =>
-										panelStore.enterReviewMode(panel.id, modifiedFilesState, initialFileIndex)}
-									onExitReviewMode={() => panelStore.exitReviewMode(panel.id)}
-									onReviewFileIndexChange={(index) => panelStore.setReviewFileIndex(panel.id, index)}
-									onCreateIssueReport={(draft) => state.openUserReportsWithDraft(draft)}
-									attachedFilePanels={panelStore.getAttachedFilePanels(panel.id)}
-									activeAttachedFilePanelId={panelStore.getActiveFilePanelId(panel.id)}
-									onSelectAttachedFilePanel={(ownerPanelId, panelId) =>
-										panelStore.setActiveAttachedFilePanel(ownerPanelId, panelId)}
-									onCloseAttachedFilePanel={(panelId) => panelStore.closeFilePanel(panelId)}
-									onResizeAttachedFilePanel={(panelId, delta) =>
-										panelStore.resizeFilePanel(panelId, delta)}
-								/>
-								{#snippet failed(error, reset)}
-									{@const boundaryError = normalizeBoundaryError(error)}
-									{@const boundaryReference = ensureErrorReference(boundaryError)}
-									{@const boundaryIssueDraft = buildAgentErrorIssueDraft({
-										agentId: selectedAgentId ?? panel.sessionAgentId ?? "unknown",
-										sessionId: panel.sessionId,
-										projectPath,
-										worktreePath: null,
-										errorSummary:
-											boundaryError.message.length > 0
-												? boundaryError.message
-												: "Agent panel crashed while rendering.",
-										errorDetails: formatBoundaryError(boundaryError),
-										referenceId: boundaryReference.referenceId,
-										referenceSearchable: boundaryReference.searchable,
-										diagnosticsSummary: boundaryError.message,
-										sessionTitle: panel.sessionTitle,
-										panelConnectionState: null,
-									})}
-									<div class="flex h-full flex-1 items-center justify-center p-4">
-										<div class="w-full max-w-3xl">
-											<AgentErrorCard
-												title="Agent panel crashed"
-												summary={boundaryError.message || "Unexpected render error"}
-												details={formatBoundaryError(boundaryError)}
-												referenceId={boundaryReference.referenceId}
-												referenceSearchable={boundaryReference.searchable}
-												onRetry={reset}
-												onCopyReferenceId={() =>
-													handleCopyBoundaryReference(boundaryReference.referenceId)}
-												issueActionLabel={resolveIssueActionLabel(boundaryIssueDraft)}
-												onIssueAction={() => state.openUserReportsWithDraft(boundaryIssueDraft)}
-											/>
-										</div>
-									</div>
-								{/snippet}
-							</svelte:boundary>
+						<div class={isAgentPanelHidden(panel.id) ? "hidden" : "contents"}>
+							<AgentPanelHost
+								panelId={panel.id}
+								panelRef={panelStore.getTopLevelAgentPanelRef(panel.id)}
+								{projectManager}
+								{state}
+								{availableAgents}
+								hideProjectBadge={hideEmbeddedProjectBadge}
+								isFullscreen={isAgentPanelFullscreen(panel.id)}
+								isFocused={panelStore.focusedPanelId === panel.id}
+								{onFocusPanel}
+								{onToggleFullscreenPanel}
+							/>
+						</div>
 					{/each}
 			{/snippet}
 
@@ -739,7 +434,7 @@ const terminalTabsPanelStore = $derived.by(() => ({
 				{/if}
 			{:else}
 			<ProjectCard
-				class="{!hasAgentPanels
+				class="{isAgentFullscreenGroup(group) || !hasAgentPanels
 					? 'flex-1 min-w-0 min-h-0'
 					: 'flex-none min-h-0'} {isGroupHidden(group) ? 'hidden' : ''}"
 					projectName={group.projectName}

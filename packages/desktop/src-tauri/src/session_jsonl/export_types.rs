@@ -33,6 +33,7 @@ use crate::acp::session_state_engine::{
     SessionStateEnvelope, SessionStateGraph, SessionStatePayload,
     SessionStateSnapshotMaterialization,
 };
+use crate::acp::session_state_engine::protocol::AssistantTextDeltaPayload;
 use crate::acp::session_update::{
     AvailableCommand, AvailableCommandsData, ChunkAggregationHint, CommandInput, ConfigOptionData,
     ConfigOptionUpdateData, ConfigOptionValue, ContentChunk, CurrentModeData, EditEntry,
@@ -477,6 +478,7 @@ pub fn export_all_types() {
     export_acp_type!(SessionStateGraph);
     export_acp_type!(SessionStateSnapshotMaterialization);
     export_acp_type!(SessionStateDelta);
+    export_acp_type!(AssistantTextDeltaPayload);
     export_acp_type!(SessionStatePayload);
     export_acp_type!(SessionStateEnvelope);
 
@@ -565,6 +567,10 @@ mod tests {
             contents
                 .contains("export type FrontendProviderProjection = ProviderMetadataProjection;"),
             "expected acp-types.ts to alias FrontendProviderProjection, but it did not"
+        );
+        assert!(
+            contents.contains("export type AssistantTextDeltaPayload ="),
+            "expected acp-types.ts to export AssistantTextDeltaPayload, but it did not"
         );
     }
 

@@ -808,133 +808,6 @@ describe("MarkdownText", () => {
 	});
 
 	describe("streaming reveal behavior", () => {
-		it("drops words out of the fade window once their animation has fully played", async () => {
-			// Drive performance.now so the first reveal records "hello world" at t=0,
-			// then advance past the 300ms fade window before the rerender. Older words
-			// must render as plain text (animation already complete) while the freshly
-			// revealed word stays wrapped with .sd-word-fade.
-			let mockedNow = 0;
-			vi.spyOn(performance, "now").mockImplementation(() => mockedNow);
-
-			const view = render(MarkdownText, {
-				text: "hello world",
-				isStreaming: true,
-				streamingAnimationMode: "smooth",
-			});
-
-			// Wait until the reveal controller has surfaced the full text so all words
-			// have been recorded at t=0 in the appearance history.
-			await waitFor(() => {
-				const section = view.container.querySelector(".markdown-content");
-				expect(section?.textContent).toBe("hello world");
-			});
-
-			mockedNow = 1000;
-
-			await view.rerender({
-				text: "hello world foo",
-				isStreaming: true,
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				const section = view.container.querySelector(".markdown-content");
-				expect(section?.textContent).toBe("hello world foo");
-				const fadeSpans = Array.from(section?.querySelectorAll(".sd-word-fade") ?? []).map(
-					(s) => s.textContent
-				);
-				expect(fadeSpans).not.toContain("hello");
-				expect(fadeSpans).not.toContain("world");
-				expect(fadeSpans).toContain("foo");
-			});
-		});
-
-		it("applies a fast-forward animation-delay to recently revealed words", async () => {
-			// Two reveal updates 100ms apart: prior words must remain wrapped (still in
-			// the 300ms fade window) but with an inline animation-delay that picks up
-			// where their previous span left off, so the canonical {@html} re-render
-			// does not visually restart their fade.
-			let mockedNow = 0;
-			vi.spyOn(performance, "now").mockImplementation(() => mockedNow);
-
-			const view = render(MarkdownText, {
-				text: "hello",
-				isStreaming: true,
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				const section = view.container.querySelector(".markdown-content");
-				expect(section?.textContent).toBe("hello");
-			});
-
-			mockedNow = 100;
-
-			await view.rerender({
-				text: "hello world",
-				isStreaming: true,
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				const section = view.container.querySelector(".markdown-content");
-				expect(section?.textContent).toBe("hello world");
-				const helloSpan = Array.from(section?.querySelectorAll(".sd-word-fade") ?? []).find(
-					(s) => s.textContent === "hello"
-				) as HTMLElement | undefined;
-				const worldSpan = Array.from(section?.querySelectorAll(".sd-word-fade") ?? []).find(
-					(s) => s.textContent === "world"
-				) as HTMLElement | undefined;
-
-				expect(helloSpan).toBeDefined();
-				expect(worldSpan).toBeDefined();
-				// "hello" was first seen at t=0 and is now 100ms into its 300ms fade.
-				expect(helloSpan?.style.animationDelay).toBe("-100ms");
-				// "world" first appeared at t=100 → no delay yet.
-				expect(worldSpan?.style.animationDelay).toBe("");
-			});
-		});
-
-		it("keeps word-fade offsets aligned when skipped reveal content precedes new text", async () => {
-			// Skipped (`[data-reveal-skip]`) regions must not shift the offset baseline used
-			// by the appearance history. Words around the skip region drop out of the fade
-			// window normally; only the freshly revealed word retains `.sd-word-fade`.
-			let mockedNow = 0;
-			vi.spyOn(performance, "now").mockImplementation(() => mockedNow);
-
-			const view = render(MarkdownText, {
-				text: "before skip after",
-				isStreaming: true,
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				expect(view.container.querySelector("[data-reveal-skip]")?.textContent).toBe("skip");
-				expect(view.container.textContent).toContain("before skip after");
-			});
-
-			mockedNow = 1000;
-
-			await view.rerender({
-				text: "before skip after new",
-				isStreaming: true,
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				const section = view.container.querySelector(".markdown-content");
-				expect(section?.textContent).toContain("before skip after new");
-				const fadeSpans = Array.from(section?.querySelectorAll(".sd-word-fade") ?? []).map(
-					(s) => s.textContent
-				);
-				expect(fadeSpans).not.toContain("before");
-				expect(fadeSpans).not.toContain("after");
-				expect(fadeSpans).toContain("new");
-				// Skipped content stays untouched.
-				expect(section?.querySelector("[data-reveal-skip]")?.textContent).toBe("skip");
-			});
-		});
-
 		it("renders canonical inline markdown while streaming is active", async () => {
 			renderMarkdownSyncMock.mockImplementation((text) => ({
 				html: `<p>${text.replace("**bold**", "<strong>bold</strong>")}</p>`,
@@ -946,14 +819,44 @@ describe("MarkdownText", () => {
 			const view = render(MarkdownText, {
 				text,
 				isStreaming: true,
-				revealKey: "smooth-test",
 				streamingAnimationMode: "smooth",
 			});
 
 			await waitFor(() => {
 				expect(view.container.querySelector(".markdown-content strong")?.textContent).toBe("bold");
-				expect(view.container.querySelector(".sd-word-fade")?.textContent).toBe("bold");
+				expect(view.container.textContent).toContain("bold text");
 			});
+		});
+
+		it("switches streaming rows to CSS token reveal when canonical timing is present", async () => {
+			renderMarkdownSyncMock.mockImplementation(() => ({
+				html: '<p><span class="tok" style="--i:0">bold</span> <span class="tok" style="--i:1">text</span></p>',
+				fromCache: false,
+				needsAsync: false,
+			}));
+
+			const view = render(MarkdownText, {
+				text: "**bold** text",
+				isStreaming: true,
+				tokenRevealCss: {
+					revealCount: 2,
+					revealedCharCount: "**bold** text".length,
+					baselineMs: -64,
+					tokStepMs: 32,
+					tokFadeDurMs: 420,
+					mode: "smooth",
+				},
+				streamingAnimationMode: "smooth",
+			});
+
+			await waitFor(() => {
+				expect(view.container.querySelectorAll(".tok")).toHaveLength(2);
+			});
+
+			const container = view.container.querySelector(".markdown-content");
+			expect(container?.getAttribute("data-token-reveal-mode")).toBe("smooth");
+			expect(container?.getAttribute("style")).toContain("--token-reveal-step-ms: 32ms");
+			expect(renderMarkdownSyncMock).toHaveBeenCalledWith("**bold** text", undefined);
 		});
 
 		it("renders canonical markdown during streaming and after settle", async () => {
@@ -967,7 +870,6 @@ describe("MarkdownText", () => {
 			const view = render(MarkdownText, {
 				text,
 				isStreaming: true,
-				revealKey: "instant-test",
 				streamingAnimationMode: "instant",
 			});
 
@@ -980,7 +882,6 @@ describe("MarkdownText", () => {
 			await view.rerender({
 				text,
 				isStreaming: false,
-				revealKey: "instant-test",
 				streamingAnimationMode: "instant",
 			});
 
@@ -1002,7 +903,6 @@ describe("MarkdownText", () => {
 			const view = render(MarkdownText, {
 				text,
 				isStreaming: true,
-				revealKey: "final-smooth",
 				streamingAnimationMode: "smooth",
 			});
 
@@ -1013,7 +913,6 @@ describe("MarkdownText", () => {
 			await view.rerender({
 				text,
 				isStreaming: false,
-				revealKey: "final-smooth",
 				streamingAnimationMode: "smooth",
 			});
 
@@ -1022,333 +921,37 @@ describe("MarkdownText", () => {
 				expect(rendered?.textContent).toBe("bold");
 			});
 
-			await waitFor(() => {
-				expect(view.container.querySelector(".sd-word-fade")).toBeNull();
-			});
 		});
 
-		it("resumes a live remount without snapping to the full source", async () => {
-			const text =
-				"Remounted live assistant text should resume from cached progress instead of snapping to the full source.";
-			const firstView = render(MarkdownText, {
-				text,
-				isStreaming: true,
-				revealKey: "live-remount-key",
-				streamingAnimationMode: "smooth",
-			});
-
-			let visibleBeforeUnmount = "";
-			await waitFor(() => {
-				const textContent = firstView.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThan(0);
-				expect(textContent.length).toBeLessThan(text.length);
-				expect(text.startsWith(textContent)).toBe(true);
-				visibleBeforeUnmount = textContent;
-			});
-
-			firstView.unmount();
-
-			const remountedView = render(MarkdownText, {
-				text,
-				isStreaming: true,
-				revealKey: "live-remount-key",
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				const textContent = remountedView.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThanOrEqual(visibleBeforeUnmount.length);
-				expect(textContent.length).toBeLessThan(text.length);
-				expect(text.startsWith(textContent)).toBe(true);
-			});
-		});
-
-		it("paces a new non-prefix streaming message when reveal key changes", async () => {
-			const firstText = "Previous assistant message";
-			const nextText = "New assistant message should pace in";
-			const view = render(MarkdownText, {
-				text: firstText,
-				isStreaming: true,
-				revealKey: "assistant-previous",
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				expect(view.container.textContent).toContain(firstText);
-			});
-
-			await view.rerender({
-				text: nextText,
-				isStreaming: true,
-				revealKey: "assistant-next",
-				streamingAnimationMode: "smooth",
-			});
-
-			expect(view.container.textContent).not.toContain(nextText);
-
-			await waitFor(() => {
-				const textContent = view.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThan(0);
-				expect(textContent.length).toBeLessThan(nextText.length);
-				expect(nextText.startsWith(textContent)).toBe(true);
-			});
-		});
-
-		it("continues reveal catch-up after streaming completes with unrevealed text", async () => {
-			const text = Array.from({ length: 2 }, (_, index) => {
-				return `Gradual streaming reveal line ${index + 1}.`;
-			}).join(" ");
-			const view = render(MarkdownText, {
-				text,
-				isStreaming: true,
-				revealKey: "completion-catchup",
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				const textContent = view.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThan(0);
-				expect(textContent.length).toBeLessThan(text.length);
-			});
-
-			await view.rerender({
-				text,
-				isStreaming: false,
-				revealKey: "completion-catchup",
-				streamingAnimationMode: "smooth",
-			});
-
-			expect(view.container.textContent).not.toContain(text);
-
-			await waitFor(() => {
-				expect(view.container.textContent).toContain(text);
-			});
-		});
-
-		it("paces explicit textRevealState text even when canonical streaming is false", async () => {
-			const text =
-				"Buffered final assistant answer should not appear as one settled block on first paint.";
-			const view = render(MarkdownText, {
-				text,
-				isStreaming: false,
-				textRevealState: { policy: "pace", key: "session-1:assistant-1:message" },
-				streamingAnimationMode: "smooth",
-			});
-
-			expect(view.container.textContent).not.toContain(text);
-
-			await waitFor(() => {
-				const textContent = view.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThan(0);
-				expect(textContent.length).toBeLessThan(text.length);
-				expect(text.startsWith(textContent)).toBe(true);
-			});
-		});
-
-		it("does not seed explicit textRevealState rows from prior full-text reveal caches", async () => {
-			const text =
-				"Cached prior reveal progress must not make an explicit text reveal snap to the final source.";
-			const revealKey = "session-1:assistant-cache:message";
-			const firstView = render(MarkdownText, {
-				text,
-				isStreaming: true,
-				revealKey,
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				expect(firstView.container.textContent).toContain(text);
-			});
-			firstView.unmount();
-
-			const secondView = render(MarkdownText, {
-				text,
-				isStreaming: false,
-				revealKey,
-				textRevealState: { policy: "pace", key: revealKey },
-				streamingAnimationMode: "smooth",
-			});
-
-			expect(secondView.container.textContent).not.toContain(text);
-
-			await waitFor(() => {
-				const textContent = secondView.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThan(0);
-				expect(textContent.length).toBeLessThan(text.length);
-				expect(text.startsWith(textContent)).toBe(true);
-			});
-		});
-
-		it("paces explicit textRevealState replacements instead of snapping to a final block", async () => {
-			const revealKey = "session-1:assistant-reused-dom-node:message";
-			const transientText = "Transient partial text from a reused message row.";
-			const finalText = [
-				"Buffered final assistant answers must not appear as one settled block.",
-				"The first visible frame should be empty or a short prefix, then grow.",
-				"This catches reused DOM rows whose prior visible text is not a prefix of the final answer.",
-			].join(" ");
-			const view = render(MarkdownText, {
-				text: transientText,
-				isStreaming: false,
-				textRevealState: { policy: "pace", key: revealKey },
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				const textContent = view.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThan(0);
-				expect(textContent.length).toBeLessThan(transientText.length);
-			});
-
-			await view.rerender({
-				text: finalText,
-				isStreaming: false,
-				textRevealState: { policy: "pace", key: revealKey },
-				streamingAnimationMode: "smooth",
-			});
-
-			expect(view.container.textContent).not.toContain(finalText);
-
-			await waitFor(() => {
-				const textContent = view.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThan(0);
-				expect(textContent.length).toBeLessThan(finalText.length);
-				expect(finalText.startsWith(textContent)).toBe(true);
-			});
-		});
-
-		it("starts explicit textRevealState rows from a supplied visible prefix", async () => {
-			const revealKey = "session-1:assistant-merged-prefix:message";
-			const seedDisplayedText = "Already visible prefix. ";
-			const text = `${seedDisplayedText}Only the newly merged assistant suffix should pace in.`;
-			const view = render(MarkdownText, {
-				text,
-				isStreaming: false,
-				textRevealState: {
-					policy: "pace",
-					key: revealKey,
-					seedDisplayedText,
-				},
-				streamingAnimationMode: "smooth",
-			});
-
-			await waitFor(() => {
-				const textContent = view.container.textContent ?? "";
-				expect(textContent.startsWith(seedDisplayedText)).toBe(true);
-				expect(textContent.length).toBeGreaterThan(seedDisplayedText.length);
-				expect(textContent.length).toBeLessThan(text.length);
-			});
-		});
-
-		it("keeps a visible paced prefix through transient empty text updates", async () => {
-			const revealKey = "session-1:assistant-transient-empty:message";
-			const transientText =
-				"SENTINEL transient assistant text should stay visible through an empty intermediate update.";
-			const view = render(MarkdownText, {
-				text: transientText,
-				isStreaming: false,
-				textRevealState: { policy: "pace", key: revealKey },
-				streamingAnimationMode: "smooth",
-			});
-
-			let visiblePrefix = "";
-			await waitFor(() => {
-				const textContent = view.container.textContent ?? "";
-				expect(textContent.length).toBeGreaterThan(0);
-				expect(textContent.length).toBeLessThan(transientText.length);
-				expect(transientText.startsWith(textContent)).toBe(true);
-				visiblePrefix = textContent;
-			});
-
-			await view.rerender({
-				text: "",
-				isStreaming: false,
-				textRevealState: { policy: "pace", key: revealKey },
-				streamingAnimationMode: "smooth",
-			});
-
-			expect(view.container.textContent).toContain(visiblePrefix);
-		});
-
-		it("reports reveal activity through the paced drain window", async () => {
-			const activityStates: boolean[] = [];
-			const text = "Hello world";
-			renderMarkdownSyncMock.mockReturnValue({
-				html: `<p>${text}</p>`,
+		it("renders the provided text prop even when token timing is active", async () => {
+			const text = "Provided text should stay authoritative even while token timing is active.";
+			renderMarkdownSyncMock.mockImplementation((mdText) => ({
+				html: `<p>${mdText}</p>`,
 				fromCache: false,
 				needsAsync: false,
-			});
+			}));
+
 			const view = render(MarkdownText, {
 				text,
-				isStreaming: true,
-				streamingAnimationMode: "smooth",
-				onRevealActivityChange: (active: boolean) => {
-					activityStates.push(active);
+				isStreaming: false,
+				tokenRevealCss: {
+					revealCount: 11,
+					revealedCharCount: text.length,
+					baselineMs: -64,
+					tokStepMs: 32,
+					tokFadeDurMs: 420,
+					mode: "smooth",
 				},
+				streamingAnimationMode: "smooth",
 			});
 
 			await waitFor(() => {
-				expect(activityStates).toContain(true);
+				expect(view.container.textContent).toContain(
+					"Provided text should stay authoritative"
+				);
 			});
-
-			await view.rerender({
-				text,
-				isStreaming: false,
-				streamingAnimationMode: "smooth",
-				onRevealActivityChange: (active: boolean) => {
-					activityStates.push(active);
-				},
-			});
-
-			await waitFor(() => {
-				expect(activityStates.at(-1)).toBe(false);
-			});
-		});
-
-		it("does not restart reveal activity when a completed paced row clears textRevealState", async () => {
-			const activityStates: boolean[] = [];
-			const onRevealActivityChange = (active: boolean) => {
-				activityStates.push(active);
-			};
-			const text =
-				"Completed paced assistant text should not flip the scroll container after reveal state clears.";
-			const revealKey = "session-1:assistant-review:message";
-			const view = render(MarkdownText, {
-				text,
-				isStreaming: true,
-				textRevealState: { policy: "pace", key: revealKey },
-				streamingAnimationMode: "smooth",
-				onRevealActivityChange,
-			});
-
-			await view.rerender({
-				text,
-				isStreaming: false,
-				textRevealState: { policy: "pace", key: revealKey },
-				streamingAnimationMode: "smooth",
-				onRevealActivityChange,
-			});
-
-			await waitFor(() => {
-				expect(view.container.textContent).toContain(text);
-				expect(activityStates.at(-1)).toBe(false);
-			}, { timeout: 3000 });
-			await new Promise<void>((resolve) => setTimeout(resolve, 250));
-			await waitFor(() => {
-				expect(activityStates.at(-1)).toBe(false);
-			});
-			const activityCountAfterDrain = activityStates.length;
-
-			await view.rerender({
-				text,
-				isStreaming: false,
-				textRevealState: undefined,
-				streamingAnimationMode: "smooth",
-				onRevealActivityChange,
-			});
-			await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-			expect(activityStates.slice(activityCountAfterDrain)).not.toContain(true);
+			expect(view.container.textContent).not.toContain("Older reveal text");
+			expect(renderMarkdownSyncMock).toHaveBeenCalledWith(text, undefined);
 		});
 	});
 

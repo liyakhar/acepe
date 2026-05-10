@@ -1,11 +1,17 @@
 use crate::acp::agent_context::with_agent;
 use crate::acp::parsers::provider_capabilities::provider_capabilities;
 use crate::acp::projections::{
-    InteractionResponse, InteractionState, ProjectionRegistry, SessionProjectionSnapshot,
+    InteractionResponse, InteractionSnapshot, InteractionState, ProjectionRegistry,
+    SessionProjectionSnapshot,
 };
 use crate::acp::provider::HistoryReplayFamily;
 use crate::acp::session_descriptor::SessionReplayContext;
-use crate::acp::session_update::{PermissionData, QuestionData, SessionUpdate, TurnErrorData};
+use crate::acp::session_update::{
+    ContentChunk, PermissionData, QuestionData, SessionUpdate, TurnErrorData,
+};
+use crate::acp::transcript_projection::{
+    TranscriptDeltaOperation, TranscriptProjectionRegistry, TranscriptSegment, TranscriptSnapshot,
+};
 use crate::db::repository::SerializedSessionJournalEventRow;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -14,6 +20,19 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ProjectionJournalUpdate {
+    UserMessageChunk {
+        chunk: ContentChunk,
+        session_id: Option<String>,
+        attempt_id: Option<String>,
+    },
+    AgentMessageChunk {
+        chunk: ContentChunk,
+        part_id: Option<String>,
+        message_id: Option<String>,
+        session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        produced_at_monotonic_ms: Option<u64>,
+    },
     PermissionRequest {
         permission: PermissionData,
         session_id: Option<String>,
@@ -37,6 +56,28 @@ impl ProjectionJournalUpdate {
     #[must_use]
     pub fn from_session_update(update: &SessionUpdate) -> Option<Self> {
         match update {
+            SessionUpdate::UserMessageChunk {
+                chunk,
+                session_id,
+                attempt_id,
+            } => Some(Self::UserMessageChunk {
+                chunk: chunk.clone(),
+                session_id: session_id.clone(),
+                attempt_id: attempt_id.clone(),
+            }),
+            SessionUpdate::AgentMessageChunk {
+                chunk,
+                part_id,
+                message_id,
+                session_id,
+                produced_at_monotonic_ms,
+            } => Some(Self::AgentMessageChunk {
+                chunk: chunk.clone(),
+                part_id: part_id.clone(),
+                message_id: message_id.clone(),
+                session_id: session_id.clone(),
+                produced_at_monotonic_ms: *produced_at_monotonic_ms,
+            }),
             SessionUpdate::PermissionRequest {
                 permission,
                 session_id,
@@ -44,13 +85,7 @@ impl ProjectionJournalUpdate {
                 permission: permission.clone(),
                 session_id: session_id.clone(),
             }),
-            SessionUpdate::QuestionRequest {
-                question,
-                session_id,
-            } => Some(Self::QuestionRequest {
-                question: question.clone(),
-                session_id: session_id.clone(),
-            }),
+            SessionUpdate::QuestionRequest { .. } => None,
             SessionUpdate::TurnComplete {
                 session_id,
                 turn_id,
@@ -74,6 +109,28 @@ impl ProjectionJournalUpdate {
     #[must_use]
     pub fn into_session_update(self) -> SessionUpdate {
         match self {
+            Self::UserMessageChunk {
+                chunk,
+                session_id,
+                attempt_id,
+            } => SessionUpdate::UserMessageChunk {
+                chunk,
+                session_id,
+                attempt_id,
+            },
+            Self::AgentMessageChunk {
+                chunk,
+                part_id,
+                message_id,
+                session_id,
+                produced_at_monotonic_ms,
+            } => SessionUpdate::AgentMessageChunk {
+                chunk,
+                part_id,
+                message_id,
+                session_id,
+                produced_at_monotonic_ms,
+            },
             Self::PermissionRequest {
                 permission,
                 session_id,
@@ -119,6 +176,9 @@ pub enum SessionJournalEventPayload {
         state: InteractionState,
         response: InteractionResponse,
     },
+    InteractionSnapshot {
+        interaction: InteractionSnapshot,
+    },
     MaterializationBarrier,
 }
 
@@ -148,6 +208,7 @@ impl SessionJournalEvent {
         match &self.payload {
             SessionJournalEventPayload::ProjectionUpdate { .. } => "projection_update",
             SessionJournalEventPayload::InteractionTransition { .. } => "interaction_transition",
+            SessionJournalEventPayload::InteractionSnapshot { .. } => "interaction_snapshot",
             SessionJournalEventPayload::MaterializationBarrier => "materialization_barrier",
         }
     }
@@ -155,6 +216,12 @@ impl SessionJournalEvent {
     pub fn replay_into(&self, registry: &ProjectionRegistry) {
         match &self.payload {
             SessionJournalEventPayload::ProjectionUpdate { update } => {
+                if matches!(
+                    update.as_ref(),
+                    ProjectionJournalUpdate::QuestionRequest { .. }
+                ) {
+                    return;
+                }
                 registry.apply_session_update(
                     &self.session_id,
                     &update.as_ref().clone().into_session_update(),
@@ -171,6 +238,10 @@ impl SessionJournalEvent {
                     state.clone(),
                     response.clone(),
                 );
+            }
+            SessionJournalEventPayload::InteractionSnapshot { interaction } => {
+                registry
+                    .import_interaction_snapshot_at_event_seq(interaction.clone(), self.event_seq);
             }
             SessionJournalEventPayload::MaterializationBarrier => {}
         }
@@ -195,6 +266,73 @@ pub fn rebuild_session_projection(
     }
 
     registry.session_projection(&replay_context.local_session_id)
+}
+
+#[must_use]
+pub fn rebuild_completed_local_transcript_snapshot(
+    replay_context: &SessionReplayContext,
+    events: &[SessionJournalEvent],
+) -> Option<TranscriptSnapshot> {
+    let last_complete_seq = events
+        .iter()
+        .filter(|event| event.session_id == replay_context.local_session_id)
+        .filter_map(|event| match &event.payload {
+            SessionJournalEventPayload::ProjectionUpdate { update } => match update.as_ref() {
+                ProjectionJournalUpdate::TurnComplete { .. }
+                | ProjectionJournalUpdate::TurnError { .. } => Some(event.event_seq),
+                _ => None,
+            },
+            _ => None,
+        })
+        .max()?;
+
+    let registry = TranscriptProjectionRegistry::new();
+    let mut applied_transcript_text = false;
+    for event in events {
+        if event.session_id != replay_context.local_session_id
+            || event.event_seq > last_complete_seq
+        {
+            continue;
+        }
+        let SessionJournalEventPayload::ProjectionUpdate { update } = &event.payload else {
+            continue;
+        };
+        let session_update = update.as_ref().clone().into_session_update();
+        if let Some(delta) = registry.apply_session_update(event.event_seq, &session_update) {
+            if delta
+                .operations
+                .iter()
+                .any(|operation| operation_contains_text_segment(operation))
+            {
+                applied_transcript_text = true;
+            }
+        }
+    }
+
+    if !applied_transcript_text {
+        return None;
+    }
+
+    registry.snapshot_for_session(&replay_context.local_session_id)
+}
+
+fn operation_contains_text_segment(operation: &TranscriptDeltaOperation) -> bool {
+    match operation {
+        TranscriptDeltaOperation::AppendEntry { entry } => {
+            entry.segments.iter().any(segment_contains_text)
+        }
+        TranscriptDeltaOperation::AppendSegment { segment, .. } => segment_contains_text(segment),
+        TranscriptDeltaOperation::ReplaceSnapshot { snapshot } => snapshot
+            .entries
+            .iter()
+            .any(|entry| entry.segments.iter().any(segment_contains_text)),
+    }
+}
+
+fn segment_contains_text(segment: &TranscriptSegment) -> bool {
+    match segment {
+        TranscriptSegment::Text { text, .. } => !text.is_empty(),
+    }
 }
 
 fn decode_serialized_event(
@@ -323,6 +461,33 @@ mod tests {
         }
     }
 
+    fn legacy_serialized_question_projection_row(
+        event_seq: i64,
+        update: SessionUpdate,
+    ) -> SerializedSessionJournalEventRow {
+        let SessionUpdate::QuestionRequest {
+            question,
+            session_id,
+        } = update
+        else {
+            panic!("expected question request");
+        };
+        let payload = SessionJournalEventPayload::ProjectionUpdate {
+            update: Box::new(ProjectionJournalUpdate::QuestionRequest {
+                question,
+                session_id,
+            }),
+        };
+        SerializedSessionJournalEventRow {
+            event_id: format!("event-{event_seq}"),
+            session_id: "local-session".to_string(),
+            event_seq,
+            event_kind: "projection_update".to_string(),
+            event_json: serde_json::to_string(&payload).expect("serialize payload"),
+            created_at_ms: event_seq,
+        }
+    }
+
     #[test]
     fn decode_serialized_events_uses_replay_context_to_restore_projection_updates() {
         let payload = SessionJournalEventPayload::ProjectionUpdate {
@@ -377,16 +542,18 @@ mod tests {
     }
 
     #[test]
-    fn long_replay_decodes_and_rebuilds_journaled_interactions_without_tool_payloads() {
+    fn long_replay_ignores_legacy_question_requests_while_rebuilding_journaled_permissions() {
         let replay_context = replay_context();
         let rows = (1..=160)
             .map(|index| {
-                let update = if index % 2 == 0 {
-                    permission_update(index as usize)
+                if index % 2 == 0 {
+                    serialized_projection_row(index, permission_update(index as usize))
                 } else {
-                    question_update(index as usize)
-                };
-                serialized_projection_row(index, update)
+                    legacy_serialized_question_projection_row(
+                        index,
+                        question_update(index as usize),
+                    )
+                }
             })
             .collect::<Vec<_>>();
 
@@ -395,7 +562,7 @@ mod tests {
 
         assert_eq!(decoded.len(), 160);
         assert_eq!(replayed.operations.len(), 0);
-        assert_eq!(replayed.interactions.len(), 160);
+        assert_eq!(replayed.interactions.len(), 80);
         assert!(replayed
             .interactions
             .iter()
@@ -403,6 +570,42 @@ mod tests {
         assert!(replayed
             .interactions
             .iter()
-            .any(|interaction| interaction.id == "question-159"));
+            .all(|interaction| !interaction.id.starts_with("question-")));
+    }
+
+    #[test]
+    fn replay_ignores_legacy_question_request_with_materialization_barriers() {
+        let replay_context = replay_context();
+        let rows = vec![
+            SerializedSessionJournalEventRow {
+                event_id: "event-1".to_string(),
+                session_id: "local-session".to_string(),
+                event_seq: 1,
+                event_kind: "materialization_barrier".to_string(),
+                event_json: serde_json::to_string(
+                    &SessionJournalEventPayload::MaterializationBarrier,
+                )
+                .expect("serialize barrier"),
+                created_at_ms: 1,
+            },
+            legacy_serialized_question_projection_row(2, question_update(1)),
+            SerializedSessionJournalEventRow {
+                event_id: "event-3".to_string(),
+                session_id: "local-session".to_string(),
+                event_seq: 3,
+                event_kind: "materialization_barrier".to_string(),
+                event_json: serde_json::to_string(
+                    &SessionJournalEventPayload::MaterializationBarrier,
+                )
+                .expect("serialize barrier"),
+                created_at_ms: 3,
+            },
+        ];
+
+        let decoded = decode_serialized_events(&replay_context, rows).expect("decode rows");
+        let replayed = rebuild_session_projection(&replay_context, &decoded);
+
+        assert!(replayed.operations.is_empty());
+        assert!(replayed.interactions.is_empty());
     }
 }

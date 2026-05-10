@@ -25,7 +25,6 @@ static FUTURE_PROVIDER_CAPABILITIES: [ProviderCapabilities; 1] = [ProviderCapabi
     plan_adapter_policy: PlanAdapterPolicy {
         parses_wrapper_plan_from_text_stream: false,
         finalizes_wrapper_plan_on_turn_end: false,
-        clears_message_tracker_on_prompt_response: false,
     },
     history_replay_policy: HistoryReplayPolicy {
         family: HistoryReplayFamily::SharedCanonical,

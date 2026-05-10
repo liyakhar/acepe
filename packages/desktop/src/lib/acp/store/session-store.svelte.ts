@@ -11,6 +11,7 @@
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { getContext, setContext } from "svelte";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
+import { countWordsInMarkdown } from "@acepe/ui/markdown";
 import type {
 	ModelsForDisplay,
 	ProviderMetadataProjection,
@@ -20,6 +21,7 @@ import {
 	resolveProviderMetadataProjection,
 } from "../../services/acp-provider-metadata.js";
 import type {
+	AssistantTextDeltaPayload,
 	ConfigOptionData as CanonicalConfigOptionData,
 	ConfigOptionValue as CanonicalConfigOptionValue,
 	FailureReason,
@@ -67,7 +69,11 @@ import type {
 	TurnCompleteUpdate,
 	TurnErrorUpdate,
 } from "../types/turn-error.js";
-import type { CanonicalSessionProjection } from "./canonical-session-projection.js";
+import type {
+	CanonicalSessionProjection,
+	RowTokenStream,
+	SessionClockAnchor,
+} from "./canonical-session-projection.js";
 import { ComposerMachineService } from "./composer-machine-service.svelte.js";
 import type { ISessionStateReader, ISessionStateWriter } from "./services/interfaces/index.js";
 import {
@@ -122,6 +128,7 @@ const logger = createLogger({ id: "session-store", name: "SessionStore" });
 
 const SESSION_STORE_KEY = Symbol("session-store");
 const PR_CHECKS_POLL_INTERVAL_MS = 10_000;
+const AWAITING_MODEL_SNAPSHOT_REFRESH_MS = 5_000;
 const MAX_CANONICAL_CONFIG_STRING_LENGTH = 512;
 
 type ProjectionTurnFailure = {
@@ -249,6 +256,7 @@ const SESSION_STATE_GRAPH_COPY_KEYS = [
 	"interactions",
 	"turnState",
 	"messageCount",
+	"lastAgentMessageId",
 	"activeTurnFailure",
 	"lastTerminalTurnId",
 	"lifecycle",
@@ -287,6 +295,7 @@ function graphWithTranscriptSnapshot(
 		interactions: graph.interactions,
 		turnState: graph.turnState,
 		messageCount: graph.messageCount,
+		lastAgentMessageId: graph.lastAgentMessageId ?? null,
 		activeTurnFailure: graph.activeTurnFailure ?? null,
 		lastTerminalTurnId: graph.lastTerminalTurnId ?? null,
 		lifecycle: graph.lifecycle,
@@ -315,6 +324,7 @@ function graphWithLifecycle(
 		interactions: graph.interactions,
 		turnState: graph.turnState,
 		messageCount: graph.messageCount,
+		lastAgentMessageId: graph.lastAgentMessageId ?? null,
 		activeTurnFailure: graph.activeTurnFailure ?? null,
 		lastTerminalTurnId: graph.lastTerminalTurnId ?? null,
 		lifecycle,
@@ -342,6 +352,7 @@ function graphWithCapabilities(
 		interactions: graph.interactions,
 		turnState: graph.turnState,
 		messageCount: graph.messageCount,
+		lastAgentMessageId: graph.lastAgentMessageId ?? null,
 		activeTurnFailure: graph.activeTurnFailure ?? null,
 		lastTerminalTurnId: graph.lastTerminalTurnId ?? null,
 		lifecycle: graph.lifecycle,
@@ -437,6 +448,7 @@ function graphWithPatches(input: {
 	readonly turnState: SessionTurnState;
 	readonly activeTurnFailure: TurnFailureSnapshot | null;
 	readonly lastTerminalTurnId: string | null;
+	readonly lastAgentMessageId: string | null;
 	readonly operationPatches: readonly OperationSnapshot[];
 	readonly interactionPatches: readonly InteractionSnapshot[];
 }): SessionStateGraph {
@@ -460,6 +472,7 @@ function graphWithPatches(input: {
 				: mergeInteractionSnapshots(input.graph.interactions, input.interactionPatches),
 		turnState: input.turnState,
 		messageCount: input.graph.messageCount,
+		lastAgentMessageId: input.lastAgentMessageId,
 		activeTurnFailure: input.activeTurnFailure,
 		lastTerminalTurnId: input.lastTerminalTurnId,
 		lifecycle: input.graph.lifecycle,
@@ -518,6 +531,77 @@ function appendTranscriptSegment(
 	return nextEntries;
 }
 
+function findLastUserTranscriptEntryIndex(entries: readonly TranscriptEntry[]): number {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		if (entries[index]?.role === "user") {
+			return index;
+		}
+	}
+	return -1;
+}
+
+function resolveCanonicalTranscriptAssistantEntryId(
+	entries: readonly TranscriptEntry[],
+	entryId: string,
+	eventSeq: number
+): string {
+	const lastUserIndex = findLastUserTranscriptEntryIndex(entries);
+	for (let index = lastUserIndex + 1; index < entries.length; index += 1) {
+		const entry = entries[index];
+		if (entry?.role === "assistant" && entry.entryId === entryId) {
+			return entryId;
+		}
+	}
+
+	for (let index = 0; index <= lastUserIndex; index += 1) {
+		const entry = entries[index];
+		if (entry?.role === "assistant" && entry.entryId === entryId) {
+			return `${entryId}:turn:${eventSeq}`;
+		}
+	}
+
+	return entryId;
+}
+
+function resolveCanonicalTranscriptAppendEntry(
+	entries: readonly TranscriptEntry[],
+	entry: TranscriptEntry,
+	eventSeq: number
+): TranscriptEntry {
+	if (entry.role !== "assistant") {
+		return entry;
+	}
+
+	const resolvedEntryId = resolveCanonicalTranscriptAssistantEntryId(
+		entries,
+		entry.entryId,
+		eventSeq
+	);
+	if (resolvedEntryId === entry.entryId) {
+		return entry;
+	}
+
+	return {
+		entryId: resolvedEntryId,
+		role: entry.role,
+		segments: entry.segments,
+		attemptId: entry.attemptId,
+	};
+}
+
+function resolveCanonicalTranscriptAppendSegmentEntryId(
+	entries: readonly TranscriptEntry[],
+	entryId: string,
+	role: TranscriptEntry["role"],
+	eventSeq: number
+): string {
+	if (role !== "assistant") {
+		return entryId;
+	}
+
+	return resolveCanonicalTranscriptAssistantEntryId(entries, entryId, eventSeq);
+}
+
 function applyTranscriptDeltaToSnapshot(
 	snapshot: TranscriptSnapshot,
 	delta: TranscriptDelta
@@ -531,13 +615,21 @@ function applyTranscriptDeltaToSnapshot(
 		}
 
 		if (operation.kind === "appendEntry") {
-			entries = replaceTranscriptEntry(entries, operation.entry);
+			entries = replaceTranscriptEntry(
+				entries,
+				resolveCanonicalTranscriptAppendEntry(entries, operation.entry, delta.eventSeq)
+			);
 			continue;
 		}
 
 		entries = appendTranscriptSegment(
 			entries,
-			operation.entryId,
+			resolveCanonicalTranscriptAppendSegmentEntryId(
+				entries,
+				operation.entryId,
+				operation.role,
+				delta.eventSeq
+			),
 			operation.role,
 			operation.segment
 		);
@@ -548,6 +640,41 @@ function applyTranscriptDeltaToSnapshot(
 		entries,
 	};
 }
+
+function buildRowTokenStreamKey(turnId: string, rowId: string): string {
+	return `${turnId}:${rowId}`;
+}
+
+function cloneRowTokenStreamMap(
+	tokenStream: ReadonlyMap<string, RowTokenStream>
+): Map<string, RowTokenStream> {
+	const nextTokenStream = new Map<string, RowTokenStream>();
+	for (const [key, value] of tokenStream) {
+		nextTokenStream.set(key, value);
+	}
+	return nextTokenStream;
+}
+
+function emptyRowTokenStream(): ReadonlyMap<string, RowTokenStream> {
+	return new Map<string, RowTokenStream>();
+}
+
+function preserveCanonicalStreamingState(
+	projection: CanonicalSessionProjection | null
+): {
+	readonly tokenStream: ReadonlyMap<string, RowTokenStream>;
+	readonly clockAnchor: SessionClockAnchor | null;
+} {
+	return {
+		tokenStream: projection?.tokenStream ?? emptyRowTokenStream(),
+		clockAnchor: projection?.clockAnchor ?? null,
+	};
+}
+
+function getBrowserMonotonicMs(): number {
+	return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
 const PR_STATE_CACHE_TTL_MS = 60_000;
 const PR_CHECKS_CACHE_TTL_MS = 10_000;
 
@@ -1059,23 +1186,17 @@ function reconcileStoredGraphActivity(
 	};
 }
 
-function canonicalProjectionResolvesPendingSendIntent(
-	lifecycle: SessionGraphLifecycle,
-	turnState: SessionTurnState,
-	activeTurnFailure: ActiveTurnFailure | null
+function transcriptSnapshotContainsUserAttemptId(
+	snapshot: TranscriptSnapshot,
+	attemptId: string
 ): boolean {
-	return (
-		lifecycle.actionability.canSend ||
-		lifecycle.status === "activating" ||
-		lifecycle.status === "reconnecting" ||
-		lifecycle.status === "detached" ||
-		lifecycle.status === "failed" ||
-		lifecycle.status === "archived" ||
-		turnState === "Running" ||
-		turnState === "Completed" ||
-		turnState === "Failed" ||
-		activeTurnFailure !== null
-	);
+	for (const entry of snapshot.entries) {
+		if (entry.role === "user" && entry.attemptId === attemptId) {
+			return true;
+		}
+	}
+
+	return false;
 }
 
 /**
@@ -1116,6 +1237,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	private sessionOpenHydrator: CreatedSessionHydrator | null = null;
 	private liveSessionStateGraphConsumer: LiveSessionStateGraphConsumer | null = null;
 	private readonly inflightSessionStateRefreshes = new Map<string, InflightSessionStateRefresh>();
+	private readonly awaitingModelRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	// PR details cache/dedupe (prevents repeated gh pr view storms during scans)
 	private readonly prDetailsCache = new Map<string, CachedPrDetails>();
@@ -1278,6 +1400,34 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		return this.pendingCreationSessions.has(sessionId);
 	}
 
+	materializePendingCreationSession(sessionId: string): boolean {
+		if (this.getSessionCold(sessionId)) {
+			this.pendingCreationSessions.delete(sessionId);
+			return true;
+		}
+
+		const pendingCreation = this.pendingCreationSessions.get(sessionId) ?? null;
+		if (pendingCreation === null) {
+			return false;
+		}
+
+		const now = new Date();
+		this.addSession({
+			id: sessionId,
+			projectPath: pendingCreation.projectPath,
+			agentId: pendingCreation.agentId,
+			worktreePath: pendingCreation.worktreePath ?? undefined,
+			title: pendingCreation.title ?? "New Thread",
+			updatedAt: now,
+			createdAt: now,
+			sourcePath: undefined,
+			sessionLifecycleState: "created",
+			parentId: null,
+		});
+		this.pendingCreationSessions.delete(sessionId);
+		return true;
+	}
+
 	getSessionCanSend(sessionId: string): boolean | null {
 		return this.canonicalProjections.get(sessionId)?.lifecycle.actionability.canSend ?? null;
 	}
@@ -1342,6 +1492,18 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	 */
 	getSessionLastTerminalTurnId(sessionId: string): string | null {
 		return this.canonicalProjections.get(sessionId)?.lastTerminalTurnId ?? null;
+	}
+
+	getRowTokenStream(sessionId: string, turnId: string, rowId: string): RowTokenStream | null {
+		const projection = this.canonicalProjections.get(sessionId) ?? null;
+		if (projection === null) {
+			return null;
+		}
+		return projection.tokenStream.get(buildRowTokenStreamKey(turnId, rowId)) ?? null;
+	}
+
+	getClockAnchor(sessionId: string): SessionClockAnchor | null {
+		return this.canonicalProjections.get(sessionId)?.clockAnchor ?? null;
 	}
 
 	/**
@@ -1613,6 +1775,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	applySessionStateGraph(graph: SessionStateGraph): void {
 		const previousHotState = this.getHotState(graph.canonicalSessionId);
 		const previousProjection = this.canonicalProjections.get(graph.canonicalSessionId) ?? null;
+		const preservedStreamingState = preserveCanonicalStreamingState(previousProjection);
 		this.sessionStateGraphs.set(graph.canonicalSessionId, graph);
 		const canonicalCapabilities = sanitizeCanonicalCapabilities(graph.capabilities);
 		const activeTurnFailure = mapProjectionTurnFailure(graph.activeTurnFailure ?? null);
@@ -1624,6 +1787,8 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 			activeTurnFailure,
 			lastTerminalTurnId: nextLastTerminalTurnId,
 			capabilities: canonicalCapabilities,
+			tokenStream: preservedStreamingState.tokenStream,
+			clockAnchor: preservedStreamingState.clockAnchor,
 			revision: graph.revision,
 		});
 		this.applyCanonicalTerminalTurnSideEffects({
@@ -1648,7 +1813,10 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		if (
 			previousHotState.pendingSendIntent !== null &&
 			previousHotState.pendingSendIntent !== undefined &&
-			canonicalProjectionResolvesPendingSendIntent(graph.lifecycle, graph.turnState, activeTurnFailure)
+			transcriptSnapshotContainsUserAttemptId(
+				graph.transcriptSnapshot,
+				previousHotState.pendingSendIntent.attemptId
+			)
 		) {
 			updates.pendingSendIntent = null;
 		}
@@ -1674,10 +1842,12 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		lastTerminalTurnId: string | null;
 	}): void {
 		const isNewCompletedTurn =
+			input.previousProjection !== null &&
 			input.turnState === "Completed" &&
 			(input.previousProjection?.turnState !== "Completed" ||
 				input.previousProjection.lastTerminalTurnId !== input.lastTerminalTurnId);
 		const isNewFailedTurn =
+			input.previousProjection !== null &&
 			input.turnState === "Failed" &&
 			input.activeTurnFailure !== null &&
 			(input.previousProjection?.turnState !== "Failed" ||
@@ -1926,6 +2096,9 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 				previewState: deriveCapabilityPreviewState(canonicalCapabilities),
 			},
 		});
+		const preservedStreamingState = preserveCanonicalStreamingState(
+			this.canonicalProjections.get(canonicalSessionId) ?? null
+		);
 		// Populate canonical projection from the backend-authored open snapshot
 		// so downstream readers never synthesize lifecycle from hot state.
 		this.canonicalProjections.set(canonicalSessionId, {
@@ -1935,6 +2108,8 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 			activeTurnFailure: mapProjectionTurnFailure(snapshot.activeTurnFailure ?? null),
 			lastTerminalTurnId: snapshot.lastTerminalTurnId ?? null,
 			capabilities: canonicalCapabilities,
+			tokenStream: preservedStreamingState.tokenStream,
+			clockAnchor: preservedStreamingState.clockAnchor,
 			revision: graph.revision,
 		});
 		this.connectionService.sendContentLoad(canonicalSessionId);
@@ -2217,6 +2392,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	disconnectSession(sessionId: string): void {
 		this.connectionMgr.disconnectSession(sessionId);
 		this.messagingSvc.clearSessionState(sessionId);
+		this.clearAwaitingModelRefreshTimer(sessionId);
 	}
 
 	/**
@@ -2228,6 +2404,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		for (const session of connectedSessions) {
 			this.disconnectSession(session.id);
 		}
+		this.clearAllAwaitingModelRefreshTimers();
 	}
 
 	// ============================================
@@ -2943,7 +3120,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	applySessionStateEnvelope(sessionId: string, envelope: SessionStateEnvelope): void {
 		const commands = routeSessionStateEnvelope(
 			sessionId,
-			this.entryStore.getTranscriptRevision(sessionId),
+			this.getGraphTranscriptRevision(sessionId),
 			envelope
 		);
 
@@ -2951,11 +3128,18 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 			if (command.kind === "replaceGraph") {
 				const graph = command.graph;
 				const previousGraph = this.sessionStateGraphs.get(sessionId) ?? null;
-				const currentTranscriptRevision = this.entryStore.getTranscriptRevision(sessionId);
+				const currentTranscriptRevision = previousGraph?.transcriptSnapshot.revision;
 				const incomingTranscriptRevision = graph.transcriptSnapshot.revision;
+				const shouldPreserveCurrentTranscript =
+					previousGraph !== null &&
+					currentTranscriptRevision !== undefined &&
+					incomingTranscriptRevision > currentTranscriptRevision &&
+					graph.transcriptSnapshot.entries.length === 0 &&
+					previousGraph.transcriptSnapshot.entries.length > 0;
 				const shouldReplaceTranscriptSnapshot =
 					currentTranscriptRevision === undefined ||
-					incomingTranscriptRevision > currentTranscriptRevision;
+					(!shouldPreserveCurrentTranscript &&
+						incomingTranscriptRevision > currentTranscriptRevision);
 				this.operationStore.replaceSessionOperations(sessionId, graph.operations);
 				if (shouldReplaceTranscriptSnapshot) {
 					this.entryStore.replaceTranscriptSnapshot(
@@ -2980,12 +3164,19 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 						: graphWithTranscriptSnapshot(graph, previousGraph.transcriptSnapshot);
 				this.liveSessionStateGraphConsumer?.replaceSessionStateGraph(projectionGraph);
 				this.applySessionStateGraph(projectionGraph);
+				this.syncAwaitingModelRefreshTimer(
+					sessionId,
+					projectionGraph.activity,
+					projectionGraph.turnState
+				);
 				continue;
 			}
 
 			if (command.kind === "applyLifecycle") {
 				const hotState = this.getHotState(sessionId);
 				const previousProjection = this.canonicalProjections.get(sessionId) ?? null;
+				const preservedStreamingState = preserveCanonicalStreamingState(previousProjection);
+				const previousGraph = this.sessionStateGraphs.get(sessionId) ?? null;
 				// Carry forward canonical turnState and activeTurnFailure from the previous full-graph
 				// projection. Reading these from hotState would feed optimistic messaging-service writes
 				// back into the canonical projection (authority inversion).
@@ -3010,16 +3201,17 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 					activeTurnFailure,
 					lastTerminalTurnId: previousProjection?.lastTerminalTurnId ?? null,
 					capabilities: previousProjection?.capabilities ?? emptySessionGraphCapabilities(),
+					tokenStream: preservedStreamingState.tokenStream,
+					clockAnchor: preservedStreamingState.clockAnchor,
 					revision: {
 						graphRevision: envelope.graphRevision,
 						transcriptRevision:
 							previousProjection?.revision.transcriptRevision ??
-							this.entryStore.getTranscriptRevision(sessionId) ??
+							previousGraph?.transcriptSnapshot.revision ??
 							0,
 						lastEventSeq: envelope.lastEventSeq,
 					},
 				});
-				const previousGraph = this.sessionStateGraphs.get(sessionId) ?? null;
 				if (previousGraph !== null) {
 					this.sessionStateGraphs.set(
 						sessionId,
@@ -3039,10 +3231,10 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 				if (
 					hotState.pendingSendIntent !== null &&
 					hotState.pendingSendIntent !== undefined &&
-					canonicalProjectionResolvesPendingSendIntent(
-						command.lifecycle,
-						turnState,
-						activeTurnFailure
+					previousGraph !== null &&
+					transcriptSnapshotContainsUserAttemptId(
+						previousGraph.transcriptSnapshot,
+						hotState.pendingSendIntent.attemptId
 					)
 				) {
 					updates.pendingSendIntent = null;
@@ -3054,6 +3246,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 					turnState,
 					activeTurnFailure
 				);
+				this.syncAwaitingModelRefreshTimer(sessionId, reconciledActivity, turnState);
 				continue;
 			}
 
@@ -3066,6 +3259,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 				if (!isNewerGraphRevision(previousProjection?.revision ?? null, command.revision)) {
 					continue;
 				}
+				const preservedStreamingState = preserveCanonicalStreamingState(previousProjection);
 				const canonicalCapabilities = mergeCanonicalCapabilities(
 					command.capabilities,
 					previousProjection?.capabilities ?? null
@@ -3079,6 +3273,8 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 						activeTurnFailure: previousProjection.activeTurnFailure,
 						lastTerminalTurnId: previousProjection.lastTerminalTurnId,
 						capabilities: canonicalCapabilities,
+						tokenStream: preservedStreamingState.tokenStream,
+						clockAnchor: preservedStreamingState.clockAnchor,
 						revision: command.revision,
 					});
 				}
@@ -3121,6 +3317,11 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 				continue;
 			}
 
+			if (command.kind === "applyAssistantTextDelta") {
+				this.applyAssistantTextDelta(sessionId, command.delta);
+				continue;
+			}
+
 			if (command.kind === "applyGraphPatches") {
 				const previousProjection = this.canonicalProjections.get(sessionId) ?? null;
 				if (previousProjection === null) {
@@ -3134,6 +3335,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 					);
 					continue;
 				}
+				const preservedStreamingState = preserveCanonicalStreamingState(previousProjection);
 				this.operationStore.applySessionOperationPatches(sessionId, command.operationPatches);
 				this.liveSessionStateGraphConsumer?.applySessionInteractionPatches?.(
 					command.interactionPatches
@@ -3149,6 +3351,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 							turnState: command.turnState,
 							activeTurnFailure: command.activeTurnFailure,
 							lastTerminalTurnId: command.lastTerminalTurnId,
+							lastAgentMessageId: command.lastAgentMessageId,
 							operationPatches: command.operationPatches,
 							interactionPatches: command.interactionPatches,
 						})
@@ -3162,6 +3365,8 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 					activeTurnFailure,
 					lastTerminalTurnId: command.lastTerminalTurnId,
 					capabilities: previousProjection.capabilities,
+					tokenStream: preservedStreamingState.tokenStream,
+					clockAnchor: preservedStreamingState.clockAnchor,
 					revision: command.revision,
 				});
 				const hotState = this.getHotState(sessionId);
@@ -3169,10 +3374,10 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 				if (
 					hotState.pendingSendIntent !== null &&
 					hotState.pendingSendIntent !== undefined &&
-					canonicalProjectionResolvesPendingSendIntent(
-						previousProjection.lifecycle,
-						command.turnState,
-						activeTurnFailure
+					previousGraph !== null &&
+					transcriptSnapshotContainsUserAttemptId(
+						previousGraph.transcriptSnapshot,
+						hotState.pendingSendIntent.attemptId
 					)
 				) {
 					updates.pendingSendIntent = null;
@@ -3192,13 +3397,14 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 					command.turnState,
 					activeTurnFailure
 				);
+				this.syncAwaitingModelRefreshTimer(sessionId, command.activity, command.turnState);
 				continue;
 			}
 
 			if (command.kind === "refreshSnapshot") {
 				logger.warn("Refreshing session-state snapshot for transcript frontier mismatch", {
 					sessionId,
-					currentRevision: this.entryStore.getTranscriptRevision(sessionId),
+					currentRevision: this.getGraphTranscriptRevision(sessionId),
 					fromRevision: command.fromRevision,
 					toRevision: command.toRevision,
 				});
@@ -3214,7 +3420,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	}
 
 	applyTranscriptDelta(sessionId: string, delta: TranscriptDelta): void {
-		const currentTranscriptRevision = this.entryStore.getTranscriptRevision(sessionId);
+		const currentTranscriptRevision = this.getGraphTranscriptRevision(sessionId);
 		if (
 			currentTranscriptRevision === undefined ||
 			delta.snapshotRevision > currentTranscriptRevision
@@ -3232,6 +3438,81 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 			}
 		}
 		this.entryStore.applyTranscriptDelta(sessionId, delta, new Date());
+	}
+
+	private applyAssistantTextDelta(
+		sessionId: string,
+		delta: AssistantTextDeltaPayload
+	): void {
+		const projection = this.canonicalProjections.get(sessionId) ?? null;
+		if (projection === null) {
+			logger.warn("Received assistant text delta before canonical projection", {
+				sessionId,
+				turnId: delta.turnId,
+				rowId: delta.rowId,
+				revision: delta.revision,
+			});
+			void this.refreshSessionStateSnapshot(sessionId).match(
+				() => undefined,
+				() => undefined
+			);
+			return;
+		}
+
+		const rowKey = buildRowTokenStreamKey(delta.turnId, delta.rowId);
+		const previousRow = projection.tokenStream.get(rowKey) ?? null;
+		if (previousRow !== null && delta.revision <= previousRow.revision) {
+			return;
+		}
+
+		const currentText = previousRow?.accumulatedText ?? "";
+		if (delta.charOffset !== currentText.length) {
+			logger.warn("Rejecting non-append assistant text delta", {
+				sessionId,
+				turnId: delta.turnId,
+				rowId: delta.rowId,
+				revision: delta.revision,
+				charOffset: delta.charOffset,
+				expectedOffset: currentText.length,
+			});
+			return;
+		}
+
+		const nextText = `${currentText}${delta.deltaText}`;
+		const nextRow: RowTokenStream = {
+			turnId: delta.turnId,
+			rowId: delta.rowId,
+			accumulatedText: nextText,
+			wordCount: countWordsInMarkdown(nextText),
+			firstDeltaProducedAtMonotonicMs:
+				previousRow?.firstDeltaProducedAtMonotonicMs ?? delta.producedAtMonotonicMs,
+			lastDeltaProducedAtMonotonicMs: delta.producedAtMonotonicMs,
+			revision: delta.revision,
+		};
+		const nextTokenStream = cloneRowTokenStreamMap(projection.tokenStream);
+		nextTokenStream.set(rowKey, nextRow);
+		const nextClockAnchor =
+			projection.clockAnchor ??
+			({
+				rustMonotonicMs: delta.producedAtMonotonicMs,
+				browserAnchorMs: getBrowserMonotonicMs(),
+			} satisfies SessionClockAnchor);
+
+		this.canonicalProjections.set(sessionId, {
+			lifecycle: projection.lifecycle,
+			activity: projection.activity,
+			turnState: projection.turnState,
+			activeTurnFailure: projection.activeTurnFailure,
+			lastTerminalTurnId: projection.lastTerminalTurnId,
+			capabilities: projection.capabilities,
+			tokenStream: nextTokenStream,
+			clockAnchor: nextClockAnchor,
+			revision: projection.revision,
+		});
+	}
+
+	private getGraphTranscriptRevision(sessionId: string): number | undefined {
+		return this.sessionStateGraphs.get(sessionId)?.transcriptSnapshot.revision;
 	}
 
 	private refreshSessionStateSnapshot(sessionId: string): InflightSessionStateRefresh {
@@ -3262,6 +3543,54 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 
 		this.inflightSessionStateRefreshes.set(sessionId, refresh);
 		return refresh;
+	}
+
+	private syncAwaitingModelRefreshTimer(
+		sessionId: string,
+		activity: SessionGraphActivity,
+		turnState: SessionTurnState
+	): void {
+		this.clearAwaitingModelRefreshTimer(sessionId);
+		if (activity.kind !== "awaiting_model" && turnState !== "Running") {
+			return;
+		}
+
+		const timerId = setTimeout(() => {
+			this.awaitingModelRefreshTimers.delete(sessionId);
+			const projection = this.canonicalProjections.get(sessionId) ?? null;
+			if (
+				projection === null ||
+				(projection.activity.kind !== "awaiting_model" && projection.turnState !== "Running")
+			) {
+				return;
+			}
+			logger.warn("Refreshing session-state snapshot after stale awaiting-model state", {
+				sessionId,
+				graphRevision: projection.revision.graphRevision,
+				lastEventSeq: projection.revision.lastEventSeq,
+			});
+			void this.refreshSessionStateSnapshot(sessionId).match(
+				() => undefined,
+				() => undefined
+			);
+		}, AWAITING_MODEL_SNAPSHOT_REFRESH_MS);
+		this.awaitingModelRefreshTimers.set(sessionId, timerId);
+	}
+
+	private clearAwaitingModelRefreshTimer(sessionId: string): void {
+		const timerId = this.awaitingModelRefreshTimers.get(sessionId);
+		if (timerId === undefined) {
+			return;
+		}
+		clearTimeout(timerId);
+		this.awaitingModelRefreshTimers.delete(sessionId);
+	}
+
+	private clearAllAwaitingModelRefreshTimers(): void {
+		for (const timerId of this.awaitingModelRefreshTimers.values()) {
+			clearTimeout(timerId);
+		}
+		this.awaitingModelRefreshTimers.clear();
 	}
 
 	// ============================================
@@ -3323,6 +3652,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 	 */
 	cleanupSessionUpdates(): void {
 		this.eventService.cleanupSessionUpdates();
+		this.clearAllAwaitingModelRefreshTimers();
 	}
 }
 

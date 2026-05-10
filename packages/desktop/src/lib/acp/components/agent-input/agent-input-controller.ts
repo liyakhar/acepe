@@ -243,7 +243,7 @@ export function createAgentInputController(host: AgentInputControllerHost): Agen
 			);
 		}
 
-		playSound(SoundEffect.Paste);
+		playSound(SoundEffect.DictationStart);
 		queueMicrotask(() => {
 			host.logger.info("handleSend: preparing send", {
 				panelId: props.panelId,

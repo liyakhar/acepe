@@ -86,7 +86,7 @@
 		{/if}
 
 		{#if durationLabel}
-			<span class="ml-auto shrink-0 font-mono text-sm text-muted-foreground/70">
+			<span class="ml-auto shrink-0 font-sans text-sm text-muted-foreground/70">
 				{durationLabel}
 			</span>
 		{/if}
@@ -175,7 +175,7 @@
 	.browser-script-block,
 	.browser-script-preview {
 		margin: 0;
-		font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+		font-family: var(--font-sans, system-ui, sans-serif);
 		font-size: 0.875rem;
 		line-height: 1.45;
 		white-space: pre-wrap;

@@ -47,7 +47,7 @@
 		ariaExpandOutput = "Expand output",
 	}: Props = $props();
 
-	let isExpanded = $state(true);
+	let isExpanded = $state(false);
 
 	const isPending = $derived(status === "pending" || status === "running");
 	const isSuccess = $derived(exitCode === 0);
@@ -196,8 +196,8 @@
 	}
 
 	.execute-block {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.8125rem;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.875rem;
 		line-height: 1.4;
 		white-space: pre-wrap;
 		word-break: break-all;
@@ -256,8 +256,8 @@
 	}
 
 	.execute-output {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.8125rem;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.875rem;
 		line-height: 1.5;
 		margin: 0;
 		white-space: pre-wrap;
@@ -279,8 +279,8 @@
 
 	/* Shiki-highlighted streams (log grammar, dual-theme spans) */
 	.execute-output-shiki {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.8125rem;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.875rem;
 		line-height: 1.5;
 		margin: 0;
 		white-space: pre-wrap;

@@ -45,6 +45,17 @@ export class SessionTransientProjectionStore implements ITransientProjectionMana
 	 */
 	updateHotState(sessionId: string, updates: Partial<SessionTransientProjection>): void {
 		const current = this.transientProjections.get(sessionId) ?? DEFAULT_TRANSIENT_PROJECTION;
+		let hasChange = false;
+		for (const key of Object.keys(updates) as Array<keyof SessionTransientProjection>) {
+			if (current[key] !== updates[key]) {
+				hasChange = true;
+				break;
+			}
+		}
+		if (!hasChange) {
+			return;
+		}
+
 		// Write directly to SvelteMap (fine-grained reactivity)
 		this.transientProjections.set(sessionId, Object.assign({}, current, updates));
 	}

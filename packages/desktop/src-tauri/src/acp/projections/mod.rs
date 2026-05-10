@@ -19,6 +19,9 @@ use sha2::{Digest, Sha256};
 use specta::Type;
 use std::sync::Arc;
 
+const CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE: &str =
+    "Result unavailable: the agent resumed after this tool call but did not provide stdout/stderr to Acepe.";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum SessionTurnState {
     Idle,
@@ -303,6 +306,10 @@ fn start_running_turn(snapshot: &mut SessionSnapshot) {
     snapshot.last_terminal_turn_id = None;
 }
 
+fn synthetic_agent_message_id(event_seq: i64) -> String {
+    format!("assistant-event-{event_seq}")
+}
+
 fn should_ignore_turn_complete(snapshot: &SessionSnapshot, turn_id: Option<&str>) -> bool {
     preserves_failed_turn(snapshot)
         && (turn_id.is_none()
@@ -458,13 +465,16 @@ impl ProjectionRegistry {
         match update {
             SessionUpdate::UserMessageChunk { .. } => {
                 snapshot.message_count = snapshot.message_count.saturating_add(1);
+                snapshot.last_agent_message_id = None;
                 start_running_turn(&mut snapshot);
             }
             SessionUpdate::AgentMessageChunk { message_id, .. } => {
                 snapshot.message_count = snapshot.message_count.saturating_add(1);
-                if let Some(message_id) = message_id {
-                    snapshot.last_agent_message_id = Some(message_id.clone());
-                }
+                let live_message_id = message_id
+                    .clone()
+                    .or_else(|| snapshot.last_agent_message_id.clone())
+                    .unwrap_or_else(|| synthetic_agent_message_id(snapshot.last_event_seq));
+                snapshot.last_agent_message_id = Some(live_message_id);
                 if !preserves_failed_turn(&snapshot) {
                     start_running_turn(&mut snapshot);
                 }
@@ -475,6 +485,14 @@ impl ProjectionRegistry {
             SessionUpdate::AgentThoughtChunk { .. } => {}
             SessionUpdate::ToolCall { tool_call, .. } => {
                 let tool_call = normalize_tool_call_for_operation_ingress(tool_call);
+                if should_skip_unanswered_question_tool_operation(&tool_call) {
+                    self.register_converted_question_interaction(
+                        session_id,
+                        &tool_call,
+                        snapshot.last_event_seq,
+                    );
+                    return;
+                }
                 upsert_active_tool_call(&mut snapshot.active_tool_call_ids, &tool_call.id);
                 if is_terminal_tool_call_status(&tool_call.status) {
                     mark_tool_call_completed(&mut snapshot, &tool_call.id);
@@ -711,6 +729,24 @@ impl ProjectionRegistry {
         Some(interaction)
     }
 
+    pub fn import_interaction_snapshot(&self, interaction: InteractionSnapshot) {
+        self.upsert_interaction(interaction);
+    }
+
+    pub fn import_interaction_snapshot_at_event_seq(
+        &self,
+        interaction: InteractionSnapshot,
+        event_seq: i64,
+    ) {
+        let session_id = interaction.session_id.clone();
+        self.upsert_interaction(interaction);
+        let mut snapshot = self
+            .snapshots
+            .entry(session_id.clone())
+            .or_insert_with(|| SessionSnapshot::new(session_id, None));
+        snapshot.last_event_seq = snapshot.last_event_seq.max(event_seq);
+    }
+
     pub fn resolve_interaction_by_request_id(
         &self,
         session_id: &str,
@@ -762,6 +798,9 @@ impl ProjectionRegistry {
                 }
                 StoredEntry::ToolCall { id, message, .. } => {
                     let message = normalize_tool_call_for_operation_ingress(message);
+                    if should_skip_unanswered_question_tool_operation(&message) {
+                        continue;
+                    }
                     if snapshot.active_turn_failure.is_some() {
                         start_running_turn(&mut snapshot);
                     }
@@ -1086,10 +1125,14 @@ impl ProjectionRegistry {
             return;
         };
 
-        let next_status = update
-            .status
-            .clone()
-            .unwrap_or(existing.provider_status.clone());
+        let next_status = if is_claude_resumed_missing_tool_result_update(update) {
+            ToolCallStatus::Completed
+        } else {
+            update
+                .status
+                .clone()
+                .unwrap_or(existing.provider_status.clone())
+        };
         let next_arguments = update
             .arguments
             .clone()
@@ -1470,6 +1513,10 @@ impl ProjectionRegistry {
     }
 }
 
+fn should_skip_unanswered_question_tool_operation(tool_call: &ToolCallData) -> bool {
+    matches!(tool_call.kind, Some(ToolKind::Question)) && tool_call.question_answer.is_none()
+}
+
 fn create_session_tool_key(session_id: &str, tool_call_id: &str) -> String {
     format!("{session_id}::{tool_call_id}")
 }
@@ -1623,6 +1670,22 @@ fn derive_operation_state(status: &ToolCallStatus) -> OperationState {
         ToolCallStatus::Completed => OperationState::Completed,
         ToolCallStatus::Failed => OperationState::Failed,
     }
+}
+
+fn is_claude_resumed_missing_tool_result_update(update: &ToolCallUpdateData) -> bool {
+    if update.status != Some(ToolCallStatus::Failed) {
+        return false;
+    }
+    if update.failure_reason.as_deref() == Some(CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE) {
+        return true;
+    }
+
+    update
+        .result
+        .as_ref()
+        .and_then(|result| result.get("stderr"))
+        .and_then(|value| value.as_str())
+        == Some(CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE)
 }
 
 pub(crate) fn is_terminal_operation_state(state: &OperationState) -> bool {
@@ -1885,6 +1948,7 @@ mod tests {
                 part_id: None,
                 message_id: Some("msg-1".to_string()),
                 session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
             },
         );
         registry.apply_session_update(
@@ -1903,6 +1967,66 @@ mod tests {
         assert_eq!(snapshot.last_agent_message_id.as_deref(), Some("msg-1"));
         assert_eq!(snapshot.turn_state, SessionTurnState::Completed);
         assert_eq!(snapshot.last_event_seq, 2);
+    }
+
+    #[test]
+    fn no_message_id_agent_chunks_expose_stable_live_assistant_id() {
+        let registry = ProjectionRegistry::new();
+        registry.register_session("session-1".to_string(), CanonicalAgentId::ClaudeCode);
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::UserMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "reply shortly".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                session_id: Some("session-1".to_string()),
+                attempt_id: None,
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "Lanterns glow".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: " softly.".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        );
+
+        let snapshot = registry
+            .snapshot_for_session("session-1")
+            .expect("expected session snapshot");
+        assert_eq!(
+            snapshot.last_agent_message_id.as_deref(),
+            Some("assistant-event-2")
+        );
+        assert_eq!(snapshot.turn_state, SessionTurnState::Running);
+        assert_eq!(snapshot.last_event_seq, 3);
     }
 
     #[test]
@@ -1962,6 +2086,7 @@ mod tests {
                 part_id: None,
                 session_id: Some("session-1".to_string()),
                 message_id: Some("msg-late".to_string()),
+                produced_at_monotonic_ms: None,
             },
         );
 
@@ -2128,6 +2253,53 @@ mod tests {
         assert_eq!(completed.provider_status, ToolCallStatus::Completed);
         assert_eq!(completed.result, Some(json!("done")));
         assert!(completed.progressive_arguments.is_none());
+    }
+
+    #[test]
+    fn operation_projection_treats_claude_resumed_missing_result_as_completed() {
+        let registry = ProjectionRegistry::new();
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-1",
+                    "head -30 file.txt",
+                    ToolCallStatus::Pending,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCallUpdate {
+                update: ToolCallUpdateData {
+                    tool_call_id: "tool-1".to_string(),
+                    status: Some(ToolCallStatus::Failed),
+                    result: Some(json!({
+                        "stderr": CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE
+                    })),
+                    failure_reason: Some(CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE.to_string()),
+                    ..ToolCallUpdateData::default()
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", "tool-1")
+            .expect("expected operation");
+        assert_eq!(operation.provider_status, ToolCallStatus::Completed);
+        assert_eq!(operation.operation_state, OperationState::Completed);
+        assert_eq!(
+            operation
+                .result
+                .as_ref()
+                .and_then(|result| result.get("stderr"))
+                .and_then(|value| value.as_str()),
+            Some(CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE)
+        );
     }
 
     #[test]
@@ -2324,6 +2496,45 @@ mod tests {
         }
 
         assert_eq!(registry.session_interactions("session-1").len(), 3);
+    }
+
+    #[test]
+    fn live_unanswered_question_tool_projects_as_interaction_not_running_operation() {
+        use crate::acp::session_update::{QuestionItem, QuestionOption};
+
+        let registry = ProjectionRegistry::new();
+        let mut tool_call =
+            create_execute_tool_call("tool-question", "ask user", ToolCallStatus::InProgress);
+        tool_call.name = "AskUserQuestion".to_string();
+        tool_call.kind = Some(ToolKind::Question);
+        tool_call.title = Some("Question".to_string());
+        tool_call.normalized_questions = Some(vec![QuestionItem {
+            question: "Which archive button should get the confirm step?".to_string(),
+            header: "Archive confirm".to_string(),
+            options: vec![QuestionOption {
+                label: "Sidebar session list".to_string(),
+                description: "Use the archive button in the session list".to_string(),
+            }],
+            multi_select: false,
+        }]);
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let projection = registry.session_projection("session-1");
+
+        assert!(
+            projection.operations.is_empty(),
+            "live AskUserQuestion tools should not appear as running operations"
+        );
+        assert_eq!(projection.interactions.len(), 1);
+        assert_eq!(projection.interactions[0].kind, InteractionKind::Question);
+        assert_eq!(projection.interactions[0].state, InteractionState::Pending);
     }
 
     #[test]
@@ -2714,6 +2925,95 @@ mod tests {
     }
 
     #[test]
+    fn project_thread_snapshot_skips_unanswered_question_tools() {
+        let question_items = vec![crate::acp::session_update::QuestionItem {
+            question: "Pick an archive target?".to_string(),
+            header: "Archive".to_string(),
+            options: vec![crate::acp::session_update::QuestionOption {
+                label: "Sidebar".to_string(),
+                description: "Archive from the sidebar".to_string(),
+            }],
+            multi_select: false,
+        }];
+
+        let thread_snapshot = SessionThreadSnapshot {
+            entries: vec![
+                StoredEntry::User {
+                    id: "user-1".to_string(),
+                    message: StoredUserMessage {
+                        id: Some("user-1".to_string()),
+                        content: StoredContentBlock {
+                            block_type: "text".to_string(),
+                            text: Some("add confirm".to_string()),
+                        },
+                        chunks: vec![],
+                        sent_at: Some("2026-04-08T00:00:00Z".to_string()),
+                    },
+                    timestamp: Some("2026-04-08T00:00:00Z".to_string()),
+                },
+                StoredEntry::ToolCall {
+                    id: "tool-question-entry".to_string(),
+                    message: ToolCallData {
+                        id: "tool-question".to_string(),
+                        name: "AskUserQuestion".to_string(),
+                        arguments: ToolArguments::Other {
+                            raw: json!({
+                                "questions": [{
+                                    "question": "Pick an archive target?",
+                                    "header": "Archive",
+                                    "options": [{
+                                        "label": "Sidebar",
+                                        "description": "Archive from the sidebar"
+                                    }],
+                                    "multiSelect": false
+                                }]
+                            }),
+                        },
+                        raw_input: None,
+                        status: ToolCallStatus::Pending,
+                        result: None,
+                        kind: Some(ToolKind::Question),
+                        title: Some("Question".to_string()),
+                        locations: None,
+                        skill_meta: None,
+                        normalized_questions: Some(question_items),
+                        normalized_todos: None,
+                        normalized_todo_update: None,
+                        parent_tool_use_id: None,
+                        task_children: None,
+                        question_answer: None,
+                        awaiting_plan_approval: false,
+                        plan_approval_request_id: None,
+                    },
+                    timestamp: Some("2026-04-08T00:00:01Z".to_string()),
+                },
+            ],
+            title: "Imported".to_string(),
+            created_at: "2026-04-08T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+
+        let projection = ProjectionRegistry::project_thread_snapshot(
+            "session-1",
+            Some(CanonicalAgentId::ClaudeCode),
+            &thread_snapshot,
+        );
+
+        assert!(
+            projection.operations.is_empty(),
+            "unanswered historical questions should not reappear as pending operations"
+        );
+        assert!(
+            projection.interactions.is_empty(),
+            "unanswered historical questions should not reappear as pending interactions"
+        );
+        assert_eq!(
+            projection.session.expect("expected session").turn_state,
+            SessionTurnState::Completed
+        );
+    }
+
+    #[test]
     fn project_converted_session_preserves_stored_error_source() {
         let thread_snapshot = SessionThreadSnapshot {
             entries: vec![StoredEntry::Error {
@@ -3033,6 +3333,7 @@ mod tests {
             part_id: None,
             message_id: Some(message_id.to_string()),
             session_id: None,
+            produced_at_monotonic_ms: None,
         }
     }
 

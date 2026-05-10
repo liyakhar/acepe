@@ -50,10 +50,6 @@ export default defineConfig({
 			// 3. ignore backend sources, generated outputs, and test-only files that should never reload the app UI
 			ignored: ignoredDevWatchPaths,
 		},
-		fs: {
-			// Allow serving files from src-tauri/packages for tauri-plugin-mcp guest-js
-			allow: [".", "../src-tauri/packages"],
-		},
 	},
 
 	// Vitest configuration for testing Svelte 5 runes

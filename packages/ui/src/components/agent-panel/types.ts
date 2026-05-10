@@ -64,25 +64,25 @@ export interface AgentAssistantEntry {
 	markdown: string;
 	message?: AssistantMessage;
 	isStreaming?: boolean;
-	revealMessageKey?: string;
-	textRevealState?: AgentTextRevealState;
+	tokenRevealCss?: TokenRevealCss;
 	timestampMs?: number;
 }
 
-export interface AgentTextRevealState {
-	policy: "pace";
-	key: string;
-	seedDisplayedText?: string;
+export interface TokenRevealCss {
+	revealCount: number;
+	revealedCharCount: number;
+	baselineMs: number;
+	tokStepMs: number;
+	tokFadeDurMs: number;
+	mode: "smooth" | "instant";
 }
 
 export interface AssistantRenderBlockContext {
 	group: ChunkGroup;
 	isStreaming?: boolean;
-	revealKey?: string;
-	textRevealState?: AgentTextRevealState;
+	tokenRevealCss?: TokenRevealCss;
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
-	onRevealActivityChange?: (active: boolean) => void;
 }
 
 /** One file/replace hunk in an edit tool — used by {@link AgentToolEdit}. */
@@ -158,6 +158,7 @@ export interface AgentThinkingEntry {
 	type: "thinking";
 	durationMs?: number | null;
 	startedAtMs?: number | null;
+	label?: string | null;
 }
 
 export interface AgentMissingEntry {
@@ -223,6 +224,13 @@ export interface AgentQuestion {
 	question: string;
 	header?: string | null;
 	options?: AgentQuestionOption[] | null;
+	multiSelect?: boolean;
+}
+
+export interface AgentPanelQuestionSelectEvent {
+	entryId: string;
+	questionIndex: number;
+	label: string;
 	multiSelect?: boolean;
 }
 

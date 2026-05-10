@@ -1,7 +1,6 @@
 <script lang="ts">
 import { IconArrowUp } from "@tabler/icons-svelte";
 import { Stop } from "phosphor-svelte";
-import { Button } from "$lib/components/ui/button/index.js";
 import { Kbd, KbdGroup } from "$lib/components/ui/kbd/index.js";
 import { Skeleton } from "$lib/components/ui/skeleton/index.js";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
@@ -197,13 +196,12 @@ let {
 			<Tooltip.Root>
 				<Tooltip.Trigger>
 					{#snippet child({ props: triggerProps })}
-						<Button
+						<button
 							{...triggerProps}
 							type="button"
-							size="icon"
 							onclick={onPrimaryButtonClick}
 							disabled={composerInteraction.primaryButtonDisabled}
-							class="h-7 w-7 cursor-pointer shrink-0 rounded-full bg-foreground text-background hover:bg-foreground/85"
+							class="inline-flex h-7 w-7 cursor-pointer shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-foreground text-sm font-medium text-background shadow-xs outline-none transition-all hover:bg-foreground/85 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0"
 						>
 							{#if composerInteraction.primaryButtonIntent === "steer" || (isStreaming && !hasDraftInput)}
 								<Stop weight="fill" class="h-3.5 w-3.5" />
@@ -212,7 +210,7 @@ let {
 								<IconArrowUp class="h-3.5 w-3.5" />
 								<span class="sr-only">{isAgentBusy ? primarySrQueue : primarySrSend}</span>
 							{/if}
-						</Button>
+						</button>
 					{/snippet}
 				</Tooltip.Trigger>
 				<Tooltip.Content>

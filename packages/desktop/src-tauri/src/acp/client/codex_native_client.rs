@@ -10,6 +10,7 @@ use crate::acp::client::{
     InitializeResponse, ListSessionsResponse, NewSessionResponse, ResumeSessionResponse,
     SessionInfo,
 };
+use crate::acp::client_errors::is_session_not_found_error;
 use crate::acp::client_loop::{
     new_stderr_buffer, read_stderr_buffer, spawn_stderr_reader, StderrBuffer,
 };
@@ -1044,6 +1045,10 @@ fn build_turn_interrupt_params(thread_id: &str, turn_id: &str) -> Value {
 }
 
 fn is_recoverable_thread_resume_error(error: &AcpError) -> bool {
+    if is_session_not_found_error(error) {
+        return true;
+    }
+
     let message = error.to_string().to_ascii_lowercase();
     message.contains("thread/resume")
         && (message.contains(THREAD_NOT_FOUND_SNIPPET)
@@ -1455,6 +1460,10 @@ mod tests {
         )));
         assert!(is_recoverable_thread_resume_error(&AcpError::JsonRpcError(
             "thread/resume failed: timed out waiting for server".to_string(),
+        )));
+        assert!(is_recoverable_thread_resume_error(&AcpError::JsonRpcError(
+            "thread/resume failed: {\"code\":-32602,\"message\":\"Session not found: 019df08e-7bee\"}"
+                .to_string(),
         )));
         assert!(!is_recoverable_thread_resume_error(
             &AcpError::JsonRpcError("thread/start failed: permission denied".to_string(),)
