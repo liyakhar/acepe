@@ -51,7 +51,9 @@ describe("SessionHandler", () => {
 				return okAsync(session as any);
 			}),
 			connectSession: mock(() => okAsync({} as any)),
-			createSession: mock(() => okAsync({ id: "acp-session-id" } as any)),
+			createSession: mock(() =>
+				okAsync({ kind: "ready", session: { id: "acp-session-id" } } as any)
+			),
 			setSessionLoading: mock(() => {}),
 			setSessionLoaded: mock(() => {}),
 			removeSession: mock((id: string) => {

@@ -34,11 +34,12 @@ Usage: bun run scripts/audit-session-timing.ts <sessionId> <projectPath> <agentI
 
   sessionId   - Session ID to audit
   projectPath - Absolute path to the project
-  agentId     - Agent identifier (claude-code, cursor, codex)
+  agentId     - Agent identifier (claude-code, copilot, cursor, codex)
   sourcePath  - Optional source file path for O(1) Cursor lookup
 
 Examples:
   bun run scripts/audit-session-timing.ts abc-123 /Users/me/project claude-code
+  bun run scripts/audit-session-timing.ts def-456 /Users/me/project copilot /Users/me/.copilot/session-state/def-456/events.jsonl
   bun run scripts/audit-session-timing.ts abc-123 /Users/me/project cursor /path/to/transcript.json
 
 Note: OpenCode audit requires the running app (use in-app invoke).

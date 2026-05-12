@@ -5,10 +5,16 @@ import type { PrDetails } from "$lib/utils/tauri-client/git.js";
 import type { IssueReportDraft } from "$lib/errors/issue-report.js";
 import { resolveIssueActionLabel } from "$lib/errors/issue-report.js";
 import type { AgentInfo } from "../../../logic/agent-manager.js";
-import type { SessionEntry } from "../../../application/dto/session";
+import type { Project } from "../../../logic/project-manager.svelte.js";
+import type {
+	SessionEntry,
+	SessionLinkedPr,
+	SessionPrLinkMode,
+} from "../../../application/dto/session";
+import type { SessionCold } from "../../../application/dto/session-cold.js";
 import type { ModifiedFilesState } from "../../../types/modified-files-state.js";
 import type { TodoState } from "../../../types/todo.js";
-import type { TurnState } from "../../../store/types.js";
+import type { SessionTurnState } from "../../../../services/acp-types.js";
 import type { PrGenerationConfig } from "../../modified-files/types/pr-generation-config.js";
 import PrStatusCard from "../../pr-status-card/pr-status-card.svelte";
 import ModifiedFilesHeader from "../../modified-files/modified-files-header.svelte";
@@ -48,6 +54,7 @@ let {
 	inlineErrorReferenceId,
 	inlineErrorReferenceSearchable,
 	onRetryConnection,
+	isRetryingConnection = false,
 	onDismissError,
 	onCopyInlineErrorReference,
 	inlineErrorIssueDraft,
@@ -75,6 +82,10 @@ let {
 	prCardRenderKey,
 	prDetails,
 	prFetchError,
+	linkedPr,
+	prLinkMode,
+	projectSessionsForPr,
+	projectForPr,
 	streamingShipData,
 	modifiedFilesState,
 	onEnterReviewMode,
@@ -106,6 +117,7 @@ let {
 	inlineErrorReferenceId: string | null;
 	inlineErrorReferenceSearchable: boolean;
 	onRetryConnection: () => void;
+	isRetryingConnection?: boolean;
 	onDismissError: () => void;
 	onCopyInlineErrorReference: () => void;
 	inlineErrorIssueDraft: IssueReportDraft | null;
@@ -131,13 +143,17 @@ let {
 	effectiveProjectPath: string | null;
 	sessionProjectPath: string | null;
 	sessionEntries: SessionEntry[];
-	sessionTurnState: TurnState;
+	sessionTurnState: SessionTurnState | null;
 	effectivePathForGit: string | null;
 	createdPr: number | null;
 	createPrRunning: boolean;
 	prCardRenderKey: number;
 	prDetails: PrDetails | null;
 	prFetchError: string | null;
+	linkedPr: SessionLinkedPr | null;
+	prLinkMode: SessionPrLinkMode | null;
+	projectSessionsForPr: readonly SessionCold[];
+	projectForPr: Project | null;
 	streamingShipData: ShipCardData | null;
 	modifiedFilesState: ModifiedFilesState | null;
 	onEnterReviewMode: (s: ModifiedFilesState) => void;
@@ -187,6 +203,7 @@ let {
 								details={errorInfo.details ?? "Unknown error"}
 								referenceId={inlineErrorReferenceId}
 								referenceSearchable={inlineErrorReferenceSearchable}
+								isRetrying={isRetryingConnection}
 								onRetry={onRetryConnection}
 								onDismiss={onDismissError}
 								onCopyReferenceId={onCopyInlineErrorReference}
@@ -232,11 +249,13 @@ let {
 						{#if effectivePathForGit && (createdPr || createPrRunning || streamingShipData)}
 							{#key prCardRenderKey}
 								<PrStatusCard
+									{sessionId}
 									projectPath={effectivePathForGit}
 									prNumber={createdPr}
 									isCreating={createPrRunning}
 									{prDetails}
 									fetchError={prFetchError}
+									{linkedPr}
 									streamingData={streamingShipData}
 								/>
 							{/key}
@@ -252,6 +271,11 @@ let {
 								onMerge={createdPr && prDetails && prDetails.state !== "MERGED" ? onMergePr : undefined}
 								merging={mergePrRunning}
 								prState={prDetails ? prDetails.state : null}
+								projectPath={sessionProjectPath}
+								{linkedPr}
+								{prLinkMode}
+								projectSessions={projectSessionsForPr}
+								project={projectForPr}
 								{availableAgents}
 								currentAgentId={effectivePanelAgentId}
 								currentModelId={sessionCurrentModelId}

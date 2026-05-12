@@ -159,6 +159,7 @@ impl StreamingDeltaBatcher {
                 part_id,
                 message_id,
                 session_id,
+                produced_at_monotonic_ms: _,
             } => {
                 if let ContentBlock::Text { text } = &chunk.content {
                     return self.buffer_message_chunk(
@@ -378,6 +379,7 @@ impl StreamingDeltaBatcher {
                         part_id: buffer.part_id,
                         message_id: buffer.message_id,
                         session_id: Some(buffer.session_id),
+                        produced_at_monotonic_ms: None,
                     }];
                 }
             }
@@ -529,6 +531,7 @@ impl StreamingDeltaBatcher {
                 part_id: buffer.part_id,
                 message_id: buffer.message_id,
                 session_id: Some(buffer.session_id),
+                produced_at_monotonic_ms: None,
             }
         })
     }
@@ -785,6 +788,7 @@ mod tests {
             part_id: None,
             message_id: Some("msg-1".to_string()),
             session_id: Some("session-1".to_string()),
+            produced_at_monotonic_ms: None,
         }
     }
 
@@ -803,6 +807,7 @@ mod tests {
             part_id: part_id.map(std::string::ToString::to_string),
             message_id: Some(message_id.to_string()),
             session_id: Some("session-1".to_string()),
+            produced_at_monotonic_ms: None,
         }
     }
 
@@ -1043,6 +1048,7 @@ mod tests {
                 part_id: Some((*part_id).to_string()),
                 message_id: Some(message_id.to_string()),
                 session_id: Some(session_id.to_string()),
+                produced_at_monotonic_ms: None,
             }));
         }
         emitted_updates.extend(batcher.process_turn_complete(session_id, None));
@@ -1058,6 +1064,7 @@ mod tests {
                     part_id,
                     message_id: emitted_message_id,
                     session_id: emitted_session_id,
+                    produced_at_monotonic_ms: _,
                 } => {
                     assert_eq!(emitted_session_id.as_deref(), Some(session_id));
                     assert_eq!(emitted_message_id.as_deref(), Some(message_id));
@@ -1554,6 +1561,7 @@ mod tests {
             part_id: None,
             message_id: Some("msg-1".to_string()),
             session_id: Some("session-1".to_string()),
+            produced_at_monotonic_ms: None,
         });
 
         let _ = batcher.process(SessionUpdate::AgentMessageChunk {
@@ -1566,6 +1574,7 @@ mod tests {
             part_id: None,
             message_id: Some("msg-2".to_string()),
             session_id: Some("session-2".to_string()),
+            produced_at_monotonic_ms: None,
         });
 
         assert_eq!(batcher.buffer_count(), 2);

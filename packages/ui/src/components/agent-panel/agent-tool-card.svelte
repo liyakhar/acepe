@@ -6,7 +6,7 @@
 	interface Props {
 		/** Visual variant: default (accent), muted (row), or card (e.g. web search). */
 		variant?: Variant;
-		/** Optional extra Tailwind classes (e.g. flex, font-mono). */
+		/** Optional extra Tailwind classes (e.g. flex, shadow-sm). */
 		class?: string;
 		dataTestid?: string;
 		children: Snippet;
@@ -14,7 +14,7 @@
 
 	let { variant = "default", class: className = "", dataTestid, children }: Props = $props();
 
-	const base = "rounded-sm border border-border overflow-hidden";
+	const base = "rounded-sm border border-border overflow-hidden text-sm";
 	const variantClasses: Record<Variant, string> = {
 		default: "bg-input/30",
 		muted: "bg-muted/30",

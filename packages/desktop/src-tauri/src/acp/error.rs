@@ -2,6 +2,81 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CreationFailureKind {
+    ProviderFailedBeforeId,
+    InvalidProviderSessionId,
+    ProviderIdentityMismatch,
+    MetadataCommitFailed,
+    LaunchTokenUnavailable,
+    CreationAttemptExpired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreationFailure {
+    pub kind: CreationFailureKind,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub creation_attempt_id: Option<String>,
+    pub retryable: bool,
+}
+
+impl CreationFailure {
+    pub fn new(
+        kind: CreationFailureKind,
+        message: impl Into<String>,
+        session_id: Option<String>,
+        creation_attempt_id: Option<String>,
+        retryable: bool,
+    ) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            session_id,
+            creation_attempt_id,
+            retryable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderHistoryFailureKind {
+    ProviderUnavailable,
+    ProviderHistoryMissing,
+    ProviderUnparseable,
+    ProviderValidationFailed,
+    StaleLineageRecovery,
+    Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderHistoryFailure {
+    pub kind: ProviderHistoryFailureKind,
+    pub message: String,
+    pub session_id: Option<String>,
+    pub retryable: bool,
+}
+
+impl ProviderHistoryFailure {
+    pub fn new(
+        kind: ProviderHistoryFailureKind,
+        message: impl Into<String>,
+        session_id: Option<String>,
+        retryable: bool,
+    ) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            session_id,
+            retryable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum SerializableAcpError {
     #[serde(rename = "agent_not_found")]
@@ -42,6 +117,12 @@ pub enum SerializableAcpError {
 
     #[serde(rename = "invalid_state")]
     InvalidState { message: String },
+
+    #[serde(rename = "creation_failed")]
+    CreationFailed(CreationFailure),
+
+    #[serde(rename = "provider_history_failed")]
+    ProviderHistoryFailed(ProviderHistoryFailure),
 }
 
 impl From<AcpError> for SerializableAcpError {
@@ -72,6 +153,47 @@ impl From<AcpError> for SerializableAcpError {
             AcpError::Timeout(operation) => SerializableAcpError::Timeout { operation },
             AcpError::InvalidState(message) => SerializableAcpError::InvalidState { message },
         }
+    }
+}
+
+impl From<crate::acp::provider::ProviderHistoryLoadError> for SerializableAcpError {
+    fn from(error: crate::acp::provider::ProviderHistoryLoadError) -> Self {
+        let (kind, message, retryable) = match error {
+            crate::acp::provider::ProviderHistoryLoadError::ProviderUnavailable { message } => (
+                ProviderHistoryFailureKind::ProviderUnavailable,
+                message,
+                true,
+            ),
+            crate::acp::provider::ProviderHistoryLoadError::ProviderHistoryMissing { message } => (
+                ProviderHistoryFailureKind::ProviderHistoryMissing,
+                message,
+                false,
+            ),
+            crate::acp::provider::ProviderHistoryLoadError::ProviderUnparseable { message } => (
+                ProviderHistoryFailureKind::ProviderUnparseable,
+                message,
+                false,
+            ),
+            crate::acp::provider::ProviderHistoryLoadError::ProviderValidationFailed {
+                message,
+            } => (
+                ProviderHistoryFailureKind::ProviderValidationFailed,
+                message,
+                false,
+            ),
+            crate::acp::provider::ProviderHistoryLoadError::StaleLineageRecovery { message } => (
+                ProviderHistoryFailureKind::StaleLineageRecovery,
+                message,
+                true,
+            ),
+            crate::acp::provider::ProviderHistoryLoadError::Internal { message } => {
+                (ProviderHistoryFailureKind::Internal, message, true)
+            }
+        };
+
+        SerializableAcpError::ProviderHistoryFailed(ProviderHistoryFailure::new(
+            kind, message, None, retryable,
+        ))
     }
 }
 
@@ -110,6 +232,20 @@ impl std::fmt::Display for SerializableAcpError {
             }
             SerializableAcpError::InvalidState { message } => {
                 write!(f, "Invalid state: {}", message)
+            }
+            SerializableAcpError::CreationFailed(failure) => {
+                write!(
+                    f,
+                    "Creation failed ({:?}): {}",
+                    failure.kind, failure.message
+                )
+            }
+            SerializableAcpError::ProviderHistoryFailed(failure) => {
+                write!(
+                    f,
+                    "Provider history failed ({:?}): {}",
+                    failure.kind, failure.message
+                )
             }
         }
     }

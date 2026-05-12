@@ -310,9 +310,6 @@
 </div>
 
 <style>
-	.agent-panel-header-title {
-		transition: opacity 90ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
 	.agent-panel-header-title.has-expansion {
 		opacity: 0;
 	}
@@ -321,9 +318,6 @@
 		grid-template-rows: 0fr;
 		opacity: 0;
 		pointer-events: none;
-		transition:
-			grid-template-rows 120ms cubic-bezier(0.4, 0, 0.2, 1),
-			opacity 90ms cubic-bezier(0.4, 0, 0.2, 1);
 	}
 	.agent-panel-header-expansion > .expansion-inner {
 		overflow: hidden;
@@ -333,11 +327,5 @@
 		grid-template-rows: 1fr;
 		opacity: 1;
 		pointer-events: auto;
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.agent-panel-header-title,
-		.agent-panel-header-expansion {
-			transition: none;
-		}
 	}
 </style>

@@ -1,3 +1,4 @@
+use crate::acp::parsers::acp_fields::normalize_tool_call_id;
 use crate::acp::parsers::{get_parser, AgentType};
 use crate::acp::reconciler::providers;
 use crate::acp::session_update::{
@@ -38,7 +39,7 @@ fn build_persisted_tool_use_index(
         for block in &message.content_blocks {
             if let ContentBlock::ToolUse { id, name, input } = block {
                 index.insert(
-                    id.clone(),
+                    normalize_tool_call_id(id),
                     PersistedToolUse {
                         name: name.clone(),
                         input: input.clone(),
@@ -125,6 +126,7 @@ fn normalize_cursor_thought_chunk(update: SessionUpdate) -> SessionUpdate {
             part_id,
             message_id,
             session_id,
+            produced_at_monotonic_ms: _,
         } => match &chunk.content {
             crate::acp::types::ContentBlock::Text { text } if has_thought_prefix(text) => {
                 SessionUpdate::AgentThoughtChunk {
@@ -144,6 +146,7 @@ fn normalize_cursor_thought_chunk(update: SessionUpdate) -> SessionUpdate {
                 part_id,
                 message_id,
                 session_id,
+                produced_at_monotonic_ms: None,
             },
         },
         other => other,
@@ -193,6 +196,7 @@ fn tool_update_needs_enrichment(update: &ToolCallUpdateData) -> bool {
 fn tool_arguments_need_enrichment(arguments: &ToolArguments) -> bool {
     match arguments {
         ToolArguments::Read { file_path, .. } => file_path.is_none(),
+        ToolArguments::ReadLints { .. } => false,
         ToolArguments::Delete {
             file_path,
             file_paths,
@@ -376,6 +380,7 @@ fn parse_persisted_tool_arguments(persisted: &PersistedToolUse) -> Option<ToolAr
 fn tool_arguments_detail_score(arguments: &ToolArguments) -> usize {
     match arguments {
         ToolArguments::Read { file_path, .. } => usize::from(file_path.is_some()),
+        ToolArguments::ReadLints { raw } => usize::from(!raw.is_null()),
         ToolArguments::Edit { edits } => edits.first().map_or(0, |e| {
             usize::from(e.file_path.is_some())
                 + usize::from(e.move_from.is_some())
@@ -580,6 +585,7 @@ mod tests {
                 }],
                 model: None,
                 usage: None,
+                error: None,
                 request_id: None,
                 is_meta: false,
                 source_tool_use_id: None,
@@ -688,6 +694,52 @@ mod tests {
     }
 
     #[test]
+    fn persisted_tool_use_index_matches_normalized_cursor_tool_call_ids() {
+        let mut session = make_session_with_tool_use();
+        session.messages[0].content_blocks = vec![ContentBlock::ToolUse {
+            id: "call-1\nfc-1".to_string(),
+            name: "Glob".to_string(),
+            input: json!({
+                "target_directory": "/tmp/project",
+                "glob_pattern": "**/*bash*tool*card*"
+            }),
+        }];
+        let index = build_persisted_tool_use_index(&session);
+        let update = SessionUpdate::ToolCallUpdate {
+            update: ToolCallUpdateData {
+                tool_call_id: "call-1%0Afc-1".to_string(),
+                status: Some(ToolCallStatus::Completed),
+                result: Some(json!({ "totalFiles": 0 })),
+                content: None,
+                raw_output: Some(json!({ "totalFiles": 0 })),
+                title: Some("Find".to_string()),
+                locations: None,
+                streaming_input_delta: None,
+                normalized_todos: None,
+                normalized_questions: None,
+                streaming_arguments: None,
+                streaming_plan: None,
+                arguments: None,
+                failure_reason: None,
+            },
+            session_id: Some("session-123".to_string()),
+        };
+
+        let enriched = enrich_tool_call_from_index(update, &index);
+
+        match enriched {
+            SessionUpdate::ToolCallUpdate { update, .. } => match update.arguments {
+                Some(ToolArguments::Glob { pattern, path }) => {
+                    assert_eq!(pattern.as_deref(), Some("**/*bash*tool*card*"));
+                    assert_eq!(path.as_deref(), Some("/tmp/project"));
+                }
+                other => panic!("Expected glob arguments, got {:?}", other),
+            },
+            other => panic!("Expected ToolCallUpdate, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn enriches_streaming_cursor_tool_call_update_with_persisted_rename_metadata() {
         let mut session = make_session_with_tool_use();
         session.messages[0].content_blocks = vec![ContentBlock::ToolUse {
@@ -761,6 +813,7 @@ mod tests {
             part_id: Some("part-1".to_string()),
             message_id: Some("msg-1".to_string()),
             session_id: Some("session-1".to_string()),
+            produced_at_monotonic_ms: None,
         };
 
         let enriched = enrich_cursor_session_update(update).await;

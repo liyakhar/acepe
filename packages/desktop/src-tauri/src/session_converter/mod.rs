@@ -5,9 +5,14 @@
 //! - opencode uses OpenCode message conversion
 
 use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
-use crate::acp::session_update::{TodoStatus, ToolCallData, ToolCallStatus, ToolCallUpdateData};
+use crate::acp::session_update::{
+    TodoStatus, ToolCallData, ToolCallStatus, ToolCallUpdateData, TurnErrorKind, TurnErrorSource,
+};
+use crate::cc_sdk::AssistantMessageError;
 use crate::opencode_history::types::OpenCodeMessage;
-use crate::session_jsonl::types::{FullSession, StoredEntry};
+use crate::session_jsonl::types::{
+    ContentBlock, FullSession, OrderedMessage, StoredEntry, StoredErrorMessage,
+};
 use std::collections::HashMap;
 
 mod claude;
@@ -152,12 +157,84 @@ pub fn calculate_todo_timing(entries: &mut [StoredEntry]) {
     }
 }
 
+pub(crate) fn assistant_provider_error_entry(
+    msg: &OrderedMessage,
+    error: &AssistantMessageError,
+) -> StoredEntry {
+    StoredEntry::Error {
+        id: msg.uuid.clone(),
+        message: StoredErrorMessage {
+            content: assistant_error_content(msg, error),
+            code: assistant_error_status_code(msg),
+            kind: assistant_error_kind(error),
+            source: Some(TurnErrorSource::Transport),
+        },
+        timestamp: Some(msg.timestamp.clone()),
+    }
+}
+
+fn assistant_error_content(msg: &OrderedMessage, error: &AssistantMessageError) -> String {
+    let content = msg
+        .content_blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.trim()),
+            _ => None,
+        })
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if content.is_empty() {
+        format!("Claude provider error: {:?}", error)
+    } else {
+        content
+    }
+}
+
+fn assistant_error_status_code(msg: &OrderedMessage) -> Option<String> {
+    let text = msg
+        .content_blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    extract_api_error_status_code(&text).map(str::to_string)
+}
+
+fn extract_api_error_status_code(text: &str) -> Option<&str> {
+    let marker = "API Error:";
+    let marker_start = text.find(marker)?;
+    let after_marker = &text[marker_start + marker.len()..];
+    let trimmed = after_marker.trim_start();
+    let code_end = trimmed
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(trimmed.len());
+    (code_end > 0).then_some(&trimmed[..code_end])
+}
+
+fn assistant_error_kind(error: &AssistantMessageError) -> TurnErrorKind {
+    match error {
+        AssistantMessageError::AuthenticationFailed
+        | AssistantMessageError::BillingError
+        | AssistantMessageError::InvalidRequest => TurnErrorKind::Fatal,
+        AssistantMessageError::RateLimit
+        | AssistantMessageError::ServerError
+        | AssistantMessageError::Unknown => TurnErrorKind::Recoverable,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::acp::parsers::AgentParser;
     use crate::acp::parsers::ClaudeCodeParser;
-    use crate::acp::session_update::{ToolArguments, ToolCallStatus, ToolKind};
+    use crate::acp::session_update::{ToolArguments, ToolCallStatus, ToolKind, TurnErrorKind};
+    use crate::cc_sdk::AssistantMessageError;
     use crate::session_jsonl::types::{ContentBlock, OrderedMessage, SessionStats};
 
     fn create_test_full_session() -> FullSession {
@@ -177,6 +254,7 @@ mod tests {
                     }],
                     model: None,
                     usage: None,
+                    error: None,
                     request_id: None,
                     is_meta: false,
                     source_tool_use_id: None,
@@ -193,6 +271,7 @@ mod tests {
                     }],
                     model: Some("claude-opus-4-5-20251101".to_string()),
                     usage: None,
+                    error: None,
                     request_id: None,
                     is_meta: false,
                     source_tool_use_id: None,
@@ -238,6 +317,41 @@ mod tests {
                 assert_eq!(message.model, Some("claude-opus-4-5-20251101".to_string()));
             }
             _ => panic!("Second entry should be assistant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_assistant_provider_error_to_error_entry() {
+        let mut full_session = create_test_full_session();
+        full_session.messages[1].content_blocks = vec![ContentBlock::Text {
+            text: "Failed to authenticate. API Error: 401 {\"error\":{\"message\":\"User not found.\",\"code\":401}}"
+                .to_string(),
+        }];
+        full_session.messages[1].error = Some(AssistantMessageError::AuthenticationFailed);
+
+        let converted = convert_claude_full_session_to_thread_snapshot(&full_session);
+
+        assert_eq!(converted.entries.len(), 2);
+        assert!(!converted.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                StoredEntry::Assistant { message, .. }
+                    if message
+                        .chunks
+                        .iter()
+                        .any(|chunk| chunk.block.text.as_deref().is_some_and(|text| text.contains("Failed to authenticate")))
+            )
+        }));
+
+        match &converted.entries[1] {
+            StoredEntry::Error { id, message, .. } => {
+                assert_eq!(id, "assistant-1");
+                assert!(message.content.contains("Failed to authenticate"));
+                assert!(message.content.contains("User not found"));
+                assert_eq!(message.code, Some("401".to_string()));
+                assert_eq!(message.kind, TurnErrorKind::Fatal);
+            }
+            _ => panic!("Assistant provider error should become an error entry"),
         }
     }
 
@@ -340,6 +454,7 @@ mod tests {
             }],
             model: None,
             usage: None,
+            error: None,
             request_id: None,
             is_meta: true,
             source_tool_use_id: None,
@@ -372,6 +487,7 @@ mod tests {
                 content_blocks: vec![],
                 model: None,
                 usage: None,
+                error: None,
                 request_id: None,
                 is_meta: false,
                 source_tool_use_id: None,
@@ -780,6 +896,7 @@ More content here."#;
             }],
             model: None,
             usage: None,
+            error: None,
             request_id: None,
             is_meta: true,
             source_tool_use_id: Some("skill-tool-1".to_string()),

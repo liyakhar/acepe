@@ -24,12 +24,12 @@ import type { TaskProgress } from "./task-progress.js";
  *
  * The Session type is reconstructed at runtime by merging:
  * - Cold data (SessionCold = Identity + Metadata) from the store
- * - Hot state (SessionHotState) from the hot state store
+ * - Hot state (SessionTransientProjection) from the hot state store
  * - Capabilities from ACP connection
  * - Entries from the entry store
  */
 export interface Session extends SessionIdentity, SessionMetadata, SessionCapabilities {
-	// Hot state fields (from SessionHotState, merged at runtime)
+	// Hot state fields (from SessionTransientProjection, merged at runtime)
 	readonly status: SessionStatus;
 	readonly isConnected: boolean;
 	readonly isStreaming: boolean;
@@ -55,6 +55,7 @@ export type { SessionCold } from "./session-cold.js";
 export type { SessionEntry } from "./session-entry.js";
 export { isToolCallEntry } from "./session-entry.js";
 export type { SessionIdentity } from "./session-identity.js";
+export type { SessionLinkedPr, SessionPrLinkMode } from "./session-linked-pr.js";
 export type { SessionMetadata } from "./session-metadata.js";
 export type { SessionStatus } from "./session-status.js";
 export type { SessionSummary } from "./session-summary.js";

@@ -7,6 +7,7 @@ use super::super::provider::{
     ProjectPathListing, SpawnConfig,
 };
 use super::cursor_session_update_enrichment::enrich_cursor_session_update;
+use crate::acp::capability_resolution::resolve_generic_preconnection_capabilities;
 use crate::acp::cursor_extensions::{
     adapt_cursor_response, cursor_extension_kind, is_cursor_extension_pre_tool,
     normalize_cursor_extension,
@@ -135,6 +136,26 @@ impl AgentProvider for CursorProvider {
         })
     }
 
+    fn list_preconnection_capabilities<'a>(
+        &'a self,
+        _app: &'a AppHandle,
+        cwd: Option<&'a Path>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = crate::acp::capability_resolution::ResolvedCapabilities>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            let effective_cwd = cwd
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| PathBuf::from("."));
+            resolve_generic_preconnection_capabilities(self, effective_cwd.as_path()).await
+        })
+    }
+
     fn normalize_mode_id(&self, id: &str) -> String {
         match id {
             "ask" | "agent" => "build".to_string(),
@@ -236,8 +257,17 @@ impl AgentProvider for CursorProvider {
         _app: &'a AppHandle,
         context: &'a SessionContext,
         _replay_context: &'a SessionReplayContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<SessionThreadSnapshot>, String>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        Option<SessionThreadSnapshot>,
+                        crate::acp::provider::ProviderHistoryLoadError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async move {
             let session_id = &context.local_session_id;
             let lookup_session_id = &context.history_session_id;
@@ -270,7 +300,9 @@ impl AgentProvider for CursorProvider {
                                     error = %error,
                                     "Cursor session lookup failed"
                                 );
-                                Ok(None)
+                                Err(crate::acp::provider::ProviderHistoryLoadError::provider_unparseable(
+                                    format!("Cursor provider history load failed: {error}"),
+                                ))
                             }
                         }
                     }
@@ -296,7 +328,9 @@ impl AgentProvider for CursorProvider {
                                     error = %error,
                                     "Cursor session lookup failed"
                                 );
-                                Ok(None)
+                                Err(crate::acp::provider::ProviderHistoryLoadError::provider_unparseable(
+                                    format!("Cursor provider history load failed: {error}"),
+                                ))
                             }
                         }
                     }
@@ -315,7 +349,11 @@ impl AgentProvider for CursorProvider {
                             error = %error,
                             "Cursor session lookup failed"
                         );
-                        Ok(None)
+                        Err(
+                            crate::acp::provider::ProviderHistoryLoadError::provider_unparseable(
+                                format!("Cursor provider history load failed: {error}"),
+                            ),
+                        )
                     }
                 }
             }

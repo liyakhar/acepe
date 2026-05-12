@@ -1,7 +1,8 @@
 <script lang="ts">
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getContext, untrack } from "svelte";
+import { getContext } from "svelte";
 import type { FileGitStatus } from "$lib/services/converted-session-types.js";
+import type { TokenRevealCss } from "@acepe/ui/agent-panel";
 import {
 	GITHUB_COMMIT_SHA_PATTERN,
 	GITHUB_GIT_REF_PATTERN,
@@ -29,16 +30,6 @@ import { mountFileBadges } from "./logic/mount-file-badges.js";
 import { mountGitHubBadges } from "./logic/mount-github-badges.js";
 import { parseContentBlocks } from "./logic/parse-content-blocks.js";
 import {
-	createStreamingRevealController,
-	type StreamingRevealController,
-} from "./logic/create-streaming-reveal-controller.svelte.js";
-import {
-	parseStreamingTailIncremental,
-	type StreamingTailParseResult,
-} from "./logic/parse-streaming-tail.js";
-import StreamingLiveSection from "./streaming-live-section.svelte";
-import { streamingTailRefresh } from "./logic/streaming-tail-refresh.js";
-import {
 	DEFAULT_STREAMING_ANIMATION_MODE,
 	type StreamingAnimationMode,
 } from "../../types/streaming-animation-mode.js";
@@ -49,9 +40,6 @@ const STREAMING_SYNC_RESULT = {
 	fromCache: false,
 	needsAsync: false,
 } satisfies SyncRenderResult;
-
-const EMPTY_STREAMING_TAIL = { sections: [] } satisfies StreamingTailParseResult;
-const revealedMessageTexts = new Map<string, string>();
 
 // Get session context (set by VirtualizedEntryList)
 const sessionContext = useSessionContext();
@@ -70,29 +58,39 @@ interface Props {
 	text: string;
 	/** Whether content is currently streaming */
 	isStreaming?: boolean;
-	revealKey?: string;
+	tokenRevealCss?: TokenRevealCss;
 	/**
 	 * Project path for opening files in panels.
 	 * If not provided, will use projectPath from session context.
 	 */
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
-	onRevealActivityChange?: (active: boolean) => void;
 }
 
 let {
 	text,
 	isStreaming = false,
-	revealKey: _revealKey,
+	tokenRevealCss,
 	projectPath: propProjectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
-	onRevealActivityChange,
 }: Props = $props();
 
 // Use context projectPath if no prop provided, otherwise use prop (backward compatibility)
 const projectPath = $derived(propProjectPath ?? contextProjectPath);
+const renderText = $derived(text);
 
 const panelStore = getPanelStore();
+const tokenRevealInlineStyle = $derived.by(() => {
+	if (tokenRevealCss === undefined) {
+		return undefined;
+	}
+
+	return [
+		`--token-reveal-baseline-ms:${String(tokenRevealCss.baselineMs)}ms`,
+		`--token-reveal-step-ms:${String(tokenRevealCss.tokStepMs)}ms`,
+		`--token-reveal-fade-ms:${String(tokenRevealCss.tokFadeDurMs)}ms`,
+	].join(";");
+});
 
 // Link preview dialog state
 
@@ -101,18 +99,6 @@ let markdownContainerRef: HTMLDivElement | null = $state(null);
 
 let gitStatusByPath = $state<ReadonlyMap<string, FileGitStatus> | null>(null);
 let lastGitStatusRequestKey = "";
-const reveal: StreamingRevealController = createStreamingRevealController(
-	untrack(() => streamingAnimationMode)
-);
-let hasStreamingSession = $state(false);
-let wasStreaming = false;
-let seedRevealFromSource = $state(false);
-let lastRevealKey = "";
-let streamingTail = $state<StreamingTailParseResult>(EMPTY_STREAMING_TAIL);
-let lastStreamingTailText = "";
-let lastStreamingTailResult: StreamingTailParseResult = EMPTY_STREAMING_TAIL;
-const shouldAnimateStreaming = true;
-
 // Fetch and cache repo context for enhancing commit badges
 let repoContext = $state<RepoContext | null>(null);
 
@@ -142,78 +128,11 @@ function htmlNeedsBadgeMount(html: string | null): boolean {
 	return html.includes("file-path-badge-placeholder") || html.includes("github-badge-placeholder");
 }
 
-$effect(() => {
-	const revealKey = _revealKey?.trim() ?? "";
-	if (revealKey === lastRevealKey) {
-		return;
-	}
-
-	lastRevealKey = revealKey;
-	if (!revealKey) {
-		seedRevealFromSource = false;
-		return;
-	}
-
-	const priorText = revealedMessageTexts.get(revealKey);
-	seedRevealFromSource =
-		priorText !== undefined &&
-		(text === priorText || text.startsWith(priorText) || priorText.startsWith(text));
-	revealedMessageTexts.set(revealKey, text);
-});
+const isRenderingPartialText = $derived(isStreaming && tokenRevealCss === undefined);
+const shouldDeferSettledRender = $derived(isRenderingPartialText);
 
 $effect(() => {
-	if (isStreaming) {
-		hasStreamingSession = true;
-		wasStreaming = true;
-		reveal.setState(text, true, { seedFromSource: seedRevealFromSource });
-		seedRevealFromSource = false;
-		return;
-	}
-
-	if (!hasStreamingSession) {
-		reveal.reset();
-		return;
-	}
-
-	if (wasStreaming) {
-		wasStreaming = false;
-		// Once the source has finished streaming, switch straight to the settled
-		// markdown renderer. Keeping the temporary streaming-tail parser alive
-		// after completion can fragment finished markdown across transient
-		// sections, which shows up as broken lists/paragraphs in the final UI.
-		hasStreamingSession = false;
-		reveal.reset();
-		return;
-	}
-
-	if (reveal.isRevealActive) {
-		if (reveal.displayedText !== text) {
-			reveal.setState(text, false);
-		}
-		return;
-	}
-
-	if (!isStreaming) {
-		hasStreamingSession = false;
-		reveal.reset();
-	}
-});
-
-const isRenderingReveal = $derived(isStreaming || reveal.isRevealActive);
-
-$effect(() => {
-	onRevealActivityChange?.(isRenderingReveal);
-});
-
-$effect(() => {
-	return () => {
-		onRevealActivityChange?.(false);
-		reveal.destroy();
-	};
-});
-
-$effect(() => {
-	if (!projectPath || repoContext || isRenderingReveal || !textNeedsRepoContext(text)) {
+	if (!projectPath || repoContext || shouldDeferSettledRender || !textNeedsRepoContext(renderText)) {
 		return;
 	}
 	// Fetch repo context once on mount
@@ -232,11 +151,11 @@ $effect(() => {
 
 // Try sync rendering first (eliminates flicker for most messages)
 const syncResult = $derived.by(() => {
-	if (isRenderingReveal) {
+	if (shouldDeferSettledRender) {
 		return STREAMING_SYNC_RESULT;
 	}
 
-	return renderMarkdownSync(text, repoContext ?? undefined);
+	return renderMarkdownSync(renderText, repoContext ?? undefined);
 });
 
 // Track async state only when needed (large messages or renderer not ready)
@@ -254,7 +173,7 @@ function getAsyncRequestKey(textValue: string, currentRepoContext: RepoContext |
 
 // Trigger async rendering when sync can't handle it - uses $effect
 $effect(() => {
-	if (isRenderingReveal) {
+	if (shouldDeferSettledRender) {
 		asyncHtml = null;
 		asyncError = null;
 		asyncPending = false;
@@ -263,7 +182,7 @@ $effect(() => {
 	}
 
 	const result = syncResult;
-	const currentText = text;
+	const currentText = renderText;
 	const currentRepoContext = repoContext;
 	const requestKey = getAsyncRequestKey(currentText, currentRepoContext);
 
@@ -297,9 +216,9 @@ $effect(() => {
 // affect git status, and the gitStatusCache handles its own TTL-based refresh.
 $effect(() => {
 	const currentProjectPath = projectPath;
-	const currentVisibleHtml = visibleHtml;
+	const currentRenderedHtmlForBadges = renderedHtmlForBadges;
 
-	if (!currentProjectPath || !htmlNeedsGitStatus(currentVisibleHtml)) {
+	if (!currentProjectPath || !htmlNeedsGitStatus(currentRenderedHtmlForBadges)) {
 		gitStatusByPath = null;
 		lastGitStatusRequestKey = "";
 		return;
@@ -331,7 +250,7 @@ $effect(() => {
 
 // Determine what to render
 const visibleHtml = $derived.by(() => {
-	if (isRenderingReveal) return null;
+	if (isRenderingPartialText) return null;
 	return syncResult.html ?? asyncHtml ?? null;
 });
 const error = $derived(asyncError);
@@ -341,18 +260,32 @@ const isLoading = $derived(syncResult.needsAsync && asyncPending);
 // File badge placeholders stay as inline <span>s — mounted as Svelte components below.
 const contentBlocks = $derived(visibleHtml ? parseContentBlocks(visibleHtml) : []);
 const hasSpecialBlocks = $derived(contentBlocks.some((block) => block.type !== "html"));
+const streamingText = $derived(isRenderingPartialText ? renderText : "");
+const streamingSyncResult = $derived.by(() => {
+	if (!isRenderingPartialText || streamingText.length === 0) {
+		return STREAMING_SYNC_RESULT;
+	}
+
+	return renderMarkdownSync(streamingText, repoContext ?? undefined);
+});
+const streamingHtml = $derived(streamingSyncResult.html);
+const streamingContentBlocks = $derived(streamingHtml ? parseContentBlocks(streamingHtml) : []);
+const streamingHasSpecialBlocks = $derived(
+	streamingContentBlocks.some((block) => block.type !== "html")
+);
+const renderedHtmlForBadges = $derived(visibleHtml ?? streamingHtml);
 
 // Mount FilePathBadge and GitHubBadge Svelte components into inline placeholder <span>s after DOM render.
 // Placeholders stay inside their parent elements (li, p, etc.) so structure is preserved.
 $effect(() => {
 	const container = markdownContainerRef;
 	// Track these so the effect re-runs when html or diff stats change
-	void visibleHtml;
+	void renderedHtmlForBadges;
 	const currentGitStatus = gitStatusByPath;
 	const currentModifiedFiles = mergedModifiedFilesState;
 	const currentRepoContext = repoContext;
 
-	if (!container || !visibleHtml) return;
+	if (!container || !renderedHtmlForBadges) return;
 
 	const cleanupFile = mountFileBadges(container, (filePath) =>
 		resolveDiffStatsForFilePath(filePath, {
@@ -370,25 +303,6 @@ $effect(() => {
 		cleanupFile();
 		cleanupGitHub();
 	};
-});
-
-$effect(() => {
-	if (!isRenderingReveal) {
-		streamingTail = EMPTY_STREAMING_TAIL;
-		lastStreamingTailText = "";
-		lastStreamingTailResult = EMPTY_STREAMING_TAIL;
-		return;
-	}
-
-	const nextStreamingText = reveal.displayedText;
-	const nextStreamingTail = parseStreamingTailIncremental(
-		lastStreamingTailText,
-		lastStreamingTailResult,
-		nextStreamingText
-	);
-	streamingTail = nextStreamingTail;
-	lastStreamingTailText = nextStreamingText;
-	lastStreamingTailResult = nextStreamingTail;
 });
 
 /**
@@ -487,7 +401,7 @@ function handleKeydown(event: KeyboardEvent) {
 	<!-- Show error state -->
 	<div class="text-sm text-destructive">
 		<p>{`Markdown rendering failed: ${error}`}</p>
-		<p class="whitespace-pre-wrap mt-2">{text}</p>
+		<p class="whitespace-pre-wrap mt-2">{renderText}</p>
 	</div>
 {:else if visibleHtml}
 	{#if hasSpecialBlocks}
@@ -495,7 +409,9 @@ function handleKeydown(event: KeyboardEvent) {
 		<div
 			bind:this={markdownContainerRef}
 			class="markdown-content text-sm text-foreground"
+			data-token-reveal-mode={tokenRevealCss?.mode}
 			role="button"
+			style={tokenRevealInlineStyle}
 			tabindex="0"
 			onclick={handleClick}
 			onkeydown={handleKeydown}
@@ -507,7 +423,9 @@ function handleKeydown(event: KeyboardEvent) {
 		<div
 			bind:this={markdownContainerRef}
 			class="markdown-content text-sm text-foreground"
+			data-token-reveal-mode={tokenRevealCss?.mode}
 			role="button"
+			style={tokenRevealInlineStyle}
 			tabindex="0"
 			onclick={handleClick}
 			onkeydown={handleKeydown}
@@ -515,51 +433,43 @@ function handleKeydown(event: KeyboardEvent) {
 			{@html visibleHtml}
 		</div>
 	{/if}
-{:else if isRenderingReveal}
-	<!-- Streaming markdown: keep settled blocks stable and only update the live tail in place -->
+{:else if isRenderingPartialText}
 	<div
+		bind:this={markdownContainerRef}
 		class="markdown-content text-sm text-foreground"
+		data-token-reveal-mode={tokenRevealCss?.mode}
 		role="button"
+		style={tokenRevealInlineStyle}
 		tabindex="0"
 		onclick={handleClick}
 		onkeydown={handleKeydown}
 	>
-		{#each streamingTail.sections as section (section.key)}
-			<div
-				class="streaming-section"
-				data-streaming-section-key={section.key}
-				data-streaming-live={section.kind === "settled" ? undefined : "true"}
-				use:streamingTailRefresh={{
-					active: section.kind !== "settled",
-					value:
-						section.kind === "settled"
-							? ""
-							: section.kind === "live-code"
-								? section.code
-								: section.text,
-				}}
-			>
-				{#if section.kind === "settled"}
-					<StreamingLiveSection section={section} animate={false} />
-				{:else if section.kind === "live-code"}
-					<StreamingLiveSection section={section} animate={shouldAnimateStreaming} />
-				{:else if section.kind === "live-markdown"}
-					<StreamingLiveSection section={section} animate={shouldAnimateStreaming} />
+		{#if streamingHtml}
+			{#key streamingHtml}
+				{#if streamingHasSpecialBlocks}
+					<ContentBlockRenderer
+						blocks={streamingContentBlocks}
+						repoContext={repoContext ?? undefined}
+					/>
 				{:else}
-					<StreamingLiveSection section={section} animate={shouldAnimateStreaming} />
+					{@html streamingHtml}
 				{/if}
+			{/key}
+		{:else}
+			<div class="markdown-loading text-sm text-foreground whitespace-pre-wrap">
+				{streamingText}
 			</div>
-		{/each}
+		{/if}
 	</div>
 {:else if isLoading}
 	<!-- Show plain text with min-height while async rendering (rare: large messages only) -->
 	<div class="markdown-loading text-sm text-foreground whitespace-pre-wrap">
-		{text}
+		{renderText}
 	</div>
 {:else}
 	<!-- Fallback: show plain text -->
 	<p class="text-sm text-foreground whitespace-pre-wrap">
-		{text}
+		{renderText}
 	</p>
 {/if}
 
@@ -567,13 +477,5 @@ function handleKeydown(event: KeyboardEvent) {
 	.markdown-loading {
 		min-height: 1.5em;
 		opacity: 0.7;
-	}
-
-	:global(.streaming-live-link.is-disabled) {
-		color: var(--color-primary);
-		cursor: text;
-		opacity: 0.85;
-		pointer-events: none;
-		text-decoration: underline;
 	}
 </style>

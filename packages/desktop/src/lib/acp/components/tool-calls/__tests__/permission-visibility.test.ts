@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import type { OperationSnapshot } from "../../../../services/acp-types.js";
 import { OperationStore } from "../../../store/operation-store.svelte.js";
-import { SessionEntryStore } from "../../../store/session-entry-store.svelte.js";
 import type { PermissionRequest } from "../../../types/permission.js";
 
 import {
@@ -31,28 +31,31 @@ function createEntriesWithOperations(
 	command = "git status"
 ): { operationStore: OperationStore } {
 	const operationStore = new OperationStore();
-	const entryStore = new SessionEntryStore(operationStore);
-	entryStore.createToolCallEntry("session-1", {
-		id: toolCallId,
+	const operation: OperationSnapshot = {
+		id: `op-${toolCallId}`,
+		session_id: "session-1",
+		tool_call_id: toolCallId,
+		operation_provenance_key: toolCallId,
 		name: "Execute",
 		arguments: {
 			kind: "execute",
 			command,
 		},
-		status: "in_progress",
+		provider_status: "in_progress",
+		operation_state: "running",
+		source_link: { kind: "transcript_linked", entry_id: toolCallId },
 		kind: "execute",
 		title: null,
-		locations: null,
-		skillMeta: null,
 		result: null,
-		normalizedQuestions: null,
-		normalizedTodos: null,
-		parentToolUseId: null,
-		taskChildren: null,
-		questionAnswer: null,
-		awaitingPlanApproval: false,
-		planApprovalRequestId: null,
-	});
+		progressive_arguments: null,
+		command,
+		normalized_todos: null,
+		parent_tool_call_id: null,
+		parent_operation_id: null,
+		child_tool_call_ids: [],
+		child_operation_ids: [],
+	};
+	operationStore.replaceSessionOperations("session-1", [operation]);
 	return {
 		operationStore,
 	};
@@ -74,11 +77,11 @@ describe("permission visibility", () => {
 		expect(visiblePermissionsForSessionBar([permission], operationStore)).toEqual([permission]);
 	});
 
-	it("treats execute permissions with matching commands as represented even when the anchor id differs", () => {
+	it("keeps execute permissions visible when only the command matches and the canonical anchor differs", () => {
 		const permission = createPermission("shell-permission");
 		const { operationStore } = createEntriesWithOperations("tool-1");
 
-		expect(isPermissionRepresentedByToolCall(permission, "session-1", operationStore)).toBe(true);
+		expect(isPermissionRepresentedByToolCall(permission, "session-1", operationStore)).toBe(false);
 	});
 
 	it("keeps anchored permissions visible in the session-level permission bar", () => {

@@ -160,6 +160,7 @@ mod tests {
             part_id: Some("msg-1".to_string()),
             message_id: Some("msg-1".to_string()),
             session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: None,
         })
         .expect("wrapper plan should adapt");
 
@@ -243,6 +244,7 @@ mod tests {
             part_id: Some("msg-plain".to_string()),
             message_id: Some("msg-plain".to_string()),
             session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: None,
         });
         assert!(non_plan.is_none());
 
@@ -256,6 +258,7 @@ mod tests {
             part_id: Some("msg-malformed".to_string()),
             message_id: Some("msg-malformed".to_string()),
             session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: None,
         });
         assert!(malformed.is_none());
 

@@ -1,11 +1,5 @@
-// Collapsible tool components (have rich content)
-
-export { default as ToolCallEdit } from "./tool-call-edit.svelte";
-export { default as ToolCallExecute } from "./tool-call-execute.svelte";
-// Fallback component for tools without a dedicated component
-export { default as ToolCallFallback } from "./tool-call-fallback.svelte";
-export { default as ToolCallFooter } from "./tool-call-footer.svelte";
-// Router - dispatches to appropriate component
-export { default as ToolCallRouter } from "./tool-call-router.svelte";
-export { default as ToolCallSearch } from "./tool-call-search.svelte";
-export { default as ToolCallThink } from "./tool-call-think.svelte";
+export { default as PermissionBar } from "./permission-bar.svelte";
+export { default as PermissionActionBar } from "./permission-action-bar.svelte";
+export { default as PendingPermissionCard } from "./pending-permission-card.svelte";
+export * from "./permission-display.js";
+export * from "./permission-visibility.js";

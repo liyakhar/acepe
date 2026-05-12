@@ -289,22 +289,108 @@
 /* Word-fade animation for live streaming content.
    Each word in newly streamed content fades from opacity 0→1 via CSS animation.
    Cursor-style approach: compositor-threaded, no JS pacing, no jank. */
-@keyframes sd-fadeIn {
+@keyframes tok-fadeIn {
 	from {
 		opacity: 0;
+		filter: blur(1px);
+		max-width: 0;
+		transform: translateY(0.16em);
+	}
+	1% {
+		max-width: var(--token-reveal-slot-max-width, 80ch);
+	}
+	60% {
+		filter: blur(0);
+		max-width: var(--token-reveal-slot-max-width, 80ch);
 	}
 	to {
 		opacity: 1;
+		filter: blur(0);
+		max-width: var(--token-reveal-slot-max-width, 80ch);
+		transform: translateY(0);
 	}
 }
 
-.sd-word-fade {
-	animation: sd-fadeIn 300ms ease-out both;
+@keyframes tok-block-fadeIn {
+	from {
+		opacity: 0;
+		filter: blur(1px);
+		grid-template-rows: 0fr;
+		transform: translateY(0.16em);
+	}
+	1% {
+		grid-template-rows: 1fr;
+	}
+	60% {
+		filter: blur(0);
+		grid-template-rows: 1fr;
+	}
+	to {
+		opacity: 1;
+		filter: blur(0);
+		grid-template-rows: 1fr;
+		transform: translateY(0);
+	}
+}
+
+.markdown-content .tok {
+	display: inline;
+	opacity: 1;
+}
+
+.markdown-content[data-token-reveal-mode] .tok {
+	display: inline-block;
+	max-width: var(--token-reveal-slot-max-width, 80ch);
+	overflow: hidden;
+	vertical-align: baseline;
+	white-space: nowrap;
+	line-height: 1;
+}
+
+.markdown-content[data-token-reveal-mode="smooth"] .tok {
+	opacity: 0;
+	animation-name: tok-fadeIn;
+	animation-duration: var(--token-reveal-fade-ms, 630ms);
+	animation-delay: calc(
+		var(--token-reveal-baseline-ms, 0ms) + (var(--i, 0) * var(--token-reveal-step-ms, 48ms))
+	);
+	animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+	animation-fill-mode: both;
+	will-change: opacity, filter, transform;
+}
+
+.markdown-content[data-token-reveal-mode] .tok-block {
+	display: grid;
+	max-width: none;
+	width: 100%;
+	line-height: inherit;
+	white-space: normal;
+	vertical-align: initial;
+}
+
+.markdown-content[data-token-reveal-mode] .tok-block-inner {
+	min-height: 0;
+	overflow: hidden;
+}
+
+.markdown-content[data-token-reveal-mode="smooth"] .tok-block {
+	animation-name: tok-block-fadeIn;
+}
+
+.markdown-content[data-token-reveal-mode="instant"] .tok,
+.markdown-content[data-token-reveal-mode="instant"] .tok * {
+	animation: none !important;
+	opacity: 1;
+	filter: none;
+	transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.sd-word-fade {
+	.markdown-content[data-token-reveal-mode] .tok {
 		animation: none;
+		opacity: 1;
+		filter: none;
+		transform: none;
 	}
 }
 

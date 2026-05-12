@@ -6,17 +6,21 @@
  * - Synchronous entry mutations for immediate UI updates
  *
  * Delegates to extracted managers:
- * - ToolCallManager: tool call CRUD, child-parent reconciliation, streaming args
+ * - TranscriptToolCallBuffer: tool call CRUD, child-parent reconciliation, streaming args
  * - ChunkAggregator: assistant/user chunk aggregation and boundary management
  * - EntryIndexManager: O(1) messageId, toolCallId, and partId lookups
  *
  * Note: This file uses native Map/Set/Date for internal indexes and timestamps
  * that are NOT meant to be reactive. Only entriesById uses SvelteMap for
- * fine-grained reactivity. Streaming arguments reactivity is in ToolCallManager.
+ * fine-grained reactivity. Streaming arguments reactivity is in TranscriptToolCallBuffer.
  */
 
 import { SvelteMap } from "svelte/reactivity";
-import type { TranscriptDelta, TranscriptSnapshot } from "../../services/acp-types.js";
+import type {
+	TranscriptDelta,
+	TranscriptEntry,
+	TranscriptSnapshot,
+} from "../../services/acp-types.js";
 import type {
 	ContentBlock,
 	ContentChunk,
@@ -30,13 +34,13 @@ import { ChunkAggregator } from "./services/chunk-aggregator.js";
 import { EntryIndexManager } from "./services/entry-index-manager";
 import type { IEntryStoreInternal } from "./services/interfaces/entry-store-internal.js";
 import type { IEntryManager } from "./services/interfaces/index.js";
-import { ToolCallManager } from "./services/tool-call-manager.svelte.js";
 import { normalizeToolResult } from "./services/tool-result-normalizer.js";
 import {
 	appendTranscriptSegmentToSessionEntry,
 	convertTranscriptEntryToSessionEntry,
 	convertTranscriptSnapshotToSessionEntries,
 } from "./services/transcript-snapshot-entry-adapter.js";
+import { TranscriptToolCallBuffer } from "./services/transcript-tool-call-buffer.svelte.js";
 import type { SessionEntry } from "./types.js";
 import { isToolCallEntry } from "./types.js";
 
@@ -45,7 +49,7 @@ const logger = createLogger({ id: "session-entry-store", name: "SessionEntryStor
 /**
  * Store for managing session entries with O(1) chunk aggregation.
  * Implements IEntryManager for external consumers and IEntryStoreInternal
- * for extracted services (ToolCallManager) to read/write entries.
+ * for extracted services (TranscriptToolCallBuffer) to read/write entries.
  *
  * Uses SvelteMap for fine-grained reactivity: when session A's entries change,
  * only components reading session A re-render, not components reading session B.
@@ -60,8 +64,8 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 	// Extracted index manager for O(1) messageId, toolCallId, and partId lookups
 	private readonly entryIndex = new EntryIndexManager();
 
-	// Extracted tool call manager for CRUD, child-parent reconciliation, and streaming args
-	private readonly toolCallManager: ToolCallManager;
+	// Transcript-only tool row buffer; product operation state lives in OperationStore.
+	private readonly transcriptToolCallBuffer: TranscriptToolCallBuffer;
 
 	// Extracted chunk aggregator for assistant/user chunk aggregation and boundary management
 	private readonly chunkAggregator = new ChunkAggregator(this, this.entryIndex);
@@ -69,14 +73,18 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 	// Track which sessions have been preloaded
 	private preloadedIds = new Set<string>();
 	private readonly transcriptRevisionBySession = new Map<string, number>();
+	private readonly canonicalAssistantEntryRemaps = new Map<string, Map<string, string>>();
 
 	constructor(operationStore?: OperationStore) {
 		this.operationStore = operationStore ?? new OperationStore();
-		this.toolCallManager = new ToolCallManager(this, this.entryIndex, this.operationStore);
+		this.transcriptToolCallBuffer = new TranscriptToolCallBuffer(
+			this,
+			this.entryIndex
+		);
 	}
 
 	// ============================================
-	// IEntryStoreInternal (consumed by ToolCallManager, ChunkAggregator)
+	// IEntryStoreInternal (consumed by TranscriptToolCallBuffer, ChunkAggregator)
 	// ============================================
 
 	/** Check if a session exists in committed or preloaded state. */
@@ -137,20 +145,11 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 	storeEntriesAndBuildIndex(sessionId: string, entries: SessionEntry[]): void {
 		const normalizedEntries = this.normalizePreloadedEntries(sessionId, entries);
 		this.setEntriesAndBuildIndices(sessionId, normalizedEntries);
-
-		this.operationStore.clearSession(sessionId);
-		for (const entry of normalizedEntries) {
-			if (!isToolCallEntry(entry)) {
-				continue;
-			}
-
-			this.operationStore.upsertFromToolCall(sessionId, entry.id, entry.message);
-		}
-
 		this.preloadedIds.add(sessionId);
 	}
 
 	private setEntriesAndBuildIndices(sessionId: string, entries: SessionEntry[]): void {
+		this.canonicalAssistantEntryRemaps.delete(sessionId);
 		// SvelteMap provides fine-grained reactivity - only this session's subscribers re-render
 		this.entriesById.set(sessionId, entries);
 
@@ -166,10 +165,7 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 		snapshot: TranscriptSnapshot,
 		timestamp: Date
 	): void {
-		const entries = this.mergeTranscriptSnapshotEntries(
-			sessionId,
-			convertTranscriptSnapshotToSessionEntries(snapshot, timestamp)
-		);
+		const entries = convertTranscriptSnapshotToSessionEntries(snapshot, timestamp);
 		this.setEntriesAndBuildIndices(sessionId, entries);
 		this.transcriptRevisionBySession.set(sessionId, snapshot.revision);
 	}
@@ -187,27 +183,32 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 			}
 
 			if (operation.kind === "appendEntry") {
-				const existingIndex = this.entryIndex.getEntryIdIndex(sessionId, operation.entry.entryId);
-				const convertedEntry = convertTranscriptEntryToSessionEntry(operation.entry, timestamp);
-				const reconciledIndex =
-					existingIndex ?? this.findMirroredOptimisticUserEntryIndex(sessionId, convertedEntry);
-				const nextEntry = this.preserveTranscriptEntry(
-					this.getEntries(sessionId)[reconciledIndex ?? -1],
-					convertedEntry
+				const appendTarget = this.resolveCanonicalAppendEntryTarget(
+					sessionId,
+					operation.entry,
+					delta.eventSeq
 				);
-				if (reconciledIndex === undefined) {
-					this.addEntry(sessionId, nextEntry);
+				const existingIndex = appendTarget.existingIndex;
+				const convertedEntry = convertTranscriptEntryToSessionEntry(appendTarget.entry, timestamp);
+				if (existingIndex === undefined) {
+					this.addEntry(sessionId, convertedEntry);
 				} else {
-					this.updateEntry(sessionId, reconciledIndex, nextEntry);
+					this.updateEntry(sessionId, existingIndex, convertedEntry);
 				}
 				continue;
 			}
 
-			const existingIndex = this.entryIndex.getEntryIdIndex(sessionId, operation.entryId);
+			const segmentTarget = this.resolveCanonicalAppendSegmentTarget(
+				sessionId,
+				operation.entryId,
+				operation.role,
+				delta.eventSeq
+			);
+			const existingIndex = segmentTarget.existingIndex;
 			if (existingIndex === undefined) {
 				const nextEntry = convertTranscriptEntryToSessionEntry(
 					{
-						entryId: operation.entryId,
+						entryId: segmentTarget.entryId,
 						role: operation.role,
 						segments: [operation.segment],
 					},
@@ -266,12 +267,90 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 		};
 	}
 
-	private syncOperationStoreForEntry(sessionId: string, entry: SessionEntry): void {
-		if (!isToolCallEntry(entry)) {
-			return;
+	private resolveCanonicalAppendEntryTarget(
+		sessionId: string,
+		entry: TranscriptEntry,
+		eventSeq: number
+	): { entry: TranscriptEntry; existingIndex: number | undefined } {
+		if (entry.role !== "assistant") {
+			return {
+				entry,
+				existingIndex: this.entryIndex.getEntryIdIndex(sessionId, entry.entryId),
+			};
 		}
 
-		this.operationStore.upsertFromToolCall(sessionId, entry.id, entry.message);
+		const target = this.resolveCanonicalAssistantTarget(sessionId, entry.entryId, eventSeq);
+		if (target.entryId === entry.entryId) {
+			return {
+				entry,
+				existingIndex: target.existingIndex,
+			};
+		}
+
+		return {
+			entry: {
+				entryId: target.entryId,
+				role: entry.role,
+				segments: entry.segments,
+			},
+			existingIndex: target.existingIndex,
+		};
+	}
+
+	private resolveCanonicalAppendSegmentTarget(
+		sessionId: string,
+		entryId: string,
+		role: TranscriptEntry["role"],
+		eventSeq: number
+	): { entryId: string; existingIndex: number | undefined } {
+		if (role !== "assistant") {
+			return {
+				entryId,
+				existingIndex: this.entryIndex.getEntryIdIndex(sessionId, entryId),
+			};
+		}
+
+		return this.resolveCanonicalAssistantTarget(sessionId, entryId, eventSeq);
+	}
+
+	private resolveCanonicalAssistantTarget(
+		sessionId: string,
+		entryId: string,
+		eventSeq: number
+	): { entryId: string; existingIndex: number | undefined } {
+		const entries = this.getEntries(sessionId);
+		const lastUserIndex = this.findLastUserEntryIndex(entries);
+		const remaps = this.canonicalAssistantEntryRemaps.get(sessionId);
+		const remappedEntryId = remaps?.get(entryId);
+		if (remappedEntryId) {
+			const remappedIndex = this.entryIndex.getEntryIdIndex(sessionId, remappedEntryId);
+			if (remappedIndex !== undefined && remappedIndex > lastUserIndex) {
+				return { entryId: remappedEntryId, existingIndex: remappedIndex };
+			}
+		}
+
+		const existingIndex = this.entryIndex.getEntryIdIndex(sessionId, entryId);
+		if (existingIndex === undefined || existingIndex > lastUserIndex) {
+			return { entryId, existingIndex };
+		}
+
+		const nextEntryId = `${entryId}:turn:${eventSeq}`;
+		let nextRemaps = remaps;
+		if (!nextRemaps) {
+			nextRemaps = new Map<string, string>();
+			this.canonicalAssistantEntryRemaps.set(sessionId, nextRemaps);
+		}
+		nextRemaps.set(entryId, nextEntryId);
+		return { entryId: nextEntryId, existingIndex: undefined };
+	}
+
+	private findLastUserEntryIndex(entries: readonly SessionEntry[]): number {
+		for (let index = entries.length - 1; index >= 0; index -= 1) {
+			if (entries[index]?.type === "user") {
+				return index;
+			}
+		}
+		return -1;
 	}
 
 	private normalizePreloadedEntries(sessionId: string, entries: SessionEntry[]): SessionEntry[] {
@@ -306,7 +385,7 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 					continue;
 				}
 
-				normalizedStore.createToolCallEntry(sessionId, entry.message);
+				normalizedStore.recordToolCallTranscriptEntry(sessionId, entry.message);
 			}
 
 			collapsedEntries = normalizedStore.getEntries(sessionId);
@@ -330,7 +409,6 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 		} else if (isToolCallEntry(normalizedEntry)) {
 			this.entryIndex.addToolCallId(sessionId, normalizedEntry.message.id, newIndex);
 		}
-		this.syncOperationStoreForEntry(sessionId, normalizedEntry);
 		logger.debug("addEntry: appended entry", {
 			sessionId,
 			entryId: normalizedEntry.id,
@@ -402,7 +480,6 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 		} else if (previousToolCallId !== null || updatedToolCallId !== null) {
 			this.entryIndex.rebuildToolCallIdIndex(sessionId, newEntries);
 		}
-		this.syncOperationStoreForEntry(sessionId, normalizedEntry);
 	}
 
 	/**
@@ -415,10 +492,11 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 		this.entryIndex.clearSession(sessionId);
 		this.preloadedIds.delete(sessionId);
 		this.transcriptRevisionBySession.delete(sessionId);
+		this.canonicalAssistantEntryRemaps.delete(sessionId);
 
 		// Delegate cleanup to extracted managers
 		this.chunkAggregator.clearSession(sessionId);
-		this.toolCallManager.clearSession(sessionId);
+		this.transcriptToolCallBuffer.clearSession(sessionId);
 		this.operationStore.clearSession(sessionId);
 	}
 
@@ -426,129 +504,18 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 		return this.operationStore;
 	}
 
-	private mergeTranscriptSnapshotEntries(
-		sessionId: string,
-		entries: SessionEntry[]
-	): SessionEntry[] {
-		const existingEntries = this.getEntries(sessionId);
-		const existingEntryById = new Map(existingEntries.map((entry) => [entry.id, entry] as const));
-		return entries.map((entry) =>
-			this.preserveStructuredTranscriptEntry(existingEntryById.get(entry.id), entry)
-		);
-	}
-
-	private preserveStructuredTranscriptEntry(
-		existingEntry: SessionEntry | undefined,
-		nextEntry: SessionEntry
-	): SessionEntry {
-		if (
-			existingEntry === undefined ||
-			existingEntry.type !== "tool_call" ||
-			nextEntry.type !== "tool_call"
-		) {
-			return nextEntry;
-		}
-
-		const nextTitle = nextEntry.message.title ?? null;
-		const nextName = nextEntry.message.name;
-		return {
-			id: nextEntry.id,
-			type: "tool_call",
-			message: {
-				id: existingEntry.message.id,
-				name: nextName.length > 0 ? nextName : existingEntry.message.name,
-				arguments: existingEntry.message.arguments,
-				progressiveArguments: existingEntry.message.progressiveArguments,
-				rawInput: existingEntry.message.rawInput,
-				status: existingEntry.message.status,
-				result: existingEntry.message.result,
-				kind: existingEntry.message.kind,
-				title: nextTitle !== null && nextTitle.length > 0 ? nextTitle : existingEntry.message.title,
-				locations: existingEntry.message.locations,
-				skillMeta: existingEntry.message.skillMeta,
-				normalizedQuestions: existingEntry.message.normalizedQuestions,
-				normalizedTodos: existingEntry.message.normalizedTodos,
-				parentToolUseId: existingEntry.message.parentToolUseId,
-				taskChildren: existingEntry.message.taskChildren,
-				questionAnswer: existingEntry.message.questionAnswer,
-				awaitingPlanApproval: existingEntry.message.awaitingPlanApproval,
-				planApprovalRequestId: existingEntry.message.planApprovalRequestId,
-				normalizedResult: existingEntry.message.normalizedResult,
-			},
-			timestamp: existingEntry.timestamp,
-			isStreaming: existingEntry.isStreaming,
-		};
-	}
-
-	private preserveTranscriptEntry(
-		existingEntry: SessionEntry | undefined,
-		nextEntry: SessionEntry
-	): SessionEntry {
-		const structuredEntry = this.preserveStructuredTranscriptEntry(existingEntry, nextEntry);
-		if (
-			existingEntry === undefined ||
-			existingEntry.type !== "user" ||
-			nextEntry.type !== "user" ||
-			existingEntry.message.sentAt === undefined
-		) {
-			return structuredEntry;
-		}
-
-		return {
-			id: nextEntry.id,
-			type: "user",
-			message: {
-				id: nextEntry.message.id,
-				content: nextEntry.message.content,
-				chunks: nextEntry.message.chunks,
-				sentAt: existingEntry.message.sentAt,
-				checkpoint: existingEntry.message.checkpoint,
-			},
-			timestamp: existingEntry.timestamp,
-		};
-	}
-
-	private findMirroredOptimisticUserEntryIndex(
-		sessionId: string,
-		nextEntry: SessionEntry
-	): number | undefined {
-		if (nextEntry.type !== "user" || nextEntry.message.content.type !== "text") {
-			return undefined;
-		}
-
-		const entries = this.getEntries(sessionId);
-		const optimisticIndex = entries.length - 1;
-		if (optimisticIndex < 0) {
-			return undefined;
-		}
-
-		const optimisticEntry = entries[optimisticIndex];
-		if (
-			optimisticEntry?.type !== "user" ||
-			optimisticEntry.message.sentAt === undefined ||
-			optimisticEntry.message.content.type !== "text"
-		) {
-			return undefined;
-		}
-
-		if (optimisticEntry.message.content.text !== nextEntry.message.content.text) {
-			return undefined;
-		}
-
-		return optimisticIndex;
-	}
 
 	// ============================================
-	// TOOL CALLS (delegated to ToolCallManager)
+	// TOOL CALLS (delegated to TranscriptToolCallBuffer)
 	// ============================================
 
 	/**
-	 * Create a new tool call entry from full ToolCallData.
-	 * Splits assistant aggregation boundary before delegating to ToolCallManager.
+	 * Record a transcript-only tool call entry from full ToolCallData.
+	 * Splits assistant aggregation boundary before delegating to TranscriptToolCallBuffer.
 	 */
-	createToolCallEntry(sessionId: string, toolCallData: ToolCallData): void {
+	recordToolCallTranscriptEntry(sessionId: string, toolCallData: ToolCallData): void {
 		this.chunkAggregator.splitAssistantAggregationBoundary(sessionId);
-		this.toolCallManager.createEntry(sessionId, toolCallData).match(
+		this.transcriptToolCallBuffer.createEntry(sessionId, toolCallData).match(
 			() => {},
 			(e) =>
 				logger.warn("Failed to create tool call entry", {
@@ -560,12 +527,12 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 	}
 
 	/**
-	 * Update an existing tool call entry.
-	 * Canonical tool rows are created by toolCall events; update events are
-	 * mutation-only and must not create synthetic placeholders.
+	 * Update an existing transcript-only tool call entry.
+	 * Operation truth is not created here; canonical operation data arrives through
+	 * Rust-authored session graph snapshots and patches.
 	 */
-	updateToolCallEntry(sessionId: string, update: ToolCallUpdate): void {
-		this.toolCallManager.updateEntry(sessionId, update).match(
+	updateToolCallTranscriptEntry(sessionId: string, update: ToolCallUpdate): void {
+		this.transcriptToolCallBuffer.updateEntry(sessionId, update).match(
 			() => {},
 			(e) =>
 				logger.warn("Failed to update tool call entry", {
@@ -580,14 +547,14 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 	 * Get the streaming arguments for a tool call.
 	 */
 	getStreamingArguments(toolCallId: string): ToolArguments | undefined {
-		return this.toolCallManager.getStreamingArguments(toolCallId);
+		return this.transcriptToolCallBuffer.getStreamingArguments(toolCallId);
 	}
 
 	/**
 	 * Clear streaming arguments for a tool call.
 	 */
 	clearStreamingArguments(toolCallId: string): void {
-		this.toolCallManager.clearStreamingArguments(toolCallId);
+		this.transcriptToolCallBuffer.clearStreamingArguments(toolCallId);
 	}
 
 	// ============================================
@@ -609,6 +576,10 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 
 	clearStreamingAssistantEntry(sessionId: string): void {
 		this.chunkAggregator.clearStreamingAssistantEntry(sessionId);
+	}
+
+	startNewAssistantTurn(sessionId: string): void {
+		this.chunkAggregator.startNewAssistantTurn(sessionId);
 	}
 
 	/**

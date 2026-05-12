@@ -1,5 +1,12 @@
 <script lang="ts">
-	import type { AgentPanelConversationEntry } from "./types.js";
+	import type { WorkerPoolManager } from "@pierre/diffs/worker";
+	import type { Snippet } from "svelte";
+	import type {
+		AgentPanelConversationEntry,
+		AgentPanelQuestionSelectEvent,
+		AssistantRenderBlockContext,
+	} from "./types.js";
+	import type { StreamingAnimationMode } from "../../lib/assistant-message/types.js";
 
 	import AgentAssistantMessage from "./agent-assistant-message.svelte";
 	import AgentToolExecute from "./agent-tool-execute.svelte";
@@ -9,20 +16,44 @@
 	import AgentToolReadLints from "./agent-tool-read-lints.svelte";
 	import AgentToolOther from "./agent-tool-other.svelte";
 	import AgentToolBrowser from "./agent-tool-browser.svelte";
+	import AgentToolEdit from "./agent-tool-edit.svelte";
 	import AgentToolRow from "./agent-tool-row.svelte";
 	import AgentToolSearch from "./agent-tool-search.svelte";
+	import AgentToolSkill from "./agent-tool-skill.svelte";
 	import AgentToolTask from "./agent-tool-task.svelte";
 	import AgentToolTodo from "./agent-tool-todo.svelte";
 	import AgentToolWebSearch from "./agent-tool-web-search.svelte";
+	import AgentThinkingSceneEntry from "./agent-thinking-scene-entry.svelte";
 	import AgentUserMessage from "./agent-user-message.svelte";
-	import { getPlanningPlaceholderLabel } from "./planning-label.js";
+	import AgentMissingSceneEntry from "./agent-missing-scene-entry.svelte";
+
+	export interface EditToolTheme {
+		theme?: "light" | "dark";
+		themeNames?: { dark: string; light: string };
+		workerPool?: WorkerPoolManager;
+		onBeforeRender?: () => Promise<void>;
+		unsafeCSS?: string;
+	}
 
 	interface Props {
 		entry: AgentPanelConversationEntry;
 		iconBasePath?: string;
+		editToolTheme?: EditToolTheme;
+		projectPath?: string;
+		streamingAnimationMode?: StreamingAnimationMode;
+		renderAssistantBlock?: Snippet<[AssistantRenderBlockContext]>;
+		onQuestionSelect?: (event: AgentPanelQuestionSelectEvent) => void;
 	}
 
-	let { entry, iconBasePath = "" }: Props = $props();
+	let {
+		entry,
+		iconBasePath = "",
+		editToolTheme,
+		projectPath,
+		streamingAnimationMode = "smooth",
+		renderAssistantBlock,
+		onQuestionSelect,
+	}: Props = $props();
 
 	function isToolCall(
 		value: AgentPanelConversationEntry,
@@ -40,17 +71,32 @@
  </script>
 
 {#if entry.type === "user"}
-	<AgentUserMessage text={entry.text} />
+	<AgentUserMessage text={entry.text} timestampMs={entry.timestampMs} />
 {:else if entry.type === "assistant"}
-	<AgentAssistantMessage
-		message={{
-			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
-		}}
-		isStreaming={entry.isStreaming}
+		<AgentAssistantMessage
+			message={entry.message ?? {
+				chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
+			}}
+			isStreaming={entry.isStreaming}
+			tokenRevealCss={entry.tokenRevealCss}
+			timestampMs={entry.timestampMs}
+			{projectPath}
+			{streamingAnimationMode}
 		{iconBasePath}
+		renderBlock={renderAssistantBlock}
 	/>
 {:else if entry.type === "thinking"}
-	<AgentToolRow title={getPlanningPlaceholderLabel(entry.durationMs)} status="running" padded={false} />
+	<AgentThinkingSceneEntry
+		durationMs={entry.durationMs}
+		startedAtMs={entry.startedAtMs}
+		label={entry.label}
+	/>
+{:else if entry.type === "missing"}
+	<AgentMissingSceneEntry
+		title={entry.title}
+		message={entry.message}
+		diagnosticLabel={entry.diagnosticLabel}
+	/>
 {:else if isToolCall(entry) && entry.todos && entry.todos.length > 0}
 	<AgentToolTodo todos={entry.todos} isLive={entry.status === "running"} />
 {:else if isToolCall(entry) && entry.question}
@@ -58,14 +104,21 @@
 		questions={[entry.question]}
 		status={entry.status}
 		isInteractive={entry.status === "running"}
+		onSelect={(questionIndex, label, multiSelect) =>
+			onQuestionSelect?.({
+				entryId: entry.id,
+				questionIndex,
+				label,
+				multiSelect,
+			})}
 	/>
-{:else if isToolCall(entry) && entry.lintDiagnostics !== undefined}
+{:else if isToolCall(entry) && (entry.kind === "read_lints" || entry.lintDiagnostics !== undefined)}
 	<AgentToolReadLints
 		status={entry.status}
-		totalDiagnostics={entry.lintDiagnostics.length}
+		totalDiagnostics={entry.lintDiagnostics?.length ?? 0}
 		totalFiles={lintFileCount}
-		diagnostics={entry.lintDiagnostics}
-		summaryLabel={`${entry.lintDiagnostics.length} issues in ${lintFileCount} files`}
+		diagnostics={entry.lintDiagnostics ?? null}
+		summaryLabel={`${entry.lintDiagnostics?.length ?? 0} issues in ${lintFileCount} files`}
 	/>
 {:else if isToolCall(entry) && entry.kind === "read"}
 	<AgentToolRead
@@ -74,6 +127,21 @@
 		sourceRangeLabel={entry.sourceRangeLabel ?? null}
 		status={entry.status}
 		{iconBasePath}
+	/>
+{:else if isToolCall(entry) && entry.kind === "edit"}
+	<AgentToolEdit
+		diffs={entry.editDiffs ? Array.from(entry.editDiffs) : []}
+		filePath={entry.filePath ?? null}
+		isStreaming={entry.status === "pending" || entry.status === "running"}
+		status={entry.status}
+		applied={entry.status === "done"}
+		awaitingApproval={entry.presentationState === "pending_operation"}
+		iconBasePath={iconBasePath}
+		theme={editToolTheme?.theme}
+		themeNames={editToolTheme?.themeNames}
+		workerPool={editToolTheme?.workerPool}
+		onBeforeRender={editToolTheme?.onBeforeRender}
+		unsafeCSS={editToolTheme?.unsafeCSS}
 	/>
 {:else if isToolCall(entry) && entry.kind === "execute"}
 	<AgentToolExecute
@@ -89,6 +157,10 @@
 		searchPath={entry.searchPath}
 		files={entry.searchFiles}
 		resultCount={entry.searchResultCount}
+		searchMode={entry.searchMode}
+		searchNumFiles={entry.searchNumFiles}
+		searchNumMatches={entry.searchNumMatches}
+		searchMatches={entry.searchMatches}
 		status={entry.status}
 		{iconBasePath}
 	/>
@@ -120,6 +192,13 @@
 		detailsText={entry.detailsText ?? null}
 		status={entry.status}
 	/>
+{:else if isToolCall(entry) && entry.kind === "skill"}
+	<AgentToolSkill
+		skillName={entry.skillName}
+		skillArgs={entry.skillArgs}
+		description={entry.skillDescription}
+		status={entry.status}
+	/>
 {:else if isToolCall(entry) && (entry.kind === "task" || entry.kind === "task_output")}
 	<AgentToolTask
 		description={entry.taskDescription ?? entry.title}
@@ -133,9 +212,9 @@
 	<div class="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
 		<p class="text-sm font-medium text-destructive">{entry.title}</p>
 		{#if entry.subtitle}
-			<p class="mt-1 text-[11px] text-muted-foreground">{entry.subtitle}</p>
+			<p class="mt-1 text-sm text-muted-foreground">{entry.subtitle}</p>
 		{/if}
-		<p class="mt-2 whitespace-pre-wrap text-xs text-foreground">{entry.resultText}</p>
+		<p class="mt-2 whitespace-pre-wrap text-sm text-foreground">{entry.resultText}</p>
 	</div>
 {:else if isToolCall(entry)}
 	<AgentToolRow

@@ -1,7 +1,16 @@
 import type { ContentBlock } from "../../services/converted-session-types";
 import type { AssistantMessageChunk } from "../types/assistant-message";
 
-export type ChunkGroup = { type: "text"; text: string } | { type: "other"; block: ContentBlock };
+type RuntimeTextBlock = { type: "text"; text?: string };
+type RuntimeContentBlock = ContentBlock | RuntimeTextBlock;
+type RuntimeAssistantMessageChunk = {
+	type: AssistantMessageChunk["type"];
+	block: RuntimeContentBlock;
+};
+
+export type ChunkGroup =
+	| { type: "text"; text: string }
+	| { type: "other"; block: RuntimeContentBlock };
 
 export type GroupedAssistantChunks = {
 	messageGroups: ChunkGroup[];
@@ -19,7 +28,9 @@ const flushText = (accumulator: GroupAccumulator) => {
 	accumulator.currentText = null;
 };
 
-export const groupAssistantChunks = (chunks: AssistantMessageChunk[]): GroupedAssistantChunks => {
+export const groupAssistantChunks = (
+	chunks: readonly RuntimeAssistantMessageChunk[]
+): GroupedAssistantChunks => {
 	const message: GroupAccumulator = { groups: [], currentText: null };
 	const thought: GroupAccumulator = { groups: [], currentText: null };
 
@@ -27,7 +38,7 @@ export const groupAssistantChunks = (chunks: AssistantMessageChunk[]): GroupedAs
 		const target = chunk.type === "thought" ? thought : message;
 		const block = chunk.block;
 
-		if (block.type === "text") {
+		if (block.type === "text" && typeof block.text === "string") {
 			target.currentText =
 				target.currentText === null ? block.text : target.currentText + block.text;
 			continue;

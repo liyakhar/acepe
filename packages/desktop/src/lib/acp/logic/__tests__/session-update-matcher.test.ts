@@ -88,7 +88,7 @@ describe("SessionUpdateMatcher", () => {
 			const update: SessionUpdate = {
 				type: "userMessageChunk",
 				chunk: { content: { type: "text", text: "hello" } },
-				session_id: "session-123",
+				sessionId: "session-123",
 			};
 
 			const handlers: SessionUpdateHandlers<string> = {

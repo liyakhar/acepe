@@ -228,6 +228,9 @@ pub struct PromptRequest {
     pub session_id: String,
     /// Array of content blocks to send as the prompt
     pub prompt: Vec<ContentBlock>,
+    /// Client-generated opaque correlation ID for the send attempt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
     /// Whether to stream the response (enables incremental message display)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
@@ -273,6 +276,7 @@ mod tests {
             prompt: vec![ContentBlock::Text {
                 text: "Hello".to_string(),
             }],
+            attempt_id: None,
             stream: Some(true),
         };
 
@@ -290,6 +294,7 @@ mod tests {
             prompt: vec![ContentBlock::Text {
                 text: "Hello".to_string(),
             }],
+            attempt_id: None,
             stream: None,
         };
 
@@ -311,6 +316,7 @@ mod tests {
         let request: PromptRequest = serde_json::from_value(json).unwrap();
 
         assert_eq!(request.session_id, "test-session");
+        assert_eq!(request.attempt_id, None);
         assert_eq!(request.stream, Some(true));
     }
 
@@ -324,6 +330,25 @@ mod tests {
         let request: PromptRequest = serde_json::from_value(json).unwrap();
 
         assert_eq!(request.session_id, "test-session");
+        assert_eq!(request.attempt_id, None);
         assert_eq!(request.stream, None);
+    }
+
+    #[test]
+    fn prompt_request_round_trips_attempt_id() {
+        let json = json!({
+            "sessionId": "test-session",
+            "prompt": [{"type": "text", "text": "Hello"}],
+            "stream": true,
+            "attemptId": "attempt-123"
+        });
+
+        let reparsed: PromptRequest = serde_json::from_value(json).unwrap();
+        let serialized = serde_json::to_value(&reparsed).unwrap();
+
+        assert_eq!(reparsed.session_id, "test-session");
+        assert_eq!(reparsed.attempt_id.as_deref(), Some("attempt-123"));
+        assert_eq!(reparsed.stream, Some(true));
+        assert_eq!(serialized["attemptId"], "attempt-123");
     }
 }

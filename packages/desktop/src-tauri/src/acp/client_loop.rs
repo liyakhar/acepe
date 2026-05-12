@@ -182,7 +182,7 @@ impl BatcherWithGuard {
         self.batcher.process(update)
     }
 
-    fn process_turn_complete(
+    pub(crate) fn process_turn_complete(
         &mut self,
         session_id: &str,
         turn_id: Option<String>,
@@ -359,8 +359,6 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
         let mut non_streaming_batcher = NonStreamingEventBatcher::new();
 
         let message_id_tracker: StdArc<std::sync::Mutex<HashMap<String, String>>> =
-            StdArc::new(std::sync::Mutex::new(HashMap::new()));
-        let assistant_text_tracker: StdArc<std::sync::Mutex<HashMap<String, String>>> =
             StdArc::new(std::sync::Mutex::new(HashMap::new()));
         let task_reconciler: StdArc<std::sync::Mutex<TaskReconciler>> =
             StdArc::new(std::sync::Mutex::new(TaskReconciler::new()));
@@ -645,10 +643,8 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
 
                                 if let Some(prompt_session) = ctx.prompt_sessions.lock().await.remove(&id) {
                                     let session_id = prompt_session.session_id;
-                                    if ctx.provider.as_ref().is_some_and(|provider| provider.clear_message_tracker_on_prompt_response()) {
-                                        if let Ok(mut tracker) = message_id_tracker.lock() {
-                                            tracker.remove(&session_id);
-                                        }
+                                    if let Ok(mut tracker) = message_id_tracker.lock() {
+                                        tracker.remove(&session_id);
                                     }
 
                                     let updates = if let Some(error) = json.get("error") {
@@ -750,7 +746,6 @@ pub(crate) fn spawn_stdout_reader(stdout: ChildStdout, ctx: StdoutLoopContext) {
                                 ctx.agent_type,
                                 ctx.provider.as_deref(),
                                 &message_id_tracker,
-                                &assistant_text_tracker,
                                 &task_reconciler,
                                 &mut streaming_batcher,
                                 &mut non_streaming_batcher,
@@ -1000,6 +995,115 @@ mod tests {
 
         let events = captured.lock().expect("captured events lock").clone();
         events
+    }
+
+    async fn capture_stdout_events_with_prompt_response(
+        lines: Vec<Value>,
+        prompt_request_id: u64,
+        prompt_session_id: &str,
+        provider: Option<StdArc<dyn AgentProvider>>,
+        agent_type: AgentType,
+    ) -> Vec<crate::acp::ui_event_dispatcher::AcpUiEvent> {
+        let script = lines
+            .iter()
+            .map(Value::to_string)
+            .map(|line| format!("sys.stdout.write({line:?} + '\\n')"))
+            .collect::<Vec<_>>()
+            .join(";");
+        let mut child = Command::new("python3")
+            .args(["-u", "-c", &format!("import sys; {script}")])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("child should spawn");
+        let stdout = child.stdout.take().expect("stdout should be piped");
+
+        let prompt_sessions = StdArc::new(Mutex::new(HashMap::new()));
+        prompt_sessions.lock().await.insert(
+            prompt_request_id,
+            PromptRequestSession {
+                generation: 1,
+                session_id: prompt_session_id.to_string(),
+            },
+        );
+
+        let pending = StdArc::new(Mutex::new(HashMap::new()));
+        let (dispatcher, captured) = AcpUiEventDispatcher::test_sink();
+        let cancel = CancellationToken::new();
+
+        spawn_stdout_reader(
+            stdout,
+            StdoutLoopContext {
+                process_generation: 1,
+                pending,
+                stdin_writer: StdArc::new(Mutex::new(None)),
+                prompt_sessions,
+                app_handle: None,
+                dispatcher,
+                permission_tracker: StdArc::new(std::sync::Mutex::new(PermissionTracker::new())),
+                web_search_dedup: StdArc::new(std::sync::Mutex::new(WebSearchDedup::new())),
+                active_session_id: StdArc::new(std::sync::Mutex::new(None)),
+                inbound_response_adapters: StdArc::new(std::sync::Mutex::new(HashMap::new())),
+                is_replay_active: StdArc::new(AtomicBool::new(false)),
+                provider,
+                agent_type,
+                max_logged_line_bytes: 512,
+                stderr_buffer: new_stderr_buffer(),
+                cancel,
+            },
+        );
+
+        child.wait().await.expect("child should exit cleanly");
+        sleep(Duration::from_millis(50)).await;
+
+        let events = captured.lock().expect("captured events lock").clone();
+        events
+    }
+
+    #[tokio::test]
+    async fn prompt_response_splits_assistant_message_id_for_all_providers() {
+        let session_id = "session-prompt-boundary";
+        let agent_message_chunk = |text: &str| {
+            json!({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "agentMessageChunk",
+                        "content": { "type": "text", "text": text }
+                    }
+                }
+            })
+        };
+
+        let captured = capture_stdout_events_with_prompt_response(
+            vec![
+                agent_message_chunk("before"),
+                json!({ "jsonrpc": "2.0", "id": 42, "result": {} }),
+                agent_message_chunk("after"),
+            ],
+            42,
+            session_id,
+            None,
+            AgentType::ClaudeCode,
+        )
+        .await;
+
+        let message_ids = captured
+            .iter()
+            .filter_map(|event| match &event.payload {
+                crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
+                    match update.as_ref() {
+                        SessionUpdate::AgentMessageChunk { message_id, .. } => message_id.clone(),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(message_ids.len(), 2);
+        assert_ne!(message_ids[0], message_ids[1]);
     }
 
     #[tokio::test]

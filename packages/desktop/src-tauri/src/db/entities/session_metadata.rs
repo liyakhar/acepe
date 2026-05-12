@@ -39,9 +39,6 @@ pub struct Model {
     /// File size in bytes (additional validation)
     pub file_size: i64,
 
-    /// Provider-owned persisted session ID when it differs from the app session ID.
-    pub provider_session_id: Option<String>,
-
     /// Optional worktree path when session operates in a git worktree
     pub worktree_path: Option<String>,
 
@@ -68,7 +65,7 @@ impl ActiveModelBehavior for ActiveModel {}
 
 impl Model {
     pub fn history_session_id(&self) -> &str {
-        self.provider_session_id.as_deref().unwrap_or(&self.id)
+        &self.id
     }
 
     pub fn effective_project_path(&self) -> &str {

@@ -1,8 +1,10 @@
 import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionEntry } from "../../../../application/dto/session.js";
+import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
+import type { SessionGraphActivityKind } from "../../../../../services/acp-types.js";
 import type { PanelViewState } from "../../../../logic/panel-visibility.js";
+import type { CanonicalSessionProjection } from "../../../../store/canonical-session-projection.js";
 
 const storageMock: Storage = {
 	length: 0,
@@ -22,6 +24,42 @@ Object.defineProperty(globalThis, "sessionStorage", {
 	value: storageMock,
 });
 
+const sessionStoreState = vi.hoisted(() => ({
+	runtimeState: null as null | {
+		connectionPhase: "disconnected" | "connecting" | "connected" | "failed";
+		contentPhase: "empty" | "loading" | "loaded";
+		activityPhase: "idle" | "running" | "waiting_for_user";
+		canSubmit: boolean;
+		canCancel: boolean;
+		showStop: boolean;
+		showThinking: boolean;
+		showConnectingOverlay: boolean;
+		showConversation: boolean;
+		showReadyPlaceholder: boolean;
+	},
+	hotState: {
+		turnState: "idle" as "idle" | "running" | "completed" | "error",
+		status: "idle" as "idle" | "loading" | "connecting" | "ready" | "streaming" | "error",
+		currentMode: null,
+		connectionError: null,
+		activeTurnFailure: null,
+		activity: null as null | {
+			kind:
+				| "awaiting_model"
+				| "running_operation"
+				| "waiting_for_user"
+				| "paused"
+				| "error"
+				| "idle";
+			activeOperationCount: number;
+			activeSubagentCount: number;
+			dominantOperationId: string | null;
+			blockingInteractionId: string | null;
+		},
+	},
+	canonicalProjection: null as CanonicalSessionProjection | null,
+}));
+
 vi.mock(
 	"svelte",
 	async () =>
@@ -31,60 +69,128 @@ vi.mock(
 
 vi.mock("@acepe/ui", async () => ({
 	TextShimmer: (await import("./fixtures/user-message-stub.svelte")).default,
+	setIconConfig: () => undefined,
+}));
+
+vi.mock("mode-watcher", () => ({
+	mode: { current: "dark" },
 }));
 
 vi.mock("../../../../store/session-store.svelte.js", () => ({
 	getSessionStore: () => ({
-		getSessionRuntimeState: () => null,
-		getHotState: () => ({ turnState: "idle" }),
+		getSessionRuntimeState: () => sessionStoreState.runtimeState,
+		getHotState: () => sessionStoreState.hotState,
+		getCanonicalSessionProjection: () => sessionStoreState.canonicalProjection,
+		getSessionCurrentModeId: () => null,
+		getOperationStore: () => ({
+			getCurrentStreamingToolCall: () => null,
+		}),
 	}),
 }));
 
-vi.mock("../../../messages/message-wrapper.svelte", async () => ({
+vi.mock("../../../../store/interaction-store.svelte.js", () => ({
+	getInteractionStore: () => ({}),
+}));
+
+vi.mock("../../../../store/operation-association.js", () => ({
+	buildSessionOperationInteractionSnapshot: () => ({
+		pendingQuestion: null,
+		pendingQuestionOperation: null,
+		pendingPermission: null,
+		pendingPermissionOperation: null,
+		pendingPlanApproval: null,
+		pendingPlanApprovalOperation: null,
+	}),
+}));
+
+vi.mock("../../messages/message-wrapper.svelte", async () => ({
 	default: (await import("./fixtures/message-wrapper-stub.svelte")).default,
 }));
 
-vi.mock("../../../messages/user-message.svelte", async () => ({
+vi.mock("../../messages/user-message.svelte", async () => ({
 	default: (await import("./fixtures/user-message-stub.svelte")).default,
 }));
 
-vi.mock("../../../project-selection-panel.svelte", async () => ({
+vi.mock("../../messages/assistant-message.svelte", async () => ({
 	default: (await import("./fixtures/user-message-stub.svelte")).default,
 }));
 
-vi.mock("../../../ready-to-assist-placeholder.svelte", async () => ({
+vi.mock("../../project-selection-panel.svelte", async () => ({
 	default: (await import("./fixtures/user-message-stub.svelte")).default,
 }));
 
-vi.mock("../virtualized-entry-list.svelte", async () => ({
+vi.mock("../../ready-to-assist-placeholder.svelte", async () => ({
+	default: (await import("./fixtures/user-message-stub.svelte")).default,
+}));
+
+vi.mock("../scene-content-viewport.svelte", async () => ({
 	default: (await import("./fixtures/virtualized-entry-list-stub.svelte")).default,
 }));
 
 import AgentPanelContent from "../agent-panel-content.svelte";
 
-function createUserEntry(id: string, text: string): SessionEntry {
+function createCanonicalProjection(activityKind: SessionGraphActivityKind): CanonicalSessionProjection {
 	return {
-		id,
-		type: "user",
-		message: {
-			content: { type: "text", text },
-			chunks: [{ type: "text", text }],
+		lifecycle: {
+			status: "ready",
+			errorMessage: null,
+			detachedReason: null,
+			failureReason: null,
+			actionability: {
+				canSend: true,
+				canResume: false,
+				canRetry: false,
+				canArchive: true,
+				canConfigure: true,
+				recommendedAction: "send",
+				recoveryPhase: "none",
+				compactStatus: "ready",
+			},
+		},
+		activity: {
+			kind: activityKind,
+			activeOperationCount: activityKind === "running_operation" ? 2 : 0,
+			activeSubagentCount: activityKind === "running_operation" ? 1 : 0,
+			dominantOperationId: activityKind === "running_operation" ? "op-2" : null,
+			blockingInteractionId: null,
+		},
+		turnState: activityKind === "idle" ? "Idle" : "Running",
+		activeTurnFailure: null,
+		lastTerminalTurnId: null,
+		capabilities: {
+			models: null,
+			modes: null,
+			availableCommands: [],
+			configOptions: [],
+			autonomousEnabled: false,
+		},
+		tokenStream: new Map(),
+		clockAnchor: null,
+		revision: {
+			graphRevision: 1,
+			transcriptRevision: 1,
+			lastEventSeq: 1,
 		},
 	};
+}
+
+function createUserSceneEntry(id: string, text: string): AgentPanelSceneEntryModel {
+	return { id, type: "user", text };
 }
 
 function renderContent(
 	viewState: PanelViewState,
 	overrides?: {
-		sessionId?: string;
-		sessionEntries?: readonly SessionEntry[];
+		sessionId?: string | null;
+		sceneEntries?: readonly AgentPanelSceneEntryModel[];
+		isWaitingForResponse?: boolean;
 	}
 ) {
 	return render(AgentPanelContent, {
 		panelId: "panel-1",
 		viewState,
-		sessionId: overrides?.sessionId ?? "session-1",
-		sessionEntries: overrides?.sessionEntries ?? [createUserEntry("user-1", "hello")],
+		sessionId: overrides?.sessionId !== undefined ? overrides.sessionId : "session-1",
+		sceneEntries: overrides?.sceneEntries,
 		sessionProjectPath: null,
 		allProjects: [],
 		scrollContainer: null,
@@ -100,18 +206,84 @@ function renderContent(
 		availableAgents: [],
 		effectiveTheme: "dark",
 		modifiedFilesState: null,
+		isWaitingForResponse: overrides?.isWaitingForResponse,
 	});
 }
 
 describe("AgentPanelContent", () => {
 	afterEach(() => {
 		cleanup();
+		sessionStoreState.runtimeState = null;
+		sessionStoreState.hotState = {
+			turnState: "idle",
+			status: "idle",
+			currentMode: null,
+			connectionError: null,
+			activeTurnFailure: null,
+			activity: null,
+		};
+		sessionStoreState.canonicalProjection = null;
 	});
 
 	it("renders the virtualized conversation list for active sessions", () => {
 		const view = renderContent({ kind: "conversation", errorDetails: null });
 
 		expect(view.getByTestId("virtualized-entry-list-stub")).toBeTruthy();
+	});
+
+	it("forwards an explicit waiting-state prop to the conversation list", () => {
+		const view = renderContent(
+			{ kind: "conversation", errorDetails: null },
+			{ isWaitingForResponse: true }
+		);
+
+		expect(view.getByTestId("virtualized-entry-list-stub").getAttribute("data-waiting")).toBe(
+			"true"
+		);
+	});
+
+	it("derives waiting-state from graph-backed awaiting-model activity", () => {
+		sessionStoreState.runtimeState = {
+			connectionPhase: "connected",
+			contentPhase: "loaded",
+			activityPhase: "idle",
+			canSubmit: true,
+			canCancel: false,
+			showStop: false,
+			showThinking: false,
+			showConnectingOverlay: false,
+			showConversation: true,
+			showReadyPlaceholder: false,
+		};
+		sessionStoreState.canonicalProjection = createCanonicalProjection("awaiting_model");
+
+		const view = renderContent({ kind: "conversation", errorDetails: null });
+
+		expect(view.getByTestId("virtualized-entry-list-stub").getAttribute("data-waiting")).toBe(
+			"true"
+		);
+	});
+
+	it("does not report waiting-state for graph-backed running operations", () => {
+		sessionStoreState.runtimeState = {
+			connectionPhase: "connected",
+			contentPhase: "loaded",
+			activityPhase: "idle",
+			canSubmit: true,
+			canCancel: false,
+			showStop: false,
+			showThinking: false,
+			showConnectingOverlay: false,
+			showConversation: true,
+			showReadyPlaceholder: false,
+		};
+		sessionStoreState.canonicalProjection = createCanonicalProjection("running_operation");
+
+		const view = renderContent({ kind: "conversation", errorDetails: null });
+
+		expect(view.getByTestId("virtualized-entry-list-stub").getAttribute("data-waiting")).toBe(
+			"false"
+		);
 	});
 
 	it("does not duplicate connection errors inside the scrollable conversation", () => {
@@ -132,7 +304,6 @@ describe("AgentPanelContent", () => {
 			},
 			{
 				sessionId: "session-1",
-				sessionEntries: [createUserEntry("user-1", "hello")],
 			}
 		);
 
@@ -145,7 +316,6 @@ describe("AgentPanelContent", () => {
 				errorDetails: null,
 			},
 			sessionId: "session-2",
-			sessionEntries: [createUserEntry("user-2", "world")],
 			sessionProjectPath: null,
 			allProjects: [],
 			scrollContainer: null,
@@ -164,5 +334,20 @@ describe("AgentPanelContent", () => {
 		});
 
 		expect(view.getByTestId("virtualized-entry-list-stub")).toBe(initialList);
+	});
+
+	it("renders SceneContentViewport pre-session with pending entry and isWaitingForResponse=true", () => {
+		const view = renderContent(
+			{ kind: "conversation", errorDetails: null },
+			{
+				sessionId: null,
+				sceneEntries: [createUserSceneEntry("user-1", "send this")],
+				isWaitingForResponse: true,
+			}
+		);
+
+		const stub = view.getByTestId("virtualized-entry-list-stub");
+		expect(stub).toBeTruthy();
+		expect(stub.getAttribute("data-waiting")).toBe("true");
 	});
 });

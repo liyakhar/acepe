@@ -1,12 +1,15 @@
 <script lang="ts">
+	import type { WorkerPoolManager } from "@pierre/diffs/worker";
 	import type {
 		AgentPanelConversationEntry as AgentPanelConversationEntryModel,
 		AnyAgentEntry,
 	} from "../agent-panel/types.js";
 
 	import AgentAssistantMessage from "../agent-panel/agent-assistant-message.svelte";
+	import AgentToolEdit from "../agent-panel/agent-tool-edit.svelte";
 	import AgentToolExecute from "../agent-panel/agent-tool-execute.svelte";
 	import AgentToolFetch from "../agent-panel/agent-tool-fetch.svelte";
+	import AgentToolOther from "../agent-panel/agent-tool-other.svelte";
 	import AgentToolQuestion from "../agent-panel/agent-tool-question.svelte";
 	import AgentToolRead from "../agent-panel/agent-tool-read.svelte";
 	import AgentToolReadLints from "../agent-panel/agent-tool-read-lints.svelte";
@@ -17,14 +20,17 @@
 	import AgentToolTodo from "../agent-panel/agent-tool-todo.svelte";
 	import AgentToolWebSearch from "../agent-panel/agent-tool-web-search.svelte";
 	import AgentUserMessage from "../agent-panel/agent-user-message.svelte";
-	import { getPlanningPlaceholderLabel } from "../agent-panel/planning-label.js";
+	import AgentMissingSceneEntry from "../agent-panel/agent-missing-scene-entry.svelte";
+	import AgentThinkingSceneEntry from "../agent-panel/agent-thinking-scene-entry.svelte";
+	import type { EditToolTheme } from "../agent-panel/agent-panel-conversation-entry.svelte";
 
 	interface Props {
 		entry: AgentPanelConversationEntryModel;
 		iconBasePath?: string;
+		editToolTheme?: EditToolTheme;
 	}
 
-	let { entry, iconBasePath = "" }: Props = $props();
+	let { entry, iconBasePath = "", editToolTheme }: Props = $props();
 
 	function isToolCall(
 		value: AgentPanelConversationEntryModel
@@ -53,7 +59,8 @@
 					id: child.id,
 					type: "assistant",
 					markdown: child.markdown,
-					isStreaming: child.isStreaming
+					isStreaming: child.isStreaming,
+					tokenRevealCss: child.tokenRevealCss
 				};
 			}
 
@@ -61,7 +68,19 @@
 				return {
 					id: child.id,
 					type: "thinking",
-					durationMs: child.durationMs
+					durationMs: child.durationMs,
+					startedAtMs: child.startedAtMs,
+					label: child.label
+				};
+			}
+
+			if (child.type === "missing") {
+				return {
+					id: child.id,
+					type: "missing",
+					title: child.title,
+					message: child.message,
+					diagnosticLabel: child.diagnosticLabel
 				};
 			}
 
@@ -71,6 +90,7 @@
 				kind: child.kind,
 				title: child.title,
 				subtitle: child.subtitle,
+				detailsText: child.detailsText,
 				filePath: child.filePath,
 				status: child.status,
 				command: child.command,
@@ -98,7 +118,10 @@
 				taskDescription: child.taskDescription,
 				taskPrompt: child.taskPrompt,
 				taskResultText: child.taskResultText,
-				taskChildren: mapTaskChildren(child.taskChildren)
+				taskChildren: mapTaskChildren(child.taskChildren),
+				presentationState: child.presentationState,
+				degradedReason: child.degradedReason,
+				editDiffs: child.editDiffs
 			};
 		});
 	}
@@ -126,17 +149,29 @@
 </script>
 
 {#if entry.type === "user"}
-	<AgentUserMessage text={entry.text} />
+	<AgentUserMessage text={entry.text} timestampMs={entry.timestampMs} />
 {:else if entry.type === "assistant"}
 	<AgentAssistantMessage
 		message={{
 			chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
 		}}
 		isStreaming={entry.isStreaming}
+		tokenRevealCss={entry.tokenRevealCss}
+		timestampMs={entry.timestampMs}
 		{iconBasePath}
 	/>
 {:else if entry.type === "thinking"}
-	<AgentToolRow title={getPlanningPlaceholderLabel(entry.durationMs)} status="running" padded={false} />
+	<AgentThinkingSceneEntry
+		durationMs={entry.durationMs}
+		startedAtMs={entry.startedAtMs}
+		label={entry.label}
+	/>
+{:else if entry.type === "missing"}
+	<AgentMissingSceneEntry
+		title={entry.title}
+		message={entry.message}
+		diagnosticLabel={entry.diagnosticLabel}
+	/>
 {:else if isToolCall(entry) && entry.todos && entry.todos.length > 0}
 	<AgentToolTodo
 		todos={entry.todos.map((todo) => ({
@@ -180,6 +215,21 @@
 		sourceRangeLabel={entry.sourceRangeLabel ?? null}
 		status={entry.status}
 		{iconBasePath}
+	/>
+{:else if isToolCall(entry) && entry.kind === "edit"}
+	<AgentToolEdit
+		diffs={entry.editDiffs ? Array.from(entry.editDiffs) : []}
+		filePath={entry.filePath ?? null}
+		isStreaming={entry.status === "pending" || entry.status === "running"}
+		status={entry.status}
+		applied={entry.status === "done"}
+		awaitingApproval={entry.presentationState === "pending_operation"}
+		iconBasePath={iconBasePath}
+		theme={editToolTheme?.theme}
+		themeNames={editToolTheme?.themeNames}
+		workerPool={editToolTheme?.workerPool}
+		onBeforeRender={editToolTheme?.onBeforeRender}
+		unsafeCSS={editToolTheme?.unsafeCSS}
 	/>
 {:else if isToolCall(entry) && entry.kind === "execute"}
 	<AgentToolExecute
@@ -232,18 +282,15 @@
 	<div class="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
 		<p class="text-sm font-medium text-destructive">{entry.title}</p>
 		{#if entry.subtitle}
-			<p class="mt-1 text-[11px] text-muted-foreground">{entry.subtitle}</p>
+			<p class="mt-1 text-sm text-muted-foreground">{entry.subtitle}</p>
 		{/if}
-		<p class="mt-2 whitespace-pre-wrap text-xs text-foreground">{entry.resultText}</p>
+		<p class="mt-2 whitespace-pre-wrap text-sm text-foreground">{entry.resultText}</p>
 	</div>
 {:else if isToolCall(entry)}
-	<AgentToolRow
+	<AgentToolOther
 		title={entry.title}
 		subtitle={entry.subtitle}
-		filePath={entry.filePath}
+		detailsText={entry.detailsText ?? null}
 		status={entry.status}
-		kind={entry.kind}
-		padded={true}
-		{iconBasePath}
 	/>
 {/if}

@@ -6,7 +6,6 @@
  * 2. Regular updates without streamingInputDelta go through normal path
  */
 
-import { okAsync } from "neverthrow";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../utils/logger.js", () => ({
@@ -19,9 +18,13 @@ vi.mock("../utils/logger.js", () => ({
 	}),
 }));
 
-import type { SessionStateEnvelope, TranscriptDelta } from "../../../services/acp-types.js";
+import type {
+	SessionGraphActivity,
+	SessionGraphLifecycle,
+	SessionStateEnvelope,
+	TranscriptDelta,
+} from "../../../services/acp-types.js";
 import type { SessionUpdate } from "../../../services/converted-session-types.js";
-import type { SessionEntry } from "../../application/dto/session.js";
 import { SessionEntryStore } from "../session-entry-store.svelte.js";
 import type { SessionEventHandler } from "../session-event-handler.js";
 import { SessionEventService } from "../session-event-service.svelte.js";
@@ -31,22 +34,64 @@ function createMockHandler(): SessionEventHandler {
 	return {
 		getSessionCold: vi.fn().mockReturnValue({ id: "session-123" } as unknown as SessionCold),
 		isPreloaded: vi.fn().mockReturnValue(true),
-		getEntries: vi.fn().mockReturnValue([]),
 		getHotState: vi.fn(),
-		aggregateAssistantChunk: vi.fn().mockReturnValue(okAsync(undefined)),
-		aggregateUserChunk: vi.fn().mockReturnValue(okAsync(undefined)),
-		createToolCallEntry: vi.fn(),
-		updateToolCallEntry: vi.fn(),
-		updateAvailableCommands: vi.fn(),
 		ensureStreamingState: vi.fn(),
-		handleStreamEntry: vi.fn(),
 		handleStreamComplete: vi.fn(),
 		handleTurnError: vi.fn(),
-		clearStreamingAssistantEntry: vi.fn(),
-		updateCurrentMode: vi.fn(),
-		updateConfigOptions: vi.fn(),
 		updateUsageTelemetry: vi.fn(),
 		applySessionStateEnvelope: vi.fn(),
+	};
+}
+
+function createGraphLifecycle(
+	status: SessionGraphLifecycle["status"] = "reserved",
+	errorMessage: string | null = null
+): SessionGraphLifecycle {
+	return {
+		status,
+		detachedReason: status === "detached" ? "reconnectExhausted" : null,
+		failureReason: status === "failed" ? "resumeFailed" : null,
+		errorMessage,
+		actionability: {
+			canSend: status === "ready",
+			canResume: status === "detached",
+			canRetry: status === "failed",
+			canArchive: status !== "archived",
+			canConfigure: status === "ready",
+			recommendedAction:
+				status === "ready"
+					? "send"
+					: status === "detached"
+						? "resume"
+						: status === "failed"
+							? "retry"
+							: status === "archived"
+								? "none"
+								: "wait",
+			recoveryPhase:
+				status === "activating"
+					? "activating"
+					: status === "reconnecting"
+						? "reconnecting"
+						: status === "detached"
+							? "detached"
+							: status === "failed"
+								? "failed"
+								: status === "archived"
+									? "archived"
+									: "none",
+			compactStatus: status,
+		},
+	};
+}
+
+function createIdleActivity(): SessionGraphActivity {
+	return {
+		kind: "idle",
+		activeOperationCount: 0,
+		activeSubagentCount: 0,
+		dominantOperationId: null,
+		blockingInteractionId: null,
 	};
 }
 
@@ -60,32 +105,6 @@ function markHandlerTurnAsCompleted(handler: SessionEventHandler): void {
 	(handler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
 		turnState: "completed",
 	});
-}
-
-function createTaskReplayEntry(toolCallId: string): SessionEntry {
-	return {
-		id: `entry-${toolCallId}`,
-		type: "tool_call",
-		timestamp: new Date(),
-		message: {
-			id: toolCallId,
-			name: "Agent",
-			arguments: {
-				kind: "think",
-				subagent_type: "reviewer",
-				description: "Review the implementation",
-				prompt: "Inspect the changes",
-			},
-			status: "in_progress",
-			kind: "task",
-			title: "Agent",
-			locations: null,
-			skillMeta: null,
-			result: null,
-			taskChildren: null,
-			awaitingPlanApproval: false,
-		},
-	};
 }
 
 function createTaskReplayChild(
@@ -152,7 +171,7 @@ describe("SessionEventService streaming delta handling", () => {
 		expect(handler.updateUsageTelemetry).not.toHaveBeenCalled();
 	});
 
-	it("keeps raw turnComplete updates non-authoritative", () => {
+	it("uses raw turnComplete only to clear local waiting state", () => {
 		const onTurnComplete = vi.fn();
 		service.setCallbacks({ onTurnComplete });
 		markHandlerTurnAsStreaming(handler);
@@ -164,7 +183,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.handleStreamComplete).not.toHaveBeenCalled();
+		expect(handler.handleStreamComplete).toHaveBeenCalledWith("session-123", "turn-123");
 		expect(onTurnComplete).not.toHaveBeenCalled();
 	});
 
@@ -204,7 +223,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("drops queued assistant fallback chunks when a canonical delta envelope arrives first", async () => {
@@ -250,7 +268,13 @@ describe("SessionEventService streaming delta handling", () => {
 				delta: {
 					fromRevision: { graphRevision: 6, transcriptRevision: 6, lastEventSeq: 6 },
 					toRevision: { graphRevision: 7, transcriptRevision: 7, lastEventSeq: 7 },
+					activity: createIdleActivity(),
+					turnState: "Running",
+					activeTurnFailure: null,
+					lastTerminalTurnId: null,
 					transcriptOperations: delta.operations,
+					operationPatches: [],
+					interactionPatches: [],
 					changedFields: ["transcriptSnapshot"],
 				},
 			},
@@ -262,7 +286,6 @@ describe("SessionEventService streaming delta handling", () => {
 			setTimeout(resolve, 0);
 		});
 
-		expect(handler.aggregateAssistantChunk).not.toHaveBeenCalled();
 		expect(handler.applySessionStateEnvelope).toHaveBeenCalledWith(
 			"session-123",
 			expect.objectContaining({
@@ -304,7 +327,13 @@ describe("SessionEventService streaming delta handling", () => {
 				delta: {
 					fromRevision: { graphRevision: 6, transcriptRevision: 6, lastEventSeq: 6 },
 					toRevision: { graphRevision: 7, transcriptRevision: 7, lastEventSeq: 7 },
+					activity: createIdleActivity(),
+					turnState: "Running",
+					activeTurnFailure: null,
+					lastTerminalTurnId: null,
 					transcriptOperations: delta.operations,
+					operationPatches: [],
+					interactionPatches: [],
 					changedFields: ["transcriptSnapshot"],
 				},
 			},
@@ -324,11 +353,7 @@ describe("SessionEventService streaming delta handling", () => {
 			lastEventSeq: 7,
 			payload: {
 				kind: "lifecycle",
-				lifecycle: {
-					status: "ready",
-					errorMessage: null,
-					canReconnect: true,
-				},
+				lifecycle: createGraphLifecycle("ready"),
 				revision: {
 					graphRevision: 7,
 					transcriptRevision: 4,
@@ -356,6 +381,63 @@ describe("SessionEventService streaming delta handling", () => {
 		);
 	});
 
+	it("materializes pending creation sessions before applying canonical delta envelopes", () => {
+		const pendingHandler = createMockHandler();
+		(pendingHandler.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+		pendingHandler.materializePendingCreationSession = vi.fn().mockReturnValue(true);
+		const envelope: SessionStateEnvelope = {
+			sessionId: "session-pending-creation-1",
+			graphRevision: 7,
+			lastEventSeq: 7,
+			payload: {
+				kind: "delta",
+				delta: {
+					fromRevision: { graphRevision: 6, transcriptRevision: 6, lastEventSeq: 6 },
+					toRevision: { graphRevision: 7, transcriptRevision: 7, lastEventSeq: 7 },
+					activity: createIdleActivity(),
+					turnState: "Running",
+					activeTurnFailure: null,
+					lastTerminalTurnId: null,
+					transcriptOperations: [],
+					operationPatches: [],
+					interactionPatches: [],
+					changedFields: ["turnState"],
+				},
+			},
+		};
+
+		service.handleSessionStateEnvelope(envelope, pendingHandler);
+
+		expect(pendingHandler.materializePendingCreationSession).toHaveBeenCalledWith(
+			"session-pending-creation-1"
+		);
+		expect(pendingHandler.applySessionStateEnvelope).toHaveBeenCalledWith(
+			"session-pending-creation-1",
+			envelope
+		);
+	});
+
+	it("materializes pending creation sessions before handling raw turn completion", () => {
+		const pendingHandler = createMockHandler();
+		(pendingHandler.getSessionCold as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+		pendingHandler.materializePendingCreationSession = vi.fn().mockReturnValue(true);
+		const update: SessionUpdate = {
+			type: "turnComplete",
+			session_id: "session-pending-creation-1",
+			turn_id: "turn-1",
+		};
+
+		service.handleSessionUpdate(update, pendingHandler);
+
+		expect(pendingHandler.materializePendingCreationSession).toHaveBeenCalledWith(
+			"session-pending-creation-1"
+		);
+		expect(pendingHandler.handleStreamComplete).toHaveBeenCalledWith(
+			"session-pending-creation-1",
+			"turn-1"
+		);
+	});
+
 	it("does not synthesize assistant transcript chunks from raw session updates", () => {
 		const update: SessionUpdate = {
 			type: "agentMessageChunk",
@@ -370,7 +452,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-		expect(handler.aggregateAssistantChunk).not.toHaveBeenCalled();
 		expect(handler.applySessionStateEnvelope).not.toHaveBeenCalled();
 	});
 
@@ -392,7 +473,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps tool_call_update without streamingInputDelta non-authoritative on the raw lane", () => {
@@ -413,7 +493,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps tool_call_update with undefined streamingInputDelta non-authoritative on the raw lane", () => {
@@ -434,7 +513,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps status updates with streamingInputDelta non-authoritative on the raw lane", () => {
@@ -455,7 +533,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps completion updates with streamingArguments non-authoritative on the raw lane", () => {
@@ -486,10 +563,11 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("does not synthesize turn completion from a plan payload", () => {
+		const onPlanUpdate = vi.fn();
+		service.setCallbacks({ onPlanUpdate });
 		markHandlerTurnAsStreaming(handler);
 		const update: SessionUpdate = {
 			type: "plan",
@@ -506,6 +584,10 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(update, handler);
 
 		expect(handler.handleStreamComplete).not.toHaveBeenCalled();
+		// GOD authority: plan content flows through the canonical SessionStateEnvelope
+		// (kind: "plan") routed via applyPlan command. The raw lane is diagnostic-only
+		// and must not invoke the plan callback.
+		expect(onPlanUpdate).not.toHaveBeenCalled();
 	});
 
 	it("still ignores plan payloads when the turn is already completed", () => {
@@ -551,7 +633,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(firstUpdate, handler);
 		service.handleSessionUpdate(secondUpdate, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps streamingArguments updates across multiple tools non-authoritative on the raw lane", () => {
@@ -591,7 +672,6 @@ describe("SessionEventService streaming delta handling", () => {
 			handler
 		);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps lifecycle-bearing tool updates non-authoritative on the raw lane", () => {
@@ -609,7 +689,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps later terminal tool updates non-authoritative on the raw lane", () => {
@@ -639,7 +718,6 @@ describe("SessionEventService streaming delta handling", () => {
 			handler
 		);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("should not aggregate text chunk when session does not exist yet", () => {
@@ -658,7 +736,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, missingSessionHandler);
 
-		expect(missingSessionHandler.aggregateAssistantChunk).not.toHaveBeenCalled();
 	});
 
 	it("ignores raw assistant chunks even when message_id and part_id are both present", () => {
@@ -673,7 +750,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-		expect(handler.aggregateAssistantChunk).not.toHaveBeenCalled();
 	});
 
 	it("treats permissionRequest updates on the raw lane as observational only", () => {
@@ -698,41 +774,10 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 		expect(handler.updateUsageTelemetry).not.toHaveBeenCalled();
 	});
 
 	it("does not mutate transcript state from raw permissionRequest updates", () => {
-		(handler.getEntries as ReturnType<typeof vi.fn>).mockReturnValue([
-			{
-				id: "tool-edit-1",
-				type: "tool_call",
-				message: {
-					id: "tool-edit-1",
-					name: "Edit",
-					arguments: {
-						kind: "edit",
-						edits: [{ filePath: null, oldString: null, newString: null, content: null }],
-					},
-					status: "pending",
-					result: null,
-					kind: "edit",
-					title: "Edit",
-					locations: null,
-					skillMeta: null,
-					normalizedQuestions: null,
-					normalizedTodos: null,
-					parentToolUseId: null,
-					taskChildren: null,
-					questionAnswer: null,
-					awaitingPlanApproval: false,
-					planApprovalRequestId: null,
-					startedAtMs: 1,
-				},
-				isStreaming: true,
-			} satisfies SessionEntry,
-		]);
-
 		const update: SessionUpdate = {
 			type: "permissionRequest",
 			permission: {
@@ -767,9 +812,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
-		expect(handler.handleStreamEntry).not.toHaveBeenCalled();
+		expect(handler.handleStreamComplete).not.toHaveBeenCalled();
 	});
 
 	it("treats questionRequest updates on the raw lane as observational only", () => {
@@ -799,7 +842,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 		expect(handler.updateUsageTelemetry).not.toHaveBeenCalled();
 	});
 
@@ -813,27 +855,10 @@ describe("SessionEventService streaming delta handling", () => {
 				.fn()
 				.mockReturnValue({ id: sessionId, agentId: "claude-code" } as SessionCold),
 			isPreloaded: vi.fn().mockReturnValue(true),
-			getEntries: vi.fn().mockImplementation((id: string) => entryStore.getEntries(id)),
 			getHotState: vi.fn().mockReturnValue({ isConnected: true, status: "streaming" }),
-			aggregateAssistantChunk: vi
-				.fn()
-				.mockImplementation(
-					(id: string, chunk, messageId: string | undefined, isThought: boolean) =>
-						entryStore.aggregateAssistantChunk(id, chunk, messageId, isThought)
-				),
-			aggregateUserChunk: vi
-				.fn()
-				.mockImplementation((id: string, chunk) => entryStore.aggregateUserChunk(id, chunk)),
-			createToolCallEntry: vi.fn(),
-			updateToolCallEntry: vi.fn(),
-			updateAvailableCommands: vi.fn(),
 			ensureStreamingState: vi.fn(),
-			handleStreamEntry: vi.fn(),
 			handleStreamComplete: vi.fn(),
 			handleTurnError: vi.fn(),
-			clearStreamingAssistantEntry: vi.fn(),
-			updateCurrentMode: vi.fn(),
-			updateConfigOptions: vi.fn(),
 			updateUsageTelemetry: vi.fn(),
 			applySessionStateEnvelope: vi.fn(),
 		};
@@ -877,10 +902,10 @@ describe("SessionEventService streaming delta handling", () => {
 		expect(assistantEntries).toHaveLength(0);
 	});
 
-	it("clears assistant streaming state when userMessageChunk arrives", () => {
+	it("treats raw userMessageChunk as diagnostic without clearing assistant streaming state", () => {
 		const update: SessionUpdate = {
 			type: "userMessageChunk",
-			session_id: "session-123",
+			sessionId: "session-123",
 			chunk: {
 				content: { type: "text", text: "All I want is success" },
 			},
@@ -888,8 +913,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.clearStreamingAssistantEntry).toHaveBeenCalledWith("session-123");
-		expect(handler.aggregateUserChunk).not.toHaveBeenCalled();
+		expect(handler.handleStreamComplete).not.toHaveBeenCalled();
 	});
 
 	it("keeps raw tool calls non-authoritative even when hot state says disconnected", () => {
@@ -923,7 +947,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, disconnectedHandler);
 
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("drops duplicate raw tool-call replays without mutating known disconnected sessions", () => {
@@ -957,7 +980,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(update, disconnectedHandler, 303);
 		service.handleSessionUpdate(update, disconnectedHandler, 303);
 
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("does not buffer raw permissionRequest updates for disconnected sessions", () => {
@@ -995,8 +1017,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.flushPendingEvents("session-123", disconnectedHandler);
 
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
-		expect(disconnectedHandler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("does not buffer raw questionRequest updates for disconnected sessions", () => {
@@ -1036,8 +1056,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.flushPendingEvents("session-123", disconnectedHandler);
 
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
-		expect(disconnectedHandler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps raw tool calls non-authoritative while connecting", () => {
@@ -1071,7 +1089,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, connectingHandler);
 
-		expect(connectingHandler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("[regression] leaves reconnect-time raw tool calls to canonical envelopes while connecting", () => {
@@ -1104,7 +1121,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, reconnectingHandler, 500);
 
-		expect(reconnectingHandler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("[regression] does not buffer transcript deltas while connecting", () => {
@@ -1150,7 +1166,13 @@ describe("SessionEventService streaming delta handling", () => {
 				delta: {
 					fromRevision: { graphRevision: 41, transcriptRevision: 41, lastEventSeq: 41 },
 					toRevision: { graphRevision: 42, transcriptRevision: 42, lastEventSeq: 42 },
+					activity: createIdleActivity(),
+					turnState: "Running",
+					activeTurnFailure: null,
+					lastTerminalTurnId: null,
 					transcriptOperations: delta.operations,
+					operationPatches: [],
+					interactionPatches: [],
 					changedFields: ["transcriptSnapshot"],
 				},
 			},
@@ -1188,7 +1210,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateCurrentMode).not.toHaveBeenCalled();
+		expect(handler.applySessionStateEnvelope).not.toHaveBeenCalled();
 	});
 
 	it("keeps Cursor tool calls non-authoritative on the raw lane", () => {
@@ -1218,7 +1240,6 @@ describe("SessionEventService streaming delta handling", () => {
 		// filtered in the Rust backend (is_cursor_extension_pre_tool).
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
 		expect(handler.ensureStreamingState).not.toHaveBeenCalled();
 	});
 
@@ -1255,7 +1276,6 @@ describe("SessionEventService streaming delta handling", () => {
 			},
 		};
 		service.handleSessionUpdate(toolCallUpdate, disconnectedHandler, 50);
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
 
 		// Phase 2: reconnect — there is nothing queued to replay because raw tool
 		// events are observational only and canonical envelopes own the state.
@@ -1265,7 +1285,6 @@ describe("SessionEventService streaming delta handling", () => {
 			turnState: "streaming",
 		});
 		service.flushPendingEvents("session-123", disconnectedHandler);
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
 
 		// Phase 3: completion update after reconnect applies without duplication
 		const completionUpdate: SessionUpdate = {
@@ -1278,7 +1297,6 @@ describe("SessionEventService streaming delta handling", () => {
 			},
 		};
 		service.handleSessionUpdate(completionUpdate, disconnectedHandler, 51);
-		expect(disconnectedHandler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("[characterize] late raw tool-call replays do not mutate state after reconnect", () => {
@@ -1314,7 +1332,6 @@ describe("SessionEventService streaming delta handling", () => {
 		});
 		service.flushPendingEvents("session-123", disconnectedHandler);
 
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("[characterize] raw permissionRequest does not reappear after reconnect flush", () => {
@@ -1353,8 +1370,6 @@ describe("SessionEventService streaming delta handling", () => {
 		});
 		service.flushPendingEvents("session-123", disconnectedHandler);
 
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
-		expect(disconnectedHandler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("[characterize] raw questionRequest does not reappear after reconnect flush", () => {
@@ -1395,8 +1410,6 @@ describe("SessionEventService streaming delta handling", () => {
 		});
 		service.flushPendingEvents("session-123", disconnectedHandler);
 
-		expect(disconnectedHandler.createToolCallEntry).not.toHaveBeenCalled();
-		expect(disconnectedHandler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("rejects canonical connection waiters from lifecycle error envelopes", async () => {
@@ -1412,11 +1425,7 @@ describe("SessionEventService streaming delta handling", () => {
 				lastEventSeq: 4,
 				payload: {
 					kind: "lifecycle",
-					lifecycle: {
-						status: "error",
-						errorMessage: "Provider disconnected",
-						canReconnect: true,
-					},
+					lifecycle: createGraphLifecycle("failed", "Provider disconnected"),
 					revision: {
 						graphRevision: 4,
 						transcriptRevision: 2,
@@ -1472,11 +1481,7 @@ describe("SessionEventService streaming delta handling", () => {
 				lastEventSeq: 8,
 				payload: {
 					kind: "lifecycle",
-					lifecycle: {
-						status: "ready",
-						errorMessage: null,
-						canReconnect: true,
-					},
+					lifecycle: createGraphLifecycle("ready"),
 					revision: {
 						graphRevision: 8,
 						transcriptRevision: 3,
@@ -1522,7 +1527,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateCurrentMode).not.toHaveBeenCalled();
+		expect(handler.applySessionStateEnvelope).not.toHaveBeenCalled();
 	});
 
 	it("stores configOptionUpdate even when no mode option is present", () => {
@@ -1544,8 +1549,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateConfigOptions).not.toHaveBeenCalled();
-		expect(handler.updateCurrentMode).not.toHaveBeenCalled();
+		expect(handler.applySessionStateEnvelope).not.toHaveBeenCalled();
 	});
 
 	it("stores configOptionUpdate even when mode currentValue is not a string", () => {
@@ -1567,8 +1571,7 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.updateConfigOptions).not.toHaveBeenCalled();
-		expect(handler.updateCurrentMode).not.toHaveBeenCalled();
+		expect(handler.applySessionStateEnvelope).not.toHaveBeenCalled();
 	});
 
 	it("drops duplicate raw toolCall events without mutating state", () => {
@@ -1588,7 +1591,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(update, handler, 101);
 		service.handleSessionUpdate(update, handler, 101);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps richer raw toolCall arguments non-authoritative", () => {
@@ -1631,7 +1633,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(placeholder, handler);
 		service.handleSessionUpdate(enriched, handler);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("leaves duplicate assistant text chunks to canonical envelopes during active streaming", () => {
@@ -1656,7 +1657,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(update, handler);
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.aggregateAssistantChunk).not.toHaveBeenCalled();
 	});
 
 	it("does not synthesize replay assistant chunks from raw event replays", () => {
@@ -1681,7 +1681,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(update, handler, 202);
 		service.handleSessionUpdate(update, handler, 202);
 
-		expect(handler.aggregateAssistantChunk).not.toHaveBeenCalled();
 	});
 
 	it("does not force streaming state from raw replay assistant chunks", () => {
@@ -1705,7 +1704,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.aggregateAssistantChunk).not.toHaveBeenCalled();
 		expect(handler.ensureStreamingState).not.toHaveBeenCalled();
 	});
 
@@ -1730,7 +1728,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(update, handler);
 		service.handleSessionUpdate(update, handler);
 
-		expect(handler.aggregateAssistantChunk).not.toHaveBeenCalled();
 	});
 
 	it("treats raw user chunks as coordination-only during reopened sends", () => {
@@ -1758,29 +1755,12 @@ describe("SessionEventService streaming delta handling", () => {
 		const integrationHandler: SessionEventHandler = {
 			getSessionCold: vi.fn().mockReturnValue({ id: sessionId, agentId: "cursor" } as SessionCold),
 			isPreloaded: vi.fn().mockReturnValue(true),
-			getEntries: vi.fn().mockImplementation((id: string) => entryStore.getEntries(id)),
 			getHotState: vi
 				.fn()
 				.mockReturnValue({ isConnected: true, status: "ready", turnState: "idle" }),
-			aggregateAssistantChunk: vi
-				.fn()
-				.mockImplementation(
-					(id: string, chunk, messageId: string | undefined, isThought: boolean) =>
-						entryStore.aggregateAssistantChunk(id, chunk, messageId, isThought)
-				),
-			aggregateUserChunk: vi
-				.fn()
-				.mockImplementation((id: string, chunk) => entryStore.aggregateUserChunk(id, chunk)),
-			createToolCallEntry: vi.fn(),
-			updateToolCallEntry: vi.fn(),
-			updateAvailableCommands: vi.fn(),
 			ensureStreamingState: vi.fn(),
-			handleStreamEntry: vi.fn(),
 			handleStreamComplete: vi.fn(),
 			handleTurnError: vi.fn(),
-			clearStreamingAssistantEntry: vi.fn(),
-			updateCurrentMode: vi.fn(),
-			updateConfigOptions: vi.fn(),
 			updateUsageTelemetry: vi.fn(),
 			applySessionStateEnvelope: vi.fn(),
 		};
@@ -1788,7 +1768,7 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(
 			{
 				type: "userMessageChunk",
-				session_id: sessionId,
+				sessionId: sessionId,
 				chunk: { content: { type: "text", text: "follow-up question" } },
 			},
 			integrationHandler
@@ -1816,8 +1796,6 @@ describe("SessionEventService streaming delta handling", () => {
 				],
 			},
 		});
-		expect(integrationHandler.aggregateUserChunk).not.toHaveBeenCalled();
-		expect(integrationHandler.aggregateAssistantChunk).not.toHaveBeenCalled();
 	});
 
 	it("keeps distinct raw toolCallUpdate events non-authoritative", () => {
@@ -1843,15 +1821,10 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(firstUpdate, handler);
 		service.handleSessionUpdate(secondUpdate, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps repeated parent task raw tool calls non-authoritative when child structure grows", () => {
 		markHandlerTurnAsStreaming(handler);
-		(handler.getEntries as ReturnType<typeof vi.fn>).mockReturnValue([
-			createTaskReplayEntry("task-parent-1"),
-		]);
-
 		const initialParentUpdate: SessionUpdate = {
 			type: "toolCall",
 			session_id: "session-123",
@@ -1914,15 +1887,10 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(initialParentUpdate, handler);
 		service.handleSessionUpdate(enrichedParentUpdate, handler);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps repeated parent task raw tool calls non-authoritative when child count grows", () => {
 		markHandlerTurnAsStreaming(handler);
-		(handler.getEntries as ReturnType<typeof vi.fn>).mockReturnValue([
-			createTaskReplayEntry("task-parent-2"),
-		]);
-
 		const initialChildren = Array.from({ length: 12 }, (_, index) => createTaskReplayChild(index));
 		const enrichedChildren = initialChildren.concat([createTaskReplayChild(12)]);
 		const initialParentUpdate: SessionUpdate = {
@@ -1973,15 +1941,10 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(initialParentUpdate, handler);
 		service.handleSessionUpdate(enrichedParentUpdate, handler);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps repeated parent task raw tool calls non-authoritative when child payload grows", () => {
 		markHandlerTurnAsStreaming(handler);
-		(handler.getEntries as ReturnType<typeof vi.fn>).mockReturnValue([
-			createTaskReplayEntry("task-parent-3"),
-		]);
-
 		const initialParentUpdate: SessionUpdate = {
 			type: "toolCall",
 			session_id: "session-123",
@@ -2058,15 +2021,10 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(initialParentUpdate, handler);
 		service.handleSessionUpdate(enrichedParentUpdate, handler);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps repeated raw tool calls non-authoritative when top-level arguments grow", () => {
 		markHandlerTurnAsStreaming(handler);
-		(handler.getEntries as ReturnType<typeof vi.fn>).mockReturnValue([
-			createTaskReplayEntry("tool-long-args-1"),
-		]);
-
 		const sharedPrefix = "a".repeat(220);
 		const initialUpdate: SessionUpdate = {
 			type: "toolCall",
@@ -2116,15 +2074,10 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(initialUpdate, handler);
 		service.handleSessionUpdate(enrichedUpdate, handler);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps repeated raw tool calls non-authoritative when top-level results grow", () => {
 		markHandlerTurnAsStreaming(handler);
-		(handler.getEntries as ReturnType<typeof vi.fn>).mockReturnValue([
-			createTaskReplayEntry("tool-rich-result-1"),
-		]);
-
 		const initialUpdate: SessionUpdate = {
 			type: "toolCall",
 			session_id: "session-123",
@@ -2176,7 +2129,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(initialUpdate, handler);
 		service.handleSessionUpdate(enrichedUpdate, handler);
 
-		expect(handler.createToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps distinct raw toolCallUpdate argument changes non-authoritative", () => {
@@ -2224,7 +2176,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(initialUpdate, handler);
 		service.handleSessionUpdate(enrichedUpdate, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
 	it("keeps distinct raw toolCallUpdate raw-output changes non-authoritative", () => {
@@ -2257,53 +2208,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(initialUpdate, handler);
 		service.handleSessionUpdate(enrichedUpdate, handler);
 
-		expect(handler.updateToolCallEntry).not.toHaveBeenCalled();
 	});
 
-	it("drops replayed identical pending raw toolCall events without mutating state", () => {
-		const liveHandler = createMockHandler();
-		const entriesBySession = new Map<string, SessionEntry[]>();
-		(liveHandler.getHotState as ReturnType<typeof vi.fn>).mockReturnValue({
-			isConnected: true,
-			status: "streaming",
-			turnState: "streaming",
-		});
-		(liveHandler.getEntries as ReturnType<typeof vi.fn>).mockImplementation((sessionId: string) => {
-			return entriesBySession.get(sessionId) ?? [];
-		});
-		(liveHandler.createToolCallEntry as ReturnType<typeof vi.fn>).mockImplementation(
-			(
-				sessionId: string,
-				toolCallData: Extract<SessionUpdate, { type: "toolCall" }>["tool_call"]
-			) => {
-				const nextEntries = entriesBySession.get(sessionId)?.slice() ?? [];
-				nextEntries.push({
-					id: toolCallData.id,
-					type: "tool_call",
-					message: toolCallData,
-					timestamp: new Date(),
-				});
-				entriesBySession.set(sessionId, nextEntries);
-			}
-		);
-
-		const update: SessionUpdate = {
-			type: "toolCall",
-			session_id: "session-123",
-			tool_call: {
-				id: "tool-replay-1",
-				name: "Run",
-				status: "pending",
-				kind: "execute",
-				arguments: { kind: "execute", command: "git status" },
-				title: "Check status",
-				awaitingPlanApproval: false,
-			},
-		};
-
-		service.handleSessionUpdate(update, liveHandler, 404);
-		service.handleSessionUpdate(update, liveHandler, 404);
-
-		expect(liveHandler.createToolCallEntry).not.toHaveBeenCalled();
-	});
 });

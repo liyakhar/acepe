@@ -15,15 +15,12 @@ import type { ActiveTurnFailure } from "../../types/turn-error.js";
 import { computeStatsFromCheckpoints } from "../../utils/checkpoint-diff-utils.js";
 import { extractProjectName } from "../../utils/path-utils.js";
 import { generateFallbackProjectColor } from "../../utils/project-utils.js";
+import type { CanonicalSessionProjection } from "../canonical-session-projection.js";
 import { checkpointStore } from "../checkpoint-store.svelte.js";
-import { deriveLiveSessionState } from "../live-session-work.js";
+import { deriveLiveSessionState, deriveLiveSessionWorkProjection } from "../live-session-work.js";
 import type { SessionOperationInteractionSnapshot } from "../operation-association.js";
 import { deriveSessionState, statusToConnectionState } from "../session-state.js";
-import {
-	deriveSessionWorkProjection,
-	selectLegacySessionStatus,
-} from "../session-work-projection.js";
-import type { SessionHotState } from "../types.js";
+import { selectSessionStatusForPresentation } from "../session-work-projection.js";
 import type { UrgencyInfo } from "../urgency.js";
 import { deriveUrgency } from "../urgency.js";
 import type { QueueItem } from "./types.js";
@@ -70,10 +67,10 @@ export interface BuildQueueSessionSnapshotInput {
 	readonly lastTodoToolCall: ToolCall | null;
 	readonly updatedAt: Date;
 	readonly runtimeState: SessionRuntimeState | null;
-	readonly hotState: Pick<
-		SessionHotState,
-		"status" | "currentMode" | "connectionError" | "activeTurnFailure"
-	>;
+	readonly currentModeId: string | null;
+	readonly connectionError: string | null;
+	readonly activeTurnFailure: ActiveTurnFailure | null;
+	readonly canonicalProjection?: CanonicalSessionProjection | null;
 	readonly interactionSnapshot: Pick<
 		SessionOperationInteractionSnapshot,
 		"pendingPlanApproval" | "pendingPermission" | "pendingQuestion"
@@ -136,7 +133,16 @@ export function buildQueueSessionSnapshot(
 ): QueueSessionSnapshot {
 	const state = deriveLiveSessionState({
 		runtimeState: input.runtimeState,
-		hotState: input.hotState,
+		canonicalProjection: input.canonicalProjection ?? null,
+		currentModeId: input.currentModeId,
+		currentStreamingToolCall: input.currentStreamingToolCall,
+		interactionSnapshot: input.interactionSnapshot,
+		hasUnseenCompletion: input.hasUnseenCompletion,
+	});
+	const workProjection = deriveLiveSessionWorkProjection({
+		runtimeState: input.runtimeState,
+		canonicalProjection: input.canonicalProjection ?? null,
+		currentModeId: input.currentModeId,
 		currentStreamingToolCall: input.currentStreamingToolCall,
 		interactionSnapshot: input.interactionSnapshot,
 		hasUnseenCompletion: input.hasUnseenCompletion,
@@ -153,20 +159,13 @@ export function buildQueueSessionSnapshot(
 		lastToolCall: input.lastToolCall,
 		lastTodoToolCall: input.lastTodoToolCall,
 		state,
-		isStreaming: state.activity.kind === "streaming",
-		isThinking: state.activity.kind === "thinking",
-		status: selectLegacySessionStatus(
-			deriveSessionWorkProjection({
-				state,
-				currentModeId: input.hotState.currentMode ? input.hotState.currentMode.id : null,
-				connectionError: input.hotState.connectionError,
-				activeTurnFailure: input.hotState.activeTurnFailure ?? null,
-			})
-		),
+		isStreaming: workProjection.compactActivityKind === "streaming",
+		isThinking: workProjection.compactActivityKind === "thinking",
+		status: selectSessionStatusForPresentation(workProjection),
 		updatedAt: input.updatedAt,
-		currentModeId: input.hotState.currentMode ? input.hotState.currentMode.id : null,
-		connectionError: input.hotState.connectionError,
-		activeTurnFailure: input.hotState.activeTurnFailure ?? null,
+		currentModeId: input.currentModeId,
+		connectionError: input.connectionError,
+		activeTurnFailure: input.activeTurnFailure,
 	};
 }
 

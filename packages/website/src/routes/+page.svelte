@@ -2,7 +2,7 @@
 import { ArrowRightIcon, BrandLockup, PillButton } from "@acepe/ui";
 import { CheckpointTimeline } from "@acepe/ui/checkpoint";
 import { PlanCard } from "@acepe/ui/plan-card";
-import { AgentSelectionGrid } from "@acepe/ui/agent-panel";
+import { AgentPanelPrCard } from "@acepe/ui/agent-panel";
 import type { AgentGridItem } from "@acepe/ui/agent-panel";
 import { AppSessionItem as AppSessionItemComponent } from "@acepe/ui/app-layout";
 import type { AppSessionItemType } from "@acepe/ui/app-layout";
@@ -13,6 +13,7 @@ import HeroShaderStage from "$lib/components/hero-shader-stage.svelte";
 import FeatureCardShader from "$lib/components/feature-card-shader.svelte";
 import LazyFeatureMount from "$lib/components/lazy-feature-mount.svelte";
 import DevShaderSwitcher from "$lib/components/dev-shader-switcher.svelte";
+import Card from "$lib/components/ui/card/card.svelte";
 import {
 	Stack,
 	ArrowsOutSimple,
@@ -22,7 +23,6 @@ import {
 	Command,
 	ClockCounterClockwise,
 	Lightning,
-	Check,
 	MagnifyingGlass,
 	GithubLogo,
 	Kanban,
@@ -147,6 +147,192 @@ const mockSessions: AppSessionItemType[] = [
 	},
 ];
 
+interface MockQueueItem {
+	readonly mode: ActivityEntryMode;
+	readonly title: string;
+	readonly timeAgo: string | null;
+	readonly insertions: number;
+	readonly deletions: number;
+	readonly isStreaming: boolean;
+	readonly fileToolDisplayText: string | null;
+	readonly statusText: string | null;
+	readonly showToolShimmer?: boolean;
+	readonly todoProgress?: ActivityEntryTodoProgress;
+	readonly currentQuestion?: ActivityEntryQuestion;
+	readonly totalQuestions?: number;
+	readonly hasMultipleQuestions?: boolean;
+	readonly currentQuestionIndex?: number;
+	readonly questionProgress?: readonly ActivityEntryQuestionProgress[];
+	readonly currentQuestionOptions?: readonly ActivityEntryQuestionOption[];
+}
+
+const mockQueueGroups = [
+	{
+		id: "answer_needed",
+		label: "Needs answer",
+		items: [
+			{
+				mode: "build",
+				title: "Fix auth middleware",
+				timeAgo: null,
+				insertions: 0,
+				deletions: 0,
+				isStreaming: false,
+				fileToolDisplayText: null,
+				statusText: null,
+				currentQuestion: {
+					question: "Which auth strategy should I use?",
+					multiSelect: false,
+					options: [{ label: "JWT tokens" }, { label: "Session cookies" }, { label: "OAuth 2.0" }],
+				},
+				totalQuestions: 1,
+				hasMultipleQuestions: false,
+				currentQuestionIndex: 0,
+				questionProgress: [{ questionIndex: 0, answered: false }],
+				currentQuestionOptions: [
+					{ label: "JWT tokens", selected: false, color: "#15DB95" },
+					{ label: "Session cookies", selected: false, color: "#FF5D5A" },
+					{ label: "OAuth 2.0", selected: false, color: "#FF78F7" },
+				],
+			},
+		],
+	},
+	{
+		id: "working",
+		label: "Working",
+		items: [
+			{
+				mode: "build",
+				title: "Database migration",
+				timeAgo: null,
+				insertions: 0,
+				deletions: 0,
+				isStreaming: true,
+				fileToolDisplayText: "db/migrate/add_users.sql",
+				statusText: null,
+				showToolShimmer: true,
+				todoProgress: { current: 2, total: 5, label: "migrations" },
+			},
+		],
+	},
+	{
+		id: "idle",
+		label: "Needs Review",
+		items: [
+			{
+				mode: "plan",
+				title: "Write API docs",
+				timeAgo: null,
+				insertions: 0,
+				deletions: 0,
+				isStreaming: false,
+				fileToolDisplayText: null,
+				statusText: null,
+				todoProgress: { current: 3, total: 3, label: "sections" },
+			},
+		],
+	},
+];
+
+const sqlColumns = ["id", "email", "role", "created_at", "active"] as const;
+const sqlRows = [
+	{
+		originalIndex: 0,
+		cells: ["1", "alice@dev.io", "admin", "2024-03-15", "true"],
+	},
+	{
+		originalIndex: 1,
+		cells: ["2", "bob@team.co", "editor", "2024-03-16", "true"],
+	},
+	{
+		originalIndex: 2,
+		cells: ["3", "carol@ops.net", "viewer", "2024-03-17", "false"],
+	},
+];
+const sqlIsCellDirty = (_rowIndex: number, _columnName: string) => false;
+const sqlGetCellValue = (rowIndex: number, columnName: string) => {
+	const colIdx = sqlColumns.indexOf(columnName as (typeof sqlColumns)[number]);
+	return sqlRows[rowIndex]?.cells[colIdx] ?? "";
+};
+const sqlNoOp = () => {};
+const sqlNoOpCell = (_row: number, _col: string) => {};
+
+const mockPrCardModel = {
+	mode: "pr" as const,
+	number: 184,
+	title: "PR Management: full review surface for agent-generated changes",
+	state: "OPEN" as const,
+	additions: 241,
+	deletions: 87,
+	descriptionHtml:
+		"<h3>Summary</h3><p>Introduces a dedicated PR management surface so reviewers can inspect generated pull requests without context switching.</p><ul><li>Unified PR status header with linked metadata</li><li>Compact checks summary with expandable CI details</li><li>Commit list with diff-aware commit badges</li></ul>",
+	commits: [
+		{
+			sha: "9f2c7a1",
+			message: "feat(ui): add PR management card shell and status header",
+			insertions: 104,
+			deletions: 21,
+			onClick: () => {},
+		},
+		{
+			sha: "1bc88e4",
+			message: "feat(ui): render CI checks table with timing bars and tooltips",
+			insertions: 79,
+			deletions: 31,
+			onClick: () => {},
+		},
+		{
+			sha: "4ed90ab",
+			message: "refactor(ui): polish PR card expansion and header treatment",
+			insertions: 58,
+			deletions: 35,
+			onClick: () => {},
+		},
+	],
+	checks: [
+		{
+			name: "typecheck",
+			workflowName: "CI",
+			status: "COMPLETED" as const,
+			conclusion: "SUCCESS" as const,
+			startedAt: "2026-04-26T00:00:00Z",
+			completedAt: "2026-04-26T00:00:24Z",
+			detailsUrl: "https://github.com/flazouh/acepe/actions/runs/1",
+		},
+		{
+			name: "ui-tests",
+			workflowName: "CI",
+			status: "COMPLETED" as const,
+			conclusion: "FAILURE" as const,
+			startedAt: "2026-04-26T00:00:00Z",
+			completedAt: "2026-04-26T00:01:02Z",
+			detailsUrl: "https://github.com/flazouh/acepe/actions/runs/2",
+		},
+		{
+			name: "e2e-smoke",
+			workflowName: "CI",
+			status: "COMPLETED" as const,
+			conclusion: "SUCCESS" as const,
+			startedAt: "2026-04-26T00:00:00Z",
+			completedAt: "2026-04-26T00:00:42Z",
+			detailsUrl: "https://github.com/flazouh/acepe/actions/runs/3",
+		},
+		{
+			name: "lint",
+			workflowName: "CI",
+			status: "COMPLETED" as const,
+			conclusion: "SUCCESS" as const,
+			startedAt: "2026-04-26T00:00:00Z",
+			completedAt: "2026-04-26T00:00:18Z",
+			detailsUrl: "https://github.com/flazouh/acepe/actions/runs/4",
+		},
+	],
+	isChecksLoading: false,
+	hasResolvedChecks: true,
+	onOpenCheck: () => {},
+	onOpen: () => {},
+};
+
 const features = [
 	{
 		id: "multi-agent",
@@ -159,19 +345,6 @@ const features = [
 			"Use different agents for different tasks without context switching",
 			"Run multiple agents in parallel for faster development",
 			"Switch agents instantly with keyboard shortcuts",
-		],
-	},
-	{
-		id: "plan-mode",
-		icon: Lightning,
-		label: "Plan Mode",
-		tag: "planning",
-		description:
-			"Agent plan mode outputs a wall of text in your terminal. Acepe renders it as clean markdown with one-click copy, download, and preview toggle.",
-		usecases: [
-			"Built-in review and deepen skills refine plans before execution",
-			"Plans render as clean markdown you can copy or download",
-			"Read through the plan, adjust if needed, then run",
 		],
 	},
 	{
@@ -188,29 +361,16 @@ const features = [
 		],
 	},
 	{
-		id: "sessions",
-		icon: ClockCounterClockwise,
-		label: "Session Management",
-		tag: "history",
+		id: "pr-badge",
+		icon: GithubLogo,
+		label: "PR Management",
+		tag: "review",
 		description:
-			"The CLI doesn't track your history across projects. Acepe indexes every session, searchable and filterable. Find that solution you wrote last week.",
+			"Review PR status, description, commits, and CI in one place. The card gives you a full shipping view before you merge.",
 		usecases: [
-			"Search and filter across all your agent interactions",
-			"Recover context from previous sessions instantly",
-			"Organize sessions by project for easy reference",
-		],
-	},
-	{
-		id: "keyboard",
-		icon: Command,
-		label: "Keyboard-First",
-		tag: "input",
-		description:
-			"⌘K command palette. ⌘L switch agent. ⌘/ change model. ⌘N new thread. Every action has a shortcut. Your mouse can rest.",
-		usecases: [
-			"Navigate entirely with keyboard shortcuts for flow state",
-			"Customize shortcuts to match your muscle memory",
-			"Discover new shortcuts with the searchable command palette",
+			"Show PR status and number in a compact visual token",
+			"Surface commit refs with insertions/deletions at a glance",
+			"Open linked PR or commit context directly from the badge",
 		],
 	},
 	{
@@ -506,340 +666,202 @@ const features = [
 </p>
 </div>
 
-<div class="flex flex-col gap-16 md:gap-24">
-{#each features as feature, i}
-{@const Icon = feature.icon}
-{@const isBig = feature.id === "kanban" || feature.id === "git" || feature.id === "sql-studio" || feature.id === "review"}
-<div
-class="grid grid-cols-1 items-center gap-10 md:grid-cols-2 md:gap-16"
-class:md:[direction:rtl]={i % 2 === 1}
->
-<!-- Visual card -->
-<div class="relative aspect-[4/3] overflow-hidden rounded-2xl border border-border/50 bg-background [direction:ltr]">
-<!-- Same site shader, scoped to cards and mounted only near the viewport. -->
-<div class="pointer-events-none absolute inset-0">
-<FeatureCardShader />
-</div>
-<div class="relative flex h-full w-full items-center justify-center p-6 md:p-8">
-<div class="flex {isBig ? 'h-full w-full' : 'h-full w-full max-w-md'} items-center justify-center">
-{#if feature.id === "multi-agent"}
-<AgentSelectionGrid agents={mockGridAgents} selectedAgentId="claude-code" />
-{:else if feature.id === "parallel"}
-<div class="parallel-illustration relative flex w-full flex-col items-center justify-center gap-4 py-2">
-<!-- Three stacked agent panel cards, offset like a deck -->
-<div class="relative h-32 w-full">
-<div class="parallel-card absolute left-[8%] top-2 w-[44%] rotate-[-4deg]">
-<div class="rounded-md border border-border/60 bg-card shadow-xl">
-<div class="flex items-center gap-1.5 border-b border-border/40 bg-muted/30 px-2 py-1">
-<span class="h-1.5 w-1.5 rounded-full bg-success animate-pulse"></span>
-<span class="font-mono text-[9px] text-foreground/70">claude · auth</span>
-</div>
-<div class="space-y-1 p-2">
-<div class="h-1 w-full rounded-full bg-muted-foreground/20"></div>
-<div class="h-1 w-3/4 rounded-full bg-muted-foreground/20"></div>
-<div class="h-1 w-5/6 rounded-full bg-primary/50"></div>
-</div>
-</div>
-</div>
-<div class="parallel-card absolute right-[8%] top-2 w-[44%] rotate-[4deg]">
-<div class="rounded-md border border-border/60 bg-card shadow-xl">
-<div class="flex items-center gap-1.5 border-b border-border/40 bg-muted/30 px-2 py-1">
-<span class="h-1.5 w-1.5 rounded-full bg-primary animate-pulse"></span>
-<span class="font-mono text-[9px] text-foreground/70">codex · api</span>
-</div>
-<div class="space-y-1 p-2">
-<div class="h-1 w-full rounded-full bg-muted-foreground/20"></div>
-<div class="h-1 w-2/3 rounded-full bg-success/60"></div>
-<div class="h-1 w-4/5 rounded-full bg-muted-foreground/20"></div>
-</div>
-</div>
-</div>
-<div class="parallel-card absolute left-1/2 top-8 -translate-x-1/2 w-[48%]">
-<div class="rounded-md border-2 border-primary/60 bg-card shadow-2xl ring-2 ring-primary/30">
-<div class="flex items-center gap-1.5 border-b border-border/40 bg-primary/10 px-2 py-1">
-<span class="h-1.5 w-1.5 rounded-full bg-warning animate-pulse"></span>
-<span class="font-mono text-[9px] font-semibold text-foreground">cursor · ui</span>
-</div>
-<div class="space-y-1 p-2">
-<div class="h-1 w-full rounded-full bg-muted-foreground/20"></div>
-<div class="h-1 w-5/6 rounded-full bg-warning/60"></div>
-<div class="h-1 w-3/5 rounded-full bg-muted-foreground/20"></div>
-<div class="h-1 w-4/5 rounded-full bg-primary/50"></div>
-</div>
-</div>
-</div>
-</div>
-<div class="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-<span>3 sessions</span>
-<span class="text-primary">·</span>
-<span>1 focused</span>
-</div>
-</div>
-{:else if feature.id === "plan-mode"}
-<div class="overflow-hidden rounded-lg bg-card shadow-2xl">
-<PlanCard content={mockPlanContent} title="Implementation Plan" status="interactive" />
-</div>
-{:else if feature.id === "checkpoints"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl backdrop-blur">
-<CheckpointTimeline checkpoints={mockCheckpoints.slice(0, 4)} showRevertButtons={false} />
-</div>
-{:else if feature.id === "sessions"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl backdrop-blur">
-<div class="border-b border-border/50 px-3 py-2">
-<div class="flex h-7 items-center gap-2 rounded-md border border-border/40 bg-background px-2.5 font-mono text-[11px] text-muted-foreground/70">
-<MagnifyingGlass size={11} />
-<span>search sessions…</span>
-</div>
-</div>
-<div class="p-1.5">
-{#each mockSessions.slice(0, 3) as session}
-<AppSessionItemComponent {session} />
-{/each}
-</div>
-</div>
-{:else if feature.id === "keyboard"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl backdrop-blur">
-<div class="border-b border-border/50 px-3 py-2.5">
-<div class="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
-<Command size={11} class="text-primary" />
-<span class="text-foreground">switch agent</span>
-</div>
-</div>
-<div class="space-y-0.5 p-1.5 font-mono text-[11px]">
-{#each [{ k: "⌘L", l: "Switch agent" }, { k: "⌘K", l: "Command palette" }, { k: "⌘N", l: "New thread" }, { k: "⌘/", l: "Change model" }] as cmd, idx}
-<div class="flex items-center justify-between rounded-md px-2.5 py-1.5 {idx === 0 ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}">
-<span>{cmd.l}</span>
-<kbd class="rounded border border-border/60 bg-background px-1.5 py-0.5 text-[10px]">{cmd.k}</kbd>
-</div>
-{/each}
-</div>
-</div>
-{:else if feature.id === "sql-studio"}
-<div class="sql-zoom-frame relative h-full w-full overflow-hidden rounded-lg border border-border/60 bg-background shadow-2xl">
-<div class="sql-zoom-inner">
-<LazyFeatureMount label="SQL Studio demo" class="h-full w-full">
-{#snippet children()}
-{#await import("$lib/blog/demos/sql-studio-demo.svelte")}
-<div class="flex h-full w-full items-center justify-center font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Loading SQL Studio</div>
-{:then module}
-{@const Demo = module.default}
-<Demo />
-{/await}
-{/snippet}
-</LazyFeatureMount>
-</div>
-</div>
-{:else if feature.id === "queue"}
-<div class="mx-auto h-full w-full max-w-[340px] overflow-hidden rounded-lg border border-border/60 bg-card text-[13px] shadow-2xl">
-<div class="h-full w-full overflow-y-auto">
-<LazyFeatureMount label="Attention queue demo" class="h-full w-full">
-{#snippet children()}
-{#await import("$lib/blog/demos/queue-answer-needed-demo.svelte")}
-<div class="flex h-full min-h-[220px] w-full items-center justify-center font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Loading queue</div>
-{:then module}
-{@const Demo = module.default}
-<Demo />
-{/await}
-{/snippet}
-</LazyFeatureMount>
-</div>
-</div>
-{:else if feature.id === "kanban"}
-<div class="kanban-zoom-frame relative h-full w-full overflow-hidden rounded-lg border border-border/60 bg-background shadow-2xl">
-<div class="kanban-zoom-inner">
-<LazyFeatureMount label="Kanban board demo" class="h-full w-full">
-{#snippet children()}
-{#await import("$lib/components/landing-kanban-demo.svelte")}
-<div class="flex h-full w-full items-center justify-center font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Loading kanban</div>
-{:then module}
-{@const Demo = module.default}
-<Demo bare={true} />
-{/await}
-{/snippet}
-</LazyFeatureMount>
-</div>
-</div>
-{:else if feature.id === "git"}
-<div class="git-zoom-frame relative h-full w-full overflow-hidden rounded-lg border border-border/60 bg-card shadow-2xl">
-<div class="git-zoom-inner">
-<LazyFeatureMount label="Git panel demo" class="h-full w-full">
-{#snippet children()}
-{#await import("$lib/components/git-features-demo.svelte")}
-<div class="flex h-full w-full items-center justify-center font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Loading git panel</div>
-{:then module}
-{@const Demo = module.default}
-<Demo />
-{/await}
-{/snippet}
-</LazyFeatureMount>
-</div>
-</div>
-{:else if feature.id === "pr"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl">
-<div class="border-b border-border/50 bg-success/10 px-3 py-2 flex items-center gap-2">
-<GitPullRequest size={14} class="text-success" />
-<span class="font-mono text-[11px] font-medium text-success">Merged · #342</span>
-</div>
-<div class="p-3 space-y-2">
-<div class="text-[13px] font-semibold">Redesign settings page with new tab layout</div>
-<div class="font-mono text-[10px] text-muted-foreground">bob-dev · 7 files · +218 −179</div>
-<div class="space-y-1 pt-2">
-{#each ["+45 −112  src/routes/settings/+page.svelte", "+38   src/routes/settings/tabs/general.svelte", "+52   src/routes/settings/tabs/appearance.svelte", "+31   src/routes/settings/tabs/keys.svelte", "  −67  src/routes/settings/settings.css"] as line}
-<div class="font-mono text-[10px] text-muted-foreground/80 truncate">{line}</div>
-{/each}
-</div>
-</div>
-</div>
-{:else if feature.id === "review"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl h-full w-full">
-<div class="border-b border-border/50 px-3 py-2 flex items-center justify-between">
-<span class="font-mono text-[11px] font-medium">Review · 5 files</span>
-<div class="flex gap-1">
-<button class="rounded border border-border/60 bg-background px-2 py-0.5 font-mono text-[10px]">Reject</button>
-<button class="rounded bg-primary px-2 py-0.5 font-mono text-[10px] text-primary-foreground">Accept all</button>
-</div>
-</div>
-<div class="grid grid-cols-[180px_1fr] h-[calc(100%-32px)]">
-<div class="border-r border-border/50 p-1.5 space-y-0.5 overflow-y-auto">
-{#each [{ p: "src/lib/auth/jwt.ts", a: 24, d: 6, sel: true }, { p: "src/lib/auth/session.ts", a: 8, d: 18 }, { p: "src/routes/login/+page.svelte", a: 12, d: 0 }, { p: "src/lib/auth/middleware.ts", a: 5, d: 2 }, { p: "tests/auth.test.ts", a: 47, d: 0 }] as f}
-<div class="rounded px-1.5 py-1 font-mono text-[10px] {f.sel ? 'bg-primary/15 text-foreground' : 'text-muted-foreground/80 hover:bg-accent/40'}">
-<div class="truncate">{f.p}</div>
-<div class="text-[9px]"><span class="text-success">+{f.a}</span> <span class="text-destructive">−{f.d}</span></div>
-</div>
-{/each}
-</div>
-<div class="overflow-auto p-2 font-mono text-[10px] leading-relaxed">
-<div class="text-muted-foreground">@@ -12,6 +12,12 @@</div>
-<div class="text-foreground/80">{"export function verifyToken(token: string) {"}</div>
-<div class="bg-destructive/10 text-destructive">−  return jwt.verify(token, process.env.SECRET);</div>
-<div class="bg-success/10 text-success">+  const secret = process.env.JWT_SECRET;</div>
-<div class="bg-success/10 text-success">+  if (!secret) throw new Error("JWT_SECRET missing");</div>
-<div class="bg-success/10 text-success">+  return jwt.verify(token, secret, {"{ algorithms: ['HS256'] }"});</div>
-<div class="text-foreground/80">{"}"}</div>
-</div>
-</div>
-</div>
-{:else if feature.id === "browser"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl">
-<div class="flex items-center gap-2 border-b border-border/50 bg-muted/30 px-3 py-1.5">
-<div class="flex gap-1"><span class="h-2.5 w-2.5 rounded-full bg-destructive/60"></span><span class="h-2.5 w-2.5 rounded-full bg-warning/60"></span><span class="h-2.5 w-2.5 rounded-full bg-success/60"></span></div>
-<div class="flex-1 truncate rounded border border-border/40 bg-background px-2 py-0.5 text-center font-mono text-[10px] text-muted-foreground">localhost:5173/dashboard</div>
-</div>
-<div class="aspect-[4/3] bg-gradient-to-br from-primary/15 via-background to-accent/15 p-3">
-<div class="mb-2 h-3 w-1/2 rounded bg-foreground/15"></div>
-<div class="grid grid-cols-2 gap-2">
-<div class="h-12 rounded bg-card border border-border/50"></div>
-<div class="h-12 rounded bg-card border border-border/50"></div>
-<div class="h-12 rounded bg-card border border-border/50"></div>
-<div class="h-12 rounded bg-card border border-border/50"></div>
-</div>
-</div>
-</div>
-{:else if feature.id === "terminal"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-[#0a0a0a] shadow-2xl">
-<div class="flex items-center gap-2 border-b border-border/50 bg-muted/20 px-3 py-1.5">
-<Terminal size={11} class="text-muted-foreground" />
-<span class="font-mono text-[10px] text-muted-foreground">Terminal 1 · zsh</span>
-</div>
-<div class="p-3 font-mono text-[10px] leading-relaxed">
-<div class="text-muted-foreground">$ bun run dev</div>
-<div class="text-success">  ✓ vite v5.4.0 ready in 312ms</div>
-<div class="text-foreground/70">  ➜  Local:   <span class="text-primary">http://localhost:5173/</span></div>
-<div class="text-muted-foreground mt-2">$ bun test src/lib/auth</div>
-<div class="text-success">  ✓ 12 tests passed (147ms)</div>
-<div class="text-muted-foreground mt-2">$ <span class="animate-pulse">▊</span></div>
-</div>
-</div>
-{:else if feature.id === "voice"}
-<div class="voice-card relative flex w-full flex-col items-center gap-4 overflow-hidden rounded-lg border border-border/50 bg-card p-6 shadow-2xl">
-<div class="relative flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_0_24px_rgba(247,126,44,0.45)]">
-<Microphone size={26} weight="fill" />
-</div>
-<div class="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-<span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-destructive"></span>
-<span>Recording · 0:14</span>
-</div>
-<!-- Animated waveform -->
-<div class="voice-waveform flex h-10 items-center gap-[3px]">
-{#each Array.from({ length: 24 }) as _, idx (idx)}
-<span class="voice-bar" style="--i: {idx};"></span>
-{/each}
-</div>
-<div class="relative font-mono text-[11px] text-foreground/70">
-"Refactor the auth module to use JWT<span class="voice-caret">▊</span>"
-</div>
-</div>
-{:else if feature.id === "permissions"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl">
-<div class="border-b border-border/50 px-3 py-2 flex items-center gap-2">
-<ShieldCheck size={12} class="text-success" />
-<span class="font-mono text-[11px] font-medium">Session permissions</span>
-</div>
-<div class="p-2 space-y-1">
-{#each [{ tool: "edit", state: "always", color: "success" }, { tool: "read", state: "always", color: "success" }, { tool: "execute", state: "ask", color: "warning" }, { tool: "fetch", state: "ask", color: "warning" }, { tool: "delete", state: "deny", color: "destructive" }] as p}
-<div class="flex items-center justify-between rounded px-2 py-1 hover:bg-accent/30">
-<span class="font-mono text-[11px] text-foreground/80">{p.tool}</span>
-<span class="rounded border border-border/40 bg-{p.color}/10 px-2 py-0.5 font-mono text-[10px] text-{p.color}">{p.state}</span>
-</div>
-{/each}
-<div class="mt-2 flex items-center justify-between border-t border-border/40 pt-2 px-2">
-<span class="font-mono text-[11px] font-semibold">Autonomous mode</span>
-<div class="flex h-4 w-7 items-center rounded-full bg-primary p-0.5">
-<div class="ml-auto h-3 w-3 rounded-full bg-primary-foreground"></div>
-</div>
-</div>
-</div>
-</div>
-{:else if feature.id === "skills"}
-<div class="w-full overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl">
-<div class="flex items-center gap-2 border-b border-border/50 px-3.5 py-2.5">
-<Plug size={13} class="text-primary" />
-<span class="font-mono text-[11px] font-medium tracking-wide">Skills & MCP</span>
-<span class="ml-auto font-mono text-[10px] text-muted-foreground">5 active</span>
-</div>
-<div class="divide-y divide-border/40">
-{#each [{ n: "github", t: "MCP", desc: "PRs, issues, code search", on: true }, { n: "linear", t: "MCP", desc: "Tickets & cycles", on: true }, { n: "ce-plan", t: "Skill", desc: "Reviewed implementation plans", on: true }, { n: "ce-debug", t: "Skill", desc: "Systematic root-cause", on: true }, { n: "git-commit", t: "Skill", desc: "Conventional commits", on: false }] as s, idx (s.n)}
-<div class="flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-accent/30">
-<div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/50 bg-background/70 font-mono text-[10px] font-medium {s.t === 'MCP' ? 'text-primary' : 'text-foreground/80'}">
-{s.t === "MCP" ? "M" : "S"}
-</div>
-<div class="min-w-0 flex-1">
-<div class="flex items-center gap-1.5">
-<span class="truncate font-mono text-[12px] font-medium text-foreground">{s.n}</span>
-<span class="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/70">{s.t}</span>
-</div>
-<div class="truncate text-[10px] text-muted-foreground">{s.desc}</div>
-</div>
-<div class="relative flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition-colors {s.on ? 'bg-primary' : 'bg-muted-foreground/25'}">
-<div class="h-3 w-3 rounded-full bg-white shadow-sm transition-all {s.on ? 'ml-auto' : ''}"></div>
-</div>
-</div>
-{/each}
-</div>
-</div>
-{/if}
-</div>
-</div>
-</div>
+				<!-- Feature cards -->
+				<div class="flex flex-col gap-6 md:gap-8">
+					{#each features as feature}
+						<Card class="feature-card feature-section-card flex h-auto flex-col gap-6 overflow-hidden rounded-xl border-0 bg-card p-6 shadow-none md:min-h-[560px] md:gap-8 md:p-10">
+								<div class="mb-6 flex flex-col items-start text-left">
+									<h3 class="mb-3 text-2xl font-semibold tracking-[-0.02em] md:text-4xl">
+										{feature.label}
+									</h3>
+									<p class="max-w-[760px] text-[13px] leading-relaxed text-muted-foreground md:text-sm">
+										{feature.description}
+									</p>
+								</div>
 
-<!-- Text -->
-<div class="flex flex-col gap-4 [direction:ltr]">
-<div class="flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-<Icon size={14} class="text-primary/80" />
-<span>{feature.tag}</span>
-</div>
-<h3 class="text-balance text-3xl font-semibold tracking-[-0.02em] md:text-[40px] md:leading-[1.1]">
-{feature.label}
-</h3>
-<p class="text-pretty text-[15px] leading-[1.65] text-muted-foreground md:text-[16px]">
-{feature.description}
-</p>
-</div>
-</div>
-{/each}
-</div>
-</div>
-</section>
+								<div class="showcase flex flex-1 items-center justify-center w-full max-w-3xl self-center">
+										{#if feature.id === "multi-agent"}
+											<div class="overflow-hidden rounded-xl border border-border/60 bg-muted/35">
+												<div class="grid grid-cols-3">
+													{#each mockGridAgents as agent, agentIndex}
+														<div
+															class="flex min-h-[78px] items-center justify-start gap-2 px-3 py-3 {agentIndex % 3 !== 2
+																? 'border-r border-border/50'
+																: ''} {agentIndex < 3 ? 'border-b border-border/50' : ''}"
+														>
+															<img
+																src={agent.iconSrc ?? ""}
+																alt={agent.name}
+																class="h-5 w-5 shrink-0 object-contain"
+																loading="lazy"
+															/>
+															<span class="text-base font-semibold text-foreground leading-tight">
+																{agent.name}
+															</span>
+														</div>
+													{/each}
+													<a
+														href="/zeus"
+														class="zeus-cell group relative flex min-h-[78px] items-center justify-start gap-2 px-3 py-3 border-border/50 transition-colors hover:bg-card/60 focus-visible:bg-card/60 focus-visible:outline-none"
+														aria-label="Zeus — coming soon"
+													>
+														<Lightning size={18} weight="fill" class="shrink-0 text-success transition-transform duration-300 group-hover:scale-110" />
+														<span class="text-base font-semibold text-foreground leading-tight">
+															Zeus <span class="text-muted-foreground/80">(soon™)</span>
+														</span>
+														<span class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full text-success/70 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+															<ArrowRightIcon size="sm" />
+														</span>
+													</a>
+												</div>
+											</div>
+										{:else if feature.id === "parallel"}
+											<div class="space-y-2">
+												<div class="overflow-hidden rounded-lg border border-border/50 bg-card/30">
+													<AppTabBar tabs={mockTabs} />
+												</div>
+												<div class="grid grid-cols-2 gap-1 rounded-lg border border-border/50 bg-card/30 p-2">
+													<div class="rounded-md border border-border/30 bg-background/50 p-2">
+														<div class="mb-1.5 font-mono text-[9px] text-muted-foreground/60">SESSION 1</div>
+														<div class="space-y-1">
+															<div class="h-1.5 w-full rounded-full bg-muted-foreground/10"></div>
+															<div class="h-1.5 w-3/4 rounded-full bg-muted-foreground/10"></div>
+															<div class="h-1.5 w-5/6 rounded-full bg-primary/20"></div>
+														</div>
+													</div>
+													<div class="rounded-md border border-border/30 bg-background/50 p-2">
+														<div class="mb-1.5 font-mono text-[9px] text-muted-foreground/60">SESSION 2</div>
+														<div class="space-y-1">
+															<div class="h-1.5 w-full rounded-full bg-muted-foreground/10"></div>
+															<div class="h-1.5 w-2/3 rounded-full bg-success/20"></div>
+															<div class="h-1.5 w-4/5 rounded-full bg-muted-foreground/10"></div>
+														</div>
+													</div>
+												</div>
+											</div>
+										{:else if feature.id === "plan-mode"}
+											<div class="plan-showcase">
+												<PlanCard content={mockPlanContent} title="Plan" status="interactive" />
+											</div>
+										{:else if feature.id === "checkpoints"}
+											<div class="checkpoint-showcase overflow-hidden rounded-lg border border-border/50">
+												<CheckpointTimeline checkpoints={mockCheckpoints} showRevertButtons={false} />
+											</div>
+										{:else if feature.id === "sessions"}
+											<div class="overflow-hidden rounded-lg border border-border/50 bg-card/30">
+												<div class="flex h-7 items-center border-b border-border/50 px-2.5">
+													<div class="flex flex-1 items-center gap-2 rounded-md bg-muted/30 px-2 py-0.5">
+														<MagnifyingGlass size={10} class="text-muted-foreground/50" />
+														<span class="font-mono text-[10px] text-muted-foreground/50">Search sessions...</span>
+													</div>
+												</div>
+												<div class="p-1">
+													{#each mockSessions as session}
+														<AppSessionItemComponent {session} />
+													{/each}
+												</div>
+											</div>
+										{:else if feature.id === "keyboard"}
+											<div class="overflow-hidden rounded-lg border border-border/50 bg-card/30">
+												<div class="flex items-center gap-2 border-b border-border/50 px-3 py-2">
+													<MagnifyingGlass size={12} class="text-muted-foreground/50" />
+													<span class="font-mono text-[11px] text-muted-foreground/50">Type a command...</span>
+												</div>
+												{#each [{ label: "New Session", kbd: "\u2318N" }, { label: "Switch Agent", kbd: "\u2318L" }, { label: "Change Model", kbd: "\u2318/" }, { label: "Command Palette", kbd: "\u2318K" }, { label: "Toggle Sidebar", kbd: "\u2318B" }] as cmd}
+													<div class="flex items-center justify-between px-3 py-1.5 first:bg-muted/30">
+														<span class="font-mono text-[11px] text-foreground">{cmd.label}</span>
+														<kbd class="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">{cmd.kbd}</kbd>
+													</div>
+												{/each}
+											</div>
+										{:else if feature.id === "sql-studio"}
+											<div class="overflow-hidden rounded-lg border border-border/50 bg-card/30">
+												<div class="flex h-7 items-center gap-2 border-b border-border/50 px-2.5">
+													<HardDrives size={10} class="text-muted-foreground/60" />
+													<span class="font-mono text-[10px] text-foreground">users</span>
+													<span class="ml-auto font-mono text-[9px] text-muted-foreground/40">PostgreSQL</span>
+												</div>
+												<SqlStudioDataGrid
+													columns={sqlColumns}
+													rows={sqlRows}
+													sortColumn={null}
+													sortDirection="asc"
+													readOnly={true}
+													isCellDirty={sqlIsCellDirty}
+													getCellValue={sqlGetCellValue}
+													onSortChange={sqlNoOp}
+													onCellClick={sqlNoOpCell}
+												/>
+												<div class="flex items-center justify-between border-t border-border/30 px-2.5 py-1">
+													<span class="font-mono text-[9px] text-muted-foreground/40">3 rows</span>
+												</div>
+											</div>
+										{:else if feature.id === "queue"}
+											<div class="queue-showcase">
+											<SectionedFeed
+												totalCount={3}
+												groups={mockQueueGroups as readonly SectionedFeedGroup<SectionedFeedItemData>[]}
+											>
+												{#snippet itemRenderer(item: SectionedFeedItemData)}
+													{@const entry = item as MockQueueItem}
+													<ActivityEntry
+														onSelect={() => {}}
+														mode={entry.mode}
+														title={entry.title}
+														timeAgo={entry.timeAgo}
+														insertions={entry.insertions}
+														deletions={entry.deletions}
+														isStreaming={entry.isStreaming}
+														taskDescription={null}
+														taskSubagentSummaries={[]}
+														showTaskSubagentList={false}
+														fileToolDisplayText={entry.fileToolDisplayText}
+														toolContent={null}
+														showToolShimmer={entry.showToolShimmer ?? false}
+														statusText={entry.statusText}
+														showStatusShimmer={false}
+														todoProgress={entry.todoProgress ?? null}
+														currentQuestion={entry.currentQuestion ?? null}
+														totalQuestions={entry.totalQuestions ?? 0}
+														hasMultipleQuestions={entry.hasMultipleQuestions ?? false}
+														currentQuestionIndex={entry.currentQuestionIndex ?? 0}
+														questionId=""
+														questionProgress={entry.questionProgress ?? []}
+														currentQuestionAnswered={false}
+														currentAnswerDisplay=""
+														currentQuestionOptions={entry.currentQuestionOptions ?? []}
+														otherText=""
+														otherPlaceholder=""
+														showOtherInput={false}
+														showSubmitButton={false}
+														canSubmit={false}
+														submitLabel=""
+														onOptionSelect={() => {}}
+														onOtherInput={() => {}}
+														onOtherKeydown={() => {}}
+														onSubmitAll={() => {}}
+														onPrevQuestion={() => {}}
+														onNextQuestion={() => {}}
+													/>
+												{/snippet}
+											</SectionedFeed>
+											</div>
+										{:else if feature.id === "pr-badge"}
+											<div class="w-full max-w-[720px]">
+												<AgentPanelPrCard
+													visible={true}
+													model={mockPrCardModel}
+													initiallyExpanded={true}
+													initiallyExpandedChecks={true}
+												/>
+											</div>
+										{/if}
+								</div>
+						</Card>
+					{/each}
+				</div>
+			</div>
+		</section>
 
 		<!-- Bottom CTA -->
 		<section class="relative overflow-hidden border-t border-border/50 px-4 py-32 md:px-6 md:py-40">
@@ -1009,20 +1031,8 @@ class:md:[direction:rtl]={i % 2 === 1}
 		backdrop-filter: blur(12px);
 	}
 
-	/* Render the SQL Studio at its real desktop modal size, then scale to fit the card. */
-	.sql-zoom-frame {
-		container-type: size;
-	}
-	.sql-zoom-inner {
-		width: 1180px;
-		height: 820px;
-		transform-origin: top left;
-		transform: scale(calc(100cqw / 1180));
-	}
-	@container (min-aspect-ratio: 1180/820) {
-		.sql-zoom-inner {
-			transform: scale(calc(100cqh / 820));
-		}
+	:global(.feature-section-card) {
+		backdrop-filter: none;
 	}
 
 	/* Queue card has its own scroll inside if content overflows. */

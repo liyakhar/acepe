@@ -10,7 +10,7 @@ export type AvailableMode = { id: string; name: string; description?: string | n
 /**
  * Command input hint.
  */
-export type CommandInput = { 
+export type CommandInput = {
 /**
  * The hint can be a string or array in the protocol; we normalize to string.
  */
@@ -46,6 +46,10 @@ export type SessionModelState = { availableModels?: AvailableModel[]; currentMod
 
 export type SessionModes = { currentModeId?: string; availableModes?: AvailableMode[] }
 
+export type ResolvedCapabilityStatus = "resolved" | "partial" | "unsupported" | "failed"
+
+export type ResolvedCapabilities = { status: ResolvedCapabilityStatus; availableModels: AvailableModel[]; currentModelId: string; modelsDisplay: ModelsForDisplay; providerMetadata: FrontendProviderProjection; availableModes: AvailableMode[]; currentModeId: string }
+
 /**
  * Configuration option value.
  */
@@ -56,17 +60,17 @@ export type ConfigOptionValue = { name: string; value: JsonValue; description?: 
  */
 export type ConfigOptionData = { id: string; name: string; category: string; type: string; description?: string | null; currentValue?: JsonValue | null; options?: ConfigOptionValue[] }
 
-export type NewSessionResponse = { sessionId: string; sequenceId?: number | null; sessionOpen?: SessionOpenResult | null; models?: SessionModelState; modes?: SessionModes; availableCommands?: AvailableCommand[]; configOptions?: ConfigOptionData[] }
+export type NewSessionResponse = { sessionId: string; creationAttemptId?: string | null; deferredCreation?: boolean; sequenceId?: number | null; sessionOpen?: SessionOpenResult | null; models?: SessionModelState; modes?: SessionModes; availableCommands?: AvailableCommand[]; configOptions?: ConfigOptionData[] }
 
 export type ResumeSessionResponse = { models?: SessionModelState; modes?: SessionModes; availableCommands?: AvailableCommand[]; configOptions?: ConfigOptionData[] }
 
 /**
  * Canonical agent identifier enum.
- * 
+ *
  * This enum represents all valid agent types in the system.
  * Parsers set the enum directly based on their context (no normalization needed).
  */
-export type CanonicalAgentId = "claude-code" | "copilot" | "cursor" | "opencode" | "codex" | "forge" | 
+export type CanonicalAgentId = "claude-code" | "copilot" | "cursor" | "opencode" | "codex" | "forge" |
 /**
  * Custom agent registered by user
  */
@@ -75,7 +79,7 @@ export type CanonicalAgentId = "claude-code" | "copilot" | "cursor" | "opencode"
 /**
  * Tool kind for routing to appropriate UI components.
  */
-export type ToolKind = "read" | "edit" | "execute" | "search" | "glob" | "fetch" | "web_search" | "think" | "todo" | "question" | "task" | "task_output" | "skill" | "move" | "delete" | "enter_plan_mode" | "exit_plan_mode" | "create_plan" | "tool_search" | "browser" | "sql" | "unclassified" | "other"
+export type ToolKind = "read" | "read_lints" | "edit" | "execute" | "search" | "glob" | "fetch" | "web_search" | "think" | "todo" | "question" | "task" | "task_output" | "skill" | "move" | "delete" | "enter_plan_mode" | "exit_plan_mode" | "create_plan" | "tool_search" | "browser" | "sql" | "unclassified" | "other"
 
 /**
  * Tool call status.
@@ -86,27 +90,27 @@ export type ChunkAggregationHint = "boundaryCarryover"
 
 /**
  * A single file edit entry within an Edit tool call.
- * 
+ *
  * A single `Edit` tool call may touch multiple files (e.g., OpenCode's `patch` tool
  * or Codex's multi-entry `changes` map). Each entry represents one file's change.
  */
-export type EditEntry = { 
+export type EditEntry = {
 /**
  * Path of the file being edited.
  */
-filePath?: string | null; 
+filePath?: string | null;
 /**
  * Original path when the edit entry represents a rename/move inside a multi-file edit patch.
  */
-moveFrom?: string | null; 
+moveFrom?: string | null;
 /**
  * Text being replaced (None = new file or full-file write).
  */
-oldString?: string | null; 
+oldString?: string | null;
 /**
  * Replacement text (standard edit).
  */
-newString?: string | null; 
+newString?: string | null;
 /**
  * Full file content (create/overwrite variant).
  */
@@ -119,11 +123,11 @@ export type ToolSourceRange = { startLine?: number | null; endLine?: number | nu
 
 /**
  * Structured provider-supplied read context (path excerpts, ranges, metadata).
- * 
+ *
  * Kept separate from [`ToolCallLocation`] (session routing) so read tools can carry
  * rich source metadata without overloading generic location lists (R13).
  */
-export type ToolSourceContext = { path?: string | null; viewRange?: ToolSourceRange | null; 
+export type ToolSourceContext = { path?: string | null; viewRange?: ToolSourceRange | null;
 /**
  * Line-numbered or plain excerpt text from the provider (not synthesized UI copy).
  */
@@ -133,10 +137,10 @@ excerpt?: string | null }
  * Tool arguments discriminated by tool kind.
  * Each variant contains exactly the fields needed for that tool type.
  */
-export type ToolArguments = { kind: "read"; file_path?: string | null; source_context?: ToolSourceContext | null } | 
+export type ToolArguments = { kind: "read"; file_path?: string | null; source_context?: ToolSourceContext | null } | { kind: "readLints"; raw: JsonValue } |
 /**
  * Edit tool arguments.
- * 
+ *
  * `edits` is always a non-empty Vec. Single-file edits have exactly one entry;
  * multi-file edits (OpenCode `patch`, Codex multi-entry `changes` map) have N entries.
  */
@@ -180,11 +184,11 @@ export type QuestionData = { id: string; sessionId: string; jsonRpcRequestId?: n
 /**
  * Payload for usage telemetry session update (generic, not provider-specific).
  */
-export type UsageTelemetryData = { sessionId: string; eventId?: string | null; 
+export type UsageTelemetryData = { sessionId: string; eventId?: string | null;
 /**
  * Scope of the telemetry (e.g. "step", later "turn").
  */
-scope?: string; costUsd?: number | null; tokens?: UsageTelemetryTokens; sourceModelId?: string | null; timestampMs?: number | null; 
+scope?: string; costUsd?: number | null; tokens?: UsageTelemetryTokens; sourceModelId?: string | null; timestampMs?: number | null;
 /**
  * Context window size reported by the agent (e.g. from usage_update `size` field).
  */
@@ -194,6 +198,72 @@ contextWindowSize?: number | null }
  * Token counts for usage telemetry (generic, adapter-agnostic).
  */
 export type UsageTelemetryTokens = { total?: number | null; input?: number | null; output?: number | null; cacheRead?: number | null; cacheWrite?: number | null; reasoning?: number | null }
+
+/**
+ * Plan step status.
+ */
+export type PlanStepStatus = "pending" | "in_progress" | "completed" | "failed"
+
+/**
+ * A single step in a plan.
+ */
+export type PlanStep = { description: string; status: PlanStepStatus }
+
+/**
+ * Plan signal source.
+ */
+export type PlanSource = "deterministic" | "heuristic"
+
+/**
+ * Confidence level for a plan signal.
+ */
+export type PlanConfidence = "high" | "medium"
+
+/**
+ * Plan data with steps and optional current step index.
+ * Also supports streaming plan content from Edit tool writes.
+ */
+export type PlanData = { steps: PlanStep[]; currentStep?: number | null;
+/**
+ * Whether this payload currently represents an active plan.
+ */
+hasPlan?: boolean;
+/**
+ * Whether the plan content is still streaming (true) or complete (false).
+ */
+streaming?: boolean;
+/**
+ * The raw markdown content of the plan file (partial during streaming).
+ */
+content?: string | null;
+/**
+ * Normalized markdown content consumed by the frontend.
+ */
+contentMarkdown?: string | null;
+/**
+ * The file path where the plan is being written.
+ */
+filePath?: string | null;
+/**
+ * The plan title extracted from the first # heading.
+ */
+title?: string | null;
+/**
+ * Source quality of the signal.
+ */
+source?: PlanSource | null;
+/**
+ * Confidence of the signal.
+ */
+confidence?: PlanConfidence | null;
+/**
+ * Agent identifier that produced this plan.
+ */
+agentId?: string | null;
+/**
+ * Last update timestamp in milliseconds.
+ */
+updatedAt?: number | null }
 
 /**
  * Todo item status.
@@ -219,7 +289,7 @@ export type TranscriptEntryRole = "user" | "assistant" | "tool" | "error"
 
 export type TranscriptSegment = { kind: "text"; segmentId: string; text: string }
 
-export type TranscriptEntry = { entryId: string; role: TranscriptEntryRole; segments: TranscriptSegment[] }
+export type TranscriptEntry = { entryId: string; role: TranscriptEntryRole; segments: TranscriptSegment[]; attemptId?: string | null }
 
 export type TranscriptSnapshot = { revision: number; entries: TranscriptEntry[] }
 
@@ -229,7 +299,7 @@ export type TranscriptDelta = { eventSeq: number; sessionId: string; snapshotRev
 
 /**
  * Marker enum identifying the domain event kind.
- * 
+ *
  * Kept as a flat string enum for backward-compatible discrimination
  * in frontend subscribers (`event.kind === "..."` comparisons).
  * Typed payload data is carried in [`SessionDomainEvent::payload`].
@@ -238,7 +308,7 @@ export type SessionDomainEventKind = "session_identity_resolved" | "session_conn
 
 /**
  * Typed payload carried by a canonical domain event.
- * 
+ *
  * Each variant corresponds to a [`SessionDomainEventKind`] and carries the
  * structured data that downstream reducers and projections need.  Consumers
  * can switch on `event.kind` for quick discrimination and access the typed
@@ -248,22 +318,58 @@ export type SessionDomainEventPayload = { kind: "session_identity_resolved"; res
 
 /**
  * Canonical domain event envelope.
- * 
+ *
  * `kind` identifies the event type for quick string-based discrimination.
  * `payload` carries typed structured data — `None` only for events where
  * payloads are not yet wired at the emission site.
  */
 export type SessionDomainEvent = { event_id: string; seq: number; session_id: string; provider_session_id: string | null; occurred_at_ms: number; causation_id: string | null; kind: SessionDomainEventKind; payload?: SessionDomainEventPayload | null }
 
+/**
+ * Tool call location.
+ */
+export type ToolCallLocation = { path: string }
+
+/**
+ * Skill metadata for skill tool calls.
+ */
+export type SkillMeta = { description?: string | null; filePath?: string | null }
+
+/**
+ * Answered question data from toolUseResult field in JSONL.
+ * Stores both the questions and the user's answers.
+ */
+export type QuestionAnswer = {
+/**
+ * The questions that were asked
+ */
+questions: QuestionItem[];
+/**
+ * Map of question text to answer(s) - value is string for single-select, array for multi-select
+ */
+answers: Partial<{ [key in string]: JsonValue }> }
+
 export type SessionTurnState = "Idle" | "Running" | "Completed" | "Failed"
 
 export type SessionSnapshot = { session_id: string; agent_id: CanonicalAgentId | null; last_event_seq: number; turn_state: SessionTurnState; message_count: number; last_agent_message_id: string | null; active_tool_call_ids: string[]; completed_tool_call_ids: string[]; active_turn_failure?: TurnFailureSnapshot | null; last_terminal_turn_id?: string | null }
 
-export type OperationSnapshot = { id: string; session_id: string; tool_call_id: string; name: string; kind: ToolKind | null; status: ToolCallStatus; title: string | null; arguments: ToolArguments; progressive_arguments: ToolArguments | null; result: JsonValue | null; command: string | null; normalized_todos: TodoItem[] | null; parent_tool_call_id: string | null; parent_operation_id: string | null; child_tool_call_ids: string[]; child_operation_ids: string[] }
+export type OperationState = "pending" | "running" | "blocked" | "completed" | "failed" | "cancelled" | "degraded"
+
+export type OperationDegradationCode = "impossible_transition" | "missing_evidence" | "absent_from_history" | "classification_failure" | "invalid_provenance_key"
+
+export type OperationDegradationReason = { code: OperationDegradationCode; detail?: string | null }
+
+export type OperationSourceLink = { kind: "transcript_linked"; entry_id: string } | { kind: "synthetic"; reason: string } | { kind: "degraded"; reason: OperationDegradationReason }
+
+export type OperationSnapshot = { id: string; session_id: string; tool_call_id: string; name: string; kind: ToolKind | null;
+/**
+ * Provider-layer provenance status. Use `operation_state` for canonical state decisions.
+ */
+provider_status: ToolCallStatus; title: string | null; arguments: ToolArguments; progressive_arguments: ToolArguments | null; result: JsonValue | null; command: string | null; normalized_todos: TodoItem[] | null; parent_tool_call_id: string | null; parent_operation_id: string | null; child_tool_call_ids: string[]; child_operation_ids: string[]; operation_provenance_key?: string | null; operation_state: OperationState; locations?: ToolCallLocation[] | null; skill_meta?: SkillMeta | null; normalized_questions?: QuestionItem[] | null; question_answer?: QuestionAnswer | null; awaiting_plan_approval?: boolean; plan_approval_request_id?: number | null; started_at_ms?: number | null; completed_at_ms?: number | null; source_link: OperationSourceLink; degradation_reason?: OperationDegradationReason | null }
 
 export type InteractionKind = "Permission" | "Question" | "PlanApproval"
 
-export type InteractionState = "Pending" | "Approved" | "Rejected" | "Answered"
+export type InteractionState = "Pending" | "Approved" | "Rejected" | "Answered" | "Unresolved"
 
 export type PlanApprovalSource = "CreatePlan" | "ExitPlanMode"
 
@@ -271,7 +377,7 @@ export type InteractionPayload = { Permission: PermissionData } | { Question: Qu
 
 export type InteractionResponse = { kind: "permission"; accepted: boolean; option_id?: string | null; reply?: string | null } | { kind: "question"; answers: JsonValue } | { kind: "plan_approval"; approved: boolean }
 
-export type InteractionSnapshot = { id: string; session_id: string; kind: InteractionKind; state: InteractionState; json_rpc_request_id: number | null; reply_handler: InteractionReplyHandler | null; tool_reference: ToolReference | null; responded_at_event_seq: number | null; response: InteractionResponse | null; payload: InteractionPayload }
+export type InteractionSnapshot = { id: string; session_id: string; kind: InteractionKind; state: InteractionState; json_rpc_request_id: number | null; reply_handler: InteractionReplyHandler | null; tool_reference: ToolReference | null; responded_at_event_seq: number | null; response: InteractionResponse | null; payload: InteractionPayload; canonical_operation_id?: string | null }
 
 /**
  * Turn error severity.
@@ -285,17 +391,19 @@ export type TurnErrorSource = "json_rpc" | "transport" | "process" | "unknown"
 
 export type TurnFailureSnapshot = { turn_id: string | null; message: string; code?: string | null; kind: TurnErrorKind; source: TurnErrorSource }
 
-export type CapabilityPreviewState = "canonical" | "pending" | "failed" | "partial" | "stale"
+export type LifecycleStatus = "reserved" | "activating" | "ready" | "reconnecting" | "detached" | "failed" | "archived"
 
-export type LifecycleStatus = "reserved" | "activating" | "reconnecting" | "ready" | "detached" | "failed" | "archived"
+export type DetachedReason = "restoredRequiresAttach" | "reconnectExhausted" | "abandonedInFlight" | "legacyAmbiguousRestore" | "closedByClient"
 
-export type DetachedReason = "userRequested" | "transportClosed" | "providerEnded" | "projectContextLost" | "reconnectRequired" | "legacyAmbiguousRestore"
+export type FailureReason = "deterministicRestoreFault" | "activationFailed" | "resumeFailed" | "sessionGoneUpstream" | "providerSessionMismatch" | "corruptedPersistedState" | "explicitErrorHandlingRequired" | "legacyIrrecoverable"
 
-export type FailureReason = "startupFailed" | "activationFailed" | "rpcError" | "providerMisconfigured" | "explicitErrorHandlingRequired"
+export type LifecycleState = { status: LifecycleStatus; detachedReason?: DetachedReason | null; failureReason?: FailureReason | null; errorMessage?: string | null }
 
-export type LifecycleState = { status: LifecycleStatus; active_session_id?: string | null; last_provider_session_id?: string | null; detached_reason?: DetachedReason | null; failure_reason?: FailureReason | null; error_message?: string | null; last_connected_at_ms?: number | null; last_ready_at_ms?: number | null; last_disconnected_at_ms?: number | null }
-
-export type LifecycleCheckpoint = { schema_version: number; graph_revision: number; lifecycle: LifecycleState; capabilities: SessionGraphCapabilities }
+export type LifecycleCheckpoint = {
+/**
+ * Older persisted checkpoints may omit this field; treat as current version for migration.
+ */
+schemaVersion?: number; graphRevision: number; lifecycle: LifecycleState; capabilities: SessionGraphCapabilities }
 
 export type SessionProjectionSnapshot = { session: SessionSnapshot | null; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; runtime?: LifecycleCheckpoint | null }
 
@@ -303,45 +411,51 @@ export type SessionProjectionSnapshot = { session: SessionSnapshot | null; opera
  * Payload for the `error` outcome — persisted state was found but could not
  * be loaded or proven consistent.
  */
-export type SessionOpenError = { requestedSessionId: string; message: string }
+export type SessionOpenErrorReason = "parseFailure" | "providerUnavailable" | "providerHistoryMissing" | "providerUnparseable" | "providerValidationFailed" | "staleLineageRecovery" | "internal"
+
+/**
+ * Payload for the `error` outcome — persisted state was found but could not
+ * be loaded or proven consistent.
+ */
+export type SessionOpenError = { requestedSessionId: string; message: string; reason: SessionOpenErrorReason; retryable: boolean }
 
 /**
  * Full payload for a `found` outcome.
  */
-export type SessionOpenFound = { 
+export type SessionOpenFound = {
 /**
  * The ID supplied by the caller (may be a provider-side alias).
  */
-requestedSessionId: string; 
+requestedSessionId: string;
 /**
  * The Acepe-local canonical session identifier.
  */
-canonicalSessionId: string; 
+canonicalSessionId: string;
 /**
  * `true` when `requested_session_id` differs from `canonical_session_id`
  * (i.e. the caller supplied a provider-side alias that was resolved to a
  * different canonical ID).
  */
-isAlias: boolean; 
+isAlias: boolean;
 /**
  * Proven journal cutoff.  `0` only when no journal events exist yet.
  */
-lastEventSeq: number; 
+lastEventSeq: number;
 /**
  * Canonical graph frontier at the proven cutoff.
- * 
+ *
  * During the compatibility window this may still be seeded from persisted
  * state that mirrors `last_event_seq`, but open/materialization paths must
  * carry it explicitly instead of re-deriving graph lineage from delivery.
  */
-graphRevision: number; 
+graphRevision: number;
 /**
  * Single-use attach token (UUID string).  All hub events for this session
  * published after this token is armed are buffered in the `event_hub`
  * reservation until the token is claimed (Unit 3) or expires after 30 s
  * of inactivity.
  */
-openToken: string; agentId: CanonicalAgentId; projectPath: string; worktreePath: string | null; sourcePath: string | null; transcriptSnapshot: TranscriptSnapshot; sessionTitle: string; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; turnState: SessionTurnState; messageCount: number; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null }
+openToken: string; agentId: CanonicalAgentId; projectPath: string; worktreePath: string | null; sourcePath: string | null; transcriptSnapshot: TranscriptSnapshot; sessionTitle: string; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; turnState: SessionTurnState; messageCount: number; lastAgentMessageId?: string | null; lifecycle: SessionGraphLifecycle; capabilities: SessionGraphCapabilities; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null }
 
 /**
  * Payload for the `missing` outcome — no persisted content was found for the
@@ -351,15 +465,15 @@ export type SessionOpenMissing = { requestedSessionId: string }
 
 /**
  * The unified outcome of a session-open request.
- * 
+ *
  * Returned by every session entry point (new, resume, history open).  The
  * frontend MUST NOT fetch projection state separately after receiving a
  * `Found` result; everything needed before live connect begins is included.
  */
-export type SessionOpenResult = 
+export type SessionOpenResult =
 /**
  * Session was found; all pre-connect state is fully populated.
- * 
+ *
  * `Box`ed to keep the enum size bounded — `SessionOpenFound` carries
  * the full projection snapshot, which is significantly larger than the
  * `Missing` and `Error` payloads.
@@ -368,19 +482,31 @@ export type SessionOpenResult =
 
 export type SessionGraphRevision = { graphRevision: number; transcriptRevision: number; lastEventSeq: number }
 
-export type SessionGraphLifecycleStatus = "idle" | "connecting" | "ready" | "error"
+export type SessionRecommendedAction = "none" | "wait" | "send" | "resume" | "retry" | "archive"
 
-export type SessionGraphLifecycle = { status: SessionGraphLifecycleStatus; errorMessage?: string | null; canReconnect: boolean }
+export type SessionRecoveryPhase = "none" | "activating" | "reconnecting" | "detached" | "failed" | "archived"
+
+export type SessionGraphActionability = { canSend: boolean; canResume: boolean; canRetry: boolean; canArchive: boolean; canConfigure: boolean; recommendedAction: SessionRecommendedAction; recoveryPhase: SessionRecoveryPhase; compactStatus: LifecycleStatus }
+
+export type SessionGraphLifecycle = { status: LifecycleStatus; detachedReason?: DetachedReason | null; failureReason?: FailureReason | null; errorMessage?: string | null; actionability: SessionGraphActionability }
 
 export type SessionGraphCapabilities = { models?: SessionModelState | null; modes?: SessionModes | null; availableCommands?: AvailableCommand[]; configOptions?: ConfigOptionData[]; autonomousEnabled?: boolean }
 
-export type SessionStateGraph = { requestedSessionId: string; canonicalSessionId: string; isAlias: boolean; agentId: CanonicalAgentId; projectPath: string; worktreePath?: string | null; sourcePath?: string | null; revision: SessionGraphRevision; transcriptSnapshot: TranscriptSnapshot; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; turnState: SessionTurnState; messageCount: number; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null; lifecycle: SessionGraphLifecycle; capabilities: SessionGraphCapabilities }
+export type CapabilityPreviewState = "canonical" | "pending" | "failed" | "partial" | "stale"
+
+export type SessionGraphActivityKind = "awaiting_model" | "running_operation" | "waiting_for_user" | "paused" | "error" | "idle"
+
+export type SessionGraphActivity = { kind: SessionGraphActivityKind; activeOperationCount: number; activeSubagentCount: number; dominantOperationId?: string | null; blockingInteractionId?: string | null }
+
+export type SessionStateGraph = { requestedSessionId: string; canonicalSessionId: string; isAlias: boolean; agentId: CanonicalAgentId; projectPath: string; worktreePath?: string | null; sourcePath?: string | null; revision: SessionGraphRevision; transcriptSnapshot: TranscriptSnapshot; operations: OperationSnapshot[]; interactions: InteractionSnapshot[]; turnState: SessionTurnState; messageCount: number; lastAgentMessageId?: string | null; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null; lifecycle: SessionGraphLifecycle; activity: SessionGraphActivity; capabilities: SessionGraphCapabilities }
 
 export type SessionStateSnapshotMaterialization = { graph: SessionStateGraph }
 
-export type SessionStateDelta = { fromRevision: SessionGraphRevision; toRevision: SessionGraphRevision; transcriptOperations: TranscriptDeltaOperation[]; changedFields?: string[] }
+export type SessionStateDelta = { fromRevision: SessionGraphRevision; toRevision: SessionGraphRevision; activity: SessionGraphActivity; turnState: SessionTurnState; activeTurnFailure?: TurnFailureSnapshot | null; lastTerminalTurnId?: string | null; lastAgentMessageId?: string | null; transcriptOperations: TranscriptDeltaOperation[]; operationPatches: OperationSnapshot[]; interactionPatches: InteractionSnapshot[]; changedFields?: string[] }
 
-export type SessionStatePayload = { kind: "snapshot"; graph: SessionStateGraph } | { kind: "delta"; delta: SessionStateDelta } | { kind: "lifecycle"; lifecycle: SessionGraphLifecycle; revision: SessionGraphRevision } | { kind: "capabilities"; capabilities: SessionGraphCapabilities; revision: SessionGraphRevision; pending_mutation_id?: string | null; preview_state: CapabilityPreviewState } | { kind: "telemetry"; telemetry: UsageTelemetryData; revision: SessionGraphRevision }
+export type AssistantTextDeltaPayload = { turnId: string; rowId: string; charOffset: number; deltaText: string; producedAtMonotonicMs: number; revision: number }
+
+export type SessionStatePayload = { kind: "snapshot"; graph: SessionStateGraph } | { kind: "delta"; delta: SessionStateDelta } | { kind: "lifecycle"; lifecycle: SessionGraphLifecycle; revision: SessionGraphRevision } | { kind: "capabilities"; capabilities: SessionGraphCapabilities; revision: SessionGraphRevision; pending_mutation_id?: string | null; preview_state: CapabilityPreviewState } | { kind: "telemetry"; telemetry: UsageTelemetryData; revision: SessionGraphRevision } | { kind: "plan"; plan: PlanData; revision: SessionGraphRevision } | { kind: "assistantTextDelta"; delta: AssistantTextDeltaPayload }
 
 export type SessionStateEnvelope = { sessionId: string; graphRevision: number; lastEventSeq: number; payload: SessionStatePayload }
 
@@ -391,6 +517,8 @@ export type ProviderVariantGroup = "plain" | "reasoningEffort";
 
 export type PreconnectionSlashMode = "startupGlobal" | "projectScoped" | "unsupported";
 
+export type PreconnectionCapabilityMode = "startupGlobal" | "projectScoped" | "unsupported";
+
 export type ProviderMetadataProjection = {
 	providerBrand: ProviderBrand;
 	displayName: string;
@@ -400,7 +528,10 @@ export type ProviderMetadataProjection = {
 	defaultAlias?: string;
 	reasoningEffortSupport: boolean;
 	preconnectionSlashMode: PreconnectionSlashMode;
+	preconnectionCapabilityMode: PreconnectionCapabilityMode;
 };
+
+export type FrontendProviderProjection = ProviderMetadataProjection;
 
 export type ModelsForDisplayWithProvider = ModelsForDisplay;
 
@@ -414,6 +545,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: "default",
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "startupGlobal",
+		preconnectionCapabilityMode: "startupGlobal",
 	},
 	copilot: {
 		providerBrand: "copilot",
@@ -424,6 +556,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "projectScoped",
+		preconnectionCapabilityMode: "projectScoped",
 	},
 	cursor: {
 		providerBrand: "cursor",
@@ -434,6 +567,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: "auto",
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "startupGlobal",
+		preconnectionCapabilityMode: "startupGlobal",
 	},
 	opencode: {
 		providerBrand: "opencode",
@@ -444,6 +578,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "projectScoped",
+		preconnectionCapabilityMode: "projectScoped",
 	},
 	codex: {
 		providerBrand: "codex",
@@ -454,6 +589,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: true,
 		preconnectionSlashMode: "startupGlobal",
+		preconnectionCapabilityMode: "startupGlobal",
 	},
 };
 
@@ -469,6 +605,8 @@ function cloneProviderMetadataProjection(
 		defaultAlias: providerMetadata.defaultAlias,
 		reasoningEffortSupport: providerMetadata.reasoningEffortSupport,
 		preconnectionSlashMode: providerMetadata.preconnectionSlashMode,
+		preconnectionCapabilityMode:
+			providerMetadata.preconnectionCapabilityMode ?? providerMetadata.preconnectionSlashMode,
 	};
 }
 
@@ -495,6 +633,7 @@ export function resolveProviderMetadataProjection(
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "unsupported",
+		preconnectionCapabilityMode: "unsupported",
 	};
 }
 
@@ -535,3 +674,4 @@ export function normalizeModelsForDisplay(
 		},
 	};
 }
+

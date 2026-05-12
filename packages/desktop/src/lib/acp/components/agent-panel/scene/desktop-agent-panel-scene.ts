@@ -11,6 +11,10 @@ import {
 	type AgentPanelSessionStatus,
 	type AgentPanelSidebarModel,
 	type AgentPanelStripModel,
+	type AgentToolEditDiffEntry,
+	type AgentToolEntry,
+	type AgentToolPresentationState,
+	type AgentToolStatus,
 } from "@acepe/ui/agent-panel";
 import type { ContentBlock, SessionPlanResponse } from "../../../../services/claude-history.js";
 import type { SessionStatus } from "../../../application/dto/session.js";
@@ -25,12 +29,14 @@ import type {
 	NormalizedSearchResult,
 	NormalizedWebSearchResult,
 } from "../../../types/normalized-tool-result.js";
+import type { JsonValue } from "../../../../services/converted-session-types.js";
 import type { ToolCall } from "../../../types/tool-call.js";
 import type { ToolKind } from "../../../types/tool-kind.js";
+import { calculateDiffStats, getFileName } from "../../../utils/file-utils.js";
 import { stripAnsiCodes } from "../../../utils/ansi-utils.js";
 import { extractSkillCallInput } from "../../../utils/extract-skill-call-input.js";
-import { resolveToolRouteKey } from "../../tool-calls/resolve-tool-operation.js";
-import type { VirtualizedDisplayEntry } from "../logic/virtualized-entry-display.js";
+import { resolveToolCallEditDiffs } from "../../../utils/tool-call-edit/logic/resolve-tool-call-edit-diffs.js";
+import type { SceneDisplayRow } from "../logic/scene-display-rows.js";
 
 export interface DesktopAgentPanelHeaderInput {
 	title: string;
@@ -129,7 +135,11 @@ function mapToolStatus(
 	turnState: TurnState | undefined,
 	parentCompleted: boolean,
 	isActiveToolCall: boolean
-): "pending" | "running" | "done" | "error" {
+): AgentToolStatus {
+	if (toolCall.presentationStatus !== undefined) {
+		return toolCall.presentationStatus;
+	}
+
 	if (toolCall.status === "failed") {
 		return "error";
 	}
@@ -152,6 +162,14 @@ function mapToolStatus(
 	}
 
 	return "pending";
+}
+
+interface MapToolCallEntryOptions {
+	readonly canonicalStatus?: AgentToolStatus;
+	readonly presentationState?: AgentToolPresentationState;
+	readonly degradedReason?: string | null;
+	readonly taskChildren?: AgentPanelSceneEntryModel[];
+	readonly includeDiagnosticDetails?: boolean;
 }
 
 function getActiveTailToolCallId(
@@ -219,6 +237,7 @@ function normalizeToolKind(kind: ToolKind | null | undefined) {
 
 	if (
 		kind === "read" ||
+		kind === "read_lints" ||
 		kind === "edit" ||
 		kind === "delete" ||
 		kind === "execute" ||
@@ -239,6 +258,7 @@ function normalizeToolKind(kind: ToolKind | null | undefined) {
 function getDefaultToolTitle(kind: ToolKind, turnState: TurnState | undefined): string {
 	if (kind === "execute") return "Run";
 	if (kind === "read") return "Read";
+	if (kind === "read_lints") return "Read lints";
 	if (kind === "edit") return "Edit";
 	if (kind === "delete") return "Delete";
 	if (kind === "search" || kind === "glob") return "Search";
@@ -268,7 +288,7 @@ function resolveToolTitle(
 	turnState: TurnState | undefined
 ): string {
 	const semanticTitle =
-		kind === "other"
+		kind === "other" || kind === "unclassified"
 			? formatOtherToolName(toolCall.name)
 			: getDefaultToolTitle(kind, turnState) || toolCall.name;
 	const rawTitle = toolCall.title?.trim();
@@ -288,7 +308,63 @@ function resolveToolTitle(
 	return rawTitle;
 }
 
+function getJsonObject(value: JsonValue | null | undefined): { [key: string]: JsonValue } | null {
+	if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) {
+		return null;
+	}
+
+	return value;
+}
+
+function getJsonScalarLabel(value: JsonValue | undefined): string | null {
+	if (value === undefined || value === null) {
+		return null;
+	}
+
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		return trimmed.length > 0 ? trimmed : null;
+	}
+
+	if (typeof value === "number" || typeof value === "boolean") {
+		return String(value);
+	}
+
+	return null;
+}
+
+function getWriteBashSubtitle(toolCall: ToolCall): string | undefined {
+	const rawToolName =
+		toolCall.arguments.kind === "unclassified" ? toolCall.arguments.raw_name : toolCall.name;
+	if (toolCall.name !== "write_bash" && rawToolName !== "write_bash") {
+		return undefined;
+	}
+
+	const rawInput = getJsonObject(toolCall.rawInput);
+	const shellId = getJsonScalarLabel(rawInput?.shellId);
+	const input = getJsonScalarLabel(rawInput?.input);
+
+	if (shellId && input) {
+		return `Shell ${shellId}: ${input}`;
+	}
+
+	if (input) {
+		return `Input: ${input}`;
+	}
+
+	if (shellId) {
+		return `Shell ${shellId}`;
+	}
+
+	return undefined;
+}
+
 function getToolSubtitle(toolCall: ToolCall): string | undefined {
+	const writeBashSubtitle = getWriteBashSubtitle(toolCall);
+	if (writeBashSubtitle) {
+		return writeBashSubtitle;
+	}
+
 	if (toolCall.arguments.kind === "execute") {
 		return toolCall.arguments.command ?? undefined;
 	}
@@ -536,6 +612,16 @@ function mapTaskChildren(
 function mapSearchPayload(toolCall: ToolCall): {
 	searchFiles?: string[];
 	searchResultCount?: number;
+	searchMode?: "content" | "files" | "count";
+	searchNumFiles?: number;
+	searchNumMatches?: number;
+	searchMatches?: {
+		filePath: string;
+		fileName: string;
+		lineNumber: number;
+		content: string;
+		isMatch: boolean;
+	}[];
 } {
 	if (toolCall.arguments.kind === "search") {
 		const normalizedResult = isSearchNormalizedResult(toolCall.normalizedResult)
@@ -551,6 +637,16 @@ function mapSearchPayload(toolCall: ToolCall): {
 				normalizedResult.mode === "content"
 					? (normalizedResult.numMatches ?? normalizedResult.numFiles)
 					: normalizedResult.files.length,
+			searchMode: normalizedResult.mode,
+			searchNumFiles: normalizedResult.numFiles,
+			searchNumMatches: normalizedResult.numMatches,
+			searchMatches: normalizedResult.matches.map((match) => ({
+				filePath: match.filePath,
+				fileName: match.fileName,
+				lineNumber: match.lineNumber,
+				content: match.content,
+				isMatch: match.isMatch,
+			})),
 		};
 	}
 
@@ -657,8 +753,7 @@ function mapLintDiagnostics(toolCall: ToolCall):
 			severity?: string | null;
 	  }[]
 	| undefined {
-	const resolvedKind = toolCall.kind ?? "other";
-	if (resolveToolRouteKey(toolCall, resolvedKind) !== "read_lints") {
+	if (toolCall.kind !== "read_lints") {
 		return undefined;
 	}
 
@@ -711,11 +806,51 @@ function mapTaskResultText(toolCall: ToolCall): string | null {
 	return typeof toolCall.result === "string" ? toolCall.result : null;
 }
 
+function normalizeNullableFilePath(value: string | null | undefined): string | null {
+	if (value === null || value === undefined) {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function mapEditDiffEntriesForToolCall(toolCall: ToolCall): readonly AgentToolEditDiffEntry[] {
+	const resolved = resolveToolCallEditDiffs(
+		toolCall.arguments,
+		toolCall.progressiveArguments ?? null
+	);
+	const locationPath = normalizeNullableFilePath(toolCall.locations?.[0]?.path ?? null);
+
+	return resolved.map((diff, index): AgentToolEditDiffEntry => {
+		const filePath =
+			normalizeNullableFilePath(diff.filePath) ??
+			(index === 0 ? locationPath : null);
+		const oldString = diff.oldString ?? null;
+		const newString = diff.newString ?? null;
+		const stats = calculateDiffStats({
+			oldString: oldString ?? "",
+			newString: newString ?? "",
+		});
+		const additions = stats?.added ?? 0;
+		const deletions = stats?.removed ?? 0;
+
+		return {
+			filePath,
+			fileName: filePath ? getFileName(filePath) : null,
+			additions,
+			deletions,
+			oldString,
+			newString,
+		};
+	});
+}
+
 function mapToolCallEntry(
 	toolCall: ToolCall,
 	turnState: TurnState | undefined,
 	parentCompleted: boolean,
-	activeToolCallId: string | null
+	activeToolCallId: string | null,
+	options: MapToolCallEntryOptions = {}
 ): AgentPanelSceneEntryModel {
 	const kind = toolCall.kind ?? "other";
 	const executeResult =
@@ -727,14 +862,13 @@ function mapToolCallEntry(
 	const webSearchPayload = mapWebSearchPayload(toolCall);
 	const browserPayload = mapBrowserPayload(toolCall);
 	const skillPayload = extractSkillCallInput(toolCall.arguments);
-	const status = mapToolStatus(
-		toolCall,
-		turnState,
-		parentCompleted,
-		toolCall.id === activeToolCallId
-	);
+	const status =
+		options.canonicalStatus ??
+		mapToolStatus(toolCall, turnState, parentCompleted, toolCall.id === activeToolCallId);
+	const diagnosticDetails =
+		options.includeDiagnosticDetails === false ? null : serializeOtherToolDetails(toolCall);
 
-	return {
+	const entry: AgentToolEntry = {
 		id: toolCall.id,
 		type: "tool_call",
 		kind: normalizeToolKind(kind),
@@ -749,7 +883,7 @@ function mapToolCallEntry(
 								? toolCall.normalizedResult.rawText
 								: toolCall.result
 						)
-					: serializeOtherToolDetails(toolCall),
+					: diagnosticDetails,
 		filePath: getToolFilePath(toolCall),
 		sourceExcerpt: getReadSourceExcerpt(toolCall),
 		sourceRangeLabel: getReadSourceRangeLabel(toolCall),
@@ -768,6 +902,10 @@ function mapToolCallEntry(
 				: undefined,
 		searchFiles: searchPayload.searchFiles,
 		searchResultCount: searchPayload.searchResultCount,
+		searchMode: searchPayload.searchMode,
+		searchNumFiles: searchPayload.searchNumFiles,
+		searchNumMatches: searchPayload.searchNumMatches,
+		searchMatches: searchPayload.searchMatches,
 		url: toolCall.arguments.kind === "fetch" ? (toolCall.arguments.url ?? null) : null,
 		resultText: mapFetchResultText(toolCall),
 		webSearchLinks: webSearchPayload.webSearchLinks,
@@ -778,11 +916,37 @@ function mapToolCallEntry(
 		taskDescription: mapTaskDescription(toolCall),
 		taskPrompt: toolCall.arguments.kind === "think" ? (toolCall.arguments.prompt ?? null) : null,
 		taskResultText: mapTaskResultText(toolCall),
-		taskChildren: mapTaskChildren(toolCall.taskChildren, turnState, status === "done"),
+		taskChildren:
+			options.taskChildren !== undefined
+				? Array.from(options.taskChildren)
+				: mapTaskChildren(toolCall.taskChildren, turnState, status === "done"),
 		todos: mapTodos(toolCall),
 		question: mapQuestion(toolCall),
 		lintDiagnostics: mapLintDiagnostics(toolCall),
 	};
+
+	if (normalizeToolKind(kind) === "edit") {
+		entry.editDiffs = mapEditDiffEntriesForToolCall(toolCall);
+	}
+
+	if (options.presentationState !== undefined) {
+		entry.presentationState = options.presentationState;
+	}
+	if (options.degradedReason !== undefined) {
+		entry.degradedReason = options.degradedReason;
+	}
+
+	return entry;
+}
+
+export function mapToolCallToSceneEntry(
+	toolCall: ToolCall,
+	turnState: TurnState | undefined,
+	parentCompleted: boolean = false,
+	activeToolCallId: string | null = null,
+	options: MapToolCallEntryOptions = {}
+): AgentPanelSceneEntryModel {
+	return mapToolCallEntry(toolCall, turnState, parentCompleted, activeToolCallId, options);
 }
 
 function contentBlockToPlainText(block: ContentBlock): string {
@@ -875,13 +1039,16 @@ export function mapSessionEntriesToConversationModel(
 export function mapSessionEntryToConversationEntry(
 	entry: SessionEntry,
 	turnState: TurnState | undefined,
-	activeToolCallId: string | null = null
+	activeToolCallId: string | null = null,
+	options?: { isOptimistic?: boolean }
 ): AgentPanelSceneEntryModel {
 	if (entry.type === "user") {
 		return {
 			id: entry.id,
 			type: "user",
 			text: contentBlocksToText(entry.message.chunks),
+			isOptimistic: options?.isOptimistic === true ? true : undefined,
+			timestampMs: entry.timestamp?.getTime(),
 		};
 	}
 
@@ -891,11 +1058,12 @@ export function mapSessionEntryToConversationEntry(
 			type: "assistant",
 			markdown: extractAssistantMarkdown(entry),
 			isStreaming: entry.isStreaming,
+			timestampMs: entry.timestamp?.getTime(),
 		};
 	}
 
 	if (entry.type === "tool_call") {
-		return mapToolCallEntry(entry.message, turnState, false, activeToolCallId);
+		return mapToolCallToSceneEntry(entry.message, turnState, false, activeToolCallId);
 	}
 
 	if (entry.type === "ask") {
@@ -932,29 +1100,56 @@ export function mapSessionEntryToConversationEntry(
 }
 
 export function mapVirtualizedDisplayEntryToConversationEntry(
-	entry: VirtualizedDisplayEntry,
+	entry: SceneDisplayRow,
 	turnState: TurnState | undefined,
 	isStreamingAssistant: boolean,
 	activeToolCallId: string | null = null,
 	nowMs: number = Date.now()
 ): AgentPanelSceneEntryModel {
 	if (entry.type === "thinking") {
-		return {
+		const thinkingEntry: AgentPanelSceneEntryModel = {
 			id: entry.id,
 			type: "thinking",
 			durationMs:
 				entry.startedAtMs === null || entry.startedAtMs === undefined
 					? null
 					: Math.max(0, nowMs - entry.startedAtMs),
+			startedAtMs: entry.startedAtMs,
 		};
+		if (entry.label !== null && entry.label !== undefined) {
+			return {
+				id: thinkingEntry.id,
+				type: thinkingEntry.type,
+				durationMs: thinkingEntry.durationMs,
+				startedAtMs: thinkingEntry.startedAtMs,
+				label: entry.label,
+			};
+		}
+		return thinkingEntry;
 	}
 
 	if (entry.type === "assistant_merged") {
 		return {
 			id: entry.key,
 			type: "assistant",
-			markdown: contentBlocksToText(entry.message.chunks.map((chunk) => chunk.block)),
+			markdown: entry.markdown,
+			message: {
+				chunks: entry.message.chunks,
+				model: entry.message.model,
+				displayModel: entry.message.displayModel,
+				receivedAt: entry.message.receivedAt,
+				thinkingDurationMs: entry.message.thinkingDurationMs,
+			},
 			isStreaming: isStreamingAssistant || entry.isStreaming,
+			tokenRevealCss: entry.tokenRevealCss,
+			timestampMs: entry.timestamp?.getTime(),
+		};
+	}
+
+	if (entry.type === "missing") {
+		return {
+			id: entry.id,
+			type: "missing",
 		};
 	}
 
@@ -965,6 +1160,8 @@ export function mapVirtualizedDisplayEntryToConversationEntry(
 			type: mapped.type,
 			markdown: mapped.markdown,
 			isStreaming: isStreamingAssistant,
+			tokenRevealCss: mapped.tokenRevealCss,
+			timestampMs: mapped.timestampMs,
 		};
 	}
 

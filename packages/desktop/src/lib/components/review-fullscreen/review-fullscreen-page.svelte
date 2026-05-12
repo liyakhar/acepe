@@ -1,7 +1,7 @@
 <script lang="ts">
 import { IconX } from "@tabler/icons-svelte";
 import AgentPanelReviewContent from "$lib/acp/components/agent-panel/components/agent-panel-review-content.svelte";
-import { aggregateFileEdits } from "$lib/acp/components/modified-files/logic/aggregate-file-edits.js";
+import { aggregateFileEditsFromToolCalls } from "$lib/acp/components/modified-files/logic/aggregate-file-edits.js";
 import { getSessionStore } from "$lib/acp/store/session-store.svelte.js";
 import { Button } from "$lib/components/ui/button/index.js";
 interface Props {
@@ -14,9 +14,10 @@ interface Props {
 let { sessionId, fileIndex, onClose, onFileIndexChange }: Props = $props();
 
 const sessionStore = getSessionStore();
-const entries = $derived(sessionStore.getEntries(sessionId));
+const operationStore = sessionStore.getOperationStore();
+const toolCalls = $derived(operationStore.getSessionToolCalls(sessionId));
 const identity = $derived(sessionStore.getSessionIdentity(sessionId));
-const modifiedFilesState = $derived.by(() => aggregateFileEdits(entries));
+const modifiedFilesState = $derived.by(() => aggregateFileEditsFromToolCalls(toolCalls));
 const projectPath = $derived(identity?.projectPath ?? null);
 
 const hasModifications = $derived(modifiedFilesState.fileCount > 0);

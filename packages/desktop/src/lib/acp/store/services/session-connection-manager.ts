@@ -23,8 +23,14 @@ import type {
 	SessionOpenResult,
 } from "../../../services/acp-types.js";
 import { tauriClient } from "../../../utils/tauri-client.js";
+import { TauriCommandError } from "../../../utils/tauri-client/invoke.js";
 import type { AppError } from "../../errors/app-error.js";
-import { AgentError, ConnectionError, SessionNotFoundError } from "../../errors/app-error.js";
+import {
+	AgentError,
+	ConnectionError,
+	CreationFailureError,
+	SessionNotFoundError,
+} from "../../errors/app-error.js";
 import type { ModeType } from "../../types/agent-model-preferences.js";
 import { CanonicalModeId } from "../../types/canonical-mode-id.js";
 import { createLogger } from "../../utils/logger.js";
@@ -35,14 +41,13 @@ import type {
 	ConnectionCompleteData,
 	SessionEventService,
 } from "../session-event-service.svelte.js";
-import type { Mode, Model, SessionCold } from "../types.js";
+import type { Mode, Model, SessionCapabilities, SessionCold } from "../types.js";
 import type {
-	ICapabilitiesManager,
 	IConnectionManager,
 	IEntryManager,
-	IHotStateManager,
 	ISessionStateReader,
 	ISessionStateWriter,
+	ITransientProjectionManager,
 } from "./interfaces/index.js";
 
 const logger = createLogger({ id: "session-connection-manager", name: "SessionConnectionManager" });
@@ -62,10 +67,23 @@ interface ConnectSessionOptions {
 	openToken?: string;
 }
 
-export interface CreatedSessionResult {
+export interface CreatedReadySessionResult {
+	readonly kind: "ready";
 	readonly session: SessionCold;
 	readonly sessionOpen: SessionOpenResult | null;
 }
+
+export interface CreatedPendingSessionResult {
+	readonly kind: "pending";
+	readonly sessionId: string;
+	readonly creationAttemptId: string | null;
+	readonly projectPath: string;
+	readonly agentId: string;
+	readonly title: string | null;
+	readonly worktreePath: string | null;
+}
+
+export type CreatedSessionResult = CreatedReadySessionResult | CreatedPendingSessionResult;
 
 type ProviderAwareSessionModelState = AcpSessionModelState & {
 	readonly providerMetadata?: ProviderMetadataProjection | null;
@@ -82,6 +100,43 @@ function getProviderAwareSessionModelState(
 	return modelState as ProviderAwareSessionModelState;
 }
 
+function canSendFromCanonical(reader: ISessionStateReader, sessionId: string): boolean {
+	return reader.getSessionCanSend?.(sessionId) === true;
+}
+
+function canonicalCurrentModeId(reader: ISessionStateReader, sessionId: string): string | null {
+	return reader.getSessionCurrentModeId?.(sessionId) ?? null;
+}
+
+function canonicalAutonomousEnabled(reader: ISessionStateReader, sessionId: string): boolean {
+	return reader.getSessionAutonomousEnabled?.(sessionId) ?? false;
+}
+
+function canonicalCapabilities(
+	reader: ISessionStateReader,
+	sessionId: string
+): SessionCapabilities {
+	return reader.getSessionCapabilities?.(sessionId) ?? {
+		availableModes: [],
+		availableModels: [],
+		availableCommands: [],
+		revision: null,
+		pendingMutationId: null,
+		previewState: undefined,
+		modelsDisplay: undefined,
+		providerMetadata: undefined,
+	};
+}
+
+function canonicalWireOpen(reader: ISessionStateReader, sessionId: string): boolean {
+	const lifecycleStatus = reader.getSessionLifecycleStatus?.(sessionId) ?? null;
+	return (
+		lifecycleStatus === "ready" ||
+		lifecycleStatus === "activating" ||
+		lifecycleStatus === "reconnecting"
+	);
+}
+
 /**
  * Manager for session connection lifecycle operations.
  */
@@ -93,8 +148,7 @@ export class SessionConnectionManager {
 	constructor(
 		private readonly stateReader: ISessionStateReader,
 		private readonly stateWriter: ISessionStateWriter,
-		private readonly hotStateManager: IHotStateManager,
-		private readonly capabilitiesManager: ICapabilitiesManager,
+		private readonly hotStateManager: ITransientProjectionManager,
 		private readonly entryManager: IEntryManager,
 		private readonly connectionManager: IConnectionManager,
 		private readonly eventService: SessionEventService
@@ -286,6 +340,53 @@ export class SessionConnectionManager {
 			)
 			.andThen((result) => {
 				const sessionId = result.sessionId;
+				if (result.deferredCreation === true) {
+					const modelState = getProviderAwareSessionModelState(result.models);
+					const rawModels = modelState.availableModels ?? [];
+					const rawProviderMetadata = modelState.providerMetadata;
+					const providerMetadata = this.resolveProviderMetadata(options.agentId, rawProviderMetadata);
+					const availableModels: Model[] = rawModels.map((m) => ({
+						id: m.modelId,
+						name: m.name,
+						description: m.description ?? undefined,
+					}));
+					const availableModes: Mode[] = (result.modes?.availableModes ?? []).map((m) => ({
+						id: m.id,
+						name: m.name,
+						description: m.description ?? undefined,
+					}));
+					const modelsDisplay =
+						normalizeModelsForDisplay(
+							options.agentId,
+							modelState.modelsDisplay,
+							options.agentId,
+							providerMetadata
+						) ?? undefined;
+
+					preferencesStore.updateModelsCache(options.agentId, availableModels);
+					preferencesStore.updateProviderMetadataCache(options.agentId, providerMetadata);
+					preferencesStore.updateModelsDisplayCache(
+						options.agentId,
+						modelsDisplay,
+						providerMetadata
+					);
+					preferencesStore.updateModesCache(options.agentId, availableModes);
+					this.hotStateManager.initializeHotState(sessionId);
+					logger.info("Deferred session creation is pending provider identity promotion", {
+						sessionId,
+						creationAttemptId: result.creationAttemptId ?? null,
+						agentId: options.agentId,
+					});
+					return okAsync({
+						kind: "pending" as const,
+						sessionId,
+						creationAttemptId: result.creationAttemptId ?? null,
+						projectPath: options.projectPath,
+						agentId: options.agentId,
+						title: options.title ?? null,
+						worktreePath: options.worktreePath ?? null,
+					});
+				}
 				const now = new Date();
 				const modelState = getProviderAwareSessionModelState(result.models);
 				const {
@@ -314,9 +415,6 @@ export class SessionConnectionManager {
 					name: m.name,
 					description: m.description ?? undefined,
 				}));
-				const availableCommands = result.availableCommands ?? [];
-				const configOptions = result.configOptions ?? [];
-
 				let currentMode = availableModes.find((m) => m.id === result.modes?.currentModeId) ?? null;
 				let currentModel = this.resolveCurrentModel(
 					options.agentId,
@@ -440,7 +538,7 @@ export class SessionConnectionManager {
 										})
 								: okAsync(false);
 
-						return applyInitialAutonomous.map((autonomousEnabled) => {
+						return applyInitialAutonomous.map(() => {
 							// Cache available models and modes for settings/optimistic display
 							preferencesStore.updateModelsCache(options.agentId, availableModels);
 							preferencesStore.updateProviderMetadataCache(options.agentId, providerMetadata);
@@ -483,20 +581,7 @@ export class SessionConnectionManager {
 								sequenceId: result.sequenceId === null ? undefined : result.sequenceId,
 							};
 
-							// Initialize hot state BEFORE adding the session to the store.
-							// New sessions stay disconnected until canonical resume/first-send
-							// materializes readiness, but we still seed optimistic mode/model
-							// metadata so the composer and settings can render immediately.
 							this.hotStateManager.initializeHotState(sessionId, {
-								status: "idle",
-								isConnected: false,
-								turnState: "idle",
-								connectionError: null,
-								autonomousEnabled,
-								currentMode,
-								currentModel,
-								availableCommands,
-								configOptions,
 								modelPerMode: currentMode
 									? { [currentMode.id]: currentModel?.id ? currentModel.id : "" }
 									: {},
@@ -522,15 +607,6 @@ export class SessionConnectionManager {
 									});
 							}
 
-							// Store capabilities separately from cold data
-							this.capabilitiesManager.updateCapabilities(sessionId, {
-								availableModes,
-								availableModels,
-								availableCommands,
-								modelsDisplay,
-								providerMetadata,
-							});
-
 							// Mark as preloaded since it's a new session with no entries
 							this.entryManager.markPreloaded(sessionId);
 
@@ -547,6 +623,7 @@ export class SessionConnectionManager {
 							});
 
 							return {
+								kind: "ready" as const,
 								session: sessionCold,
 								sessionOpen: result.sessionOpen ?? null,
 							};
@@ -555,6 +632,21 @@ export class SessionConnectionManager {
 			})
 			.mapErr((error) => {
 				logger.error("Failed to create session", { error });
+				if (
+					error instanceof TauriCommandError &&
+					error.domain?.type === "acp" &&
+					error.domain.data.type === "creation_failed"
+				) {
+					const failure = error.domain.data.data;
+					return new CreationFailureError(
+						failure.kind,
+						failure.message,
+						failure.sessionId,
+						failure.creationAttemptId,
+						failure.retryable,
+						error
+					);
+				}
 				const message = error instanceof Error ? error.message : String(error);
 				return new ConnectionError(
 					`Failed to create session: ${message}`,
@@ -582,12 +674,11 @@ export class SessionConnectionManager {
 		}
 		const effectiveAgentId = options?.agentOverrideId ?? session.agentId;
 
-		const hotState = this.stateReader.getHotState(sessionId);
-		if (hotState.isConnected) {
+		const canSend = canSendFromCanonical(this.stateReader, sessionId);
+		if (canSend) {
 			logger.info("Session already connected, skipping", {
 				sessionId,
-				status: hotState.status,
-				isConnected: hotState.isConnected,
+				canSend,
 			});
 			return okAsync(session);
 		}
@@ -600,10 +691,6 @@ export class SessionConnectionManager {
 		this.connectionManager.setConnecting(sessionId, true);
 		// Start connection in state machine
 		this.connectionManager.sendConnectionConnect(sessionId);
-		this.hotStateManager.updateHotState(sessionId, {
-			status: "connecting",
-			connectionError: null,
-		});
 
 		const resumeCwd = session.projectPath;
 		const attemptId = nextAttemptId++;
@@ -651,17 +738,13 @@ export class SessionConnectionManager {
 				this.connectionManager.setConnecting(sessionId, false);
 				lifecycleWaiter.cancel();
 
-				const errorMessage = error instanceof Error ? error.message : String(error);
-
 				// Connection failed in state machine
 				this.connectionManager.sendConnectionError(sessionId);
 
-				this.hotStateManager.updateHotState(sessionId, {
-					status: "error",
-					isConnected: false,
-					availableCommands: [],
-					connectionError: errorMessage,
-				});
+				// GOD: Rust emits a Failed lifecycle envelope via emit_lifecycle_event
+				// (ConnectionFailed → SessionStateGraph snapshot). Canonical projection
+				// is authoritative — no client-side synthesis.
+
 				logger.error("Failed to connect session", { sessionId, error });
 				return new ConnectionError(sessionId, error instanceof Error ? error : undefined);
 			});
@@ -739,7 +822,7 @@ export class SessionConnectionManager {
 	 * Disconnect a session and clean up its subprocess.
 	 *
 	 * This method:
-	 * 1. Updates local state (state machine, capabilities, hot state)
+	 * 1. Updates local state (state machine, local transient state)
 	 * 2. Calls the backend to close the session and kill the subprocess
 	 *
 	 * The subprocess cleanup is fire-and-forget to avoid blocking the UI.
@@ -752,19 +835,16 @@ export class SessionConnectionManager {
 		// Disconnect in state machine
 		this.connectionManager.sendDisconnect(sessionId);
 
-		// Clear ACP capabilities on disconnect
-		this.capabilitiesManager.removeCapabilities(sessionId);
-
 		// Read acpSessionId from hot state before clearing it
 		const acpSessionId = this.stateReader.getHotState(sessionId).acpSessionId;
 
+		// Pure GOD: Rust emits a Detached(ClosedByClient) lifecycle envelope from
+		// `acp_close_session` before tearing down the subprocess. Canonical
+		// projection updates via the normal envelope handler — no client-side
+		// synthesis.
+
 		this.hotStateManager.updateHotState(sessionId, {
-			status: "idle",
-			isConnected: false,
-			turnState: "idle",
 			acpSessionId: null,
-			connectionError: null,
-			availableCommands: [],
 			modelPerMode: {},
 		});
 
@@ -792,16 +872,16 @@ export class SessionConnectionManager {
 		if (!session) {
 			return errAsync(new SessionNotFoundError(sessionId));
 		}
-		const hotState = this.stateReader.getHotState(sessionId);
-		if (!hotState.isConnected) {
+		if (!canSendFromCanonical(this.stateReader, sessionId)) {
 			return errAsync(new ConnectionError(sessionId));
 		}
 
 		logger.debug("Setting model", { sessionId, modelId });
 
 		// Track model choice per mode for this session
-		if (hotState.currentMode) {
-			preferencesStore.setSessionModelForMode(sessionId, hotState.currentMode.id, modelId);
+		const currentModeId = canonicalCurrentModeId(this.stateReader, sessionId);
+		if (currentModeId !== null) {
+			preferencesStore.setSessionModelForMode(sessionId, currentModeId, modelId);
 		}
 
 		return api
@@ -832,14 +912,13 @@ export class SessionConnectionManager {
 		if (!session) {
 			return errAsync(new SessionNotFoundError(sessionId));
 		}
-		const hotState = this.stateReader.getHotState(sessionId);
-		if (!hotState.isConnected) {
+		if (!canSendFromCanonical(this.stateReader, sessionId)) {
 			return errAsync(new ConnectionError(sessionId));
 		}
 
-		const capabilities = this.capabilitiesManager.getCapabilities(sessionId);
+		const capabilities = canonicalCapabilities(this.stateReader, sessionId);
 		const newMode = capabilities.availableModes.find((m) => m.id === modeId);
-		const oldAutonomousEnabled = hotState.autonomousEnabled;
+		const oldAutonomousEnabled = canonicalAutonomousEnabled(this.stateReader, sessionId);
 		const nextAutonomousEnabled =
 			oldAutonomousEnabled && this.supportsAutonomousMode(newMode ? newMode.id : undefined);
 		logger.debug("Setting mode", { sessionId, modeId });
@@ -918,7 +997,7 @@ export class SessionConnectionManager {
 		const hotState = this.stateReader.getHotState(sessionId);
 		const targetEnabled =
 			enabled &&
-			this.supportsAutonomousMode(hotState.currentMode ? hotState.currentMode.id : undefined);
+			this.supportsAutonomousMode(canonicalCurrentModeId(this.stateReader, sessionId) ?? undefined);
 		if (hotState.autonomousTransition !== "idle") {
 			return errAsync(
 				new AgentError(
@@ -928,10 +1007,8 @@ export class SessionConnectionManager {
 			);
 		}
 
-		const previousAutonomousEnabled = hotState.autonomousEnabled;
 		const rollbackAutonomous = (error: AppError) => {
 			this.hotStateManager.updateHotState(sessionId, {
-				autonomousEnabled: previousAutonomousEnabled,
 				autonomousTransition: "idle",
 			});
 			logger.error("Failed to update Autonomous session policy, rolling back", {
@@ -942,30 +1019,14 @@ export class SessionConnectionManager {
 			return new AgentError("setAutonomousEnabled", error instanceof Error ? error : undefined);
 		};
 
-		if (!hotState.isConnected) {
-			this.hotStateManager.updateHotState(sessionId, {
-				autonomousEnabled: targetEnabled,
-				autonomousTransition: "idle",
-			});
-			return this.setSessionAutonomous(sessionId, targetEnabled).mapErr(rollbackAutonomous);
-		}
-
 		void session;
 		void eventHandler;
 
 		this.hotStateManager.updateHotState(sessionId, {
-			autonomousEnabled: targetEnabled,
 			autonomousTransition: targetEnabled ? "enabling" : "disabling",
 		});
 
-		return this.setSessionAutonomous(sessionId, targetEnabled)
-			.map(() => {
-				this.hotStateManager.updateHotState(sessionId, {
-					autonomousEnabled: targetEnabled,
-					autonomousTransition: "idle",
-				});
-			})
-			.mapErr(rollbackAutonomous);
+		return this.setSessionAutonomous(sessionId, targetEnabled).mapErr(rollbackAutonomous);
 	}
 
 	/**
@@ -976,8 +1037,7 @@ export class SessionConnectionManager {
 		if (!session) {
 			return errAsync(new SessionNotFoundError(sessionId));
 		}
-		const hotState = this.stateReader.getHotState(sessionId);
-		if (!hotState.isConnected) {
+		if (!canSendFromCanonical(this.stateReader, sessionId)) {
 			return errAsync(new ConnectionError(sessionId));
 		}
 
@@ -1006,8 +1066,9 @@ export class SessionConnectionManager {
 		if (!session) {
 			return errAsync(new SessionNotFoundError(sessionId));
 		}
-		const hotState = this.stateReader.getHotState(sessionId);
-		if (!hotState.isConnected) {
+		// Cancellation only requires an active WebSocket connection — canSend is false
+		// while streaming (lifecycle is not Ready), so we must not gate on it here.
+		if (!canonicalWireOpen(this.stateReader, sessionId)) {
 			return errAsync(new ConnectionError(sessionId));
 		}
 
@@ -1017,10 +1078,6 @@ export class SessionConnectionManager {
 				// Transition machine STREAMING → READY so deriveSessionRuntimeState()
 				// sees the updated connection state after the reactive anchor fires.
 				this.connectionManager.sendResponseComplete(sessionId);
-				this.hotStateManager.updateHotState(sessionId, {
-					status: "ready",
-					turnState: "interrupted",
-				});
 				logger.debug("Streaming cancelled", { sessionId });
 				return undefined;
 			})

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { mode } from "mode-watcher";
+import { useTheme } from "$lib/components/theme/context.svelte.js";
 import { createLogger } from "../../utils/logger.js";
 import { renderMermaid } from "../../utils/mermaid-renderer.js";
 import MermaidCanvas from "./mermaid/mermaid-canvas.svelte";
@@ -7,6 +7,7 @@ import MermaidFullscreenDialog from "./mermaid/mermaid-fullscreen-dialog.svelte"
 import MermaidToolbar from "./mermaid/mermaid-toolbar.svelte";
 
 const logger = createLogger({ id: "mermaid-diagram", name: "Mermaid Diagram" });
+const themeState = useTheme();
 
 let { code }: { code: string } = $props();
 
@@ -21,7 +22,7 @@ let scale = $state(1);
 let translateX = $state(0);
 let translateY = $state(0);
 
-const isDark = $derived(mode.current === "dark");
+const isDark = $derived(themeState?.effectiveTheme !== "light");
 const zoomLevel = $derived(Math.round(scale * 100));
 
 $effect(() => {

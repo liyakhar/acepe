@@ -9,7 +9,9 @@ pub mod runtime_registry;
 pub mod selectors;
 pub mod snapshot_builder;
 
-pub use bridge::{build_delta_envelope, build_snapshot_envelope};
+pub use bridge::{
+    build_delta_envelope, build_snapshot_envelope, DeltaEnvelopeParts, DeltaSessionProjectionFields,
+};
 pub use envelope::SessionStateEnvelope;
 pub use frontier::{FrontierFallbackReason, SessionFrontierDecision};
 pub use graph::SessionStateGraph;
@@ -22,5 +24,9 @@ pub use revision::SessionGraphRevision;
 pub use runtime_registry::{
     LiveSessionStateEnvelopeRequest, SessionGraphRuntimeRegistry, SessionGraphRuntimeSnapshot,
 };
-pub use selectors::{SessionGraphCapabilities, SessionGraphLifecycle, SessionGraphLifecycleStatus};
+pub use selectors::{
+    select_session_graph_activity, SessionGraphActionability, SessionGraphActivity,
+    SessionGraphActivityKind, SessionGraphCapabilities, SessionGraphLifecycle,
+    SessionRecommendedAction, SessionRecoveryPhase,
+};
 pub use snapshot_builder::build_graph_from_open_found;

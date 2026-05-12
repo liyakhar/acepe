@@ -1,18 +1,16 @@
 use super::*;
 use crate::acp::client::session_lifecycle::reconnect_policy_for_provider;
-use crate::acp::client_session::default_modes;
+use crate::acp::client_session::{
+    apply_provider_model_fallback, default_modes, parse_model_discovery_output,
+};
 use crate::acp::model_display::ModelsForDisplay;
 use crate::acp::parsers::AgentType;
 use crate::acp::projections::{InteractionState, ProjectionRegistry};
 use crate::acp::provider::SpawnConfig;
-use crate::acp::session_descriptor::{SessionCompatibilityInput, SessionReplayContext};
-use crate::acp::session_journal::load_stored_projection;
 use crate::acp::session_update::PlanSource;
 use crate::acp::session_update::{PermissionData, SessionUpdate};
 use crate::db::migrations::Migrator;
-use crate::db::repository::{
-    SessionJournalEventRepository, SessionMetadataRepository, SessionProjectionSnapshotRepository,
-};
+use crate::db::repository::{SessionJournalEventRepository, SessionMetadataRepository};
 use sea_orm::{Database, DbConn};
 use sea_orm_migration::MigratorTrait;
 use std::collections::HashMap;
@@ -28,6 +26,7 @@ const CLIENT_UPDATES_MOD_SOURCE: &str = include_str!("../client_updates/mod.rs")
 const INBOUND_ROUTER_HELPERS_SOURCE: &str = include_str!("../inbound_request_router/helpers.rs");
 const CLIENT_UPDATES_PLAN_SOURCE: &str = include_str!("../client_updates/plan.rs");
 const MODEL_DISPLAY_SOURCE: &str = include_str!("../model_display.rs");
+const CLIENT_MESSAGE_IDS_SOURCE: &str = include_str!("../client_message_ids.rs");
 
 fn production_source(source: &str) -> &str {
     source.split("#[cfg(test)]").next().unwrap_or(source)
@@ -304,18 +303,67 @@ fn provider_owned_model_presentation_metadata_matches_provider_contract() {
     );
 }
 
-#[test]
-fn session_lifecycle_uses_provider_owned_model_presentation_contract() {
-    let source = include_str!("session_lifecycle.rs");
-    let production_source = source.split("#[cfg(test)]").next().unwrap_or(source);
+#[tokio::test]
+async fn session_lifecycle_uses_provider_owned_model_presentation_contract() {
+    let provider = TestProvider { id: "codex" };
+    let cwd = std::env::current_dir().expect("current dir should be available");
+    let models = crate::acp::client::SessionModelState {
+        available_models: vec![crate::acp::client::AvailableModel {
+            model_id: "gpt-5".to_string(),
+            name: "gpt-5".to_string(),
+            description: None,
+        }],
+        current_model_id: "gpt-5".to_string(),
+        models_display: ModelsForDisplay::default(),
+        provider_metadata: None,
+    };
 
-    assert!(
-        production_source.contains("provider.model_presentation_metadata()"),
-        "session lifecycle should use provider-owned model presentation metadata"
+    let resolved = crate::acp::capability_resolution::resolve_live_capabilities(
+        &provider,
+        &cwd,
+        models,
+        default_modes(),
+    )
+    .await
+    .expect("live capability resolution should succeed");
+
+    let expected = crate::acp::model_display::build_models_for_display(
+        &resolved.available_models,
+        provider.model_presentation_metadata(),
     );
-    assert!(
-        !production_source.contains("provider_capabilities(agent_type)"),
-        "session lifecycle should not reconstruct model presentation from parser agent type"
+
+    assert_eq!(resolved.models_display.presentation, expected.presentation);
+    assert_eq!(
+        resolved
+            .models_display
+            .groups
+            .iter()
+            .map(|group| {
+                (
+                    group.label.clone(),
+                    group
+                        .models
+                        .iter()
+                        .map(|model| (model.model_id.clone(), model.display_name.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        expected
+            .groups
+            .iter()
+            .map(|group| {
+                (
+                    group.label.clone(),
+                    group
+                        .models
+                        .iter()
+                        .map(|model| (model.model_id.clone(), model.display_name.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        "session lifecycle should use provider-owned model presentation metadata"
     );
 }
 
@@ -327,18 +375,6 @@ async fn setup_test_db() -> DbConn {
         .await
         .expect("Failed to run migrations");
     db
-}
-
-async fn replay_context_for_session(db: &DbConn, session_id: &str) -> SessionReplayContext {
-    let metadata = SessionMetadataRepository::get_by_id(db, session_id)
-        .await
-        .expect("load metadata");
-    SessionMetadataRepository::resolve_existing_session_replay_context_from_metadata(
-        session_id,
-        metadata.as_ref(),
-        SessionCompatibilityInput::default(),
-    )
-    .expect("replay context")
 }
 
 #[test]
@@ -527,6 +563,44 @@ fn model_display_uses_presentation_metadata_not_agent_type_branching() {
     assert!(
         source.contains("ModelPresentationMetadata"),
         "model display should expose presentation metadata for frontend consumers"
+    );
+}
+
+#[test]
+fn message_id_normalization_does_not_branch_on_agent_type() {
+    // Shared chunk-id normalization must remain provider-agnostic.
+    // Provider-specific replay/dedupe behavior (e.g. Codex turn replay)
+    // belongs at the provider edge — never in shared core. This regression
+    // guard exists because a previous implementation gated dedupe behind an
+    // unused `_agent_type` parameter, which silently dropped legitimate
+    // repeated assistant text for Cursor and Copilot.
+    let source = production_source(CLIENT_MESSAGE_IDS_SOURCE);
+
+    assert!(
+        !source.contains("AgentType"),
+        "client_message_ids.rs must not branch on AgentType — provider quirks belong at the edge"
+    );
+    assert!(
+        !source.contains("assistant_text_tracker"),
+        "assistant text dedupe is a provider-specific quirk and must not live in shared id normalization"
+    );
+}
+
+#[test]
+fn shared_session_update_flow_does_not_carry_assistant_text_tracker() {
+    // Companion guard for `message_id_normalization_does_not_branch_on_agent_type`:
+    // the upstream call sites that own message-id state must not reintroduce
+    // the dropped text-equality dedupe by name.
+    let mod_source = production_source(CLIENT_UPDATES_MOD_SOURCE);
+    let loop_source = production_source(CLIENT_LOOP_SOURCE);
+
+    assert!(
+        !mod_source.contains("assistant_text_tracker"),
+        "client_updates/mod.rs must not plumb assistant_text_tracker — shared core is provider-agnostic"
+    );
+    assert!(
+        !loop_source.contains("assistant_text_tracker"),
+        "client_loop.rs must not plumb assistant_text_tracker — shared core is provider-agnostic"
     );
 }
 
@@ -895,7 +969,17 @@ fn parse_model_discovery_output_strips_claude_formatting_suffix() {
 
     assert_eq!(models.len(), 1);
     assert_eq!(models[0].model_id, "claude-opus-4-6");
-    assert_eq!(models[0].name, "claude-opus-4-6");
+    assert_eq!(models[0].name, "Opus 4.6");
+}
+
+#[test]
+fn parse_model_discovery_output_formats_future_claude_versions_without_hardcoding() {
+    let output = "claude-opus-4-7-20260401";
+    let models = parse_model_discovery_output(output);
+
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].model_id, "claude-opus-4-7-20260401");
+    assert_eq!(models[0].name, "Opus 4.7");
 }
 
 #[test]
@@ -904,6 +988,20 @@ fn parse_model_discovery_output_ignores_claude_login_prompt() {
     let models = parse_model_discovery_output(output);
 
     assert!(models.is_empty());
+}
+
+#[test]
+fn parse_model_discovery_output_ignores_cursor_tip_suffix() {
+    let output = "Available models\n\nauto - Auto (current)\ngpt-5.4 - GPT-5.4\n\nTip: use --model <id> (or /model <id> in interactive mode) to switch.\n";
+    let models = parse_model_discovery_output(output);
+
+    let ids: Vec<&str> = models.iter().map(|m| m.model_id.as_str()).collect();
+    assert!(ids.contains(&"auto"), "expected auto, got {ids:?}");
+    assert!(ids.contains(&"gpt-5.4"), "expected gpt-5.4, got {ids:?}");
+    assert!(
+        !ids.iter().any(|id| id.eq_ignore_ascii_case("tip")),
+        "should not include Tip: line, got {ids:?}"
+    );
 }
 
 #[test]
@@ -989,6 +1087,7 @@ async fn send_prompt_fire_and_forget_cleans_tracking_on_write_failure() {
             prompt: vec![crate::acp::types::ContentBlock::Text {
                 text: "hello".to_string(),
             }],
+            attempt_id: None,
             stream: Some(true),
         })
         .await;
@@ -1101,20 +1200,16 @@ async fn active_client_interaction_projection_persists_selected_permission_reply
         .expect("interaction should exist");
     assert_eq!(interaction.state, InteractionState::Approved);
 
-    let replay_context = replay_context_for_session(&db, "session-1").await;
-    let stored_projection = load_stored_projection(&db, &replay_context)
+    let stored_events = SessionJournalEventRepository::list_serialized(&db, "session-1")
         .await
-        .expect("load stored projection")
-        .expect("stored projection should exist");
-    assert!(stored_projection
-        .interactions
-        .into_iter()
-        .any(|interaction| interaction.id == "permission-1"
-            && interaction.state == InteractionState::Approved));
+        .expect("list persisted interaction events");
+    assert!(stored_events
+        .iter()
+        .any(|event| event.event_kind == "interaction_transition"));
 }
 
 #[tokio::test]
-async fn load_stored_projection_ignores_legacy_projection_snapshot_without_journal() {
+async fn empty_journal_does_not_rebuild_product_projection() {
     let db = setup_test_db().await;
     SessionMetadataRepository::upsert(
         &db,
@@ -1130,20 +1225,9 @@ async fn load_stored_projection_ignores_legacy_projection_snapshot_without_journ
     .await
     .expect("persist session metadata");
 
-    let registry = ProjectionRegistry::new();
-    registry.register_session(
-        "session-legacy".to_string(),
-        crate::acp::types::CanonicalAgentId::Codex,
-    );
-    let snapshot = registry.session_projection("session-legacy");
-    SessionProjectionSnapshotRepository::set(&db, "session-legacy", &snapshot)
+    let stored_events = SessionJournalEventRepository::list_serialized(&db, "session-legacy")
         .await
-        .expect("persist legacy projection snapshot");
+        .expect("list stored journal events");
 
-    let replay_context = replay_context_for_session(&db, "session-legacy").await;
-    let stored_projection = load_stored_projection(&db, &replay_context)
-        .await
-        .expect("load stored projection");
-
-    assert!(stored_projection.is_none());
+    assert!(stored_events.is_empty());
 }

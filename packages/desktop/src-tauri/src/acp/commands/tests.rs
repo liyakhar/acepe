@@ -5,7 +5,8 @@ use crate::acp::client_session::{default_modes, default_session_model_state};
 use crate::acp::client_trait::AgentClient;
 use crate::acp::client_transport::InboundRequestResponder;
 use crate::acp::commands::session_commands::{
-    persist_session_metadata_for_cwd, resolve_requested_agent_id, session_metadata_context_from_cwd,
+    persist_session_metadata_for_cwd, resolve_requested_agent_id,
+    session_metadata_context_from_cwd, validate_provider_session_id_for_creation,
 };
 use crate::acp::error::{AcpError, AcpResult};
 use crate::acp::projections::ProjectionRegistry;
@@ -13,9 +14,8 @@ use crate::acp::session_state_engine::runtime_registry::{
     LiveSessionStateEnvelopeRequest, SessionGraphRuntimeRegistry,
 };
 use crate::acp::session_state_engine::{
-    CapabilityPreviewState, SessionGraphCapabilities, SessionGraphLifecycle,
-    SessionGraphLifecycleStatus, SessionGraphRevision, SessionStateEnvelope, SessionStateGraph,
-    SessionStatePayload,
+    CapabilityPreviewState, SessionGraphActivity, SessionGraphCapabilities, SessionGraphLifecycle,
+    SessionGraphRevision, SessionStateEnvelope, SessionStateGraph, SessionStatePayload,
 };
 use crate::acp::transcript_projection::TranscriptProjectionRegistry;
 use crate::acp::transcript_projection::TranscriptSnapshot;
@@ -53,6 +53,19 @@ async fn setup_test_db() -> DbConn {
         .expect("Failed to run migrations");
 
     db
+}
+
+fn seed_runtime_lifecycle(
+    runtime_registry: &SessionGraphRuntimeRegistry,
+    session_id: &str,
+    graph_revision: i64,
+) {
+    runtime_registry.restore_session_state(
+        session_id.to_string(),
+        graph_revision,
+        SessionGraphLifecycle::reserved(),
+        SessionGraphCapabilities::empty(),
+    );
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +286,37 @@ async fn persist_session_metadata_for_cwd_inserts_created_plain_project_session(
     assert!(row.is_transcript_pending());
 }
 
+#[test]
+fn provider_session_id_creation_validation_accepts_provider_safe_ids() {
+    for session_id in [
+        "7377ad20-98c4-47bb-9540-f44156420c63",
+        "ses_abc123",
+        "thread:codex.123",
+    ] {
+        assert!(validate_provider_session_id_for_creation(session_id).is_ok());
+    }
+}
+
+#[test]
+fn provider_session_id_creation_validation_rejects_empty_oversized_and_shell_sensitive_ids() {
+    let oversized = "a".repeat(257);
+    for session_id in [
+        "",
+        oversized.as_str(),
+        "has space",
+        "quote'id",
+        "slash/id",
+        "semi;colon",
+        "dollar$id",
+        "back\\slash",
+    ] {
+        assert!(
+            validate_provider_session_id_for_creation(session_id).is_err(),
+            "{session_id:?} should be rejected"
+        );
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn validate_session_cwd_rejects_home_directory_on_macos() {
@@ -405,13 +449,11 @@ fn session_state_snapshot_envelope_carries_one_graph_revision_authority() {
         interactions: Vec::new(),
         turn_state: crate::acp::projections::SessionTurnState::Idle,
         message_count: 0,
+        last_agent_message_id: None,
         active_turn_failure: None,
         last_terminal_turn_id: None,
-        lifecycle: SessionGraphLifecycle {
-            status: SessionGraphLifecycleStatus::Ready,
-            error_message: None,
-            can_reconnect: true,
-        },
+        lifecycle: SessionGraphLifecycle::ready(),
+        activity: SessionGraphActivity::idle(),
         capabilities: SessionGraphCapabilities::empty(),
     };
 
@@ -463,6 +505,7 @@ async fn connection_complete_builds_graph_native_snapshot_envelope() {
     let projection_registry = ProjectionRegistry::new();
     let transcript_projection_registry = TranscriptProjectionRegistry::new();
     let runtime_registry = SessionGraphRuntimeRegistry::new();
+    seed_runtime_lifecycle(&runtime_registry, "session-1", 6);
     let update = crate::acp::session_update::SessionUpdate::ConnectionComplete {
         session_id: "session-1".to_string(),
         attempt_id: 42,
@@ -519,7 +562,10 @@ async fn connection_complete_builds_graph_native_snapshot_envelope() {
     match envelope.payload {
         SessionStatePayload::Snapshot { graph } => {
             assert_eq!(graph.revision, SessionGraphRevision::new(7, 5, 7));
-            assert_eq!(graph.lifecycle.status, SessionGraphLifecycleStatus::Ready);
+            assert_eq!(
+                graph.lifecycle.status,
+                crate::acp::lifecycle::LifecycleStatus::Ready
+            );
             assert_eq!(graph.lifecycle.error_message, None);
             assert_eq!(
                 graph
@@ -556,10 +602,12 @@ async fn connection_failed_builds_graph_native_error_snapshot_envelope() {
     let projection_registry = ProjectionRegistry::new();
     let transcript_projection_registry = TranscriptProjectionRegistry::new();
     let runtime_registry = SessionGraphRuntimeRegistry::new();
+    seed_runtime_lifecycle(&runtime_registry, "session-1", 8);
     let update = crate::acp::session_update::SessionUpdate::ConnectionFailed {
         session_id: "session-1".to_string(),
         attempt_id: 42,
         error: "connection dropped".to_string(),
+        failure_reason: crate::acp::lifecycle::FailureReason::ResumeFailed,
     };
 
     runtime_registry.apply_session_update_with_graph_seed("session-1", 8, &update);
@@ -581,12 +629,15 @@ async fn connection_failed_builds_graph_native_error_snapshot_envelope() {
     match envelope.payload {
         SessionStatePayload::Snapshot { graph } => {
             assert_eq!(graph.revision, SessionGraphRevision::new(9, 4, 9));
-            assert_eq!(graph.lifecycle.status, SessionGraphLifecycleStatus::Error);
+            assert_eq!(
+                graph.lifecycle.status,
+                crate::acp::lifecycle::LifecycleStatus::Failed
+            );
             assert_eq!(
                 graph.lifecycle.error_message.as_deref(),
                 Some("connection dropped")
             );
-            assert!(graph.lifecycle.can_reconnect);
+            assert!(graph.lifecycle.actionability.can_retry);
         }
         payload => panic!("expected snapshot payload, got {payload:?}"),
     }
@@ -705,6 +756,89 @@ async fn resume_or_create_reuses_cached_snapshot_when_existing_client_is_already
 }
 
 #[tokio::test]
+async fn resume_or_create_does_not_reuse_cached_snapshot_when_copilot_reports_missing_session() {
+    let session_registry = SessionRegistry::new();
+    let session_id = "live-copilot-session".to_string();
+    let cwd = "/workspace/a".to_string();
+    let agent_id = CanonicalAgentId::Copilot;
+
+    let existing_state = MockClientState::new(false)
+        .with_reconnect_behavior(MockReconnectBehavior::Load)
+        .with_failed_load_message(
+            "JSON-RPC error: {\"code\":-32002,\"data\":{\"uri\":\"Session live-copilot-session not found\"},\"message\":\"Resource not found: Session live-copilot-session not found\"}",
+        );
+    session_registry.store(
+        session_id.clone(),
+        Box::new(MockAgentClient::new(existing_state.clone())),
+        agent_id.clone(),
+    );
+    session_registry
+        .cache_ready_snapshot(
+            &session_id,
+            ResumeSessionResponse {
+                models: SessionModelState {
+                    available_models: vec![AvailableModel {
+                        model_id: "claude-sonnet-4.6".to_string(),
+                        name: "Claude Sonnet 4.6".to_string(),
+                        description: None,
+                    }],
+                    current_model_id: "claude-sonnet-4.6".to_string(),
+                    models_display: Default::default(),
+                    provider_metadata: None,
+                },
+                modes: SessionModes {
+                    current_mode_id: "plan".to_string(),
+                    available_modes: vec![],
+                },
+                available_commands: vec![],
+                config_options: vec![],
+            },
+        )
+        .expect("cache ready snapshot");
+
+    let existing_client_arc = session_registry
+        .get(&session_id)
+        .expect("existing client should be present");
+    let factory_calls = Arc::new(AtomicUsize::new(0));
+    let replacement_state = MockClientState::new(false);
+
+    let result = resume_or_create_session_client(
+        &session_registry,
+        session_id.clone(),
+        cwd,
+        agent_id,
+        None,
+        {
+            let factory_calls = Arc::clone(&factory_calls);
+            let replacement_state = replacement_state.clone();
+            move || {
+                let factory_calls = Arc::clone(&factory_calls);
+                let replacement_state = replacement_state.clone();
+                async move {
+                    factory_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(Box::new(MockAgentClient::new(replacement_state))
+                        as Box<dyn AgentClient + Send + Sync + 'static>)
+                }
+            }
+        },
+    )
+    .await;
+
+    let response =
+        result.expect("replacement client should reconnect instead of reusing stale cache");
+    assert_eq!(factory_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(existing_state.resume_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(existing_state.load_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(response.models.current_model_id, "gpt-5");
+    assert_eq!(response.modes.current_mode_id, "build");
+
+    let stored_client_arc = session_registry
+        .get(&session_id)
+        .expect("stored client should still exist");
+    assert!(!Arc::ptr_eq(&existing_client_arc, &stored_client_arc));
+}
+
+#[tokio::test]
 async fn resume_or_create_does_not_store_client_when_new_resume_fails() {
     let session_registry = SessionRegistry::new();
     let session_id = "missing-session".to_string();
@@ -758,9 +892,9 @@ fn session_metadata_created_rows_are_detected_as_pending_transcript() {
         file_path: "__worktree__/session-placeholder".to_string(),
         file_mtime: 0,
         file_size: 0,
-        provider_session_id: None,
         worktree_path: None,
         pr_number: None,
+        pr_link_mode: None,
         is_acepe_managed: false,
         sequence_id: None,
     };
@@ -780,9 +914,9 @@ fn session_metadata_real_rows_are_resumable() {
         file_path: "/project/session-real.jsonl".to_string(),
         file_mtime: 1704067200,
         file_size: 1024,
-        provider_session_id: None,
         worktree_path: None,
         pr_number: None,
+        pr_link_mode: None,
         is_acepe_managed: false,
         sequence_id: None,
     };
@@ -805,9 +939,9 @@ fn session_metadata_created_rows_with_worktree_context_are_resumable() {
         file_path: "__session_registry__/session-worktree-placeholder".to_string(),
         file_mtime: 0,
         file_size: 0,
-        provider_session_id: None,
         worktree_path: Some(worktree_path),
         pr_number: None,
+        pr_link_mode: None,
         is_acepe_managed: true,
         sequence_id: Some(1),
     };
@@ -853,6 +987,51 @@ async fn persist_session_metadata_for_multiple_worktree_sessions_uses_unique_cre
     assert_eq!(second.file_path, "__session_registry__/session-worktree-b");
     assert!(first.is_transcript_pending());
     assert!(second.is_transcript_pending());
+}
+
+#[tokio::test]
+async fn creation_attempt_promotion_reuses_existing_opened_placeholder_session() {
+    let db = setup_test_db().await;
+    let session_id = "session-codex-placeholder";
+    let attempt = SessionMetadataRepository::create_creation_attempt(
+        &db,
+        "/project",
+        CanonicalAgentId::Codex.as_str(),
+        None,
+    )
+    .await
+    .expect("create attempt");
+
+    SessionMetadataRepository::ensure_exists(
+        &db,
+        session_id,
+        "/project",
+        CanonicalAgentId::Codex.as_str(),
+        None,
+    )
+    .await
+    .expect("insert opened placeholder");
+
+    let promoted =
+        SessionMetadataRepository::promote_creation_attempt(&db, &attempt.id, session_id)
+            .await
+            .expect("promotion should reuse the placeholder row");
+
+    assert_eq!(promoted.id, session_id);
+    assert_eq!(
+        promoted.file_path,
+        "__session_registry__/session-codex-placeholder"
+    );
+
+    let consumed_attempt = SessionMetadataRepository::get_creation_attempt(&db, &attempt.id)
+        .await
+        .expect("load attempt")
+        .expect("attempt exists");
+    assert_eq!(consumed_attempt.status, "consumed");
+    assert_eq!(
+        consumed_attempt.provider_session_id.as_deref(),
+        Some(session_id)
+    );
 }
 
 #[tokio::test]
@@ -954,10 +1133,6 @@ async fn reserved_send_prompt_emits_connection_complete_before_prompt_echo() {
     )
     .await
     .expect("persist session metadata");
-    SessionMetadataRepository::set_provider_session_id(&db, session_id, "provider-session-1")
-        .await
-        .expect("set provider session id");
-
     let event_hub = Arc::new(crate::acp::event_hub::AcpEventHubState::new());
     let projection_registry = Arc::new(ProjectionRegistry::new());
     let transcript_projection_registry = Arc::new(TranscriptProjectionRegistry::new());
@@ -1000,6 +1175,7 @@ async fn reserved_send_prompt_emits_connection_complete_before_prompt_echo() {
         &app.handle().clone(),
         session_id.to_string(),
         request,
+        None,
     )
     .await;
 
@@ -1061,6 +1237,7 @@ async fn send_prompt_rejects_activating_session_before_transport_dispatch() {
         &app.handle().clone(),
         session_id.to_string(),
         request,
+        None,
     )
     .await
     .expect_err("activating session should reject ready-only dispatch");
@@ -1273,10 +1450,6 @@ async fn resume_session_emits_connecting_session_state_before_completion_events(
     persist_session_metadata_for_cwd(&db, session_id, &CanonicalAgentId::ClaudeCode, temp.path())
         .await
         .expect("persist session metadata");
-    SessionMetadataRepository::set_provider_session_id(&db, session_id, "provider-session-1")
-        .await
-        .expect("set provider session id");
-
     let event_hub = Arc::new(crate::acp::event_hub::AcpEventHubState::new());
     let projection_registry = Arc::new(ProjectionRegistry::new());
     let transcript_projection_registry = Arc::new(TranscriptProjectionRegistry::new());
@@ -1380,7 +1553,7 @@ async fn resume_session_emits_connecting_session_state_before_completion_events(
         SessionStatePayload::Snapshot { graph } => {
             assert_eq!(
                 graph.lifecycle.status,
-                SessionGraphLifecycleStatus::Connecting
+                crate::acp::lifecycle::LifecycleStatus::Activating
             );
         }
         payload => panic!("expected snapshot payload, got {:?}", payload),
@@ -1405,6 +1578,11 @@ async fn resume_session_allows_live_pending_claude_session_without_provider_id()
     let runtime_registry = Arc::new(SessionGraphRuntimeRegistry::with_supervisor(Arc::clone(
         &supervisor,
     )));
+    projection_registry.register_session(session_id.to_string(), CanonicalAgentId::ClaudeCode);
+    supervisor
+        .reserve(&db, projection_registry.as_ref(), session_id)
+        .await
+        .expect("reserve live pending session");
 
     let session_registry = SessionRegistry::new();
     session_registry.store(
@@ -1789,18 +1967,19 @@ impl AgentClient for MockAgentClient {
     async fn set_session_config_option(
         &mut self,
         _session_id: String,
-        _config_id: String,
+        config_id: String,
         value: String,
     ) -> AcpResult<Value> {
         Ok(json!({
             "configOptions": [
                 {
-                    "id": "approval-policy",
-                    "name": "Approval policy",
+                    "id": config_id,
+                    "name": "API Key",
+                    "category": "auth",
+                    "type": "string",
                     "description": null,
-                    "valueType": "string",
                     "currentValue": value,
-                    "required": false,
+                    "options": [],
                 }
             ]
         }))
@@ -1830,11 +2009,7 @@ async fn set_model_emits_pending_then_confirmed_capabilities_envelopes() {
     runtime_registry.restore_session_state(
         session_id.to_string(),
         4,
-        SessionGraphLifecycle {
-            status: SessionGraphLifecycleStatus::Ready,
-            error_message: None,
-            can_reconnect: true,
-        },
+        SessionGraphLifecycle::ready(),
         SessionGraphCapabilities {
             models: Some(SessionModelState {
                 available_models: vec![AvailableModel {
@@ -1936,6 +2111,102 @@ async fn set_model_emits_pending_then_confirmed_capabilities_envelopes() {
 }
 
 #[tokio::test]
+async fn set_mode_emits_pending_then_confirmed_capabilities_envelopes() {
+    let session_id = "set-mode-success-session";
+    let event_hub = Arc::new(crate::acp::event_hub::AcpEventHubState::new());
+    let projection_registry = Arc::new(ProjectionRegistry::new());
+    let transcript_projection_registry = Arc::new(TranscriptProjectionRegistry::new());
+    let runtime_registry = Arc::new(SessionGraphRuntimeRegistry::new());
+    runtime_registry.restore_session_state(
+        session_id.to_string(),
+        2,
+        SessionGraphLifecycle::ready(),
+        SessionGraphCapabilities {
+            models: None,
+            modes: Some(SessionModes {
+                current_mode_id: "build".to_string(),
+                available_modes: vec![],
+            }),
+            available_commands: vec![],
+            config_options: vec![],
+            autonomous_enabled: false,
+        },
+    );
+
+    let session_registry = SessionRegistry::new();
+    session_registry.store(
+        session_id.to_string(),
+        Box::new(MockAgentClient::new(MockClientState::new(false))),
+        CanonicalAgentId::Copilot,
+    );
+
+    let app = mock_builder()
+        .manage(session_registry)
+        .manage(Arc::clone(&event_hub))
+        .manage(Arc::clone(&projection_registry))
+        .manage(Arc::clone(&transcript_projection_registry))
+        .manage(Arc::clone(&runtime_registry))
+        .build(mock_context(noop_assets()))
+        .expect("build mock app");
+
+    let mut receiver = event_hub.subscribe();
+    let result = super::interaction_commands::acp_set_mode_for_handle(
+        app.handle().clone(),
+        session_id.to_string(),
+        "plan".to_string(),
+    )
+    .await;
+
+    assert!(result.is_ok(), "set mode should succeed");
+
+    let pending = tokio::time::timeout(std::time::Duration::from_millis(200), receiver.recv())
+        .await
+        .expect("expected pending capability envelope")
+        .expect("pending event should be delivered");
+    let confirmed = tokio::time::timeout(std::time::Duration::from_millis(200), receiver.recv())
+        .await
+        .expect("expected confirmed capability envelope")
+        .expect("confirmed event should be delivered");
+
+    let pending_envelope: SessionStateEnvelope =
+        serde_json::from_value(pending.payload).expect("deserialize pending envelope");
+    let confirmed_envelope: SessionStateEnvelope =
+        serde_json::from_value(confirmed.payload).expect("deserialize confirmed envelope");
+
+    match pending_envelope.payload {
+        SessionStatePayload::Capabilities {
+            capabilities,
+            preview_state,
+            ..
+        } => {
+            assert_eq!(preview_state, CapabilityPreviewState::Pending);
+            assert_eq!(
+                capabilities.modes.expect("modes").current_mode_id,
+                "plan".to_string()
+            );
+        }
+        _ => panic!("expected pending capabilities payload"),
+    }
+
+    match confirmed_envelope.payload {
+        SessionStatePayload::Capabilities {
+            capabilities,
+            pending_mutation_id,
+            preview_state,
+            ..
+        } => {
+            assert_eq!(preview_state, CapabilityPreviewState::Canonical);
+            assert_eq!(pending_mutation_id, None);
+            assert_eq!(
+                capabilities.modes.expect("modes").current_mode_id,
+                "plan".to_string()
+            );
+        }
+        _ => panic!("expected confirmed capabilities payload"),
+    }
+}
+
+#[tokio::test]
 async fn set_mode_failure_emits_corrective_failed_capabilities_envelope() {
     let session_id = "set-mode-session";
     let event_hub = Arc::new(crate::acp::event_hub::AcpEventHubState::new());
@@ -1945,11 +2216,7 @@ async fn set_mode_failure_emits_corrective_failed_capabilities_envelope() {
     runtime_registry.restore_session_state(
         session_id.to_string(),
         2,
-        SessionGraphLifecycle {
-            status: SessionGraphLifecycleStatus::Ready,
-            error_message: None,
-            can_reconnect: true,
-        },
+        SessionGraphLifecycle::ready(),
         SessionGraphCapabilities {
             models: None,
             modes: Some(SessionModes {
@@ -2037,5 +2304,177 @@ async fn set_mode_failure_emits_corrective_failed_capabilities_envelope() {
             );
         }
         _ => panic!("expected failed capabilities payload"),
+    }
+}
+
+#[tokio::test]
+async fn set_config_option_emits_sanitized_capabilities_envelopes() {
+    let session_id = "set-config-session";
+    let event_hub = Arc::new(crate::acp::event_hub::AcpEventHubState::new());
+    let projection_registry = Arc::new(ProjectionRegistry::new());
+    let transcript_projection_registry = Arc::new(TranscriptProjectionRegistry::new());
+    let runtime_registry = Arc::new(SessionGraphRuntimeRegistry::new());
+    runtime_registry.restore_session_state(
+        session_id.to_string(),
+        4,
+        SessionGraphLifecycle::ready(),
+        SessionGraphCapabilities {
+            models: None,
+            modes: None,
+            available_commands: vec![],
+            config_options: vec![crate::acp::session_update::ConfigOptionData {
+                id: "api-key".to_string(),
+                name: "API Key".to_string(),
+                category: "auth".to_string(),
+                option_type: "string".to_string(),
+                description: None,
+                current_value: None,
+                options: Vec::new(),
+            }],
+            autonomous_enabled: false,
+        },
+    );
+
+    let session_registry = SessionRegistry::new();
+    session_registry.store(
+        session_id.to_string(),
+        Box::new(MockAgentClient::new(MockClientState::new(false))),
+        CanonicalAgentId::Copilot,
+    );
+
+    let app = mock_builder()
+        .manage(session_registry)
+        .manage(Arc::clone(&event_hub))
+        .manage(Arc::clone(&projection_registry))
+        .manage(Arc::clone(&transcript_projection_registry))
+        .manage(Arc::clone(&runtime_registry))
+        .build(mock_context(noop_assets()))
+        .expect("build mock app");
+
+    let mut receiver = event_hub.subscribe();
+    let result = super::interaction_commands::acp_set_config_option_for_handle(
+        app.handle().clone(),
+        session_id.to_string(),
+        "api-key".to_string(),
+        "sk-12345678901234567890".to_string(),
+    )
+    .await;
+
+    assert!(result.is_ok(), "set config option should succeed");
+
+    let pending = tokio::time::timeout(std::time::Duration::from_millis(200), receiver.recv())
+        .await
+        .expect("expected pending capability envelope")
+        .expect("pending event should be delivered");
+    let confirmed = tokio::time::timeout(std::time::Duration::from_millis(200), receiver.recv())
+        .await
+        .expect("expected confirmed capability envelope")
+        .expect("confirmed event should be delivered");
+
+    assert!(
+        !pending
+            .payload
+            .to_string()
+            .contains("sk-12345678901234567890"),
+        "pending canonical envelope must not expose credential-shaped config values"
+    );
+    assert!(
+        !confirmed
+            .payload
+            .to_string()
+            .contains("sk-12345678901234567890"),
+        "confirmed canonical envelope must not expose credential-shaped config values"
+    );
+
+    let pending_envelope: SessionStateEnvelope =
+        serde_json::from_value(pending.payload).expect("deserialize pending envelope");
+    let confirmed_envelope: SessionStateEnvelope =
+        serde_json::from_value(confirmed.payload).expect("deserialize confirmed envelope");
+
+    match pending_envelope.payload {
+        SessionStatePayload::Capabilities {
+            capabilities,
+            preview_state,
+            ..
+        } => {
+            assert_eq!(preview_state, CapabilityPreviewState::Pending);
+            assert_eq!(capabilities.config_options[0].current_value, None);
+        }
+        _ => panic!("expected pending capabilities payload"),
+    }
+
+    match confirmed_envelope.payload {
+        SessionStatePayload::Capabilities {
+            capabilities,
+            preview_state,
+            ..
+        } => {
+            assert_eq!(preview_state, CapabilityPreviewState::Canonical);
+            assert_eq!(capabilities.config_options[0].current_value, None);
+        }
+        _ => panic!("expected confirmed capabilities payload"),
+    }
+}
+
+#[tokio::test]
+async fn set_session_autonomous_emits_canonical_capabilities_envelope() {
+    let db = setup_test_db().await;
+    let session_id = "set-autonomous-session";
+    let event_hub = Arc::new(crate::acp::event_hub::AcpEventHubState::new());
+    let transcript_projection_registry = Arc::new(TranscriptProjectionRegistry::new());
+    let runtime_registry = Arc::new(SessionGraphRuntimeRegistry::new());
+    let session_policy = Arc::new(crate::acp::session_policy::SessionPolicyRegistry::new());
+    runtime_registry.restore_session_state(
+        session_id.to_string(),
+        3,
+        SessionGraphLifecycle::ready(),
+        SessionGraphCapabilities {
+            models: None,
+            modes: None,
+            available_commands: vec![],
+            config_options: vec![],
+            autonomous_enabled: false,
+        },
+    );
+
+    let app = mock_builder()
+        .manage(db)
+        .manage(Arc::clone(&event_hub))
+        .manage(Arc::clone(&transcript_projection_registry))
+        .manage(Arc::clone(&runtime_registry))
+        .manage(Arc::clone(&session_policy))
+        .build(mock_context(noop_assets()))
+        .expect("build mock app");
+
+    let mut receiver = event_hub.subscribe();
+    let result = super::session_commands::acp_set_session_autonomous_for_handle(
+        app.handle().clone(),
+        session_id.to_string(),
+        true,
+    )
+    .await;
+
+    assert!(result.is_ok(), "set autonomous should succeed");
+    assert!(session_policy.is_autonomous(session_id));
+
+    let event = tokio::time::timeout(std::time::Duration::from_millis(200), receiver.recv())
+        .await
+        .expect("expected capability envelope")
+        .expect("event should be delivered");
+    let envelope: SessionStateEnvelope =
+        serde_json::from_value(event.payload).expect("deserialize capability envelope");
+
+    match envelope.payload {
+        SessionStatePayload::Capabilities {
+            capabilities,
+            preview_state,
+            pending_mutation_id,
+            ..
+        } => {
+            assert_eq!(preview_state, CapabilityPreviewState::Canonical);
+            assert_eq!(pending_mutation_id, None);
+            assert!(capabilities.autonomous_enabled);
+        }
+        _ => panic!("expected capabilities payload"),
     }
 }

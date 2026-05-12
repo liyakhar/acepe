@@ -9,7 +9,8 @@ import {
 	DialogContent,
 	DialogHeader,
 	DialogTitle,
-} from "$lib/components/ui/dialog/index.js";
+} from "@acepe/ui/dialog";
+import StreamingReproLab from "./debug-panel/streaming-repro-lab.svelte";
 
 interface Props {
 	open?: boolean;
@@ -32,17 +33,25 @@ function closeChangelogModal() {
 </script>
 
 <Dialog bind:open>
-	<DialogContent class="max-w-sm">
+	<DialogContent class="max-w-6xl h-[85vh] max-h-[900px] overflow-hidden p-0 gap-0 flex flex-col">
 		<DialogHeader>
+			<div class="px-6 pt-6">
 			<DialogTitle>Debug Panel</DialogTitle>
+			</div>
 		</DialogHeader>
 
-		<div class="space-y-3">
+		<div class="space-y-3 px-6 pb-4">
 			<Button variant="outline" class="w-full justify-start gap-3" onclick={openChangelogModal}>
 				<Gift class="size-4" />
 				Test Changelog Modal
 			</Button>
 		</div>
+
+		{#if import.meta.env.DEV}
+			<div class="min-h-0 flex-1 border-t border-border px-6 pb-6 pt-4 overflow-hidden">
+				<StreamingReproLab />
+			</div>
+		{/if}
 	</DialogContent>
 </Dialog>
 

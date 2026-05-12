@@ -3,6 +3,7 @@ export const PROVIDER_BRANDS = [
 	"openai",
 	"google",
 	"opencode",
+	"cursor",
 	"default",
 	"other",
 ] as const;
@@ -14,6 +15,7 @@ const PROVIDER_DISPLAY_NAMES: Record<ProviderBrand, string> = {
 	openai: "OpenAI",
 	google: "Google",
 	opencode: "OpenCode",
+	cursor: "Cursor",
 	default: "Default",
 	other: "Other",
 };
@@ -26,6 +28,11 @@ function isOpenAiReasoningFamily(value: string): boolean {
 	return /(^|[^a-z0-9])o(?:1|3|4)(?:-[a-z0-9]+)?(?=$|[^a-z0-9])/.test(value);
 }
 
+function isClaudeFamily(value: string): boolean {
+	// Claude-family model short names used as standalone IDs by Claude Code
+	return /(^|[^a-z])(sonnet|haiku|opus)([^a-z]|$)/.test(value);
+}
+
 export function resolveProviderBrand(source: string | null | undefined): ProviderBrand {
 	const normalized = normalizeProviderSource(source);
 
@@ -33,7 +40,7 @@ export function resolveProviderBrand(source: string | null | undefined): Provide
 		return "other";
 	}
 
-	if (normalized.includes("anthropic") || normalized.includes("claude")) {
+	if (normalized.includes("anthropic") || normalized.includes("claude") || isClaudeFamily(normalized)) {
 		return "anthropic";
 	}
 
@@ -55,7 +62,11 @@ export function resolveProviderBrand(source: string | null | undefined): Provide
 		return "opencode";
 	}
 
-	if (normalized === "default") {
+	if (normalized.includes("cursor") || normalized.includes("composer")) {
+		return "cursor";
+	}
+
+	if (normalized === "default" || normalized === "auto") {
 		return "default";
 	}
 

@@ -10,6 +10,7 @@ use crate::acp::client::{
     InitializeResponse, ListSessionsResponse, NewSessionResponse, ResumeSessionResponse,
     SessionInfo,
 };
+use crate::acp::client_errors::is_session_not_found_error;
 use crate::acp::client_loop::{
     new_stderr_buffer, read_stderr_buffer, spawn_stderr_reader, StderrBuffer,
 };
@@ -38,7 +39,6 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 const THREAD_NOT_FOUND_SNIPPET: &str = "thread not found";
@@ -166,7 +166,7 @@ impl CodexNativeClient {
 
     async fn open_thread(
         &mut self,
-        session_id: &str,
+        session_id: Option<&str>,
         cwd: &str,
         resume_thread_id: Option<String>,
     ) -> AcpResult<String> {
@@ -192,15 +192,17 @@ impl CodexNativeClient {
         })?;
 
         self.provider_thread_id = Some(provider_thread_id.clone());
-        persist_provider_thread_id(
-            self.app_handle.as_ref(),
-            self.db.as_ref(),
-            session_id,
-            self.provider.id(),
-            cwd,
-            &provider_thread_id,
-        )
-        .await;
+        if let Some(session_id) = session_id {
+            persist_provider_thread_id(
+                self.app_handle.as_ref(),
+                self.db.as_ref(),
+                session_id,
+                self.provider.id(),
+                cwd,
+                &provider_thread_id,
+            )
+            .await?;
+        }
         Ok(provider_thread_id)
     }
 
@@ -353,8 +355,28 @@ impl AgentClient for CodexNativeClient {
                                 }
 
                                 remember_question_ids(&pending_question_ids, &message).await;
-                                persist_thread_id_alias(app_handle.as_ref(), &db, &active_session_id, &message)
-                                .await;
+                                if let Err(error) = persist_thread_id_alias(
+                                    app_handle.as_ref(),
+                                    &db,
+                                    &active_session_id,
+                                    &message,
+                                )
+                                .await
+                                {
+                                    let reason = format!(
+                                        "Codex provider session identity could not be persisted: {error}"
+                                    );
+                                    fail_pending_requests(&pending_requests, &reason).await;
+                                    dispatch_transport_error(
+                                        &dispatcher,
+                                        &active_session_id,
+                                        &current_turn_id,
+                                        &reason,
+                                        crate::acp::session_update::TurnErrorSource::Transport,
+                                    )
+                                    .await;
+                                    break;
+                                }
 
                                 let session_id = active_session_id.lock().await.clone();
                                 let Some(session_id) = session_id else {
@@ -469,12 +491,33 @@ impl AgentClient for CodexNativeClient {
     }
 
     async fn new_session(&mut self, cwd: String) -> AcpResult<NewSessionResponse> {
-        let session_id = Uuid::new_v4().to_string();
+        self.execution_profile = CodexExecutionProfile::Standard;
+        let session_id = self.open_thread(None, &cwd, None).await?;
         self.session_id = Some(session_id.clone());
         *self.active_session_id.lock().await = Some(session_id.clone());
-        self.execution_profile = CodexExecutionProfile::Standard;
-        self.open_thread(&session_id, &cwd, None).await?;
+        persist_provider_thread_id(
+            self.app_handle.as_ref(),
+            self.db.as_ref(),
+            &session_id,
+            self.provider.id(),
+            &cwd,
+            &session_id,
+        )
+        .await?;
         Ok(self.build_new_session_response(session_id).await)
+    }
+
+    fn begin_pre_reservation_drain(&self, session_id: &str) {
+        self.dispatcher.begin_pre_reservation_drain(session_id);
+    }
+
+    fn drain_pre_reservation_events(&self, session_id: &str) {
+        self.dispatcher.drain_pre_reservation_events(session_id);
+    }
+
+    fn discard_pre_reservation_events(&self, session_id: &str, reason: &'static str) {
+        self.dispatcher
+            .discard_pre_reservation_events(session_id, reason);
     }
 
     async fn resume_session(
@@ -491,7 +534,7 @@ impl AgentClient for CodexNativeClient {
             &session_id,
         )
         .await;
-        self.open_thread(&session_id, &cwd, resume_thread_id)
+        self.open_thread(Some(&session_id), &cwd, resume_thread_id)
             .await?;
         Ok(self.build_resume_session_response().await)
     }
@@ -1002,6 +1045,10 @@ fn build_turn_interrupt_params(thread_id: &str, turn_id: &str) -> Value {
 }
 
 fn is_recoverable_thread_resume_error(error: &AcpError) -> bool {
+    if is_session_not_found_error(error) {
+        return true;
+    }
+
     let message = error.to_string().to_ascii_lowercase();
     message.contains("thread/resume")
         && (message.contains(THREAD_NOT_FOUND_SNIPPET)
@@ -1255,12 +1302,12 @@ async fn persist_thread_id_alias(
     db: &Option<DbConn>,
     active_session_id: &StdArc<Mutex<Option<String>>>,
     message: &Value,
-) {
+) -> AcpResult<()> {
     let Some(method) = message.get("method").and_then(Value::as_str) else {
-        return;
+        return Ok(());
     };
     if method != "thread/started" {
-        return;
+        return Ok(());
     }
 
     let Some(provider_thread_id) = message
@@ -1269,21 +1316,16 @@ async fn persist_thread_id_alias(
         .and_then(|thread| thread.get("id"))
         .and_then(Value::as_str)
     else {
-        return;
+        return Ok(());
     };
 
     let session_id = active_session_id.lock().await.clone();
     let Some(session_id) = session_id else {
-        return;
+        return Ok(());
     };
 
-    let _ = bind_provider_session_id_persisted(
-        app_handle,
-        db.as_ref(),
-        &session_id,
-        provider_thread_id,
-    )
-    .await;
+    bind_provider_session_id_persisted(app_handle, db.as_ref(), &session_id, provider_thread_id)
+        .await
 }
 
 async fn provider_thread_id_for_app_session(
@@ -1298,7 +1340,7 @@ async fn provider_thread_id_for_app_session(
                 .map(|state| state.get_descriptor(session_id))
         })
         .flatten()
-        .and_then(|descriptor| descriptor.provider_session_id)
+        .map(|_| session_id.to_string())
     {
         return Some(provider_session_id);
     }
@@ -1308,7 +1350,7 @@ async fn provider_thread_id_for_app_session(
         .await
         .ok()
         .flatten()
-        .and_then(|row| row.provider_session_id)
+        .map(|row| row.history_session_id().to_string())
 }
 
 async fn persist_provider_thread_id(
@@ -1318,19 +1360,25 @@ async fn persist_provider_thread_id(
     agent_id: &str,
     cwd: &str,
     provider_thread_id: &str,
-) {
+) -> AcpResult<()> {
     let Some(db) = db else {
-        return;
+        return Ok(());
     };
 
-    let _ = crate::db::repository::SessionMetadataRepository::ensure_exists(
+    crate::db::repository::SessionMetadataRepository::ensure_exists(
         db, session_id, cwd, agent_id, None,
     )
-    .await;
+    .await
+    .map_err(|error| {
+        AcpError::InvalidState(format!(
+            "failed to ensure Codex metadata row for {session_id}: {error}"
+        ))
+    })?;
 
-    let _ =
-        bind_provider_session_id_persisted(app_handle, Some(db), session_id, provider_thread_id)
-            .await;
+    bind_provider_session_id_persisted(app_handle, Some(db), session_id, provider_thread_id)
+        .await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1339,6 +1387,18 @@ mod tests {
     use crate::acp::projections::ProjectionRegistry;
     use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus};
     use crate::acp::types::ContentBlock;
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
+
+    async fn setup_test_db() -> DbConn {
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        crate::db::migrations::Migrator::up(&db, None)
+            .await
+            .expect("run migrations");
+        db
+    }
 
     #[test]
     fn permission_replies_map_to_codex_decisions() {
@@ -1401,6 +1461,10 @@ mod tests {
         assert!(is_recoverable_thread_resume_error(&AcpError::JsonRpcError(
             "thread/resume failed: timed out waiting for server".to_string(),
         )));
+        assert!(is_recoverable_thread_resume_error(&AcpError::JsonRpcError(
+            "thread/resume failed: {\"code\":-32602,\"message\":\"Session not found: 019df08e-7bee\"}"
+                .to_string(),
+        )));
         assert!(!is_recoverable_thread_resume_error(
             &AcpError::JsonRpcError("thread/start failed: permission denied".to_string(),)
         ));
@@ -1415,6 +1479,77 @@ mod tests {
                 "experimentalRawEvents": false,
                 "persistExtendedHistory": true,
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_thread_persistence_can_store_returned_thread_id_as_canonical_session_id() {
+        let db = setup_test_db().await;
+
+        persist_provider_thread_id(
+            None,
+            Some(&db),
+            "codex-thread-1",
+            "codex",
+            "/tmp/project",
+            "codex-thread-1",
+        )
+        .await
+        .expect("returned Codex thread id should persist as canonical session id");
+
+        let row =
+            crate::db::repository::SessionMetadataRepository::get_by_id(&db, "codex-thread-1")
+                .await
+                .expect("load metadata")
+                .expect("metadata row");
+
+        assert_eq!(row.id, "codex-thread-1");
+        assert_eq!(row.history_session_id(), "codex-thread-1");
+    }
+
+    #[tokio::test]
+    async fn thread_started_alias_persistence_errors_when_metadata_row_is_missing() {
+        let db = setup_test_db().await;
+        let active_session_id = StdArc::new(Mutex::new(Some("missing-codex-session".to_string())));
+        let message = json!({
+            "method": "thread/started",
+            "params": {
+                "thread": {
+                    "id": "codex-thread-1"
+                }
+            }
+        });
+
+        let error = persist_thread_id_alias(None, &Some(db), &active_session_id, &message)
+            .await
+            .expect_err("missing metadata must fail provider identity binding");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to persist provider session binding"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_thread_id_for_app_session_uses_provider_owned_canonical_session_id() {
+        let db = setup_test_db().await;
+
+        persist_provider_thread_id(
+            None,
+            Some(&db),
+            "codex-thread-1",
+            "codex",
+            "/tmp/project",
+            "codex-thread-1",
+        )
+        .await
+        .expect("persist canonical thread id");
+
+        assert_eq!(
+            provider_thread_id_for_app_session(None, Some(&db), "codex-thread-1").await,
+            Some("codex-thread-1".to_string())
         );
     }
 

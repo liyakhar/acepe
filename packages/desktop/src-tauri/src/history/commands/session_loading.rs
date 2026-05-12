@@ -1,20 +1,16 @@
 use super::*;
 use crate::acp::event_hub::AcpEventHubState;
-use crate::acp::projections::ProjectionRegistry;
-use crate::acp::provider::HistoryReplayFamily;
+use crate::acp::provider::{HistoryReplayFamily, ProviderHistoryLoadError};
 use crate::acp::registry::AgentRegistry;
 use crate::acp::session_descriptor::SessionReplayContext;
-use crate::acp::session_journal::{SessionJournalEvent, SessionJournalEventPayload};
-use crate::acp::session_open_snapshot::{SessionOpenMissing, SessionOpenResult};
+use crate::acp::session_open_snapshot::{SessionOpenError, SessionOpenMissing, SessionOpenResult};
 use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
 use crate::commands::observability::{
     unexpected_command_result, CommandResult, SerializableCommandError,
 };
 use crate::db::repository::SessionMetadataRepository;
 use crate::opencode_history::commands::fetch_opencode_session;
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QuerySelect, Set, TransactionTrait,
-};
+use sea_orm::DbConn;
 use std::sync::Arc;
 
 fn canonicalize_persisted_worktree_path(worktree_path: &str) -> Result<std::path::PathBuf, String> {
@@ -88,6 +84,244 @@ fn apply_derived_current_mode_metadata(
     session
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderRestoreAuditOutcome {
+    RestoredNonEmpty,
+    MissingHistory,
+    UnparseableHistory,
+    ProviderUnavailable,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProvenanceKeyStability {
+    Stable,
+    Unstable,
+    Unknown,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CanonicalSafeWellFormedness {
+    WellFormed,
+    NotWellFormed,
+    Unknown,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderRestoreAuditCase {
+    pub(crate) provider_id: String,
+    pub(crate) session_id: String,
+    pub(crate) outcome: ProviderRestoreAuditOutcome,
+    pub(crate) entry_count: usize,
+    pub(crate) time_to_first_entry_render_ms: Option<u128>,
+    pub(crate) provenance_key_stability: ProvenanceKeyStability,
+    pub(crate) canonical_safe_well_formedness: CanonicalSafeWellFormedness,
+}
+
+#[cfg(test)]
+impl ProviderRestoreAuditCase {
+    pub(crate) fn happy_path(
+        provider_id: impl Into<String>,
+        session_id: impl Into<String>,
+        entry_count: usize,
+        time_to_first_entry_render_ms: u128,
+    ) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            session_id: session_id.into(),
+            outcome: ProviderRestoreAuditOutcome::RestoredNonEmpty,
+            entry_count,
+            time_to_first_entry_render_ms: Some(time_to_first_entry_render_ms),
+            provenance_key_stability: ProvenanceKeyStability::Stable,
+            canonical_safe_well_formedness: CanonicalSafeWellFormedness::WellFormed,
+        }
+    }
+
+    pub(crate) fn missing_history(
+        provider_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            session_id: session_id.into(),
+            outcome: ProviderRestoreAuditOutcome::MissingHistory,
+            entry_count: 0,
+            time_to_first_entry_render_ms: None,
+            provenance_key_stability: ProvenanceKeyStability::Unknown,
+            canonical_safe_well_formedness: CanonicalSafeWellFormedness::Unknown,
+        }
+    }
+
+    pub(crate) fn unparseable_history(
+        provider_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            session_id: session_id.into(),
+            outcome: ProviderRestoreAuditOutcome::UnparseableHistory,
+            entry_count: 0,
+            time_to_first_entry_render_ms: None,
+            provenance_key_stability: ProvenanceKeyStability::Unknown,
+            canonical_safe_well_formedness: CanonicalSafeWellFormedness::Unknown,
+        }
+    }
+
+    pub(crate) fn provider_unavailable(
+        provider_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            session_id: session_id.into(),
+            outcome: ProviderRestoreAuditOutcome::ProviderUnavailable,
+            entry_count: 0,
+            time_to_first_entry_render_ms: None,
+            provenance_key_stability: ProvenanceKeyStability::Unknown,
+            canonical_safe_well_formedness: CanonicalSafeWellFormedness::Unknown,
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderRestoreAuditGateStatus {
+    pub(crate) ready: bool,
+    pub(crate) blocking_reasons: Vec<String>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderRestoreAuditReport {
+    pub(crate) cases: Vec<ProviderRestoreAuditCase>,
+}
+
+#[cfg(test)]
+impl ProviderRestoreAuditReport {
+    pub(crate) fn new(cases: Vec<ProviderRestoreAuditCase>) -> Self {
+        Self { cases }
+    }
+
+    pub(crate) fn deletion_gate_status(
+        &self,
+        supported_provider_ids: &[&str],
+    ) -> ProviderRestoreAuditGateStatus {
+        let mut blocking_reasons = Vec::new();
+
+        for provider_id in supported_provider_ids {
+            let provider_cases = self
+                .cases
+                .iter()
+                .filter(|case| case.provider_id == *provider_id);
+
+            let has_non_empty_restore = provider_cases.clone().any(|case| {
+                case.outcome == ProviderRestoreAuditOutcome::RestoredNonEmpty
+                    && case.entry_count > 0
+            });
+            let has_missing_history = provider_cases
+                .clone()
+                .any(|case| case.outcome == ProviderRestoreAuditOutcome::MissingHistory);
+            let has_unparseable_history = provider_cases
+                .clone()
+                .any(|case| case.outcome == ProviderRestoreAuditOutcome::UnparseableHistory);
+            let has_stable_provenance = provider_cases
+                .clone()
+                .any(|case| case.provenance_key_stability == ProvenanceKeyStability::Stable);
+            let has_any_well_formedness_verdict = provider_cases.clone().any(|case| {
+                case.canonical_safe_well_formedness != CanonicalSafeWellFormedness::Unknown
+            });
+            let has_well_formed_canonical_keys = provider_cases.clone().any(|case| {
+                case.canonical_safe_well_formedness == CanonicalSafeWellFormedness::WellFormed
+            });
+
+            if !has_non_empty_restore {
+                blocking_reasons.push(format!(
+                    "{provider_id} lacks a parseable non-empty restore case"
+                ));
+            }
+            if !has_missing_history {
+                blocking_reasons.push(format!(
+                    "{provider_id} lacks a missing-history restore case"
+                ));
+            }
+            if !has_unparseable_history {
+                blocking_reasons.push(format!(
+                    "{provider_id} lacks an unparseable-history restore case"
+                ));
+            }
+            if !has_stable_provenance {
+                blocking_reasons.push(format!(
+                    "{provider_id} lacks a stable provenance-key verdict"
+                ));
+            }
+            if !has_any_well_formedness_verdict {
+                blocking_reasons.push(format!(
+                    "{provider_id} lacks a canonical-safe well-formedness verdict"
+                ));
+            } else if !has_well_formed_canonical_keys {
+                blocking_reasons.push(format!(
+                    "{provider_id} failed the canonical-safe well-formedness check"
+                ));
+            }
+        }
+
+        ProviderRestoreAuditGateStatus {
+            ready: blocking_reasons.is_empty(),
+            blocking_reasons,
+        }
+    }
+
+    pub(crate) fn p95_time_to_first_entry_render_ms(&self) -> Option<u128> {
+        let mut samples: Vec<u128> = self
+            .cases
+            .iter()
+            .filter_map(|case| case.time_to_first_entry_render_ms)
+            .collect();
+
+        if samples.is_empty() {
+            return None;
+        }
+
+        samples.sort_unstable();
+        let index = ((samples.len() * 95).saturating_add(99) / 100).saturating_sub(1);
+        samples.get(index).copied()
+    }
+
+    pub(crate) fn max_allowed_time_to_first_entry_render_ms(&self) -> Option<u128> {
+        self.p95_time_to_first_entry_render_ms()
+            .map(|p95| p95.saturating_mul(125).saturating_add(99) / 100)
+    }
+}
+
+fn session_open_error_from_provider_load(
+    requested_session_id: &str,
+    error: ProviderHistoryLoadError,
+) -> SessionOpenError {
+    match error {
+        ProviderHistoryLoadError::ProviderUnavailable { message } => {
+            SessionOpenError::provider_unavailable(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::ProviderHistoryMissing { message } => {
+            SessionOpenError::provider_history_missing(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::ProviderUnparseable { message } => {
+            SessionOpenError::provider_unparseable(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::ProviderValidationFailed { message } => {
+            SessionOpenError::provider_validation_failed(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::StaleLineageRecovery { message } => {
+            SessionOpenError::stale_lineage_recovery(requested_session_id, message)
+        }
+        ProviderHistoryLoadError::Internal { message } => {
+            SessionOpenError::internal(requested_session_id, message)
+        }
+    }
+}
+
 fn history_replay_family(agent: &CanonicalAgentId) -> HistoryReplayFamily {
     crate::acp::parsers::provider_capabilities::provider_capabilities(
         crate::acp::parsers::AgentType::from_canonical(agent),
@@ -99,7 +333,7 @@ fn history_replay_family(agent: &CanonicalAgentId) -> HistoryReplayFamily {
 async fn load_unified_session_content_with_context(
     app: AppHandle,
     context: crate::history::session_context::SessionContext,
-) -> Result<Option<SessionThreadSnapshot>, String> {
+) -> Result<Option<SessionThreadSnapshot>, ProviderHistoryLoadError> {
     tracing::info!(
         session_id = %context.local_session_id,
         agent_id = %context.agent_id,
@@ -123,7 +357,12 @@ async fn load_unified_session_content_with_context(
                     .load_provider_owned_session(&app, &context, &replay_context)
                     .await?
             }
-            None => None,
+            None => {
+                return Err(ProviderHistoryLoadError::provider_unavailable(format!(
+                    "Provider {} is unavailable for provider-owned session load",
+                    context.agent_id
+                )));
+            }
         },
         HistoryReplayFamily::SharedCanonical => None,
     };
@@ -133,241 +372,23 @@ async fn load_unified_session_content_with_context(
         .map(|session| apply_session_title_metadata(session, context.session_metadata.as_ref())))
 }
 
-// Full journal round-trip for provider-owned materialization; reserved until wired into the open path.
-#[allow(dead_code)]
-fn build_transcript_snapshot(
-    revision: i64,
-    snapshot: &SessionThreadSnapshot,
-) -> crate::acp::transcript_projection::TranscriptSnapshot {
-    crate::acp::transcript_projection::TranscriptSnapshot::from_stored_entries(
-        revision,
-        &snapshot.entries,
-    )
-}
-
-#[allow(dead_code)]
-fn build_projection_snapshot(
-    replay_context: &SessionReplayContext,
-    revision: i64,
-    snapshot: &SessionThreadSnapshot,
-) -> crate::acp::projections::SessionProjectionSnapshot {
-    let mut projection = ProjectionRegistry::project_thread_snapshot(
-        &replay_context.local_session_id,
-        Some(replay_context.agent_id.clone()),
-        snapshot,
-    );
-    if let Some(session) = projection.session.as_mut() {
-        session.last_event_seq = revision;
-    }
-    projection
-}
-
-#[allow(dead_code)]
-fn projection_last_event_seq(
-    snapshot: &crate::acp::projections::SessionProjectionSnapshot,
-) -> Option<i64> {
-    snapshot
-        .session
-        .as_ref()
-        .map(|session| session.last_event_seq)
-}
-
-async fn persist_canonical_materialization(
-    db: &DbConn,
-    replay_context: &SessionReplayContext,
-    snapshot: &SessionThreadSnapshot,
-) -> Result<(), String> {
-    let session_id = replay_context.local_session_id.clone();
-    let replay_context_for_txn = replay_context.clone();
-    let file_path = replay_context
-        .source_path
-        .clone()
-        .unwrap_or_else(|| format!("__session_registry__/{}", replay_context.local_session_id));
-
-    SessionMetadataRepository::upsert(
-        db,
-        replay_context.local_session_id.clone(),
-        snapshot.title.clone(),
-        chrono::Utc::now().timestamp_millis(),
-        replay_context.project_path.clone(),
-        replay_context.agent_id.as_str().to_string(),
-        file_path.clone(),
-        0,
-        0,
-    )
-    .await
-    .map_err(|error| {
-        format!(
-            "Failed to persist canonical session metadata for {}: {error}",
-            replay_context.local_session_id
-        )
-    })?;
-    if let Some(worktree_path) = replay_context.worktree_path.as_deref() {
-        SessionMetadataRepository::set_worktree_path(
-            db,
-            &replay_context.local_session_id,
-            worktree_path,
-            Some(&replay_context.project_path),
-            Some(replay_context.agent_id.as_str()),
-        )
-        .await
-        .map_err(|error| {
-            format!(
-                "Failed to persist canonical worktree metadata for {}: {error}",
-                replay_context.local_session_id
-            )
-        })?;
-    }
-
-    db.transaction::<_, (), sea_orm::DbErr>(|txn| {
-        let session_id = session_id.clone();
-        let snapshot = snapshot.clone();
-        let replay_context = replay_context_for_txn.clone();
-        Box::pin(async move {
-            let now = chrono::Utc::now();
-            let max_seq: Option<i64> = crate::db::entities::session_journal_event::Entity::find()
-                .select_only()
-                .column_as(
-                    crate::db::entities::session_journal_event::Column::EventSeq.max(),
-                    "max_seq",
-                )
-                .filter(
-                    crate::db::entities::session_journal_event::Column::SessionId.eq(&session_id),
-                )
-                .into_tuple::<Option<i64>>()
-                .one(txn)
-                .await?
-                .flatten();
-            let revision = if let Some(revision) = max_seq {
-                revision
-            } else {
-                let barrier = SessionJournalEvent::new(
-                    &session_id,
-                    1,
-                    SessionJournalEventPayload::MaterializationBarrier,
-                );
-                crate::db::entities::session_journal_event::Entity::insert(
-                    crate::db::entities::session_journal_event::ActiveModel {
-                        event_id: Set(barrier.event_id.clone()),
-                        session_id: Set(barrier.session_id.clone()),
-                        event_seq: Set(barrier.event_seq),
-                        event_kind: Set(barrier.event_kind().to_string()),
-                        event_json: Set(serde_json::to_string(&barrier.payload)
-                            .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?),
-                        created_at: Set(now),
-                    },
-                )
-                .exec(txn)
-                .await?;
-                barrier.event_seq
-            };
-            let transcript_json =
-                serde_json::to_string(&build_transcript_snapshot(revision, &snapshot))
-                    .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
-
-            if let Some(existing_model) =
-                crate::db::entities::session_transcript_snapshot::Entity::find_by_id(&session_id)
-                    .one(txn)
-                    .await?
-            {
-                let mut active: crate::db::entities::session_transcript_snapshot::ActiveModel =
-                    existing_model.into();
-                active.snapshot_json = Set(transcript_json.clone());
-                active.updated_at = Set(now);
-                active.update(txn).await?;
-            } else {
-                crate::db::entities::session_transcript_snapshot::Entity::insert(
-                    crate::db::entities::session_transcript_snapshot::ActiveModel {
-                        session_id: Set(session_id.clone()),
-                        snapshot_json: Set(transcript_json.clone()),
-                        updated_at: Set(now),
-                    },
-                )
-                .exec(txn)
-                .await?;
-            }
-
-            let thread_snapshot_json = serde_json::to_string(&snapshot)
-                .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
-            if let Some(existing_model) =
-                crate::db::entities::session_thread_snapshot::Entity::find_by_id(&session_id)
-                    .one(txn)
-                    .await?
-            {
-                let mut active: crate::db::entities::session_thread_snapshot::ActiveModel =
-                    existing_model.into();
-                active.snapshot_json = Set(thread_snapshot_json);
-                active.updated_at = Set(now);
-                active.update(txn).await?;
-            } else {
-                crate::db::entities::session_thread_snapshot::Entity::insert(
-                    crate::db::entities::session_thread_snapshot::ActiveModel {
-                        session_id: Set(session_id.clone()),
-                        snapshot_json: Set(thread_snapshot_json),
-                        updated_at: Set(now),
-                    },
-                )
-                .exec(txn)
-                .await?;
-            }
-
-            let projection_snapshot_json = serde_json::to_string(&build_projection_snapshot(
-                &replay_context,
-                revision,
-                &snapshot,
-            ))
-            .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
-            if let Some(existing_model) =
-                crate::db::entities::session_projection_snapshot::Entity::find_by_id(&session_id)
-                    .one(txn)
-                    .await?
-            {
-                let mut active: crate::db::entities::session_projection_snapshot::ActiveModel =
-                    existing_model.into();
-                active.snapshot_json = Set(projection_snapshot_json);
-                active.updated_at = Set(now);
-                active.update(txn).await?;
-            } else {
-                crate::db::entities::session_projection_snapshot::Entity::insert(
-                    crate::db::entities::session_projection_snapshot::ActiveModel {
-                        session_id: Set(session_id.clone()),
-                        snapshot_json: Set(projection_snapshot_json),
-                        updated_at: Set(now),
-                    },
-                )
-                .exec(txn)
-                .await?;
-            }
-
-            Ok(())
-        })
-    })
-    .await
-    .map_err(|error| {
-        format!(
-            "Failed to persist canonical snapshots for {}: {error}",
-            replay_context.local_session_id
-        )
-    })?;
-
-    Ok(())
-}
-
-pub async fn ensure_canonical_session_materialized(
+pub async fn load_provider_owned_session_snapshot(
     app: AppHandle,
     replay_context: &SessionReplayContext,
-) -> Result<Option<SessionThreadSnapshot>, String> {
+) -> Result<Option<SessionThreadSnapshot>, ProviderHistoryLoadError> {
     let Some(db) = app.try_state::<DbConn>().map(|s| s.inner().clone()) else {
-        return Err("Database unavailable for provider-owned session load".to_string());
+        return Err(ProviderHistoryLoadError::provider_unavailable(
+            "Database unavailable for provider-owned session load",
+        ));
     };
     let session_metadata =
         SessionMetadataRepository::get_by_id(&db, &replay_context.local_session_id)
             .await
             .map_err(|error| {
-                format!(
+                ProviderHistoryLoadError::internal(format!(
                     "Failed to load session metadata for {}: {error}",
                     replay_context.local_session_id
-                )
+                ))
             })?;
 
     let context = crate::history::session_context::SessionContext {
@@ -381,11 +402,7 @@ pub async fn ensure_canonical_session_materialized(
         compatibility: replay_context.compatibility.clone(),
         session_metadata,
     };
-    let snapshot = load_unified_session_content_with_context(app, context).await?;
-    if let Some(ref snap) = snapshot {
-        persist_canonical_materialization(&db, replay_context, snap).await?;
-    }
-    Ok(snapshot)
+    load_unified_session_content_with_context(app, context).await
 }
 
 #[tauri::command]
@@ -411,28 +428,61 @@ pub async fn get_session_open_result(
     .await;
     let replay_context = context.replay_context();
     let thread_content =
-        match ensure_canonical_session_materialized(app_clone, &replay_context).await {
+        match load_provider_owned_session_snapshot(app_clone, &replay_context).await {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                return Ok(SessionOpenResult::Error(
-                    crate::acp::session_open_snapshot::SessionOpenError {
-                        requested_session_id: session_id,
-                        message: error,
-                    },
-                ));
+                let open_error = session_open_error_from_provider_load(&session_id, error);
+                // GOD: emit a Failed lifecycle envelope so canonical readers see the
+                // failure through the canonical channel — no client-side synthesis.
+                let update = crate::acp::session_update::SessionUpdate::ConnectionFailed {
+                    session_id: session_id.clone(),
+                    attempt_id: 0,
+                    error: open_error.message.clone(),
+                    // Provider snapshot load failure — not the same path as
+                    // `session/load` rejection. Treat as transient/transport
+                    // by default; classifier could be invoked here in future
+                    // if `ProviderHistoryLoadError` gains richer cases.
+                    failure_reason: crate::acp::lifecycle::FailureReason::ResumeFailed,
+                };
+                crate::acp::commands::emit_lifecycle_event(
+                    &app,
+                    &Some(hub.clone()),
+                    update,
+                    &session_id,
+                )
+                .await;
+                return Ok(SessionOpenResult::Error(open_error));
             }
         };
 
     let Some(thread_content) = thread_content else {
+        // GOD: emit a Failed lifecycle envelope so canonical readers see the
+        // missing state through the canonical channel — no client-side synthesis.
+        // History-not-available means the provider has no replayable state for
+        // this session — same upstream-permanent semantics as session-not-found
+        // at the resume boundary, so classify as SessionGoneUpstream.
+        let update = crate::acp::session_update::SessionUpdate::ConnectionFailed {
+            session_id: session_id.clone(),
+            attempt_id: 0,
+            error: "Provider history is not available for this session".to_string(),
+            failure_reason: crate::acp::lifecycle::FailureReason::SessionGoneUpstream,
+        };
+        crate::acp::commands::emit_lifecycle_event(&app, &Some(hub.clone()), update, &session_id)
+            .await;
         return Ok(SessionOpenResult::Missing(SessionOpenMissing {
             requested_session_id: session_id,
         }));
     };
 
+    let runtime_registry = app
+        .try_state::<Arc<crate::acp::session_state_engine::runtime_registry::SessionGraphRuntimeRegistry>>()
+        .map(|state| state.inner().clone());
+
     Ok(
         crate::acp::session_open_snapshot::session_open_result_from_thread_snapshot(
             db.inner(),
             &hub,
+            runtime_registry.as_deref(),
             &replay_context,
             &session_id,
             &thread_content,
@@ -443,9 +493,14 @@ pub async fn get_session_open_result(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_session_title_metadata, history_replay_family};
-    use crate::acp::provider::HistoryReplayFamily;
+    use super::{
+        apply_session_title_metadata, audit_session_load_timing_cli, history_replay_family,
+        session_open_error_from_provider_load, CanonicalSafeWellFormedness, ProvenanceKeyStability,
+        ProviderRestoreAuditCase, ProviderRestoreAuditReport,
+    };
+    use crate::acp::provider::{HistoryReplayFamily, ProviderHistoryLoadError};
     use crate::acp::session_descriptor::{SessionDescriptorCompatibility, SessionReplayContext};
+    use crate::acp::session_open_snapshot::SessionOpenErrorReason;
     use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
     use crate::acp::session_update::{ToolArguments, ToolCallData, ToolCallStatus, ToolKind};
     use crate::acp::types::CanonicalAgentId;
@@ -532,9 +587,9 @@ mod tests {
             file_path: "file.jsonl".to_string(),
             file_mtime: 0,
             file_size: 0,
-            provider_session_id: None,
             worktree_path: None,
             pr_number: None,
+            pr_link_mode: None,
             is_acepe_managed: false,
             sequence_id: Some(1),
         };
@@ -557,9 +612,9 @@ mod tests {
             file_path: "file.jsonl".to_string(),
             file_mtime: 0,
             file_size: 0,
-            provider_session_id: None,
             worktree_path: None,
             pr_number: None,
+            pr_link_mode: None,
             is_acepe_managed: false,
             sequence_id: Some(1),
         };
@@ -615,6 +670,181 @@ mod tests {
         );
     }
 
+    #[test]
+    fn provider_history_parse_failures_are_non_retryable_unparseable_errors() {
+        let error = session_open_error_from_provider_load(
+            "session-1",
+            ProviderHistoryLoadError::provider_unparseable(
+                "Claude provider history parse failed: invalid JSON",
+            ),
+        );
+
+        assert!(matches!(
+            error.reason,
+            SessionOpenErrorReason::ProviderUnparseable
+        ));
+        assert!(!error.retryable);
+    }
+
+    #[test]
+    fn provider_history_restore_failures_have_specific_taxonomy() {
+        let missing = session_open_error_from_provider_load(
+            "session-1",
+            ProviderHistoryLoadError::provider_history_missing(
+                "provider history missing for provider session",
+            ),
+        );
+        assert!(matches!(
+            missing.reason,
+            SessionOpenErrorReason::ProviderHistoryMissing
+        ));
+        assert!(!missing.retryable);
+
+        let unavailable = session_open_error_from_provider_load(
+            "session-1",
+            ProviderHistoryLoadError::provider_unavailable(
+                "provider unavailable while loading history",
+            ),
+        );
+        assert!(matches!(
+            unavailable.reason,
+            SessionOpenErrorReason::ProviderUnavailable
+        ));
+        assert!(unavailable.retryable);
+
+        let validation = session_open_error_from_provider_load(
+            "session-1",
+            ProviderHistoryLoadError::provider_validation_failed(
+                "provider history validation failed: invalid provenance",
+            ),
+        );
+        assert!(matches!(
+            validation.reason,
+            SessionOpenErrorReason::ProviderValidationFailed
+        ));
+        assert!(!validation.retryable);
+    }
+
+    #[test]
+    fn provider_history_load_failures_use_explicit_internal_errors() {
+        let error = session_open_error_from_provider_load(
+            "session-1",
+            ProviderHistoryLoadError::internal(
+                "Copilot provider history load failed: transport timeout",
+            ),
+        );
+
+        assert!(matches!(error.reason, SessionOpenErrorReason::Internal));
+        assert!(error.retryable);
+    }
+
+    #[test]
+    fn restore_audit_gate_requires_minimum_corpus_for_each_supported_provider() {
+        let report = ProviderRestoreAuditReport::new(vec![
+            ProviderRestoreAuditCase::happy_path("claude-code", "claude-session", 2, 120),
+            ProviderRestoreAuditCase::missing_history("claude-code", "missing-claude"),
+            ProviderRestoreAuditCase::unparseable_history("claude-code", "bad-claude"),
+        ]);
+
+        let gate = report.deletion_gate_status(&["claude-code", "copilot", "cursor"]);
+
+        assert!(!gate.ready);
+        assert!(gate
+            .blocking_reasons
+            .contains(&"copilot lacks a parseable non-empty restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"copilot lacks a missing-history restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"copilot lacks an unparseable-history restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks a parseable non-empty restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks a missing-history restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks an unparseable-history restore case".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks a stable provenance-key verdict".to_string()));
+        assert!(gate
+            .blocking_reasons
+            .contains(&"cursor lacks a canonical-safe well-formedness verdict".to_string()));
+    }
+
+    #[test]
+    fn restore_audit_gate_requires_stable_provenance_verdict() {
+        let mut happy = ProviderRestoreAuditCase::happy_path("copilot", "copilot-session", 2, 80);
+        happy.provenance_key_stability = ProvenanceKeyStability::Unstable;
+        let report = ProviderRestoreAuditReport::new(vec![
+            happy,
+            ProviderRestoreAuditCase::missing_history("copilot", "missing-copilot"),
+            ProviderRestoreAuditCase::unparseable_history("copilot", "bad-copilot"),
+            ProviderRestoreAuditCase::provider_unavailable("copilot", "offline-copilot"),
+        ]);
+
+        let gate = report.deletion_gate_status(&["copilot"]);
+
+        assert!(!gate.ready);
+        assert_eq!(
+            gate.blocking_reasons,
+            vec!["copilot lacks a stable provenance-key verdict".to_string()]
+        );
+    }
+
+    #[test]
+    fn restore_audit_gate_requires_canonical_safe_well_formedness_verdict() {
+        let mut cursor_happy =
+            ProviderRestoreAuditCase::happy_path("cursor", "cursor-session", 2, 90);
+        cursor_happy.canonical_safe_well_formedness = CanonicalSafeWellFormedness::NotWellFormed;
+        let report = ProviderRestoreAuditReport::new(vec![
+            cursor_happy,
+            ProviderRestoreAuditCase::missing_history("cursor", "missing-cursor"),
+            ProviderRestoreAuditCase::unparseable_history("cursor", "bad-cursor"),
+            ProviderRestoreAuditCase::provider_unavailable("cursor", "offline-cursor"),
+        ]);
+
+        let gate = report.deletion_gate_status(&["cursor"]);
+
+        assert!(!gate.ready);
+        assert_eq!(
+            gate.blocking_reasons,
+            vec!["cursor failed the canonical-safe well-formedness check".to_string()]
+        );
+    }
+
+    #[test]
+    fn restore_audit_gate_accepts_cursor_when_stable_and_well_formed() {
+        let report = ProviderRestoreAuditReport::new(vec![
+            ProviderRestoreAuditCase::happy_path("cursor", "cursor-session", 2, 90),
+            ProviderRestoreAuditCase::missing_history("cursor", "missing-cursor"),
+            ProviderRestoreAuditCase::unparseable_history("cursor", "bad-cursor"),
+            ProviderRestoreAuditCase::provider_unavailable("cursor", "offline-cursor"),
+        ]);
+
+        let gate = report.deletion_gate_status(&["cursor"]);
+
+        assert!(gate.ready);
+        assert!(gate.blocking_reasons.is_empty());
+    }
+
+    #[test]
+    fn restore_audit_records_p95_and_regression_limit() {
+        let report = ProviderRestoreAuditReport::new(vec![
+            ProviderRestoreAuditCase::happy_path("copilot", "session-1", 1, 10),
+            ProviderRestoreAuditCase::happy_path("copilot", "session-2", 1, 20),
+            ProviderRestoreAuditCase::happy_path("copilot", "session-3", 1, 30),
+            ProviderRestoreAuditCase::happy_path("copilot", "session-4", 1, 40),
+            ProviderRestoreAuditCase::happy_path("copilot", "session-5", 1, 50),
+        ]);
+
+        assert_eq!(report.p95_time_to_first_entry_render_ms(), Some(50));
+        assert_eq!(report.max_allowed_time_to_first_entry_render_ms(), Some(63));
+    }
+
     #[tokio::test]
     async fn journal_has_no_events_before_materialization() {
         let db = setup_test_db().await;
@@ -646,11 +876,40 @@ mod tests {
 
         assert_eq!(revision, None);
     }
+
+    #[tokio::test]
+    #[ignore = "manual real-provider timing audit"]
+    async fn manual_real_provider_timing_audit() {
+        let session_id =
+            std::env::var("ACEPE_AUDIT_SESSION_ID").expect("ACEPE_AUDIT_SESSION_ID is required");
+        let project_path = std::env::var("ACEPE_AUDIT_PROJECT_PATH")
+            .expect("ACEPE_AUDIT_PROJECT_PATH is required");
+        let agent_id =
+            std::env::var("ACEPE_AUDIT_AGENT_ID").expect("ACEPE_AUDIT_AGENT_ID is required");
+        let source_path = std::env::var("ACEPE_AUDIT_SOURCE_PATH").ok();
+
+        let timing = audit_session_load_timing_cli(session_id, project_path, agent_id, source_path)
+            .await
+            .expect("real-provider timing audit should run");
+
+        assert!(
+            timing.ok,
+            "expected timing audit to find a restorable session"
+        );
+        assert!(
+            timing.entry_count > 0,
+            "expected timing audit to restore a non-empty session"
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&timing).expect("serialize timing audit")
+        );
+    }
 }
 
 /// Audit session load timing for performance bottleneck identification.
 ///
-/// CLI-only audit (no AppHandle). Supports Claude, Cursor, Codex. Returns error for OpenCode.
+/// CLI-only audit (no AppHandle). Supports Claude, Copilot, Cursor, Codex. Returns error for OpenCode.
 pub async fn audit_session_load_timing_cli(
     session_id: String,
     project_path: String,
@@ -661,9 +920,6 @@ pub async fn audit_session_load_timing_cli(
 
     if matches!(canonical_agent, CanonicalAgentId::OpenCode) {
         return Err("OpenCode audit requires running app (use in-app invoke)".to_string());
-    }
-    if matches!(canonical_agent, CanonicalAgentId::Copilot) {
-        return Err("Copilot audit is not implemented yet".to_string());
     }
     if matches!(canonical_agent, CanonicalAgentId::Forge) {
         return Err("Forge audit is not implemented yet".to_string());
@@ -699,6 +955,18 @@ pub async fn audit_session_load_timing_cli(
             );
             add_stage(&mut stages, "convert", t2);
 
+            Some(snapshot)
+        }
+        CanonicalAgentId::Copilot => {
+            let t0 = Instant::now();
+            let snapshot = crate::copilot_history::load_thread_snapshot_from_disk(
+                &session_id,
+                source_path.as_deref(),
+                &format!("Session {}", &session_id[..8.min(session_id.len())]),
+            )
+            .await
+            .map_err(|e| format!("Failed to parse Copilot session: {}", e))?;
+            add_stage(&mut stages, "load_session", t0);
             Some(snapshot)
         }
         CanonicalAgentId::Cursor => {
@@ -761,22 +1029,17 @@ pub async fn audit_session_load_timing_cli(
             add_stage(&mut stages, "load_session", t0);
             codex_result
         }
-        CanonicalAgentId::OpenCode
-        | CanonicalAgentId::Copilot
-        | CanonicalAgentId::Forge
-        | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode | CanonicalAgentId::Forge | CanonicalAgentId::Custom(_) => {
             unreachable!("handled above")
         }
     };
 
     let agent_name = match canonical_agent {
         CanonicalAgentId::ClaudeCode => "claude-code",
+        CanonicalAgentId::Copilot => "copilot",
         CanonicalAgentId::Cursor => "cursor",
         CanonicalAgentId::Codex => "codex",
-        CanonicalAgentId::OpenCode
-        | CanonicalAgentId::Copilot
-        | CanonicalAgentId::Forge
-        | CanonicalAgentId::Custom(_) => {
+        CanonicalAgentId::OpenCode | CanonicalAgentId::Forge | CanonicalAgentId::Custom(_) => {
             unreachable!()
         }
     };
@@ -810,9 +1073,6 @@ pub async fn audit_session_load_timing(
         let total_start = Instant::now();
         let canonical_agent = CanonicalAgentId::parse(&agent_id);
 
-        if matches!(canonical_agent, CanonicalAgentId::Copilot) {
-            return Err("Copilot audit is not implemented yet".to_string());
-        }
         if matches!(canonical_agent, CanonicalAgentId::Forge) {
             return Err("Forge audit is not implemented yet".to_string());
         }
@@ -843,6 +1103,18 @@ pub async fn audit_session_load_timing(
                 add_stage(&mut stages, "convert", t2);
 
                 (Some(snapshot), "claude-code".to_string())
+            }
+            CanonicalAgentId::Copilot => {
+                let t0 = Instant::now();
+                let snapshot = crate::copilot_history::load_thread_snapshot_from_disk(
+                    &session_id,
+                    source_path.as_deref(),
+                    &format!("Session {}", &session_id[..8.min(session_id.len())]),
+                )
+                .await
+                .map_err(|e| format!("Failed to parse Copilot session: {}", e))?;
+                add_stage(&mut stages, "load_session", t0);
+                (Some(snapshot), "copilot".to_string())
             }
             CanonicalAgentId::Cursor => {
                 if let Some(ref sp) = source_path {
@@ -928,7 +1200,7 @@ pub async fn audit_session_load_timing(
             CanonicalAgentId::Custom(_) => {
                 return Err("Custom agents do not support session load audit".to_string());
             }
-            CanonicalAgentId::Copilot | CanonicalAgentId::Forge => unreachable!("handled above"),
+            CanonicalAgentId::Forge => unreachable!("handled above"),
         };
 
         let total_ms = total_start.elapsed().as_millis();
@@ -1029,6 +1301,7 @@ pub async fn set_session_pr_number(
     app: AppHandle,
     session_id: String,
     pr_number: Option<i32>,
+    pr_link_mode: Option<String>,
 ) -> CommandResult<()> {
     unexpected_command_result(
         "set_session_pr_number",
@@ -1037,6 +1310,7 @@ pub async fn set_session_pr_number(
             tracing::info!(
                 session_id = %session_id,
                 pr_number = ?pr_number,
+                pr_link_mode = ?pr_link_mode,
                 "Persisting PR number for session"
             );
 
@@ -1046,16 +1320,21 @@ pub async fn set_session_pr_number(
                 .inner()
                 .clone();
 
-            SessionMetadataRepository::set_pr_number(&db, &session_id, pr_number)
-                .await
-                .map_err(|e| {
-                    tracing::error!(
-                        session_id = %session_id,
-                        error = %e,
-                        "Failed to persist PR number to DB"
-                    );
-                    format!("Failed to set PR number: {}", e)
-                })
+            SessionMetadataRepository::set_pr_number(
+                &db,
+                &session_id,
+                pr_number,
+                pr_link_mode.as_deref(),
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    session_id = %session_id,
+                    error = %e,
+                    "Failed to persist PR number to DB"
+                );
+                format!("Failed to set PR number: {}", e)
+            })
         }
         .await,
     )

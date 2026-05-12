@@ -1,8 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
+import type {
+	LifecycleStatus,
+	SessionGraphActivityKind,
+} from "../../../services/acp-types.js";
 import type { SessionEntry } from "../../application/dto/session-entry.js";
+import type { CanonicalSessionProjection } from "../canonical-session-projection.js";
 import { type PanelToTabInput, panelToTab } from "../tab-bar-utils.js";
-import type { Panel, SessionHotState } from "../types.js";
+import type { Panel, SessionTransientProjection } from "../types.js";
 
 function makePanel(overrides: Partial<Panel> = {}): Panel {
 	return {
@@ -20,20 +25,63 @@ function makePanel(overrides: Partial<Panel> = {}): Panel {
 	};
 }
 
-function makeHotState(overrides: Partial<SessionHotState> = {}): SessionHotState {
+function makeHotState(
+	overrides: Partial<SessionTransientProjection> = {}
+): SessionTransientProjection {
 	return {
-		status: "idle",
-		isConnected: true,
-		turnState: "idle",
 		acpSessionId: null,
-		connectionError: null,
-		autonomousEnabled: false,
 		autonomousTransition: "idle",
-		currentModel: null,
-		currentMode: null,
-		availableCommands: [],
 		statusChangedAt: Date.now(),
 		...overrides,
+	};
+}
+
+function makeCanonicalProjection(
+	status: LifecycleStatus = "ready",
+	activityKind: SessionGraphActivityKind = "idle",
+	currentModeId: string | null = null
+): CanonicalSessionProjection {
+	return {
+		lifecycle: {
+			status,
+			errorMessage: null,
+			detachedReason: null,
+			failureReason: null,
+			actionability: {
+				canSend: status === "ready",
+				canResume: status === "detached",
+				canRetry: status === "failed",
+				canArchive: true,
+				canConfigure: status === "ready",
+				recommendedAction: status === "ready" ? "send" : "wait",
+				recoveryPhase: "none",
+				compactStatus: status,
+			},
+		},
+		activity: {
+			kind: activityKind,
+			activeOperationCount: activityKind === "running_operation" ? 1 : 0,
+			activeSubagentCount: 0,
+			dominantOperationId: activityKind === "running_operation" ? "op-1" : null,
+			blockingInteractionId: null,
+		},
+		turnState: activityKind === "idle" ? "Idle" : "Running",
+		activeTurnFailure: null,
+		lastTerminalTurnId: null,
+		capabilities: {
+			models: null,
+			modes: currentModeId === null ? null : { currentModeId, availableModes: [] },
+			availableCommands: [],
+			configOptions: [],
+			autonomousEnabled: false,
+		},
+		tokenStream: new Map(),
+		clockAnchor: null,
+		revision: {
+			graphRevision: 1,
+			transcriptRevision: 1,
+			lastEventSeq: 1,
+		},
 	};
 }
 
@@ -125,7 +173,7 @@ describe("panelToTab", () => {
 		it("should return mode id when mode is set", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ currentMode: { id: "plan", name: "Plan" } }),
+					canonicalProjection: makeCanonicalProjection("ready", "idle", "plan"),
 				})
 			);
 			expect(tab.currentModeId).toBe("plan");
@@ -134,7 +182,7 @@ describe("panelToTab", () => {
 		it("should return null when mode is null", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ currentMode: null }),
+					canonicalProjection: makeCanonicalProjection("ready", "idle", null),
 				})
 			);
 			expect(tab.currentModeId).toBeNull();
@@ -147,19 +195,63 @@ describe("panelToTab", () => {
 	});
 
 	describe("state.activity streaming", () => {
-		it("should be streaming when status is streaming", () => {
+		it("should be thinking when canonical activity is awaiting_model", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ status: "streaming" }),
+					canonicalProjection: makeCanonicalProjection("ready", "awaiting_model"),
 				})
 			);
+			expect(tab.state.activity.kind).toBe("thinking");
+		});
+
+		it("should be thinking when graph-backed activity is awaiting_model", () => {
+			const tab = panelToTab(
+				makeInput({
+					canonicalProjection: makeCanonicalProjection("ready", "awaiting_model"),
+					runtimeState: {
+						connectionPhase: "connected",
+						contentPhase: "loaded",
+						activityPhase: "idle",
+						canSubmit: true,
+						canCancel: false,
+						showStop: false,
+						showThinking: false,
+						showConnectingOverlay: false,
+						showConversation: true,
+						showReadyPlaceholder: false,
+					},
+				})
+			);
+
+			expect(tab.state.activity.kind).toBe("thinking");
+		});
+
+		it("should be streaming when graph-backed activity is running_operation", () => {
+			const tab = panelToTab(
+				makeInput({
+					canonicalProjection: makeCanonicalProjection("ready", "running_operation"),
+					runtimeState: {
+						connectionPhase: "connected",
+						contentPhase: "loaded",
+						activityPhase: "idle",
+						canSubmit: true,
+						canCancel: false,
+						showStop: false,
+						showThinking: false,
+						showConnectingOverlay: false,
+						showConversation: true,
+						showReadyPlaceholder: false,
+					},
+				})
+			);
+
 			expect(tab.state.activity.kind).toBe("streaming");
 		});
 
 		it("should be idle when status is idle", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ status: "idle" }),
+					canonicalProjection: null,
 				})
 			);
 			expect(tab.state.activity.kind).toBe("idle");
@@ -172,48 +264,44 @@ describe("panelToTab", () => {
 	});
 
 	describe("state.connection connecting", () => {
-		it("should be connecting when status is connecting", () => {
+		it("should be connecting when canonical lifecycle is activating", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ status: "connecting" }),
+					canonicalProjection: makeCanonicalProjection("activating", "idle"),
 				})
 			);
 			expect(tab.state.connection).toBe("connecting");
 		});
 
-		it("should be connecting when status is loading", () => {
+		it("should be connecting when canonical lifecycle is reconnecting", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ status: "loading" }),
+					canonicalProjection: makeCanonicalProjection("reconnecting", "idle"),
 				})
 			);
 			expect(tab.state.connection).toBe("connecting");
 		});
 
 		it("should be disconnected when status is idle", () => {
-			const tab = panelToTab(
-				makeInput({
-					hotState: makeHotState({ status: "idle" }),
-				})
-			);
+			const tab = panelToTab(makeInput({ canonicalProjection: null }));
 			expect(tab.state.connection).toBe("disconnected");
 		});
 	});
 
 	describe("state.connection error", () => {
-		it("should be error when status is error", () => {
+		it("should be error when canonical lifecycle is failed", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ status: "error" }),
+					canonicalProjection: makeCanonicalProjection("failed", "idle"),
 				})
 			);
 			expect(tab.state.connection).toBe("error");
 		});
 
-		it("should be connected when status is streaming", () => {
+		it("should be connected when canonical lifecycle is ready", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ status: "streaming" }),
+					canonicalProjection: makeCanonicalProjection("ready", "awaiting_model"),
 				})
 			);
 			expect(tab.state.connection).toBe("connected");

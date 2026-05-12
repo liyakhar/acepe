@@ -3,7 +3,7 @@
 	"mcp": {
 		"tauri": {
 			"type": "local",
-			"command": ["npx", "-y", "@hypothesi/tauri-mcp-server"]
+			"command": ["npx", "-y", "@hypothesi/tauri-mcp-server@0.11.1"]
 		}
 	}
 }

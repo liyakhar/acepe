@@ -1,12 +1,14 @@
 <script lang="ts">
-	import { GitPullRequest } from "phosphor-svelte";
+	import { GitPullRequest, GitMerge } from "phosphor-svelte";
 	import { CaretDown } from "phosphor-svelte";
 
 	import type { AgentPanelPrCardModel } from "./types.js";
 
+	import { Colors } from "../../lib/colors.js";
 	import { DiffPill } from "../diff-pill/index.js";
 	import { GitHubBadge } from "../github-badge/index.js";
 	import { LoadingIcon } from "../icons/index.js";
+	import { PrChecksList } from "../pr-checks/index.js";
 	import AgentPanelPrStatusCard from "./pr-status-card.svelte";
 
 	interface Props {
@@ -14,19 +16,40 @@
 		model: AgentPanelPrCardModel;
 		fetchError?: string | null;
 		initiallyExpanded?: boolean;
+		initiallyExpandedChecks?: boolean;
 	}
 
-	let { visible, model, fetchError = null, initiallyExpanded = false }: Props = $props();
+	let {
+		visible,
+		model,
+		fetchError = null,
+		initiallyExpanded = false,
+		initiallyExpandedChecks = false,
+	}: Props = $props();
 
+	const hasChecks = $derived(
+		(model.checks?.length ?? 0) > 0 ||
+			Boolean(model.isChecksLoading) ||
+			Boolean(model.hasResolvedChecks)
+	);
 	const hasExpandedContent = $derived(
-		Boolean(model.descriptionHtml) || (model.commits?.length ?? 0) > 0 || model.mode === "streaming"
+		Boolean(model.descriptionHtml) ||
+			(model.commits?.length ?? 0) > 0 ||
+			model.mode === "streaming"
 	);
 	const prState = $derived(
 		model.state === "MERGED" ? "merged" : model.state === "CLOSED" ? "closed" : "open"
 	);
+	const headerIconColor = $derived(
+		prState === "merged"
+			? Colors.purple
+			: prState === "closed"
+				? "var(--destructive)"
+				: "var(--success)"
+	);
 </script>
 
-<AgentPanelPrStatusCard {visible} {fetchError} {initiallyExpanded} {hasExpandedContent}>
+<AgentPanelPrStatusCard {visible} {fetchError} {initiallyExpanded} {hasExpandedContent} hasBelowHeader={hasChecks}>
 	{#snippet headerMain()}
 		{#if model.mode === "pr" && model.number !== null && model.number !== undefined}
 			<button
@@ -37,7 +60,11 @@
 					model.onOpen?.(event);
 				}}
 			>
-				<GitPullRequest size={13} weight="bold" class="shrink-0" style="color: var(--success)" />
+				{#if prState === "merged"}
+					<GitMerge size={13} weight="bold" class="shrink-0" style="color: {headerIconColor}" />
+				{:else}
+					<GitPullRequest size={13} weight="bold" class="shrink-0" style="color: {headerIconColor}" />
+				{/if}
 				<span class="font-medium tabular-nums text-foreground">#{model.number}</span>
 			</button>
 			{#if model.title}
@@ -73,17 +100,32 @@
 				<LoadingIcon class="size-3 shrink-0 animate-spin" />
 			{/if}
 			<CaretDown
-				size={14}
+				size={12}
 				weight="bold"
-				class="shrink-0 text-muted-foreground transition-transform {isExpanded ? '' : 'rotate-180'}"
+				class="shrink-0 text-muted-foreground/80 transition-transform {isExpanded ? '' : 'rotate-180'}"
 			/>
+		{/if}
+	{/snippet}
+
+	{#snippet belowHeader()}
+		{#if model.mode === "pr" && hasChecks}
+			<div class="px-3 py-1.5 bg-input/30 rounded-b-md border-x border-b border-border">
+				<PrChecksList
+					checks={model.checks ?? []}
+					isLoading={model.isChecksLoading ?? false}
+					hasResolved={model.hasResolvedChecks ?? false}
+					initiallyExpanded={initiallyExpandedChecks}
+					collapseThreshold={model.checksCollapseThreshold ?? 3}
+					onOpenCheck={model.onOpenCheck}
+				/>
+			</div>
 		{/if}
 	{/snippet}
 
 	{#snippet expandedContent()}
 		{#if model.descriptionHtml}
-			<div class="px-3 pt-2.5 pb-2 max-h-[200px] overflow-y-auto">
-				<div class="markdown-content text-xs text-foreground leading-relaxed">
+			<div class="px-3 pt-0 pb-2 max-h-[200px] overflow-y-auto">
+				<div class="markdown-content text-sm text-foreground leading-relaxed">
 					{@html model.descriptionHtml}
 					{#if model.mode === "streaming" && model.isStreaming}
 						<span class="inline-block w-1.5 h-3 bg-foreground/50 animate-pulse ml-0.5 align-text-bottom"></span>
@@ -105,7 +147,7 @@
 								commit.onClick?.(event);
 							}}
 						/>
-						<span class="text-[11px] text-foreground/70 truncate leading-none">{commit.message}</span>
+						<span class="text-sm text-foreground/70 truncate leading-none">{commit.message}</span>
 					</div>
 				{/each}
 			</div>

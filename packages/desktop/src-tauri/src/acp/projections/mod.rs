@@ -4,6 +4,7 @@
 //! [`crate::acp::reconciler::projector`]. This module tracks operational state derived from
 //! already-projected [`ToolCallData`] / updates — it does not re-classify tools.
 
+use crate::acp::parsers::acp_fields::normalize_tool_call_id;
 use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
 use crate::acp::session_update::{
     InteractionReplyHandler, PermissionData, QuestionData, SessionUpdate, TodoItem, ToolArguments,
@@ -14,8 +15,12 @@ use crate::session_jsonl::types::StoredEntry;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use specta::Type;
 use std::sync::Arc;
+
+const CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE: &str =
+    "Result unavailable: the agent resumed after this tool call but did not provide stdout/stderr to Acepe.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum SessionTurnState {
@@ -51,6 +56,105 @@ pub struct SessionSnapshot {
     pub last_terminal_turn_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationState {
+    Pending,
+    Running,
+    Blocked,
+    Completed,
+    Failed,
+    Cancelled,
+    Degraded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationDegradationCode {
+    ImpossibleTransition,
+    MissingEvidence,
+    AbsentFromHistory,
+    ClassificationFailure,
+    InvalidProvenanceKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct OperationDegradationReason {
+    pub code: OperationDegradationCode,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OperationSourceLink {
+    TranscriptLinked { entry_id: String },
+    Synthetic { reason: String },
+    Degraded { reason: OperationDegradationReason },
+}
+
+impl OperationSourceLink {
+    pub(crate) fn transcript_linked(entry_id: String) -> Self {
+        Self::TranscriptLinked { entry_id }
+    }
+
+    pub(crate) fn synthetic(reason: &str) -> Self {
+        Self::Synthetic {
+            reason: reason.to_string(),
+        }
+    }
+
+    pub(crate) fn degraded(reason: OperationDegradationReason) -> Self {
+        Self::Degraded { reason }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvenanceValidationError {
+    Empty,
+    InvalidCharacters,
+    ExceedsMaxLength { key_len: usize },
+}
+
+pub const PROVENANCE_KEY_MAX_LEN: usize = 512;
+pub const MAX_SESSION_OPERATIONS: usize = 1000;
+
+pub fn validate_provenance_key(key: &str) -> Result<(), ProvenanceValidationError> {
+    if key.is_empty() {
+        return Err(ProvenanceValidationError::Empty);
+    }
+    if key.len() > PROVENANCE_KEY_MAX_LEN {
+        return Err(ProvenanceValidationError::ExceedsMaxLength { key_len: key.len() });
+    }
+    if key.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        return Err(ProvenanceValidationError::InvalidCharacters);
+    }
+    Ok(())
+}
+
+pub fn build_canonical_operation_id(session_id: &str, provenance_key: &str) -> String {
+    format!(
+        "op:{}:{}:{}:{}",
+        session_id.len(),
+        session_id,
+        provenance_key.len(),
+        provenance_key
+    )
+}
+
+pub fn build_validated_canonical_operation_id(
+    session_id: &str,
+    provenance_key: &str,
+) -> Result<String, ProvenanceValidationError> {
+    validate_provenance_key(provenance_key)?;
+    Ok(build_canonical_operation_id(session_id, provenance_key))
+}
+
+/// Provider-layer provenance status carried by an Operation snapshot.
+/// This is the raw status from the tool-call stream, captured as provenance evidence.
+/// Do NOT use for canonical state decisions — use [`OperationState`] instead.
+pub type OperationProviderStatus = ToolCallStatus;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct OperationSnapshot {
     pub id: String,
@@ -58,7 +162,8 @@ pub struct OperationSnapshot {
     pub tool_call_id: String,
     pub name: String,
     pub kind: Option<crate::acp::session_update::ToolKind>,
-    pub status: ToolCallStatus,
+    /// Provider-layer provenance status. Use `operation_state` for canonical state decisions.
+    pub provider_status: OperationProviderStatus,
     pub title: Option<String>,
     pub arguments: crate::acp::session_update::ToolArguments,
     pub progressive_arguments: Option<crate::acp::session_update::ToolArguments>,
@@ -69,6 +174,28 @@ pub struct OperationSnapshot {
     pub parent_operation_id: Option<String>,
     pub child_tool_call_ids: Vec<String>,
     pub child_operation_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub operation_provenance_key: Option<String>,
+    pub operation_state: OperationState,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub locations: Option<Vec<crate::acp::session_update::ToolCallLocation>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub skill_meta: Option<crate::acp::session_update::SkillMeta>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub normalized_questions: Option<Vec<crate::acp::session_update::QuestionItem>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub question_answer: Option<crate::session_jsonl::types::QuestionAnswer>,
+    #[serde(default)]
+    pub awaiting_plan_approval: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub plan_approval_request_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub started_at_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub completed_at_ms: Option<u64>,
+    pub source_link: OperationSourceLink,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub degradation_reason: Option<OperationDegradationReason>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -84,6 +211,7 @@ pub enum InteractionState {
     Approved,
     Rejected,
     Answered,
+    Unresolved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -129,6 +257,8 @@ pub struct InteractionSnapshot {
     pub responded_at_event_seq: Option<i64>,
     pub response: Option<InteractionResponse>,
     pub payload: InteractionPayload,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub canonical_operation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -174,6 +304,10 @@ fn start_running_turn(snapshot: &mut SessionSnapshot) {
     snapshot.turn_state = SessionTurnState::Running;
     snapshot.active_turn_failure = None;
     snapshot.last_terminal_turn_id = None;
+}
+
+fn synthetic_agent_message_id(event_seq: i64) -> String {
+    format!("assistant-event-{event_seq}")
 }
 
 fn should_ignore_turn_complete(snapshot: &SessionSnapshot, turn_id: Option<&str>) -> bool {
@@ -243,12 +377,24 @@ impl ProjectionRegistry {
             self.snapshots.insert(session_id.clone(), session);
         }
         for operation in projection.operations {
+            let operation_id = operation.id.clone();
+            let operation = self
+                .operations_by_id
+                .get(&operation_id)
+                .map(|existing| merge_operation_snapshot_evidence(&existing, operation.clone()))
+                .unwrap_or(operation);
             self.operations_by_id
                 .insert(operation.id.clone(), operation.clone());
             self.operation_id_by_tool_key.insert(
                 create_session_tool_key(&session_id, &operation.tool_call_id),
                 operation.id.clone(),
             );
+            if let Some(provenance_key) = operation.operation_provenance_key.as_ref() {
+                self.operation_id_by_tool_key.insert(
+                    create_session_tool_key(&session_id, provenance_key),
+                    operation.id.clone(),
+                );
+            }
             self.insert_session_operation_id(&session_id, &operation.id);
         }
         for interaction in projection.interactions {
@@ -277,6 +423,10 @@ impl ProjectionRegistry {
                             session_id,
                             &operation.tool_call_id,
                         ));
+                    if let Some(provenance_key) = operation.operation_provenance_key.as_ref() {
+                        self.operation_id_by_tool_key
+                            .remove(&create_session_tool_key(session_id, provenance_key));
+                    }
                 }
             }
         }
@@ -315,13 +465,16 @@ impl ProjectionRegistry {
         match update {
             SessionUpdate::UserMessageChunk { .. } => {
                 snapshot.message_count = snapshot.message_count.saturating_add(1);
+                snapshot.last_agent_message_id = None;
                 start_running_turn(&mut snapshot);
             }
             SessionUpdate::AgentMessageChunk { message_id, .. } => {
                 snapshot.message_count = snapshot.message_count.saturating_add(1);
-                if let Some(message_id) = message_id {
-                    snapshot.last_agent_message_id = Some(message_id.clone());
-                }
+                let live_message_id = message_id
+                    .clone()
+                    .or_else(|| snapshot.last_agent_message_id.clone())
+                    .unwrap_or_else(|| synthetic_agent_message_id(snapshot.last_event_seq));
+                snapshot.last_agent_message_id = Some(live_message_id);
                 if !preserves_failed_turn(&snapshot) {
                     start_running_turn(&mut snapshot);
                 }
@@ -331,22 +484,33 @@ impl ProjectionRegistry {
             }
             SessionUpdate::AgentThoughtChunk { .. } => {}
             SessionUpdate::ToolCall { tool_call, .. } => {
+                let tool_call = normalize_tool_call_for_operation_ingress(tool_call);
+                if should_skip_unanswered_question_tool_operation(&tool_call) {
+                    self.register_converted_question_interaction(
+                        session_id,
+                        &tool_call,
+                        snapshot.last_event_seq,
+                    );
+                    return;
+                }
                 upsert_active_tool_call(&mut snapshot.active_tool_call_ids, &tool_call.id);
                 if is_terminal_tool_call_status(&tool_call.status) {
                     mark_tool_call_completed(&mut snapshot, &tool_call.id);
                 }
                 self.upsert_tool_call_projection(
                     session_id,
-                    tool_call,
+                    &tool_call,
                     None,
                     tool_call.parent_tool_use_id.clone(),
+                    OperationSourceLink::transcript_linked(tool_call.id.clone()),
                 );
-                self.register_plan_approval_interaction(session_id, tool_call);
+                self.register_plan_approval_interaction(session_id, &tool_call);
                 if !preserves_failed_turn(&snapshot) {
                     start_running_turn(&mut snapshot);
                 }
             }
             SessionUpdate::ToolCallUpdate { update, .. } => {
+                let update = normalize_tool_call_update_for_operation_ingress(update);
                 upsert_active_tool_call(&mut snapshot.active_tool_call_ids, &update.tool_call_id);
                 if update
                     .status
@@ -355,7 +519,7 @@ impl ProjectionRegistry {
                 {
                     mark_tool_call_completed(&mut snapshot, &update.tool_call_id);
                 }
-                self.apply_tool_call_update_projection(session_id, update);
+                self.apply_tool_call_update_projection(session_id, &update);
                 if !preserves_failed_turn(&snapshot) {
                     start_running_turn(&mut snapshot);
                 }
@@ -442,10 +606,39 @@ impl ProjectionRegistry {
         session_id: &str,
         tool_call_id: &str,
     ) -> Option<OperationSnapshot> {
-        let tool_key = create_session_tool_key(session_id, tool_call_id);
-        let operation_id = self.operation_id_by_tool_key.get(&tool_key)?;
+        let operation_id = self.lookup_operation_id_by_tool_call(session_id, tool_call_id)?;
         self.operations_by_id
-            .get(operation_id.value())
+            .get(&operation_id)
+            .map(|snapshot| snapshot.clone())
+    }
+
+    fn lookup_operation_id_by_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+    ) -> Option<String> {
+        let direct_key = create_session_tool_key(session_id, tool_call_id);
+        if let Some(operation_id) = self.operation_id_by_tool_key.get(&direct_key) {
+            return Some(operation_id.value().clone());
+        }
+
+        let normalized_tool_call_id = normalize_operation_ingress_tool_call_id(tool_call_id);
+        if normalized_tool_call_id == tool_call_id {
+            return None;
+        }
+
+        self.operation_id_by_tool_key
+            .get(&create_session_tool_key(
+                session_id,
+                &normalized_tool_call_id,
+            ))
+            .map(|operation_id| operation_id.value().clone())
+    }
+
+    #[must_use]
+    pub fn operation(&self, operation_id: &str) -> Option<OperationSnapshot> {
+        self.operations_by_id
+            .get(operation_id)
             .map(|snapshot| snapshot.clone())
     }
 
@@ -532,7 +725,26 @@ impl ProjectionRegistry {
         interaction.response = Some(response);
         self.interactions_by_id
             .insert(interaction_id.to_string(), interaction.clone());
+        self.advance_operation_after_interaction_resolution(&interaction);
         Some(interaction)
+    }
+
+    pub fn import_interaction_snapshot(&self, interaction: InteractionSnapshot) {
+        self.upsert_interaction(interaction);
+    }
+
+    pub fn import_interaction_snapshot_at_event_seq(
+        &self,
+        interaction: InteractionSnapshot,
+        event_seq: i64,
+    ) {
+        let session_id = interaction.session_id.clone();
+        self.upsert_interaction(interaction);
+        let mut snapshot = self
+            .snapshots
+            .entry(session_id.clone())
+            .or_insert_with(|| SessionSnapshot::new(session_id, None));
+        snapshot.last_event_seq = snapshot.last_event_seq.max(event_seq);
     }
 
     pub fn resolve_interaction_by_request_id(
@@ -562,19 +774,33 @@ impl ProjectionRegistry {
 
             match entry {
                 StoredEntry::User { .. } => {
+                    self.cancel_active_tool_calls_for_historical_boundary(
+                        session_id,
+                        &snapshot.active_tool_call_ids,
+                    );
+                    snapshot.active_tool_call_ids.clear();
                     if snapshot.active_turn_failure.is_some() {
                         start_running_turn(&mut snapshot);
                     }
                     snapshot.message_count = snapshot.message_count.saturating_add(1);
                 }
                 StoredEntry::Assistant { id, .. } => {
+                    self.cancel_active_tool_calls_for_historical_boundary(
+                        session_id,
+                        &snapshot.active_tool_call_ids,
+                    );
+                    snapshot.active_tool_call_ids.clear();
                     if snapshot.active_turn_failure.is_some() {
                         start_running_turn(&mut snapshot);
                     }
                     snapshot.message_count = snapshot.message_count.saturating_add(1);
                     snapshot.last_agent_message_id = Some(id.clone());
                 }
-                StoredEntry::ToolCall { message, .. } => {
+                StoredEntry::ToolCall { id, message, .. } => {
+                    let message = normalize_tool_call_for_operation_ingress(message);
+                    if should_skip_unanswered_question_tool_operation(&message) {
+                        continue;
+                    }
                     if snapshot.active_turn_failure.is_some() {
                         start_running_turn(&mut snapshot);
                     }
@@ -585,14 +811,17 @@ impl ProjectionRegistry {
 
                     self.upsert_tool_call_projection(
                         session_id,
-                        message,
+                        &message,
                         None,
                         message.parent_tool_use_id.clone(),
+                        OperationSourceLink::transcript_linked(
+                            normalize_operation_ingress_tool_call_id(id),
+                        ),
                     );
-                    self.register_plan_approval_interaction(session_id, message);
+                    self.register_plan_approval_interaction(session_id, &message);
                     self.register_converted_question_interaction(
                         session_id,
-                        message,
+                        &message,
                         snapshot.last_event_seq,
                     );
                 }
@@ -621,12 +850,48 @@ impl ProjectionRegistry {
         tool_call: &ToolCallData,
         parent_operation_id: Option<String>,
         parent_tool_call_id: Option<String>,
+        source_link: OperationSourceLink,
     ) -> OperationSnapshot {
-        let operation_id = build_operation_id(session_id, &tool_call.id);
+        let normalized_tool_call = normalize_tool_call_for_operation_ingress(tool_call);
+        let tool_call = &normalized_tool_call;
+        let parent_tool_call_id =
+            parent_tool_call_id.map(|id| normalize_operation_ingress_tool_call_id(&id));
+        let operation_id = match build_validated_canonical_operation_id(session_id, &tool_call.id) {
+            Ok(operation_id) => operation_id,
+            Err(_) => {
+                return self.upsert_rejected_tool_call_projection(
+                    session_id,
+                    tool_call,
+                    parent_operation_id,
+                    parent_tool_call_id,
+                    OperationDegradationReason {
+                        code: OperationDegradationCode::InvalidProvenanceKey,
+                        detail: Some("Operation provenance key failed validation".to_string()),
+                    },
+                    source_link,
+                );
+            }
+        };
         let existing = self
             .operations_by_id
             .get(&operation_id)
             .map(|operation| operation.clone());
+        if existing.is_none() && !self.can_insert_operation(session_id) {
+            return rejected_operation_snapshot(
+                build_rejected_operation_id(session_id, &tool_call.id),
+                session_id,
+                tool_call,
+                parent_operation_id,
+                parent_tool_call_id,
+                OperationDegradationReason {
+                    code: OperationDegradationCode::MissingEvidence,
+                    detail: Some(format!(
+                        "Session operation limit of {MAX_SESSION_OPERATIONS} was reached"
+                    )),
+                },
+                source_link,
+            );
+        }
         let resolved_parent_tool_call_id =
             tool_call.parent_tool_use_id.clone().or(parent_tool_call_id);
         let mut child_tool_call_ids = Vec::new();
@@ -639,19 +904,32 @@ impl ProjectionRegistry {
                     child,
                     Some(operation_id.clone()),
                     Some(tool_call.id.clone()),
+                    OperationSourceLink::synthetic("task_child_operation"),
                 );
                 child_tool_call_ids.push(child.id.clone());
                 child_operation_ids.push(child_operation.id);
             }
         }
 
+        let derived_operation_state = derive_operation_state(&tool_call.status);
+        let mut new_operation_state = match existing.as_ref() {
+            Some(operation) if is_terminal_operation_state(&operation.operation_state) => {
+                operation.operation_state.clone()
+            }
+            _ => derived_operation_state.clone(),
+        };
+        if !is_terminal_operation_state(&new_operation_state)
+            && self.has_pending_blocking_interaction_for_operation(session_id, &operation_id)
+        {
+            new_operation_state = OperationState::Blocked;
+        }
         let operation = OperationSnapshot {
             id: operation_id.clone(),
             session_id: session_id.to_string(),
             tool_call_id: tool_call.id.clone(),
             name: tool_call.name.clone(),
             kind: tool_call.kind,
-            status: tool_call.status.clone(),
+            provider_status: tool_call.status.clone(),
             title: tool_call.title.clone(),
             arguments: tool_call.arguments.clone(),
             progressive_arguments: existing
@@ -670,7 +948,157 @@ impl ProjectionRegistry {
             parent_operation_id,
             child_tool_call_ids,
             child_operation_ids,
+            operation_provenance_key: Some(tool_call.id.clone()),
+            operation_state: new_operation_state,
+            locations: tool_call
+                .locations
+                .clone()
+                .or_else(|| existing.as_ref().and_then(|e| e.locations.clone())),
+            skill_meta: tool_call
+                .skill_meta
+                .clone()
+                .or_else(|| existing.as_ref().and_then(|e| e.skill_meta.clone())),
+            normalized_questions: tool_call.normalized_questions.clone().or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|e| e.normalized_questions.clone())
+            }),
+            question_answer: tool_call
+                .question_answer
+                .clone()
+                .or_else(|| existing.as_ref().and_then(|e| e.question_answer.clone())),
+            awaiting_plan_approval: tool_call.awaiting_plan_approval,
+            plan_approval_request_id: tool_call.plan_approval_request_id,
+            started_at_ms: None,
+            completed_at_ms: None,
+            source_link,
+            degradation_reason: None,
         };
+
+        let operation = existing
+            .as_ref()
+            .map(|existing| merge_operation_snapshot_evidence(existing, operation.clone()))
+            .unwrap_or(operation);
+
+        self.operations_by_id
+            .insert(operation_id.clone(), operation.clone());
+        self.operation_id_by_tool_key.insert(
+            create_session_tool_key(session_id, &tool_call.id),
+            operation_id.clone(),
+        );
+        if let Some(provenance_key) = operation.operation_provenance_key.as_ref() {
+            self.operation_id_by_tool_key.insert(
+                create_session_tool_key(session_id, provenance_key),
+                operation_id.clone(),
+            );
+        }
+        self.insert_session_operation_id(session_id, &operation_id);
+
+        operation
+    }
+
+    fn cancel_active_tool_calls_for_historical_boundary(
+        &self,
+        session_id: &str,
+        active_tool_call_ids: &[String],
+    ) {
+        self.mark_pending_interactions_unresolved_for_historical_boundary(
+            session_id,
+            active_tool_call_ids,
+        );
+        for tool_call_id in active_tool_call_ids {
+            let Some(operation_id) = self
+                .operation_id_by_tool_key
+                .get(&create_session_tool_key(session_id, tool_call_id))
+                .map(|entry| entry.value().clone())
+            else {
+                continue;
+            };
+            if let Some(mut operation) = self.operations_by_id.get_mut(&operation_id) {
+                if !is_terminal_operation_state(&operation.operation_state) {
+                    operation.operation_state = OperationState::Cancelled;
+                }
+            }
+        }
+    }
+
+    fn mark_pending_interactions_unresolved_for_historical_boundary(
+        &self,
+        session_id: &str,
+        active_tool_call_ids: &[String],
+    ) {
+        let Some(interaction_ids) = self.session_interaction_ids.get(session_id) else {
+            return;
+        };
+        let interaction_ids: Vec<String> = interaction_ids.iter().cloned().collect();
+
+        for interaction_id in interaction_ids {
+            let Some(mut interaction) = self.interactions_by_id.get_mut(&interaction_id) else {
+                continue;
+            };
+            if interaction.state != InteractionState::Pending {
+                continue;
+            }
+            let Some(tool_reference) = interaction.tool_reference.as_ref() else {
+                continue;
+            };
+            if !active_tool_call_ids
+                .iter()
+                .any(|tool_call_id| tool_call_id == &tool_reference.call_id)
+            {
+                continue;
+            }
+
+            interaction.state = InteractionState::Unresolved;
+            interaction.reply_handler = None;
+        }
+    }
+
+    fn upsert_rejected_tool_call_projection(
+        &self,
+        session_id: &str,
+        tool_call: &ToolCallData,
+        parent_operation_id: Option<String>,
+        parent_tool_call_id: Option<String>,
+        degradation_reason: OperationDegradationReason,
+        source_link: OperationSourceLink,
+    ) -> OperationSnapshot {
+        let operation_id = build_rejected_operation_id(session_id, &tool_call.id);
+        let existing = self
+            .operations_by_id
+            .get(&operation_id)
+            .map(|operation| operation.clone());
+
+        if existing.is_none() && !self.can_insert_operation(session_id) {
+            return rejected_operation_snapshot(
+                operation_id,
+                session_id,
+                tool_call,
+                parent_operation_id,
+                parent_tool_call_id,
+                OperationDegradationReason {
+                    code: OperationDegradationCode::MissingEvidence,
+                    detail: Some(format!(
+                        "Session operation limit of {MAX_SESSION_OPERATIONS} was reached"
+                    )),
+                },
+                source_link,
+            );
+        }
+
+        let operation = rejected_operation_snapshot(
+            operation_id.clone(),
+            session_id,
+            tool_call,
+            parent_operation_id,
+            parent_tool_call_id,
+            degradation_reason,
+            source_link,
+        );
+        let operation = existing
+            .as_ref()
+            .map(|existing| merge_operation_snapshot_evidence(existing, operation.clone()))
+            .unwrap_or(operation);
 
         self.operations_by_id
             .insert(operation_id.clone(), operation.clone());
@@ -684,11 +1112,8 @@ impl ProjectionRegistry {
     }
 
     fn apply_tool_call_update_projection(&self, session_id: &str, update: &ToolCallUpdateData) {
-        let tool_key = create_session_tool_key(session_id, &update.tool_call_id);
-        let Some(operation_id) = self
-            .operation_id_by_tool_key
-            .get(&tool_key)
-            .map(|entry| entry.value().clone())
+        let Some(operation_id) =
+            self.lookup_operation_id_by_tool_call(session_id, &update.tool_call_id)
         else {
             return;
         };
@@ -700,7 +1125,14 @@ impl ProjectionRegistry {
             return;
         };
 
-        let next_status = update.status.clone().unwrap_or(existing.status);
+        let next_status = if is_claude_resumed_missing_tool_result_update(update) {
+            ToolCallStatus::Completed
+        } else {
+            update
+                .status
+                .clone()
+                .unwrap_or(existing.provider_status.clone())
+        };
         let next_arguments = update
             .arguments
             .clone()
@@ -725,31 +1157,54 @@ impl ProjectionRegistry {
             .clone()
             .or(existing.normalized_todos.clone());
 
-        self.operations_by_id.insert(
-            operation_id,
-            OperationSnapshot {
-                id: existing.id,
-                session_id: existing.session_id,
-                tool_call_id: existing.tool_call_id,
-                name: existing.name,
-                kind: existing.kind,
-                status: next_status,
-                title: next_title.clone(),
-                arguments: next_arguments.clone(),
-                progressive_arguments: next_progressive_arguments.clone(),
-                result: next_result,
-                command: extract_operation_command(
-                    Some(&next_arguments),
-                    next_progressive_arguments.as_ref(),
-                    next_title.as_deref(),
-                ),
-                normalized_todos: next_normalized_todos,
-                parent_tool_call_id: existing.parent_tool_call_id,
-                parent_operation_id: existing.parent_operation_id,
-                child_tool_call_ids: existing.child_tool_call_ids,
-                child_operation_ids: existing.child_operation_ids,
-            },
-        );
+        let derived_state = derive_operation_state(&next_status);
+        let mut next_operation_state = if is_terminal_operation_state(&existing.operation_state) {
+            existing.operation_state.clone()
+        } else {
+            derived_state
+        };
+        if !is_terminal_operation_state(&next_operation_state)
+            && self.has_pending_blocking_interaction_for_operation(session_id, &operation_id)
+        {
+            next_operation_state = OperationState::Blocked;
+        }
+
+        let updated_operation = OperationSnapshot {
+            id: existing.id.clone(),
+            session_id: existing.session_id.clone(),
+            tool_call_id: existing.tool_call_id.clone(),
+            name: existing.name.clone(),
+            kind: existing.kind,
+            provider_status: next_status,
+            title: next_title.clone(),
+            arguments: next_arguments.clone(),
+            progressive_arguments: next_progressive_arguments.clone(),
+            result: next_result,
+            command: extract_operation_command(
+                Some(&next_arguments),
+                next_progressive_arguments.as_ref(),
+                next_title.as_deref(),
+            ),
+            normalized_todos: next_normalized_todos,
+            parent_tool_call_id: existing.parent_tool_call_id.clone(),
+            parent_operation_id: existing.parent_operation_id.clone(),
+            child_tool_call_ids: existing.child_tool_call_ids.clone(),
+            child_operation_ids: existing.child_operation_ids.clone(),
+            operation_provenance_key: existing.operation_provenance_key.clone(),
+            operation_state: next_operation_state,
+            locations: existing.locations.clone(),
+            skill_meta: existing.skill_meta.clone(),
+            normalized_questions: existing.normalized_questions.clone(),
+            question_answer: existing.question_answer.clone(),
+            awaiting_plan_approval: existing.awaiting_plan_approval,
+            plan_approval_request_id: existing.plan_approval_request_id,
+            started_at_ms: existing.started_at_ms,
+            completed_at_ms: existing.completed_at_ms,
+            source_link: existing.source_link.clone(),
+            degradation_reason: existing.degradation_reason.clone(),
+        };
+        let merged_operation = merge_operation_snapshot_evidence(&existing, updated_operation);
+        self.operations_by_id.insert(operation_id, merged_operation);
     }
 
     fn insert_session_operation_id(&self, session_id: &str, operation_id: &str) {
@@ -765,6 +1220,113 @@ impl ProjectionRegistry {
         }
 
         operation_ids.push(operation_id.to_string());
+    }
+
+    fn can_insert_operation(&self, session_id: &str) -> bool {
+        self.session_operation_ids
+            .get(session_id)
+            .map(|operation_ids| operation_ids.len() < MAX_SESSION_OPERATIONS)
+            .unwrap_or(true)
+    }
+
+    fn patch_operation_state(
+        &self,
+        operation_id: &str,
+        new_state: OperationState,
+    ) -> Option<OperationSnapshot> {
+        let existing = self
+            .operations_by_id
+            .get(operation_id)
+            .map(|operation| operation.clone())?;
+        if is_terminal_operation_state(&existing.operation_state) {
+            return Some(existing);
+        }
+
+        let updated = OperationSnapshot {
+            id: existing.id.clone(),
+            session_id: existing.session_id.clone(),
+            tool_call_id: existing.tool_call_id.clone(),
+            name: existing.name.clone(),
+            kind: existing.kind,
+            provider_status: existing.provider_status.clone(),
+            title: existing.title.clone(),
+            arguments: existing.arguments.clone(),
+            progressive_arguments: existing.progressive_arguments.clone(),
+            result: existing.result.clone(),
+            command: existing.command.clone(),
+            normalized_todos: existing.normalized_todos.clone(),
+            parent_tool_call_id: existing.parent_tool_call_id.clone(),
+            parent_operation_id: existing.parent_operation_id.clone(),
+            child_tool_call_ids: existing.child_tool_call_ids.clone(),
+            child_operation_ids: existing.child_operation_ids.clone(),
+            operation_provenance_key: existing.operation_provenance_key.clone(),
+            operation_state: new_state,
+            locations: existing.locations.clone(),
+            skill_meta: existing.skill_meta.clone(),
+            normalized_questions: existing.normalized_questions.clone(),
+            question_answer: existing.question_answer.clone(),
+            awaiting_plan_approval: existing.awaiting_plan_approval,
+            plan_approval_request_id: existing.plan_approval_request_id,
+            started_at_ms: existing.started_at_ms,
+            completed_at_ms: existing.completed_at_ms,
+            source_link: existing.source_link.clone(),
+            degradation_reason: existing.degradation_reason.clone(),
+        };
+        self.operations_by_id
+            .insert(operation_id.to_string(), updated.clone());
+        Some(updated)
+    }
+
+    fn has_pending_blocking_interaction_for_operation(
+        &self,
+        session_id: &str,
+        operation_id: &str,
+    ) -> bool {
+        let Some(interaction_ids) = self.session_interaction_ids.get(session_id) else {
+            return false;
+        };
+
+        interaction_ids.iter().any(|interaction_id| {
+            self.interactions_by_id
+                .get(interaction_id)
+                .is_some_and(|interaction| {
+                    interaction.state == InteractionState::Pending
+                        && interaction.canonical_operation_id.as_deref() == Some(operation_id)
+                })
+        })
+    }
+
+    fn block_operation_for_pending_interaction(&self, interaction: &InteractionSnapshot) {
+        if interaction.state != InteractionState::Pending {
+            return;
+        }
+
+        let Some(operation_id) = interaction.canonical_operation_id.as_deref() else {
+            return;
+        };
+
+        let _ = self.patch_operation_state(operation_id, OperationState::Blocked);
+    }
+
+    fn advance_operation_after_interaction_resolution(&self, interaction: &InteractionSnapshot) {
+        let Some(operation_id) = interaction.canonical_operation_id.as_deref() else {
+            return;
+        };
+
+        match interaction.state {
+            InteractionState::Approved | InteractionState::Answered => {
+                if !self.has_pending_blocking_interaction_for_operation(
+                    &interaction.session_id,
+                    operation_id,
+                ) {
+                    let _ = self.patch_operation_state(operation_id, OperationState::Running);
+                }
+            }
+            InteractionState::Rejected | InteractionState::Unresolved => {
+                let _ = self.patch_operation_state(operation_id, OperationState::Cancelled);
+            }
+            InteractionState::Pending => {}
+        }
     }
 
     fn advance_session_event_seq(&self, session_id: &str) -> i64 {
@@ -803,6 +1365,10 @@ impl ProjectionRegistry {
                     reply: Some("once".to_string()),
                 }),
             payload: InteractionPayload::Permission(permission.clone()),
+            canonical_operation_id: permission
+                .tool
+                .as_ref()
+                .map(|t| build_canonical_operation_id(&permission.session_id, &t.call_id)),
         };
         self.upsert_interaction(interaction);
     }
@@ -824,6 +1390,10 @@ impl ProjectionRegistry {
             responded_at_event_seq: None,
             response: None,
             payload: InteractionPayload::Question(question.clone()),
+            canonical_operation_id: question
+                .tool
+                .as_ref()
+                .map(|t| build_canonical_operation_id(&question.session_id, &t.call_id)),
         };
         self.upsert_interaction(interaction);
     }
@@ -857,6 +1427,7 @@ impl ProjectionRegistry {
             responded_at_event_seq: None,
             response: None,
             payload: InteractionPayload::PlanApproval { source },
+            canonical_operation_id: Some(build_canonical_operation_id(session_id, &tool_call.id)),
         };
         self.upsert_interaction(interaction);
     }
@@ -911,6 +1482,7 @@ impl ProjectionRegistry {
             responded_at_event_seq,
             response,
             payload: InteractionPayload::Question(question),
+            canonical_operation_id: Some(build_canonical_operation_id(session_id, &tool_call.id)),
         };
         self.upsert_interaction(interaction);
     }
@@ -920,7 +1492,8 @@ impl ProjectionRegistry {
         let session_id = interaction.session_id.clone();
         let request_id = interaction.json_rpc_request_id;
         self.interactions_by_id
-            .insert(interaction_id.clone(), interaction);
+            .insert(interaction_id.clone(), interaction.clone());
+        self.block_operation_for_pending_interaction(&interaction);
         if let Some(request_id) = request_id {
             self.interaction_id_by_request_key.insert(
                 create_session_request_key(&session_id, request_id),
@@ -940,8 +1513,50 @@ impl ProjectionRegistry {
     }
 }
 
+fn should_skip_unanswered_question_tool_operation(tool_call: &ToolCallData) -> bool {
+    matches!(tool_call.kind, Some(ToolKind::Question)) && tool_call.question_answer.is_none()
+}
+
 fn create_session_tool_key(session_id: &str, tool_call_id: &str) -> String {
     format!("{session_id}::{tool_call_id}")
+}
+
+fn normalize_operation_ingress_tool_call_id(tool_call_id: &str) -> String {
+    if tool_call_id.chars().any(char::is_control) {
+        return normalize_tool_call_id(tool_call_id);
+    }
+
+    tool_call_id.to_string()
+}
+
+fn normalize_optional_operation_ingress_tool_call_id(
+    tool_call_id: &Option<String>,
+) -> Option<String> {
+    tool_call_id
+        .as_deref()
+        .map(normalize_operation_ingress_tool_call_id)
+}
+
+fn normalize_tool_call_for_operation_ingress(tool_call: &ToolCallData) -> ToolCallData {
+    let mut normalized = tool_call.clone();
+    normalized.id = normalize_operation_ingress_tool_call_id(&tool_call.id);
+    normalized.parent_tool_use_id =
+        normalize_optional_operation_ingress_tool_call_id(&tool_call.parent_tool_use_id);
+    normalized.task_children = tool_call.task_children.as_ref().map(|children| {
+        children
+            .iter()
+            .map(normalize_tool_call_for_operation_ingress)
+            .collect()
+    });
+    normalized
+}
+
+fn normalize_tool_call_update_for_operation_ingress(
+    update: &ToolCallUpdateData,
+) -> ToolCallUpdateData {
+    let mut normalized = update.clone();
+    normalized.tool_call_id = normalize_operation_ingress_tool_call_id(&update.tool_call_id);
+    normalized
 }
 
 fn convert_turn_error_snapshot(
@@ -986,8 +1601,101 @@ fn create_session_request_key(session_id: &str, request_id: u64) -> String {
     format!("{session_id}::{request_id}")
 }
 
-fn build_operation_id(session_id: &str, tool_call_id: &str) -> String {
-    format!("{session_id}:{tool_call_id}")
+fn rejected_operation_snapshot(
+    operation_id: String,
+    session_id: &str,
+    tool_call: &ToolCallData,
+    parent_operation_id: Option<String>,
+    parent_tool_call_id: Option<String>,
+    degradation_reason: OperationDegradationReason,
+    source_link: OperationSourceLink,
+) -> OperationSnapshot {
+    let source_link = match source_link {
+        OperationSourceLink::TranscriptLinked { entry_id } => {
+            OperationSourceLink::TranscriptLinked { entry_id }
+        }
+        OperationSourceLink::Synthetic { .. } | OperationSourceLink::Degraded { .. } => {
+            OperationSourceLink::degraded(degradation_reason.clone())
+        }
+    };
+
+    OperationSnapshot {
+        id: operation_id,
+        session_id: session_id.to_string(),
+        tool_call_id: tool_call.id.clone(),
+        name: tool_call.name.clone(),
+        kind: tool_call.kind,
+        provider_status: tool_call.status.clone(),
+        title: tool_call.title.clone(),
+        arguments: tool_call.arguments.clone(),
+        progressive_arguments: None,
+        result: tool_call.result.clone(),
+        command: extract_operation_command(
+            Some(&tool_call.arguments),
+            None,
+            tool_call.title.as_deref(),
+        ),
+        normalized_todos: tool_call.normalized_todos.clone(),
+        parent_tool_call_id,
+        parent_operation_id,
+        child_tool_call_ids: Vec::new(),
+        child_operation_ids: Vec::new(),
+        operation_provenance_key: None,
+        operation_state: OperationState::Degraded,
+        locations: tool_call.locations.clone(),
+        skill_meta: tool_call.skill_meta.clone(),
+        normalized_questions: tool_call.normalized_questions.clone(),
+        question_answer: tool_call.question_answer.clone(),
+        awaiting_plan_approval: tool_call.awaiting_plan_approval,
+        plan_approval_request_id: tool_call.plan_approval_request_id,
+        started_at_ms: None,
+        completed_at_ms: None,
+        source_link,
+        degradation_reason: Some(degradation_reason),
+    }
+}
+
+fn build_rejected_operation_id(session_id: &str, tool_call_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(tool_call_id.as_bytes());
+    let digest = hasher.finalize();
+    let provenance_key = format!("rejected-operation-{}", hex::encode(&digest[..16]));
+    build_canonical_operation_id(session_id, &provenance_key)
+}
+
+fn derive_operation_state(status: &ToolCallStatus) -> OperationState {
+    match status {
+        ToolCallStatus::Pending => OperationState::Pending,
+        ToolCallStatus::InProgress => OperationState::Running,
+        ToolCallStatus::Completed => OperationState::Completed,
+        ToolCallStatus::Failed => OperationState::Failed,
+    }
+}
+
+fn is_claude_resumed_missing_tool_result_update(update: &ToolCallUpdateData) -> bool {
+    if update.status != Some(ToolCallStatus::Failed) {
+        return false;
+    }
+    if update.failure_reason.as_deref() == Some(CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE) {
+        return true;
+    }
+
+    update
+        .result
+        .as_ref()
+        .and_then(|result| result.get("stderr"))
+        .and_then(|value| value.as_str())
+        == Some(CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE)
+}
+
+pub(crate) fn is_terminal_operation_state(state: &OperationState) -> bool {
+    matches!(
+        state,
+        OperationState::Completed
+            | OperationState::Failed
+            | OperationState::Cancelled
+            | OperationState::Degraded
+    )
 }
 
 pub(crate) fn build_plan_approval_interaction_id(
@@ -1067,12 +1775,153 @@ fn mark_tool_call_completed(snapshot: &mut SessionSnapshot, tool_call_id: &str) 
         .push(tool_call_id.to_string());
 }
 
+fn operation_has_terminal_evidence(operation: &OperationSnapshot) -> bool {
+    is_terminal_operation_state(&operation.operation_state)
+}
+
+fn operation_identity_conflicts(
+    existing: &OperationSnapshot,
+    incoming: &OperationSnapshot,
+) -> bool {
+    if existing.session_id != incoming.session_id || existing.tool_call_id != incoming.tool_call_id
+    {
+        return true;
+    }
+
+    matches!(
+        (existing.kind, incoming.kind),
+        (Some(existing_kind), Some(incoming_kind)) if existing_kind != incoming_kind
+    )
+}
+
+fn merge_unique_strings(existing: &[String], incoming: Vec<String>) -> Vec<String> {
+    let mut merged = existing.to_vec();
+    for value in incoming {
+        if !merged.iter().any(|candidate| candidate == &value) {
+            merged.push(value);
+        }
+    }
+    merged
+}
+
+fn merge_operation_source_link(
+    existing: &OperationSourceLink,
+    incoming: OperationSourceLink,
+) -> OperationSourceLink {
+    match (existing, incoming) {
+        (OperationSourceLink::TranscriptLinked { entry_id }, _) => {
+            OperationSourceLink::TranscriptLinked {
+                entry_id: entry_id.clone(),
+            }
+        }
+        (_, OperationSourceLink::TranscriptLinked { entry_id }) => {
+            OperationSourceLink::TranscriptLinked { entry_id }
+        }
+        (_, OperationSourceLink::Degraded { reason }) => OperationSourceLink::Degraded { reason },
+        (OperationSourceLink::Degraded { reason }, _) => OperationSourceLink::Degraded {
+            reason: reason.clone(),
+        },
+        (_, OperationSourceLink::Synthetic { reason }) => OperationSourceLink::Synthetic { reason },
+    }
+}
+
+pub(crate) fn merge_operation_snapshot_evidence(
+    existing: &OperationSnapshot,
+    mut incoming: OperationSnapshot,
+) -> OperationSnapshot {
+    let conflicts = operation_identity_conflicts(existing, &incoming);
+    let existing_terminal = operation_has_terminal_evidence(existing);
+    let incoming_terminal = operation_has_terminal_evidence(&incoming);
+
+    if conflicts {
+        incoming.session_id = existing.session_id.clone();
+        incoming.tool_call_id = existing.tool_call_id.clone();
+        incoming.name = existing.name.clone();
+        incoming.kind = existing.kind;
+        incoming.arguments = existing.arguments.clone();
+        incoming.operation_state = OperationState::Degraded;
+        incoming.degradation_reason = Some(OperationDegradationReason {
+            code: OperationDegradationCode::ImpossibleTransition,
+            detail: Some(
+                "Conflicting operation evidence was received for the same canonical operation."
+                    .to_string(),
+            ),
+        });
+    } else if existing_terminal {
+        incoming.operation_state = existing.operation_state.clone();
+        if !incoming_terminal {
+            incoming.provider_status = existing.provider_status.clone();
+        }
+    }
+
+    incoming.id = existing.id.clone();
+    incoming.title = incoming.title.or_else(|| existing.title.clone());
+    if operation_has_terminal_evidence(&incoming) {
+        incoming.progressive_arguments = None;
+    } else {
+        incoming.progressive_arguments = incoming
+            .progressive_arguments
+            .or_else(|| existing.progressive_arguments.clone());
+    }
+    incoming.result = incoming.result.or_else(|| existing.result.clone());
+    incoming.command = incoming.command.or_else(|| existing.command.clone());
+    incoming.normalized_todos = incoming
+        .normalized_todos
+        .or_else(|| existing.normalized_todos.clone());
+    incoming.parent_tool_call_id = incoming
+        .parent_tool_call_id
+        .or_else(|| existing.parent_tool_call_id.clone());
+    incoming.parent_operation_id = incoming
+        .parent_operation_id
+        .or_else(|| existing.parent_operation_id.clone());
+    incoming.child_tool_call_ids =
+        merge_unique_strings(&existing.child_tool_call_ids, incoming.child_tool_call_ids);
+    incoming.child_operation_ids =
+        merge_unique_strings(&existing.child_operation_ids, incoming.child_operation_ids);
+    incoming.operation_provenance_key = incoming
+        .operation_provenance_key
+        .or_else(|| existing.operation_provenance_key.clone());
+    incoming.locations = incoming.locations.or_else(|| existing.locations.clone());
+    incoming.skill_meta = incoming.skill_meta.or_else(|| existing.skill_meta.clone());
+    incoming.normalized_questions = incoming
+        .normalized_questions
+        .or_else(|| existing.normalized_questions.clone());
+    incoming.question_answer = incoming
+        .question_answer
+        .or_else(|| existing.question_answer.clone());
+    incoming.awaiting_plan_approval =
+        incoming.awaiting_plan_approval || existing.awaiting_plan_approval;
+    incoming.plan_approval_request_id = incoming
+        .plan_approval_request_id
+        .or(existing.plan_approval_request_id);
+    incoming.started_at_ms = incoming.started_at_ms.or(existing.started_at_ms);
+    incoming.completed_at_ms = incoming.completed_at_ms.or(existing.completed_at_ms);
+    incoming.source_link = if conflicts {
+        OperationSourceLink::degraded(OperationDegradationReason {
+            code: OperationDegradationCode::ImpossibleTransition,
+            detail: Some(
+                "Conflicting operation evidence prevents a trustworthy transcript source link."
+                    .to_string(),
+            ),
+        })
+    } else {
+        merge_operation_source_link(&existing.source_link, incoming.source_link)
+    };
+    if !conflicts {
+        incoming.degradation_reason = incoming
+            .degradation_reason
+            .or_else(|| existing.degradation_reason.clone());
+    }
+
+    incoming
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
     use crate::acp::session_update::{
-        ContentChunk, ToolArguments, ToolCallData, ToolCallUpdateData, ToolKind,
+        ContentChunk, QuestionItem, ToolArguments, ToolCallData, ToolCallUpdateData, ToolKind,
     };
     use crate::acp::types::ContentBlock;
     use crate::session_jsonl::types::{
@@ -1099,6 +1948,7 @@ mod tests {
                 part_id: None,
                 message_id: Some("msg-1".to_string()),
                 session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
             },
         );
         registry.apply_session_update(
@@ -1117,6 +1967,66 @@ mod tests {
         assert_eq!(snapshot.last_agent_message_id.as_deref(), Some("msg-1"));
         assert_eq!(snapshot.turn_state, SessionTurnState::Completed);
         assert_eq!(snapshot.last_event_seq, 2);
+    }
+
+    #[test]
+    fn no_message_id_agent_chunks_expose_stable_live_assistant_id() {
+        let registry = ProjectionRegistry::new();
+        registry.register_session("session-1".to_string(), CanonicalAgentId::ClaudeCode);
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::UserMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "reply shortly".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                session_id: Some("session-1".to_string()),
+                attempt_id: None,
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "Lanterns glow".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: " softly.".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("session-1".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        );
+
+        let snapshot = registry
+            .snapshot_for_session("session-1")
+            .expect("expected session snapshot");
+        assert_eq!(
+            snapshot.last_agent_message_id.as_deref(),
+            Some("assistant-event-2")
+        );
+        assert_eq!(snapshot.turn_state, SessionTurnState::Running);
+        assert_eq!(snapshot.last_event_seq, 3);
     }
 
     #[test]
@@ -1176,6 +2086,7 @@ mod tests {
                 part_id: None,
                 session_id: Some("session-1".to_string()),
                 message_id: Some("msg-late".to_string()),
+                produced_at_monotonic_ms: None,
             },
         );
 
@@ -1235,6 +2146,7 @@ mod tests {
                     aggregation_hint: None,
                 },
                 session_id: Some("session-1".to_string()),
+                attempt_id: None,
             },
         );
 
@@ -1291,7 +2203,7 @@ mod tests {
             .operation_for_tool_call("session-1", "tool-1")
             .expect("expected created operation");
         assert_eq!(created.command.as_deref(), Some("mkdir demo"));
-        assert_eq!(created.status, ToolCallStatus::Pending);
+        assert_eq!(created.provider_status, ToolCallStatus::Pending);
 
         registry.apply_session_update(
             "session-1",
@@ -1338,9 +2250,114 @@ mod tests {
             .operation_for_tool_call("session-1", "tool-1")
             .expect("expected completed operation");
         assert_eq!(completed.id, created.id);
-        assert_eq!(completed.status, ToolCallStatus::Completed);
+        assert_eq!(completed.provider_status, ToolCallStatus::Completed);
         assert_eq!(completed.result, Some(json!("done")));
         assert!(completed.progressive_arguments.is_none());
+    }
+
+    #[test]
+    fn operation_projection_treats_claude_resumed_missing_result_as_completed() {
+        let registry = ProjectionRegistry::new();
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-1",
+                    "head -30 file.txt",
+                    ToolCallStatus::Pending,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCallUpdate {
+                update: ToolCallUpdateData {
+                    tool_call_id: "tool-1".to_string(),
+                    status: Some(ToolCallStatus::Failed),
+                    result: Some(json!({
+                        "stderr": CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE
+                    })),
+                    failure_reason: Some(CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE.to_string()),
+                    ..ToolCallUpdateData::default()
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", "tool-1")
+            .expect("expected operation");
+        assert_eq!(operation.provider_status, ToolCallStatus::Completed);
+        assert_eq!(operation.operation_state, OperationState::Completed);
+        assert_eq!(
+            operation
+                .result
+                .as_ref()
+                .and_then(|result| result.get("stderr"))
+                .and_then(|value| value.as_str()),
+            Some(CLAUDE_RESUMED_MISSING_TOOL_RESULT_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn live_tool_call_links_operation_to_transcript_entry() {
+        let registry = ProjectionRegistry::new();
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call("tool-1", "ls", ToolCallStatus::Pending),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", "tool-1")
+            .expect("expected live operation");
+        assert_eq!(
+            operation.source_link,
+            OperationSourceLink::TranscriptLinked {
+                entry_id: "tool-1".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn provider_tool_id_with_control_character_normalizes_to_transcript_linked_operation() {
+        let registry = ProjectionRegistry::new();
+        let tool_call_id =
+            "call_MsKdahsWK4cuKJzzuOsgpjxG\nfc_008c04d42d7516f80169f23545d0fc819a8a3e522df8820405";
+        let normalized_tool_call_id =
+            "call_MsKdahsWK4cuKJzzuOsgpjxG%0Afc_008c04d42d7516f80169f23545d0fc819a8a3e522df8820405";
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    tool_call_id,
+                    "find .",
+                    ToolCallStatus::Completed,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", tool_call_id)
+            .expect("raw provider id should resolve to normalized canonical operation");
+        assert_eq!(operation.tool_call_id, normalized_tool_call_id);
+        assert_eq!(operation.operation_state, OperationState::Completed);
+        assert!(operation.degradation_reason.is_none());
+        assert_eq!(
+            operation.source_link,
+            OperationSourceLink::TranscriptLinked {
+                entry_id: normalized_tool_call_id.to_string(),
+            }
+        );
+        assert_eq!(registry.session_operations("session-1").len(), 1);
     }
 
     #[test]
@@ -1479,6 +2496,45 @@ mod tests {
         }
 
         assert_eq!(registry.session_interactions("session-1").len(), 3);
+    }
+
+    #[test]
+    fn live_unanswered_question_tool_projects_as_interaction_not_running_operation() {
+        use crate::acp::session_update::{QuestionItem, QuestionOption};
+
+        let registry = ProjectionRegistry::new();
+        let mut tool_call =
+            create_execute_tool_call("tool-question", "ask user", ToolCallStatus::InProgress);
+        tool_call.name = "AskUserQuestion".to_string();
+        tool_call.kind = Some(ToolKind::Question);
+        tool_call.title = Some("Question".to_string());
+        tool_call.normalized_questions = Some(vec![QuestionItem {
+            question: "Which archive button should get the confirm step?".to_string(),
+            header: "Archive confirm".to_string(),
+            options: vec![QuestionOption {
+                label: "Sidebar session list".to_string(),
+                description: "Use the archive button in the session list".to_string(),
+            }],
+            multi_select: false,
+        }]);
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let projection = registry.session_projection("session-1");
+
+        assert!(
+            projection.operations.is_empty(),
+            "live AskUserQuestion tools should not appear as running operations"
+        );
+        assert_eq!(projection.interactions.len(), 1);
+        assert_eq!(projection.interactions[0].kind, InteractionKind::Question);
+        assert_eq!(projection.interactions[0].state, InteractionState::Pending);
     }
 
     #[test]
@@ -1652,7 +2708,7 @@ mod tests {
                 tool_call_id: "tool-1".to_string(),
                 name: "bash".to_string(),
                 kind: Some(ToolKind::Execute),
-                status: ToolCallStatus::Completed,
+                provider_status: ToolCallStatus::Completed,
                 title: Some("Run command".to_string()),
                 arguments: ToolArguments::Execute {
                     command: Some("bun test".to_string()),
@@ -1665,6 +2721,18 @@ mod tests {
                 parent_operation_id: None,
                 child_tool_call_ids: vec![],
                 child_operation_ids: vec![],
+                operation_provenance_key: None,
+                operation_state: OperationState::Completed,
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+                started_at_ms: None,
+                completed_at_ms: None,
+                source_link: OperationSourceLink::transcript_linked("tool-1".to_string()),
+                degradation_reason: None,
             }],
             interactions: vec![InteractionSnapshot {
                 id: "permission-1".to_string(),
@@ -1692,6 +2760,7 @@ mod tests {
                     auto_accepted: false,
                     tool: None,
                 }),
+                canonical_operation_id: None,
             }],
             runtime: None,
         });
@@ -1822,6 +2891,18 @@ mod tests {
         assert_eq!(session.turn_state, SessionTurnState::Running);
         assert_eq!(projection.operations.len(), 2);
 
+        let question_operation = projection
+            .operations
+            .iter()
+            .find(|operation| operation.tool_call_id == "tool-question")
+            .expect("expected imported question operation");
+        assert_eq!(
+            question_operation.source_link,
+            OperationSourceLink::TranscriptLinked {
+                entry_id: "tool-question-entry".to_string()
+            }
+        );
+
         let answered_question = projection
             .interactions
             .iter()
@@ -1841,6 +2922,95 @@ mod tests {
             .find(|interaction| interaction.kind == InteractionKind::PlanApproval)
             .expect("expected imported plan approval interaction");
         assert_eq!(plan_approval.state, InteractionState::Pending);
+    }
+
+    #[test]
+    fn project_thread_snapshot_skips_unanswered_question_tools() {
+        let question_items = vec![crate::acp::session_update::QuestionItem {
+            question: "Pick an archive target?".to_string(),
+            header: "Archive".to_string(),
+            options: vec![crate::acp::session_update::QuestionOption {
+                label: "Sidebar".to_string(),
+                description: "Archive from the sidebar".to_string(),
+            }],
+            multi_select: false,
+        }];
+
+        let thread_snapshot = SessionThreadSnapshot {
+            entries: vec![
+                StoredEntry::User {
+                    id: "user-1".to_string(),
+                    message: StoredUserMessage {
+                        id: Some("user-1".to_string()),
+                        content: StoredContentBlock {
+                            block_type: "text".to_string(),
+                            text: Some("add confirm".to_string()),
+                        },
+                        chunks: vec![],
+                        sent_at: Some("2026-04-08T00:00:00Z".to_string()),
+                    },
+                    timestamp: Some("2026-04-08T00:00:00Z".to_string()),
+                },
+                StoredEntry::ToolCall {
+                    id: "tool-question-entry".to_string(),
+                    message: ToolCallData {
+                        id: "tool-question".to_string(),
+                        name: "AskUserQuestion".to_string(),
+                        arguments: ToolArguments::Other {
+                            raw: json!({
+                                "questions": [{
+                                    "question": "Pick an archive target?",
+                                    "header": "Archive",
+                                    "options": [{
+                                        "label": "Sidebar",
+                                        "description": "Archive from the sidebar"
+                                    }],
+                                    "multiSelect": false
+                                }]
+                            }),
+                        },
+                        raw_input: None,
+                        status: ToolCallStatus::Pending,
+                        result: None,
+                        kind: Some(ToolKind::Question),
+                        title: Some("Question".to_string()),
+                        locations: None,
+                        skill_meta: None,
+                        normalized_questions: Some(question_items),
+                        normalized_todos: None,
+                        normalized_todo_update: None,
+                        parent_tool_use_id: None,
+                        task_children: None,
+                        question_answer: None,
+                        awaiting_plan_approval: false,
+                        plan_approval_request_id: None,
+                    },
+                    timestamp: Some("2026-04-08T00:00:01Z".to_string()),
+                },
+            ],
+            title: "Imported".to_string(),
+            created_at: "2026-04-08T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+
+        let projection = ProjectionRegistry::project_thread_snapshot(
+            "session-1",
+            Some(CanonicalAgentId::ClaudeCode),
+            &thread_snapshot,
+        );
+
+        assert!(
+            projection.operations.is_empty(),
+            "unanswered historical questions should not reappear as pending operations"
+        );
+        assert!(
+            projection.interactions.is_empty(),
+            "unanswered historical questions should not reappear as pending interactions"
+        );
+        assert_eq!(
+            projection.session.expect("expected session").turn_state,
+            SessionTurnState::Completed
+        );
     }
 
     #[test]
@@ -1944,6 +3114,159 @@ mod tests {
     }
 
     #[test]
+    fn project_thread_snapshot_cancels_active_tool_when_transcript_continues() {
+        let thread_snapshot = SessionThreadSnapshot {
+            entries: vec![
+                StoredEntry::User {
+                    id: "user-1".to_string(),
+                    message: StoredUserMessage {
+                        id: Some("user-1".to_string()),
+                        content: StoredContentBlock {
+                            block_type: "text".to_string(),
+                            text: Some("run the scaffold".to_string()),
+                        },
+                        chunks: vec![],
+                        sent_at: Some("2026-04-15T00:00:00Z".to_string()),
+                    },
+                    timestamp: Some("2026-04-15T00:00:00Z".to_string()),
+                },
+                StoredEntry::ToolCall {
+                    id: "tool-stale-entry".to_string(),
+                    message: create_execute_tool_call(
+                        "tool-stale",
+                        "bun create @tanstack/start",
+                        ToolCallStatus::InProgress,
+                    ),
+                    timestamp: Some("2026-04-15T00:00:01Z".to_string()),
+                },
+                StoredEntry::User {
+                    id: "user-2".to_string(),
+                    message: StoredUserMessage {
+                        id: Some("user-2".to_string()),
+                        content: StoredContentBlock {
+                            block_type: "text".to_string(),
+                            text: Some("i ran it myself, proceed".to_string()),
+                        },
+                        chunks: vec![],
+                        sent_at: Some("2026-04-15T00:00:02Z".to_string()),
+                    },
+                    timestamp: Some("2026-04-15T00:00:02Z".to_string()),
+                },
+                StoredEntry::Assistant {
+                    id: "assistant-1".to_string(),
+                    message: StoredAssistantMessage {
+                        chunks: vec![StoredAssistantChunk {
+                            chunk_type: "message".to_string(),
+                            block: StoredContentBlock {
+                                block_type: "text".to_string(),
+                                text: Some("Proceeding.".to_string()),
+                            },
+                        }],
+                        model: Some("gpt-5.4".to_string()),
+                        display_model: Some("GPT-5.4".to_string()),
+                        received_at: Some("2026-04-15T00:00:03Z".to_string()),
+                    },
+                    timestamp: Some("2026-04-15T00:00:03Z".to_string()),
+                },
+            ],
+            title: "Recovered session".to_string(),
+            created_at: "2026-04-15T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+
+        let projection = ProjectionRegistry::project_thread_snapshot(
+            "session-1",
+            Some(CanonicalAgentId::Copilot),
+            &thread_snapshot,
+        );
+
+        let session = projection
+            .session
+            .expect("expected imported session snapshot");
+        assert_eq!(session.turn_state, SessionTurnState::Completed);
+        assert!(session.active_tool_call_ids.is_empty());
+        let stale_operation = projection
+            .operations
+            .iter()
+            .find(|operation| operation.tool_call_id == "tool-stale")
+            .expect("expected stale tool operation");
+        assert_eq!(stale_operation.provider_status, ToolCallStatus::InProgress);
+        assert_eq!(stale_operation.operation_state, OperationState::Cancelled);
+    }
+
+    #[test]
+    fn project_thread_snapshot_does_not_reopen_pending_interaction_after_user_boundary() {
+        let thread_snapshot = SessionThreadSnapshot {
+            entries: vec![
+                StoredEntry::ToolCall {
+                    id: "plan-tool-entry".to_string(),
+                    message: ToolCallData {
+                        id: "plan-tool".to_string(),
+                        name: "create_plan".to_string(),
+                        arguments: ToolArguments::Other { raw: json!({}) },
+                        raw_input: None,
+                        status: ToolCallStatus::Pending,
+                        result: None,
+                        kind: Some(ToolKind::CreatePlan),
+                        title: None,
+                        locations: None,
+                        skill_meta: None,
+                        normalized_questions: None,
+                        normalized_todos: None,
+                        normalized_todo_update: None,
+                        parent_tool_use_id: None,
+                        task_children: None,
+                        question_answer: None,
+                        awaiting_plan_approval: true,
+                        plan_approval_request_id: Some(42),
+                    },
+                    timestamp: Some("2026-04-15T00:00:01Z".to_string()),
+                },
+                StoredEntry::User {
+                    id: "user-1".to_string(),
+                    message: StoredUserMessage {
+                        id: Some("user-1".to_string()),
+                        content: StoredContentBlock {
+                            block_type: "text".to_string(),
+                            text: Some("continue without that approval".to_string()),
+                        },
+                        chunks: vec![],
+                        sent_at: Some("2026-04-15T00:00:02Z".to_string()),
+                    },
+                    timestamp: Some("2026-04-15T00:00:02Z".to_string()),
+                },
+            ],
+            title: "Recovered session".to_string(),
+            created_at: "2026-04-15T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+
+        let projection = ProjectionRegistry::project_thread_snapshot(
+            "session-1",
+            Some(CanonicalAgentId::Copilot),
+            &thread_snapshot,
+        );
+
+        let session = projection
+            .session
+            .expect("expected imported session snapshot");
+        assert_eq!(session.turn_state, SessionTurnState::Completed);
+        let operation = projection
+            .operations
+            .iter()
+            .find(|operation| operation.tool_call_id == "plan-tool")
+            .expect("expected plan operation");
+        assert_eq!(operation.operation_state, OperationState::Cancelled);
+        let interaction = projection
+            .interactions
+            .iter()
+            .find(|interaction| interaction.kind == InteractionKind::PlanApproval)
+            .expect("expected plan interaction");
+        assert_eq!(interaction.state, InteractionState::Unresolved);
+        assert!(interaction.reply_handler.is_none());
+    }
+
+    #[test]
     fn project_converted_session_defaults_missing_stored_error_source_to_unknown() {
         let thread_snapshot = SessionThreadSnapshot {
             entries: vec![StoredEntry::Error {
@@ -2010,6 +3333,7 @@ mod tests {
             part_id: None,
             message_id: Some(message_id.to_string()),
             session_id: None,
+            produced_at_monotonic_ms: None,
         }
     }
 
@@ -2113,5 +3437,946 @@ mod tests {
         assert_eq!(snapshot.turn_state, SessionTurnState::Failed);
         assert!(snapshot.active_turn_failure.is_some());
         assert_eq!(snapshot.last_event_seq, 7);
+    }
+
+    #[test]
+    fn canonical_operation_id_stable_across_live_and_history_replay() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call("tool-1", "echo hi", ToolCallStatus::Pending),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        let live_op = registry
+            .operation_for_tool_call("session-1", "tool-1")
+            .unwrap();
+        let projection = registry.session_projection("session-1");
+        let registry2 = ProjectionRegistry::new();
+        registry2.restore_session_projection(projection);
+        let restored_op = registry2
+            .operation_for_tool_call("session-1", "tool-1")
+            .unwrap();
+        assert_eq!(live_op.id, restored_op.id);
+        assert_eq!(live_op.operation_provenance_key, Some("tool-1".to_string()));
+    }
+
+    #[test]
+    fn operation_snapshot_preserves_extended_evidence() {
+        use crate::acp::session_update::{
+            QuestionItem, QuestionOption, SkillMeta, ToolCallLocation,
+        };
+        let registry = ProjectionRegistry::new();
+        let mut tool_call =
+            create_execute_tool_call("tool-evidence", "ls", ToolCallStatus::Pending);
+        tool_call.locations = Some(vec![ToolCallLocation {
+            path: "/some/file.rs".to_string(),
+        }]);
+        tool_call.skill_meta = Some(SkillMeta {
+            file_path: Some("read-file.ts".to_string()),
+            description: None,
+        });
+        tool_call.normalized_questions = Some(vec![QuestionItem {
+            question: "Approve?".to_string(),
+            header: "Header".to_string(),
+            options: vec![QuestionOption {
+                label: "Yes".to_string(),
+                description: "Yes".to_string(),
+            }],
+            multi_select: false,
+        }]);
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        let op = registry
+            .operation_for_tool_call("session-1", "tool-evidence")
+            .unwrap();
+        assert!(op.locations.is_some());
+        assert!(op.skill_meta.is_some());
+        assert!(op.normalized_questions.is_some());
+    }
+
+    #[test]
+    fn sparse_later_update_does_not_erase_richer_prior_evidence() {
+        use crate::acp::session_update::ToolCallLocation;
+        let registry = ProjectionRegistry::new();
+        let mut tool_call =
+            create_execute_tool_call("tool-sparse", "cat file.txt", ToolCallStatus::Pending);
+        tool_call.locations = Some(vec![ToolCallLocation {
+            path: "/some/file.txt".to_string(),
+        }]);
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCallUpdate {
+                update: ToolCallUpdateData {
+                    tool_call_id: "tool-sparse".to_string(),
+                    status: Some(ToolCallStatus::InProgress),
+                    ..ToolCallUpdateData::default()
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        let op = registry
+            .operation_for_tool_call("session-1", "tool-sparse")
+            .unwrap();
+        assert!(
+            op.locations.is_some(),
+            "locations should be preserved from initial tool call"
+        );
+    }
+
+    #[test]
+    fn sparse_full_tool_replay_does_not_erase_richer_prior_evidence() {
+        let registry = ProjectionRegistry::new();
+        let mut rich_tool_call =
+            create_execute_tool_call("tool-rich", "cat file.txt", ToolCallStatus::Completed);
+        rich_tool_call.title = Some("Read full file".to_string());
+        rich_tool_call.result = Some(json!("full file contents"));
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: rich_tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let mut sparse_tool_call =
+            create_execute_tool_call("tool-rich", "cat file.txt", ToolCallStatus::Completed);
+        sparse_tool_call.title = None;
+        sparse_tool_call.result = None;
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: sparse_tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let op = registry
+            .operation_for_tool_call("session-1", "tool-rich")
+            .unwrap();
+        assert_eq!(op.title.as_deref(), Some("Read full file"));
+        assert_eq!(op.result, Some(json!("full file contents")));
+        assert_eq!(registry.session_operations("session-1").len(), 1);
+    }
+
+    #[test]
+    fn conflicting_full_tool_replay_degrades_existing_operation_instead_of_duplicating() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-conflict",
+                    "cargo test",
+                    ToolCallStatus::Completed,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let conflicting_tool_call = ToolCallData {
+            id: "tool-conflict".to_string(),
+            name: "Read".to_string(),
+            arguments: ToolArguments::Read {
+                file_path: Some("/repo/README.md".to_string()),
+                source_context: None,
+            },
+            raw_input: None,
+            status: ToolCallStatus::Completed,
+            result: None,
+            kind: Some(ToolKind::Read),
+            title: Some("Read file".to_string()),
+            locations: None,
+            skill_meta: None,
+            normalized_questions: None,
+            normalized_todos: None,
+            normalized_todo_update: None,
+            parent_tool_use_id: None,
+            task_children: None,
+            question_answer: None,
+            awaiting_plan_approval: false,
+            plan_approval_request_id: None,
+        };
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: conflicting_tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let op = registry
+            .operation_for_tool_call("session-1", "tool-conflict")
+            .unwrap();
+        assert_eq!(registry.session_operations("session-1").len(), 1);
+        assert_eq!(op.operation_state, OperationState::Degraded);
+        assert_eq!(
+            op.degradation_reason.as_ref().map(|reason| &reason.code),
+            Some(&OperationDegradationCode::ImpossibleTransition)
+        );
+    }
+
+    #[test]
+    fn unclassified_tool_kind_preserves_provider_lifecycle_state() {
+        use crate::acp::session_update::ToolArguments;
+        let registry = ProjectionRegistry::new();
+        let tool_call = ToolCallData {
+            id: "tool-unclassified".to_string(),
+            name: "unknown_tool".to_string(),
+            arguments: ToolArguments::Other {
+                raw: serde_json::json!({}),
+            },
+            raw_input: None,
+            status: ToolCallStatus::Pending,
+            result: None,
+            kind: Some(ToolKind::Unclassified),
+            title: None,
+            locations: None,
+            skill_meta: None,
+            normalized_questions: None,
+            normalized_todos: None,
+            normalized_todo_update: None,
+            parent_tool_use_id: None,
+            task_children: None,
+            question_answer: None,
+            awaiting_plan_approval: false,
+            plan_approval_request_id: None,
+        };
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        let op = registry
+            .operation_for_tool_call("session-1", "tool-unclassified")
+            .unwrap();
+        assert_eq!(op.operation_state, OperationState::Pending);
+        assert!(op.degradation_reason.is_none());
+    }
+
+    #[test]
+    fn validate_provenance_key_rejects_invalid_input() {
+        assert!(validate_provenance_key("valid-key-123").is_ok());
+        assert!(validate_provenance_key("key\x00with-nul").is_err());
+        assert!(validate_provenance_key("key\x1f-control").is_err());
+        assert!(validate_provenance_key(&"x".repeat(513)).is_err());
+        assert!(validate_provenance_key("").is_err());
+    }
+
+    #[test]
+    fn canonical_operation_id_includes_session_identity_without_delimiter_collision() {
+        assert_eq!(
+            build_canonical_operation_id("session-1", "tool-1"),
+            "op:9:session-1:6:tool-1"
+        );
+        assert_ne!(
+            build_canonical_operation_id("a:b", "c"),
+            build_canonical_operation_id("a", "b:c")
+        );
+        assert!(build_validated_canonical_operation_id("session-1", "tool-1").is_ok());
+        assert!(build_validated_canonical_operation_id("session-1", "bad\x00tool").is_err());
+    }
+
+    #[test]
+    fn invalid_provenance_key_uses_safe_degraded_operation_id() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call("", "cargo test", ToolCallStatus::Pending),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", "")
+            .expect("invalid provider id should still be represented");
+        assert_ne!(operation.id, build_canonical_operation_id("session-1", ""));
+        assert!(validate_provenance_key(&operation.id).is_ok());
+        assert_eq!(operation.operation_state, OperationState::Degraded);
+        assert_eq!(
+            operation
+                .degradation_reason
+                .as_ref()
+                .map(|reason| reason.code.clone()),
+            Some(OperationDegradationCode::InvalidProvenanceKey)
+        );
+        assert_eq!(
+            operation.source_link,
+            OperationSourceLink::TranscriptLinked {
+                entry_id: "".to_string(),
+            }
+        );
+        assert_eq!(registry.session_operations("session-1").len(), 1);
+    }
+
+    #[test]
+    fn operation_ingress_normalizes_control_character_tool_ids() {
+        let registry = ProjectionRegistry::new();
+        let raw_id = "tool\ncursor";
+        let normalized_id = "tool%0Acursor";
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    raw_id,
+                    "cargo test",
+                    ToolCallStatus::Completed,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", raw_id)
+            .expect("raw lookup should resolve through ingress normalization");
+        assert_eq!(operation.tool_call_id, normalized_id);
+        assert_eq!(
+            operation.operation_provenance_key.as_deref(),
+            Some(normalized_id)
+        );
+        assert_eq!(operation.operation_state, OperationState::Completed);
+        assert!(operation.degradation_reason.is_none());
+        assert!(!operation.id.contains('\n'));
+
+        let normalized_lookup = registry
+            .operation_for_tool_call("session-1", normalized_id)
+            .expect("normalized lookup should resolve directly");
+        assert_eq!(normalized_lookup.id, operation.id);
+    }
+
+    #[test]
+    fn operation_ingress_normalizes_control_character_update_ids() {
+        let registry = ProjectionRegistry::new();
+        let raw_id = "tool\ncursor";
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(raw_id, "cargo test", ToolCallStatus::Pending),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCallUpdate {
+                update: ToolCallUpdateData {
+                    tool_call_id: raw_id.to_string(),
+                    status: Some(ToolCallStatus::Completed),
+                    result: None,
+                    content: None,
+                    raw_output: None,
+                    title: None,
+                    locations: None,
+                    streaming_input_delta: None,
+                    normalized_todos: None,
+                    normalized_questions: None,
+                    streaming_arguments: None,
+                    streaming_plan: None,
+                    arguments: None,
+                    failure_reason: None,
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", "tool%0Acursor")
+            .expect("operation should exist");
+        assert_eq!(operation.operation_state, OperationState::Completed);
+        assert_eq!(operation.provider_status, ToolCallStatus::Completed);
+        assert!(operation.degradation_reason.is_none());
+    }
+
+    #[test]
+    fn operation_ingress_normalizes_nested_task_relationship_ids() {
+        let registry = ProjectionRegistry::new();
+        let mut parent = ToolCallData {
+            id: "task\nparent".to_string(),
+            name: "task".to_string(),
+            arguments: ToolArguments::Other { raw: json!({}) },
+            raw_input: None,
+            status: ToolCallStatus::Pending,
+            result: None,
+            kind: Some(ToolKind::Task),
+            title: Some("Task".to_string()),
+            locations: None,
+            skill_meta: None,
+            normalized_questions: None,
+            normalized_todos: None,
+            normalized_todo_update: None,
+            parent_tool_use_id: None,
+            task_children: None,
+            question_answer: None,
+            awaiting_plan_approval: false,
+            plan_approval_request_id: None,
+        };
+        let mut child =
+            create_execute_tool_call("task\nchild", "go test ./...", ToolCallStatus::Pending);
+        child.parent_tool_use_id = Some("task\nparent".to_string());
+        parent.task_children = Some(vec![child]);
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: parent,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let parent = registry
+            .operation_for_tool_call("session-1", "task%0Aparent")
+            .expect("expected parent operation");
+        let child = registry
+            .operation_for_tool_call("session-1", "task%0Achild")
+            .expect("expected child operation");
+
+        assert_eq!(parent.tool_call_id, "task%0Aparent");
+        assert_eq!(parent.child_tool_call_ids, vec!["task%0Achild"]);
+        assert_eq!(child.tool_call_id, "task%0Achild");
+        assert_eq!(child.parent_tool_call_id.as_deref(), Some("task%0Aparent"));
+        assert_eq!(
+            child.parent_operation_id.as_deref(),
+            Some(parent.id.as_str())
+        );
+        assert!(parent.degradation_reason.is_none());
+        assert!(child.degradation_reason.is_none());
+    }
+
+    #[test]
+    fn thread_snapshot_ingress_normalizes_control_character_tool_ids() {
+        let raw_id = "restored\ncursor";
+        let thread_snapshot = SessionThreadSnapshot {
+            entries: vec![StoredEntry::ToolCall {
+                id: raw_id.to_string(),
+                message: create_execute_tool_call(raw_id, "cargo test", ToolCallStatus::Completed),
+                timestamp: Some("2026-04-30T00:00:00Z".to_string()),
+            }],
+            title: "Restored Cursor".to_string(),
+            created_at: "2026-04-30T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+
+        let projection = ProjectionRegistry::project_thread_snapshot(
+            "session-1",
+            Some(CanonicalAgentId::Cursor),
+            &thread_snapshot,
+        );
+
+        assert_eq!(projection.operations.len(), 1);
+        let operation = &projection.operations[0];
+        assert_eq!(operation.tool_call_id, "restored%0Acursor");
+        assert_eq!(operation.operation_state, OperationState::Completed);
+        assert!(operation.degradation_reason.is_none());
+        assert_eq!(
+            operation.operation_provenance_key.as_deref(),
+            Some("restored%0Acursor")
+        );
+        assert_eq!(
+            operation.source_link,
+            OperationSourceLink::TranscriptLinked {
+                entry_id: "restored%0Acursor".to_string(),
+            }
+        );
+        assert_eq!(
+            projection.session.as_ref().map(|session| {
+                (
+                    session.active_tool_call_ids.clone(),
+                    session.completed_tool_call_ids.clone(),
+                )
+            }),
+            Some((Vec::new(), vec!["restored%0Acursor".to_string()]))
+        );
+    }
+
+    #[test]
+    fn max_session_operations_is_enforced_before_graph_insertion() {
+        let registry = ProjectionRegistry::new();
+        for index in 0..MAX_SESSION_OPERATIONS {
+            let tool_call_id = format!("tool-{index}");
+            registry.apply_session_update(
+                "session-1",
+                &SessionUpdate::ToolCall {
+                    tool_call: create_execute_tool_call(
+                        &tool_call_id,
+                        "cargo test",
+                        ToolCallStatus::Pending,
+                    ),
+                    session_id: Some("session-1".to_string()),
+                },
+            );
+        }
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-overflow",
+                    "cargo test",
+                    ToolCallStatus::Pending,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        assert_eq!(
+            registry.session_operations("session-1").len(),
+            MAX_SESSION_OPERATIONS
+        );
+        assert!(registry
+            .operation_for_tool_call("session-1", "tool-overflow")
+            .is_none());
+    }
+
+    #[test]
+    fn interaction_gets_canonical_operation_id_from_tool_reference() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-1",
+                    "cargo test",
+                    ToolCallStatus::Pending,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::PermissionRequest {
+                permission: PermissionData {
+                    id: "perm-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    json_rpc_request_id: Some(42),
+                    reply_handler: Some(InteractionReplyHandler::json_rpc(42)),
+                    permission: "Execute".to_string(),
+                    patterns: vec![],
+                    metadata: json!({"command": "cargo test"}),
+                    always: vec![],
+                    auto_accepted: false,
+                    tool: Some(ToolReference {
+                        message_id: String::new(),
+                        call_id: "tool-1".to_string(),
+                    }),
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        let interaction = registry.interaction("perm-1").unwrap();
+        let expected_id = build_canonical_operation_id("session-1", "tool-1");
+        assert_eq!(interaction.canonical_operation_id, Some(expected_id));
+    }
+
+    #[test]
+    fn terminal_operation_state_set_excludes_resumable_blocked_state() {
+        assert!(!is_terminal_operation_state(&OperationState::Pending));
+        assert!(!is_terminal_operation_state(&OperationState::Running));
+        assert!(!is_terminal_operation_state(&OperationState::Blocked));
+        assert!(is_terminal_operation_state(&OperationState::Completed));
+        assert!(is_terminal_operation_state(&OperationState::Failed));
+        assert!(is_terminal_operation_state(&OperationState::Cancelled));
+        assert!(is_terminal_operation_state(&OperationState::Degraded));
+    }
+
+    #[test]
+    fn pending_permission_blocks_linked_operation_and_approval_resumes_it() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-1",
+                    "cargo test",
+                    ToolCallStatus::InProgress,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let running = registry
+            .operation_for_tool_call("session-1", "tool-1")
+            .expect("expected running operation");
+        assert_eq!(running.operation_state, OperationState::Running);
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::PermissionRequest {
+                permission: PermissionData {
+                    id: "permission-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    json_rpc_request_id: Some(42),
+                    reply_handler: Some(InteractionReplyHandler::json_rpc(42)),
+                    permission: "Execute".to_string(),
+                    patterns: vec![],
+                    metadata: json!({"command": "cargo test"}),
+                    always: vec![],
+                    auto_accepted: false,
+                    tool: Some(ToolReference {
+                        message_id: String::new(),
+                        call_id: "tool-1".to_string(),
+                    }),
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let blocked = registry
+            .operation_for_tool_call("session-1", "tool-1")
+            .expect("expected blocked operation");
+        assert_eq!(blocked.operation_state, OperationState::Blocked);
+
+        registry
+            .resolve_interaction(
+                "session-1",
+                "permission-1",
+                InteractionState::Approved,
+                InteractionResponse::Permission {
+                    accepted: true,
+                    option_id: Some("allow_once".to_string()),
+                    reply: Some("once".to_string()),
+                },
+            )
+            .expect("expected permission resolution");
+
+        let resumed = registry
+            .operation_for_tool_call("session-1", "tool-1")
+            .expect("expected resumed operation");
+        assert_eq!(resumed.operation_state, OperationState::Running);
+    }
+
+    #[test]
+    fn pending_question_blocks_linked_operation_and_answer_resumes_it() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "question-tool",
+                    "ask user",
+                    ToolCallStatus::InProgress,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::QuestionRequest {
+                question: QuestionData {
+                    id: "question-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    json_rpc_request_id: Some(43),
+                    reply_handler: Some(InteractionReplyHandler::json_rpc(43)),
+                    questions: vec![QuestionItem {
+                        question: "Proceed?".to_string(),
+                        header: "Approval".to_string(),
+                        options: vec![],
+                        multi_select: false,
+                    }],
+                    tool: Some(ToolReference {
+                        message_id: String::new(),
+                        call_id: "question-tool".to_string(),
+                    }),
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let blocked = registry
+            .operation_for_tool_call("session-1", "question-tool")
+            .expect("expected blocked operation");
+        assert_eq!(blocked.operation_state, OperationState::Blocked);
+
+        registry
+            .resolve_interaction(
+                "session-1",
+                "question-1",
+                InteractionState::Answered,
+                InteractionResponse::Question {
+                    answers: json!({ "Proceed?": ["Yes"] }),
+                },
+            )
+            .expect("expected question resolution");
+
+        let resumed = registry
+            .operation_for_tool_call("session-1", "question-tool")
+            .expect("expected resumed operation");
+        assert_eq!(resumed.operation_state, OperationState::Running);
+    }
+
+    #[test]
+    fn plan_approval_blocks_linked_operation_and_approval_resumes_it() {
+        let registry = ProjectionRegistry::new();
+        let mut plan_tool_call =
+            create_execute_tool_call("plan-tool", "write plan", ToolCallStatus::InProgress);
+        plan_tool_call.kind = Some(ToolKind::CreatePlan);
+        plan_tool_call.awaiting_plan_approval = true;
+        plan_tool_call.plan_approval_request_id = Some(44);
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: plan_tool_call,
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let blocked = registry
+            .operation_for_tool_call("session-1", "plan-tool")
+            .expect("expected blocked operation");
+        assert_eq!(blocked.operation_state, OperationState::Blocked);
+
+        let plan_id = build_plan_approval_interaction_id("session-1", "plan-tool", 44);
+        registry
+            .resolve_interaction(
+                "session-1",
+                &plan_id,
+                InteractionState::Approved,
+                InteractionResponse::PlanApproval { approved: true },
+            )
+            .expect("expected plan approval resolution");
+
+        let resumed = registry
+            .operation_for_tool_call("session-1", "plan-tool")
+            .expect("expected resumed operation");
+        assert_eq!(resumed.operation_state, OperationState::Running);
+    }
+
+    #[test]
+    fn unlinked_interaction_does_not_invent_blocked_operation() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::PermissionRequest {
+                permission: PermissionData {
+                    id: "permission-unlinked".to_string(),
+                    session_id: "session-1".to_string(),
+                    json_rpc_request_id: Some(45),
+                    reply_handler: Some(InteractionReplyHandler::json_rpc(45)),
+                    permission: "Execute".to_string(),
+                    patterns: vec![],
+                    metadata: json!({}),
+                    always: vec![],
+                    auto_accepted: false,
+                    tool: None,
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let projection = registry.session_projection("session-1");
+        assert!(projection.operations.is_empty());
+        assert_eq!(projection.interactions.len(), 1);
+        assert_eq!(projection.interactions[0].state, InteractionState::Pending);
+    }
+
+    #[test]
+    fn pending_interaction_blocks_operation_when_operation_materializes_later() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::PermissionRequest {
+                permission: PermissionData {
+                    id: "permission-late".to_string(),
+                    session_id: "session-1".to_string(),
+                    json_rpc_request_id: Some(46),
+                    reply_handler: Some(InteractionReplyHandler::json_rpc(46)),
+                    permission: "Execute".to_string(),
+                    patterns: vec![],
+                    metadata: json!({}),
+                    always: vec![],
+                    auto_accepted: false,
+                    tool: Some(ToolReference {
+                        message_id: String::new(),
+                        call_id: "late-tool".to_string(),
+                    }),
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "late-tool",
+                    "cargo test",
+                    ToolCallStatus::InProgress,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let blocked = registry
+            .operation_for_tool_call("session-1", "late-tool")
+            .expect("expected late materialized operation");
+        assert_eq!(blocked.operation_state, OperationState::Blocked);
+    }
+
+    #[test]
+    fn terminal_operation_not_regressed_by_stale_update() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-terminal",
+                    "rm -rf",
+                    ToolCallStatus::Pending,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCallUpdate {
+                update: ToolCallUpdateData {
+                    tool_call_id: "tool-terminal".to_string(),
+                    status: Some(ToolCallStatus::Completed),
+                    ..ToolCallUpdateData::default()
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCallUpdate {
+                update: ToolCallUpdateData {
+                    tool_call_id: "tool-terminal".to_string(),
+                    status: Some(ToolCallStatus::InProgress),
+                    ..ToolCallUpdateData::default()
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        let op = registry
+            .operation_for_tool_call("session-1", "tool-terminal")
+            .unwrap();
+        assert_eq!(
+            op.operation_state,
+            OperationState::Completed,
+            "terminal state must not regress"
+        );
+    }
+
+    #[test]
+    fn terminal_operation_not_regressed_by_stale_full_tool_call() {
+        let registry = ProjectionRegistry::new();
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-terminal",
+                    "cargo test",
+                    ToolCallStatus::Completed,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-terminal",
+                    "cargo test",
+                    ToolCallStatus::Pending,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let op = registry
+            .operation_for_tool_call("session-1", "tool-terminal")
+            .unwrap();
+        assert_eq!(
+            op.operation_state,
+            OperationState::Completed,
+            "terminal state must not regress from a stale full tool-call projection"
+        );
+    }
+
+    #[test]
+    fn live_tool_call_patch_preserves_restored_transcript_source_link() {
+        let registry = ProjectionRegistry::new();
+        let operation_id = build_canonical_operation_id("session-1", "tool-restored");
+        registry.restore_session_projection(SessionProjectionSnapshot {
+            session: Some(SessionSnapshot::new(
+                "session-1".to_string(),
+                Some(CanonicalAgentId::ClaudeCode),
+            )),
+            operations: vec![OperationSnapshot {
+                id: operation_id,
+                session_id: "session-1".to_string(),
+                tool_call_id: "tool-restored".to_string(),
+                name: "bash".to_string(),
+                kind: Some(ToolKind::Execute),
+                provider_status: ToolCallStatus::Completed,
+                title: Some("Run command".to_string()),
+                arguments: ToolArguments::Execute {
+                    command: Some("pwd".to_string()),
+                },
+                progressive_arguments: None,
+                result: Some(json!("done")),
+                command: Some("pwd".to_string()),
+                normalized_todos: None,
+                parent_tool_call_id: None,
+                parent_operation_id: None,
+                child_tool_call_ids: vec![],
+                child_operation_ids: vec![],
+                operation_provenance_key: Some("tool-restored".to_string()),
+                operation_state: OperationState::Completed,
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+                started_at_ms: None,
+                completed_at_ms: None,
+                source_link: OperationSourceLink::TranscriptLinked {
+                    entry_id: "transcript-tool-entry".to_string(),
+                },
+                degradation_reason: None,
+            }],
+            interactions: vec![],
+            runtime: None,
+        });
+
+        registry.apply_session_update(
+            "session-1",
+            &SessionUpdate::ToolCall {
+                tool_call: create_execute_tool_call(
+                    "tool-restored",
+                    "pwd",
+                    ToolCallStatus::Completed,
+                ),
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        let operation = registry
+            .operation_for_tool_call("session-1", "tool-restored")
+            .expect("expected restored operation");
+        assert_eq!(
+            operation.source_link,
+            OperationSourceLink::TranscriptLinked {
+                entry_id: "transcript-tool-entry".to_string()
+            }
+        );
     }
 }

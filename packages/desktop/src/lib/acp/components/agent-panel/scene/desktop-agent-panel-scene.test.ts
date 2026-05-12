@@ -7,6 +7,7 @@ import {
 	buildDesktopComposerModel,
 	buildDesktopPlanSidebar,
 	mapSessionEntriesToConversationModel,
+	mapSessionEntryToConversationEntry,
 	mapSessionStatusToSceneStatus,
 	mapVirtualizedDisplayEntryToConversationEntry,
 } from "./desktop-agent-panel-scene.js";
@@ -111,6 +112,7 @@ describe("desktop agent panel scene adapter", () => {
 			type: "assistant",
 			markdown: "JWT service is ready.",
 			isStreaming: true,
+			timestampMs: undefined,
 		});
 	});
 
@@ -158,6 +160,61 @@ describe("desktop agent panel scene adapter", () => {
 			filePath: "/repo/src/session.ts",
 			sourceExcerpt: "443. export function reconcile() {}",
 			sourceRangeLabel: "Line 443",
+		});
+	});
+
+	it("maps edit tool arguments into editDiffs for shared AgentToolEdit", () => {
+		const entries: SessionEntry[] = [
+			{
+				id: "tool-edit-1",
+				type: "tool_call",
+				message: {
+					id: "tool-edit-1",
+					name: "Edit",
+					arguments: {
+						kind: "edit",
+						edits: [
+							{
+								filePath: "/repo/src/a.ts",
+								oldString: "a",
+								newString: "b",
+							},
+						],
+					},
+					rawInput: null,
+					status: "completed",
+					result: null,
+					kind: "edit",
+					title: "Edit File",
+					locations: null,
+					skillMeta: null,
+					normalizedResult: null,
+					normalizedQuestions: null,
+					normalizedTodos: null,
+					parentToolUseId: null,
+					taskChildren: null,
+					questionAnswer: null,
+					awaitingPlanApproval: false,
+					planApprovalRequestId: null,
+				},
+			},
+		];
+
+		const conversation = mapSessionEntriesToConversationModel(entries, "idle");
+
+		const toolCall = conversation.entries[0] as { editDiffs?: readonly unknown[] };
+		expect(toolCall).toMatchObject({
+			id: "tool-edit-1",
+			type: "tool_call",
+			kind: "edit",
+			status: "done",
+			filePath: "/repo/src/a.ts",
+		});
+		expect(toolCall.editDiffs).toHaveLength(1);
+		expect(toolCall.editDiffs?.[0]).toMatchObject({
+			filePath: "/repo/src/a.ts",
+			oldString: "a",
+			newString: "b",
 		});
 	});
 
@@ -282,6 +339,8 @@ describe("desktop agent panel scene adapter", () => {
 			id: "assistant-1",
 			type: "assistant",
 			markdown: "Final answer",
+			isStreaming: undefined,
+			timestampMs: undefined,
 		});
 	});
 
@@ -435,7 +494,7 @@ describe("desktop agent panel scene adapter", () => {
 				message: {
 					id: "lint-1",
 					name: "read_lints",
-					arguments: { kind: "other", raw: {} },
+					arguments: { kind: "readLints", raw: {} },
 					rawInput: null,
 					status: "completed",
 					result: {
@@ -445,7 +504,7 @@ describe("desktop agent panel scene adapter", () => {
 							{ filePath: "src/lib/auth.ts", line: 42, message: "Boom", severity: "error" },
 						],
 					},
-					kind: "other",
+					kind: "read_lints",
 					title: "Read lints",
 					locations: null,
 					skillMeta: null,
@@ -585,15 +644,11 @@ describe("desktop agent panel scene adapter", () => {
 		});
 		expect(conversation.entries[5]).toMatchObject({
 			type: "tool_call",
-			lintDiagnostics: [
-				{
-					filePath: "src/routes/+page.svelte",
-					line: 7,
-					message: "Unused export",
-					severity: "warning",
-				},
-			],
+			kind: "read",
 		});
+		expect(conversation.entries[5]?.type === "tool_call" ? conversation.entries[5].lintDiagnostics : null).toBe(
+			undefined
+		);
 		expect(conversation.entries[6]).toMatchObject({
 			type: "tool_call",
 			kind: "task_output",
@@ -718,6 +773,54 @@ describe("desktop agent panel scene adapter", () => {
 			title: "Report Intent",
 			subtitle: "Viewing extracted lines",
 			detailsText: expect.stringContaining('"name": "report_intent"'),
+			status: "done",
+		});
+	});
+
+	it("surfaces write_bash shell input metadata on generic tool rows", () => {
+		const entries: SessionEntry[] = [
+			{
+				id: "write-bash-1",
+				type: "tool_call",
+				message: {
+					id: "write-bash-1",
+					name: "write_bash",
+					arguments: {
+						kind: "unclassified",
+						raw_name: "write_bash",
+						raw_kind_hint: null,
+						title: "Write shell input",
+						arguments_preview: '{"shellId":"2","input":"{enter}","delay":10}',
+						signals_tried: ["ProviderNameMap", "ArgumentShape"],
+					},
+					rawInput: { shellId: "2", input: "{enter}", delay: 10 },
+					status: "completed",
+					result: {
+						content: "done",
+					},
+					kind: "unclassified",
+					title: "Write shell input",
+					locations: null,
+					skillMeta: null,
+					normalizedQuestions: null,
+					normalizedTodos: null,
+					parentToolUseId: null,
+					taskChildren: null,
+					questionAnswer: null,
+					awaitingPlanApproval: false,
+					planApprovalRequestId: null,
+				},
+			},
+		];
+
+		const conversation = mapSessionEntriesToConversationModel(entries, "idle");
+
+		expect(conversation.entries[0]).toMatchObject({
+			type: "tool_call",
+			kind: "other",
+			title: "Write shell input",
+			subtitle: "Shell 2: {enter}",
+			detailsText: expect.stringContaining('"shellId": "2"'),
 			status: "done",
 		});
 	});
@@ -943,6 +1046,7 @@ describe("desktop agent panel scene adapter", () => {
 				type: "assistant_merged",
 				key: "assistant-merged",
 				memberIds: ["assistant-1", "assistant-2"],
+				markdown: "Thinking…Done.",
 				message: {
 					chunks: [
 						{ type: "thought", block: { type: "text", text: "Thinking…" } },
@@ -959,7 +1063,132 @@ describe("desktop agent panel scene adapter", () => {
 			id: "assistant-merged",
 			type: "assistant",
 			markdown: "Thinking…Done.",
+			message: {
+				chunks: [
+					{ type: "thought", block: { type: "text", text: "Thinking…" } },
+					{ type: "message", block: { type: "text", text: "Done." } },
+				],
+			},
 			isStreaming: true,
+			timestampMs: undefined,
+		});
+	});
+
+	it("threads thinking start timestamps through virtualized fallback mapping", () => {
+		const startedAtMs = Date.parse("2026-05-01T00:00:00.000Z");
+		const assistantEntry = mapSessionEntryToConversationEntry(
+			{
+				id: "assistant-1",
+				type: "assistant",
+				message: {
+					chunks: [{ type: "message", block: { type: "text", text: "Done." } }],
+				},
+			},
+			"streaming"
+		);
+		const thinkingEntry = mapVirtualizedDisplayEntryToConversationEntry(
+			{
+				id: "thinking-indicator",
+				type: "thinking",
+				startedAtMs,
+			},
+			"streaming",
+			false,
+			null,
+			startedAtMs + 4_000
+		);
+
+		expect(assistantEntry.type).toBe("assistant");
+		expect(thinkingEntry).toEqual({
+			id: "thinking-indicator",
+			type: "thinking",
+			durationMs: 4_000,
+			startedAtMs,
+		});
+	});
+
+	describe("mapSessionEntryToConversationEntry isOptimistic threading", () => {
+		function makeUserEntry(id: string, text: string): SessionEntry {
+			return {
+				id,
+				type: "user",
+				message: {
+					content: { type: "text", text },
+					chunks: [{ type: "text", text }],
+				},
+			};
+		}
+
+		function makeToolEntry(id: string): SessionEntry {
+			return {
+				id,
+				type: "tool_call",
+				message: {
+					id,
+					name: "bash",
+					arguments: { kind: "execute", command: "bun test" },
+					rawInput: null,
+					status: "completed",
+					result: null,
+					kind: "execute",
+					title: "Run",
+					locations: null,
+					skillMeta: null,
+					normalizedResult: null,
+					normalizedQuestions: null,
+					normalizedTodos: null,
+					parentToolUseId: null,
+					taskChildren: null,
+					questionAnswer: null,
+					awaitingPlanApproval: false,
+					planApprovalRequestId: null,
+				},
+			};
+		}
+
+		it("stamps isOptimistic: true on user entries when options.isOptimistic is true", () => {
+			const entry = makeUserEntry("u1", "Hello");
+			const result = mapSessionEntryToConversationEntry(entry, undefined, null, {
+				isOptimistic: true,
+			});
+
+			expect(result.type).toBe("user");
+			if (result.type === "user") {
+				expect(result.isOptimistic).toBe(true);
+				expect(result.text).toBe("Hello");
+			}
+		});
+
+		it("leaves isOptimistic undefined on user entries when options are omitted", () => {
+			const entry = makeUserEntry("u2", "Hello default");
+			const result = mapSessionEntryToConversationEntry(entry, undefined);
+
+			expect(result.type).toBe("user");
+			if (result.type === "user") {
+				expect(result.isOptimistic).toBeUndefined();
+			}
+		});
+
+		it("leaves isOptimistic undefined on user entries when isOptimistic is false", () => {
+			const entry = makeUserEntry("u3", "Hello false");
+			const result = mapSessionEntryToConversationEntry(entry, undefined, null, {
+				isOptimistic: false,
+			});
+
+			expect(result.type).toBe("user");
+			if (result.type === "user") {
+				expect(result.isOptimistic).toBeUndefined();
+			}
+		});
+
+		it("does NOT add isOptimistic to non-user entry variants even when options flag is set", () => {
+			const toolEntry = makeToolEntry("t1");
+			const result = mapSessionEntryToConversationEntry(toolEntry, undefined, null, {
+				isOptimistic: true,
+			});
+
+			expect(result.type).toBe("tool_call");
+			expect("isOptimistic" in result).toBe(false);
 		});
 	});
 });

@@ -1,15 +1,16 @@
 use super::*;
+use crate::acp::client_trait::CommunicationMode;
+use crate::acp::error::{CreationFailure, CreationFailureKind};
 use crate::acp::event_hub::AcpEventHubState;
 use crate::acp::lifecycle::{ReadyDispatchPermit, SessionSupervisor};
 use crate::acp::projections::{ProjectionRegistry, SessionProjectionSnapshot};
 use crate::acp::session_descriptor::{
     resolve_live_pending_session_resume, ResolvedForkSession, ResolvedResumeSession,
-    SessionCompatibilityInput, SessionDescriptorCompatibility, SessionReplayContext,
+    SessionCompatibilityInput, SessionReplayContext,
 };
-use crate::acp::session_journal::{load_stored_projection, load_transcript_from_journal};
 use crate::acp::session_open_snapshot::{
-    resolve_canonical_session_title, session_open_result_for_new_session, SessionOpenFound,
-    SessionOpenResult,
+    resolve_canonical_session_title, session_open_result_for_new_session,
+    NewSessionOpenResultInput, SessionOpenFound, SessionOpenResult,
 };
 use crate::acp::session_policy::SessionPolicyRegistry;
 use crate::acp::session_registry::{redact_session_id, SessionRegistry};
@@ -19,12 +20,12 @@ use crate::acp::session_state_engine::revision::SessionGraphRevision;
 use crate::acp::session_state_engine::runtime_registry::{
     LiveSessionStateEnvelopeRequest, SessionGraphRuntimeRegistry, SessionGraphRuntimeSnapshot,
 };
+use crate::acp::session_state_engine::selectors::SessionGraphCapabilities;
 use crate::acp::transcript_projection::{TranscriptProjectionRegistry, TranscriptSnapshot};
 use crate::acp::types::CanonicalAgentId;
 use crate::commands::observability::{expected_acp_command_result, CommandResult};
 use crate::db::repository::{
     SessionJournalEventRepository, SessionMetadataRepository, SessionMetadataRow,
-    SessionProjectionSnapshotRepository,
 };
 use sea_orm::DbConn;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -86,6 +87,74 @@ pub(crate) async fn persist_session_metadata_for_cwd(
         })?;
 
     Ok(sequence_id)
+}
+
+pub(crate) fn validate_provider_session_id_for_creation(
+    session_id: &str,
+) -> Result<(), SerializableAcpError> {
+    const MAX_PROVIDER_SESSION_ID_LEN: usize = 256;
+    if session_id.is_empty() {
+        return Err(creation_failure(
+            CreationFailureKind::InvalidProviderSessionId,
+            "Provider returned an empty session id",
+            None,
+            None,
+            false,
+        ));
+    }
+    if session_id.len() > MAX_PROVIDER_SESSION_ID_LEN {
+        return Err(creation_failure(
+            CreationFailureKind::InvalidProviderSessionId,
+            format!(
+                "Provider returned an oversized session id ({} bytes)",
+                session_id.len()
+            ),
+            Some(session_id.to_string()),
+            None,
+            false,
+        ));
+    }
+    let is_allowed = session_id.chars().all(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
+    });
+    if !is_allowed {
+        return Err(creation_failure(
+            CreationFailureKind::InvalidProviderSessionId,
+            "Provider returned a session id with disallowed characters",
+            Some(session_id.to_string()),
+            None,
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn creation_failure(
+    kind: CreationFailureKind,
+    message: impl Into<String>,
+    session_id: Option<String>,
+    creation_attempt_id: Option<String>,
+    retryable: bool,
+) -> SerializableAcpError {
+    SerializableAcpError::CreationFailed(CreationFailure::new(
+        kind,
+        message,
+        session_id,
+        creation_attempt_id,
+        retryable,
+    ))
+}
+
+async fn mark_creation_attempt_failed(db: &DbConn, attempt_id: &str, reason: &str) {
+    if let Err(error) =
+        SessionMetadataRepository::fail_creation_attempt(db, attempt_id, reason).await
+    {
+        tracing::warn!(
+            attempt_id = %attempt_id,
+            error = %error,
+            "Failed to mark creation attempt failed"
+        );
+    }
 }
 
 async fn ensure_session_anchor_snapshots(
@@ -174,11 +243,13 @@ async fn resolve_fork_session_target(
 
 async fn build_new_session_open_result(
     app: &AppHandle,
-    session_id: &str,
+    response: &NewSessionResponse,
     fallback_agent_id: &CanonicalAgentId,
 ) -> Result<SessionOpenResult, SerializableAcpError> {
+    let session_id = &response.session_id;
     let db = app.state::<DbConn>();
     let hub = app.state::<Arc<AcpEventHubState>>();
+    let runtime_graph_registry = app.state::<Arc<SessionGraphRuntimeRegistry>>();
     let metadata = SessionMetadataRepository::get_by_id(db.inner(), session_id)
         .await
         .map_err(|error| SerializableAcpError::InvalidState {
@@ -194,17 +265,44 @@ async fn build_new_session_open_result(
         .agent_id
         .unwrap_or_else(|| fallback_agent_id.clone());
     let project_path = descriptor.project_path.unwrap_or_default();
+    let runtime_snapshot = runtime_graph_registry
+        .supervisor()
+        .snapshot_for_session(session_id)
+        .map(|checkpoint| SessionGraphRuntimeSnapshot::from_checkpoint(&checkpoint))
+        .ok_or_else(|| SerializableAcpError::InvalidState {
+            message: format!("Missing lifecycle checkpoint for new session {session_id}"),
+        })?;
 
     Ok(session_open_result_for_new_session(
         db.inner(),
         hub.inner(),
-        session_id,
-        agent_id,
-        project_path,
-        descriptor.worktree_path,
-        descriptor.source_path,
+        NewSessionOpenResultInput {
+            session_id: session_id.to_string(),
+            agent_id,
+            project_path,
+            worktree_path: descriptor.worktree_path,
+            source_path: descriptor.source_path,
+            lifecycle: runtime_snapshot.lifecycle,
+            capabilities: runtime_snapshot.capabilities,
+        },
     )
     .await)
+}
+
+fn capabilities_from_new_session_response(
+    app: &AppHandle,
+    response: &NewSessionResponse,
+) -> SessionGraphCapabilities {
+    let policy_registry = app.state::<Arc<SessionPolicyRegistry>>();
+    SessionGraphCapabilities {
+        models: Some(response.models.clone()),
+        modes: Some(response.modes.clone()),
+        available_commands: response.available_commands.clone(),
+        config_options: crate::acp::session_update::sanitize_config_options_for_canonical(
+            response.config_options.clone(),
+        ),
+        autonomous_enabled: policy_registry.is_autonomous(&response.session_id),
+    }
 }
 
 /// Initialize the ACP connection.
@@ -256,6 +354,14 @@ pub async fn acp_set_session_autonomous(
     session_id: String,
     enabled: bool,
 ) -> CommandResult<()> {
+    acp_set_session_autonomous_for_handle(app, session_id, enabled).await
+}
+
+pub(crate) async fn acp_set_session_autonomous_for_handle<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    session_id: String,
+    enabled: bool,
+) -> CommandResult<()> {
     expected_acp_command_result(
         "acp_set_session_autonomous",
         async {
@@ -266,12 +372,96 @@ pub async fn acp_set_session_autonomous(
             );
 
             let session_policy = app.state::<Arc<SessionPolicyRegistry>>();
+            let canonical_emit =
+                prepare_autonomous_capability_emit(&app, &session_id, enabled).await?;
             session_policy.set_autonomous(&session_id, enabled);
+            publish_autonomous_capability_emit(&session_id, canonical_emit);
 
             Ok(())
         }
         .await,
     )
+}
+
+struct AutonomousCapabilityEmit {
+    event_hub: Arc<AcpEventHubState>,
+    runtime_registry: Arc<SessionGraphRuntimeRegistry>,
+    revision: SessionGraphRevision,
+    capabilities: SessionGraphCapabilities,
+}
+
+async fn prepare_autonomous_capability_emit<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    session_id: &str,
+    enabled: bool,
+) -> Result<AutonomousCapabilityEmit, SerializableAcpError> {
+    let event_hub = app
+        .try_state::<Arc<AcpEventHubState>>()
+        .map(|state| Arc::clone(state.inner()))
+        .ok_or_else(|| SerializableAcpError::InvalidState {
+            message: "Cannot emit autonomous capability update without event hub".to_string(),
+        })?;
+    let runtime_registry = app
+        .try_state::<Arc<SessionGraphRuntimeRegistry>>()
+        .map(|state| Arc::clone(state.inner()))
+        .ok_or_else(|| SerializableAcpError::InvalidState {
+            message: "Cannot emit autonomous capability update without runtime registry"
+                .to_string(),
+        })?;
+    let db = app
+        .try_state::<DbConn>()
+        .ok_or_else(|| SerializableAcpError::InvalidState {
+            message: "Cannot emit autonomous capability update without database".to_string(),
+        })?;
+    let transcript_projection_registry = app
+        .try_state::<Arc<TranscriptProjectionRegistry>>()
+        .map(|state| Arc::clone(state.inner()))
+        .ok_or_else(|| SerializableAcpError::InvalidState {
+            message: "Cannot emit autonomous capability update without transcript registry"
+                .to_string(),
+        })?;
+
+    let revision = load_live_session_graph_revision(
+        db.inner(),
+        transcript_projection_registry.as_ref(),
+        Some(runtime_registry.as_ref()),
+        session_id,
+    )
+    .await?;
+    let mut capabilities = runtime_registry
+        .snapshot_for_session(session_id)
+        .capabilities;
+    capabilities.autonomous_enabled = enabled;
+
+    Ok(AutonomousCapabilityEmit {
+        event_hub,
+        runtime_registry,
+        revision,
+        capabilities,
+    })
+}
+
+fn publish_autonomous_capability_emit(session_id: &str, emit: AutonomousCapabilityEmit) {
+    let graph_revision = emit.runtime_registry.replace_capabilities_with_graph_seed(
+        session_id,
+        emit.revision.graph_revision,
+        emit.capabilities.clone(),
+    );
+    let revision = SessionGraphRevision::new(
+        graph_revision,
+        emit.revision.transcript_revision,
+        emit.revision.last_event_seq,
+    );
+    publish_session_state_envelope(
+        &emit.event_hub,
+        emit.runtime_registry.build_capabilities_envelope(
+            session_id,
+            emit.capabilities,
+            revision,
+            None,
+            crate::acp::session_state_engine::CapabilityPreviewState::Canonical,
+        ),
+    );
 }
 
 #[tauri::command]
@@ -305,13 +495,12 @@ pub async fn acp_get_session_state(
             session,
             operations,
             interactions,
-            runtime,
+            runtime: _,
         } = lookup.projection;
         let projection_session = session.as_ref();
         let runtime_snapshot = runtime_snapshot_for_refresh(
             app.try_state::<Arc<SessionGraphRuntimeRegistry>>()
                 .map(|registry| registry.inner().as_ref()),
-            runtime.as_ref(),
             &canonical_session_id,
         );
         let revision = load_live_session_graph_revision(
@@ -380,16 +569,16 @@ pub async fn acp_get_session_state(
             message_count: projection_session
                 .map(|session| session.message_count)
                 .unwrap_or(0),
+            last_agent_message_id: projection_session
+                .and_then(|session| session.last_agent_message_id.clone()),
+            lifecycle: runtime_snapshot.lifecycle.clone(),
+            capabilities: runtime_snapshot.capabilities.clone(),
             active_turn_failure: projection_session.and_then(|session| session.active_turn_failure.clone()),
             last_terminal_turn_id: projection_session
                 .and_then(|session| session.last_terminal_turn_id.clone()),
         };
 
-        Ok(build_snapshot_envelope(
-            &found,
-            runtime_snapshot.lifecycle,
-            runtime_snapshot.capabilities,
-        ))
+        Ok(build_snapshot_envelope(&found))
     }
     .await)
 }
@@ -417,7 +606,7 @@ async fn load_transcript_snapshot_for_state_lookup(
 
 async fn load_transcript_snapshot_for_state_lookup_with_app(
     app: Option<&AppHandle>,
-    db: &DbConn,
+    _db: &DbConn,
     transcript_registry: &TranscriptProjectionRegistry,
     canonical_session_id: &str,
     requested_session_id: &str,
@@ -432,31 +621,14 @@ async fn load_transcript_snapshot_for_state_lookup_with_app(
     }
 
     if let Some(replay_context) = replay_context {
-        if let Some(journal_snapshot) = load_transcript_from_journal(db, replay_context)
-            .await
-            .map_err(|error| SerializableAcpError::InvalidState {
-                message: format!(
-                    "Failed to rebuild transcript snapshot from journal for state lookup {canonical_session_id}: {error}"
-                ),
-            })?
-        {
-            if journal_snapshot.revision >= last_event_seq {
-                return Ok(journal_snapshot);
-            }
-        }
-
         if let Some(app) = app {
             if let Some(provider_snapshot) =
-                crate::history::commands::session_loading::ensure_canonical_session_materialized(
+                crate::history::commands::session_loading::load_provider_owned_session_snapshot(
                     app.clone(),
                     replay_context,
                 )
                 .await
-                .map_err(|error| SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to load provider-owned transcript for state lookup {canonical_session_id}: {error}"
-                    ),
-                })?
+                .map_err(SerializableAcpError::from)?
             {
                 return Ok(TranscriptSnapshot::from_stored_entries(
                     last_event_seq,
@@ -467,12 +639,6 @@ async fn load_transcript_snapshot_for_state_lookup_with_app(
     }
 
     Ok(TranscriptSnapshot::from_stored_entries(last_event_seq, &[]))
-}
-
-fn projection_contains_restorable_content(snapshot: &SessionProjectionSnapshot) -> bool {
-    snapshot.session.is_some()
-        || !snapshot.operations.is_empty()
-        || !snapshot.interactions.is_empty()
 }
 
 #[derive(Debug, Clone)]
@@ -523,51 +689,28 @@ async fn load_session_projection_lookup(
         });
     }
 
-    let stored_projection = if let Some(replay_context) = replay_context.as_ref() {
-        load_stored_projection(db.inner(), replay_context)
-            .await
-            .map_err(|error| SerializableAcpError::InvalidState {
-                message: format!(
-                    "Failed to rebuild session projection from journal for session {session_id}: {error}"
-                ),
-            })?
-    } else {
-        None
-    };
-    let stored_runtime = stored_projection
-        .as_ref()
-        .and_then(|snapshot| snapshot.runtime.clone());
-    if let Some(stored_projection) =
-        stored_projection.filter(projection_contains_restorable_content)
-    {
-        return Ok(SessionProjectionLookup {
-            projection: stored_projection,
-            metadata,
-            replay_context,
-        });
-    }
-
     let Some(_metadata) = metadata.as_ref() else {
         return Ok(SessionProjectionLookup {
-            projection: runtime_projection,
+            projection: SessionProjectionSnapshot {
+                session: None,
+                operations: Vec::new(),
+                interactions: Vec::new(),
+                runtime: None,
+            },
             metadata,
             replay_context,
         });
     };
 
     let imported_thread_snapshot =
-        crate::history::commands::session_loading::ensure_canonical_session_materialized(
+        crate::history::commands::session_loading::load_provider_owned_session_snapshot(
             app.clone(),
             replay_context
                 .as_ref()
                 .expect("replay context should exist with metadata"),
         )
         .await
-        .map_err(|error| SerializableAcpError::InvalidState {
-            message: format!(
-                "Failed to materialize legacy session {session_id} into canonical state: {error}"
-            ),
-        })?;
+        .map_err(SerializableAcpError::from)?;
 
     let Some(imported_thread_snapshot) = imported_thread_snapshot else {
         return Ok(SessionProjectionLookup {
@@ -589,7 +732,7 @@ async fn load_session_projection_lookup(
         &imported_thread_snapshot,
     );
     let mut imported_projection = imported_projection;
-    imported_projection.runtime = stored_runtime;
+    imported_projection.runtime = None;
 
     Ok(SessionProjectionLookup {
         projection: imported_projection,
@@ -622,9 +765,34 @@ pub async fn acp_new_session(
 
         // Determine which agent to use
         let agent_id_enum = resolve_requested_agent_id(agent_id.as_deref(), active_agent.get());
+        let provider_uses_deferred_creation = registry
+            .get(&agent_id_enum)
+            .is_some_and(|provider| provider.communication_mode() == CommunicationMode::CcSdk);
+        let (project_path, worktree_path) = session_metadata_context_from_cwd(&cwd);
+        let creation_attempt_id = if let Some(launch_token) = launch_token.as_deref() {
+            launch_token.to_string()
+        } else {
+            SessionMetadataRepository::create_creation_attempt(
+                db.inner(),
+                &project_path,
+                agent_id_enum.as_str(),
+                worktree_path.as_deref(),
+            )
+            .await
+            .map_err(|error| {
+                creation_failure(
+                    CreationFailureKind::MetadataCommitFailed,
+                    format!("Failed to create session creation attempt: {error}"),
+                    None,
+                    None,
+                    true,
+                )
+            })?
+            .id
+        };
 
         // Create and initialize client with cwd so subprocess spawns in correct directory
-        let mut client = create_and_initialize_client(
+        let mut client = match create_and_initialize_client(
             &registry,
             &opencode_manager,
             agent_id_enum.clone(),
@@ -632,69 +800,253 @@ pub async fn acp_new_session(
             cwd.clone(),
             "new session",
         )
-        .await?;
+        .await
+        {
+            Ok(client) => client,
+            Err(error) => {
+                mark_creation_attempt_failed(
+                    db.inner(),
+                    &creation_attempt_id,
+                    &format!("client-initialization-failed: {error}"),
+                )
+                .await;
+                return Err(creation_failure(
+                    CreationFailureKind::ProviderFailedBeforeId,
+                    error.to_string(),
+                    None,
+                    Some(creation_attempt_id),
+                    true,
+                ));
+            }
+        };
+        if provider_uses_deferred_creation {
+            client.bind_pending_creation_attempt(Some(creation_attempt_id.clone()));
+        }
 
         // Create the session
         tracing::debug!("Creating session");
-        let result = client
+        let result = match client
             .new_session(cwd.to_string_lossy().to_string())
             .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "New session failed");
-                SerializableAcpError::from(e)
-            })?;
+        {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::error!(error = %error, "New session failed");
+                mark_creation_attempt_failed(
+                    db.inner(),
+                    &creation_attempt_id,
+                    &format!("provider-new-session-failed: {error}"),
+                )
+                .await;
+                return Err(creation_failure(
+                    CreationFailureKind::ProviderFailedBeforeId,
+                    error.to_string(),
+                    None,
+                    Some(creation_attempt_id),
+                    true,
+                ));
+            }
+        };
+        if let Err(error) = validate_provider_session_id_for_creation(&result.session_id) {
+            mark_creation_attempt_failed(
+                db.inner(),
+                &creation_attempt_id,
+                &format!("provider-session-id-invalid: {error}"),
+            )
+            .await;
+            client.discard_pre_reservation_events(&result.session_id, "invalid_provider_session_id");
+            client.stop();
+            let message = error.to_string();
+            return Err(creation_failure(
+                CreationFailureKind::InvalidProviderSessionId,
+                message,
+                Some(result.session_id),
+                Some(creation_attempt_id),
+                false,
+            ));
+        }
 
-        let sequence_id = if let Some(launch_token) = launch_token.as_deref() {
-            SessionMetadataRepository::consume_reserved_worktree_launch(
+        let sequence_id = if provider_uses_deferred_creation {
+            SessionMetadataRepository::record_creation_attempt_requested_provider_session_id(
+                db.inner(),
+                &creation_attempt_id,
+                &result.session_id,
+            )
+            .await
+            .map_err(|error| {
+                client.stop();
+                creation_failure(
+                    CreationFailureKind::MetadataCommitFailed,
+                    format!(
+                        "Failed to bind requested provider session id {} to creation attempt {creation_attempt_id}: {error}",
+                        result.session_id
+                    ),
+                    Some(result.session_id.clone()),
+                    Some(creation_attempt_id.clone()),
+                    true,
+                )
+            })?;
+            if let Some(launch_token) = launch_token.as_deref() {
+                SessionMetadataRepository::get_reserved_worktree_launch(db.inner(), launch_token)
+                    .await
+                    .map_err(|error| {
+                        creation_failure(
+                            CreationFailureKind::LaunchTokenUnavailable,
+                            format!(
+                            "Failed to load deferred worktree launch {launch_token}: {error}"
+                        ),
+                            Some(result.session_id.clone()),
+                            Some(creation_attempt_id.clone()),
+                            true,
+                        )
+                    })?
+                    .map(|reserved| reserved.sequence_id)
+            } else {
+                None
+            }
+        } else if let Some(launch_token) = launch_token.as_deref() {
+            match SessionMetadataRepository::consume_reserved_worktree_launch(
                 db.inner(),
                 launch_token,
                 &result.session_id,
                 agent_id_enum.as_str(),
             )
             .await
-            .map_err(|error| {
-                tracing::error!(
-                    error = %error,
-                    launch_token,
-                    session_id = %result.session_id,
-                    "Prepared worktree launch consumption failed; stopping session client"
-                );
-                client.stop();
-                SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to consume prepared worktree launch {launch_token} for session {}: {error}",
+            {
+                Ok(sequence_id) => sequence_id,
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        launch_token,
+                        session_id = %result.session_id,
+                        "Prepared worktree launch consumption failed; stopping session client"
+                    );
+                    mark_creation_attempt_failed(
+                        db.inner(),
+                        &creation_attempt_id,
+                        &format!("worktree-launch-promotion-failed: {error}"),
+                    )
+                    .await;
+                    client.discard_pre_reservation_events(
+                        &result.session_id,
+                        "worktree_launch_promotion_failed",
+                    );
+                    client.stop();
+                    return Err(creation_failure(
+                        CreationFailureKind::LaunchTokenUnavailable,
+                        format!(
+                            "Failed to consume prepared worktree launch {launch_token} for session {}: {error}",
+                            result.session_id
+                        ),
+                        Some(result.session_id),
+                        Some(creation_attempt_id),
+                        true,
+                    ));
+                }
+            }
+        } else {
+            let promoted = match SessionMetadataRepository::promote_creation_attempt(
+                db.inner(),
+                &creation_attempt_id,
+                &result.session_id,
+            )
+            .await
+            {
+                Ok(promoted) => promoted,
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        attempt_id = %creation_attempt_id,
+                        session_id = %result.session_id,
+                        "Creation attempt promotion failed; stopping session client"
+                    );
+                    mark_creation_attempt_failed(
+                        db.inner(),
+                        &creation_attempt_id,
+                        &format!("metadata-promotion-failed: {error}"),
+                    )
+                    .await;
+                    client.discard_pre_reservation_events(
+                        &result.session_id,
+                        "metadata_promotion_failed",
+                    );
+                    client.stop();
+                    return Err(creation_failure(
+                        CreationFailureKind::MetadataCommitFailed,
+                        format!(
+                            "Failed to promote creation attempt {creation_attempt_id} into session {}: {error}",
+                            result.session_id
+                        ),
+                        Some(result.session_id),
+                        Some(creation_attempt_id),
+                        true,
+                    ));
+                }
+            };
+            promoted.sequence_id
+        };
+        if !provider_uses_deferred_creation {
+            ensure_session_anchor_snapshots(db.inner(), &result.session_id, &agent_id_enum)
+                .await
+                .map_err(|error| {
+                    client.discard_pre_reservation_events(
+                        &result.session_id,
+                        "anchor_snapshot_failed",
+                    );
+                    creation_failure(
+                        CreationFailureKind::MetadataCommitFailed,
+                        format!(
+                        "Failed to persist canonical session anchors for session {}: {error}",
                         result.session_id
                     ),
-                }
-            })?
-        } else {
-            persist_session_metadata_for_cwd(db.inner(), &result.session_id, &agent_id_enum, &cwd)
-                .await?
-        };
+                        Some(result.session_id.clone()),
+                        Some(creation_attempt_id.clone()),
+                        true,
+                    )
+                })?;
+        }
 
         tracing::info!(
             session_id = %result.session_id,
             "New session created with dedicated client"
         );
         projection_registry.register_session(result.session_id.clone(), agent_id_enum.clone());
-        app.state::<Arc<crate::acp::lifecycle::SessionSupervisor>>()
-            .inner()
-            .reserve(db.inner(), projection_registry.inner(), &result.session_id)
-            .await
-            .map_err(|error| {
-                tracing::error!(
-                    session_id = %result.session_id,
-                    error = %error,
-                    "Failed to reserve supervisor runtime checkpoint for new session"
-                );
-                client.stop();
-                SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to reserve lifecycle runtime checkpoint for session {}: {error}",
-                        result.session_id
-                    ),
-                }
-            })?;
+        if !provider_uses_deferred_creation {
+            let initial_capabilities = capabilities_from_new_session_response(&app, &result);
+            client.begin_pre_reservation_drain(&result.session_id);
+            app.state::<Arc<crate::acp::lifecycle::SessionSupervisor>>()
+                .inner()
+                .reserve_with_capabilities(
+                    db.inner(),
+                    projection_registry.inner(),
+                    &result.session_id,
+                    initial_capabilities,
+                )
+                .await
+                .map_err(|error| {
+                    tracing::error!(
+                        session_id = %result.session_id,
+                        error = %error,
+                        "Failed to reserve supervisor runtime checkpoint for new session"
+                    );
+                    client.discard_pre_reservation_events(
+                        &result.session_id,
+                        "lifecycle_reservation_failed",
+                    );
+                    client.stop();
+                    creation_failure(
+                        CreationFailureKind::MetadataCommitFailed,
+                        format!(
+                            "Failed to reserve lifecycle runtime checkpoint for session {}: {error}",
+                            result.session_id
+                        ),
+                        Some(result.session_id.clone()),
+                        Some(creation_attempt_id.clone()),
+                        true,
+                    )
+                })?;
+            client.drain_pre_reservation_events(&result.session_id);
+        }
 
         // Store the client keyed by session_id only after session metadata and
         // supervisor state are durably attached.
@@ -724,12 +1076,17 @@ pub async fn acp_new_session(
             )
             .map_err(SerializableAcpError::from)?;
 
-        let session_open =
-            build_new_session_open_result(&app, &result.session_id, &agent_id_enum).await?;
+        let session_open = if provider_uses_deferred_creation {
+            None
+        } else {
+            Some(build_new_session_open_result(&app, &result, &agent_id_enum).await?)
+        };
 
         Ok(NewSessionResponse {
+            creation_attempt_id: Some(creation_attempt_id),
+            deferred_creation: provider_uses_deferred_creation,
             sequence_id,
-            session_open: Some(session_open),
+            session_open,
             ..result
         })
     }
@@ -880,6 +1237,10 @@ where
         let app_clone = app.clone();
         let resume_descriptor = resume_target.descriptor.clone();
         let work = work;
+        // Cloned for the error branch so the resume-failure classifier can
+        // see the agent identity even after `agent_id_enum` has been moved
+        // into `work(...)`.
+        let agent_id_for_classifier = agent_id_enum.clone();
 
         // --- Spawn the async task for heavy work ---
         // We capture the JoinHandle and spawn a follow-up task to catch panics,
@@ -927,16 +1288,23 @@ where
                     );
                 }
                 Ok(Err(error)) => {
+                    let classification =
+                        crate::acp::resume_failure_classifier::classify_resume_error(
+                            &agent_id_for_classifier,
+                            &error,
+                        );
                     let update = crate::acp::session_update::SessionUpdate::ConnectionFailed {
                         session_id: session_id.clone(),
                         attempt_id,
                         error: error.to_string(),
+                        failure_reason: classification.failure_reason,
                     };
                     emit_lifecycle_event(&app_clone, &hub, update, &session_id).await;
                     tracing::error!(
                         session_id = %session_id,
                         attempt_id,
                         error = %error,
+                        failure_reason = ?classification.failure_reason,
                         "Async resume failed"
                     );
                 }
@@ -948,6 +1316,8 @@ where
                             "Session resume timed out after {}s",
                             RESUME_SESSION_TIMEOUT.as_secs()
                         ),
+                        // Timeout is transient/transport — explicit, not classified.
+                        failure_reason: crate::acp::lifecycle::FailureReason::ResumeFailed,
                     };
                     emit_lifecycle_event(&app_clone, &hub, update, &session_id).await;
                     tracing::error!(
@@ -977,6 +1347,13 @@ where
                     session_id: session_id_panic.clone(),
                     attempt_id,
                     error: format!("Internal error: resume task panicked: {join_error}"),
+                    // Panic is transient by classification (not session-gone),
+                    // but explicitly NOT retryable from the user's perspective —
+                    // the existing `is_retryable_failure` already treats
+                    // `ResumeFailed` as retryable. Keeping the same shape as
+                    // the timeout branch preserves prior behavior; if we ever
+                    // want panics to be terminal, introduce a new variant.
+                    failure_reason: crate::acp::lifecycle::FailureReason::ResumeFailed,
                 };
                 emit_lifecycle_event(&app_panic, &hub, update, &session_id_panic).await;
             }
@@ -1088,6 +1465,84 @@ pub(crate) async fn emit_lifecycle_event<R: tauri::Runtime>(
     }
 }
 
+/// Emit a Detached lifecycle envelope for a client-driven disconnect.
+///
+/// Unlike `emit_lifecycle_event` (which is driven by a `SessionUpdate` flowing
+/// through the reducer), this path uses `transition_lifecycle_state` to set the
+/// canonical lifecycle directly to Detached(reason). It is the GOD-pure
+/// replacement for the former TS-side synthetic-detached projection workaround.
+pub(crate) async fn emit_detached_lifecycle<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    hub: &Option<Arc<AcpEventHubState>>,
+    session_id: &str,
+    reason: crate::acp::lifecycle::DetachedReason,
+) {
+    let Some(hub) = hub else {
+        tracing::warn!(session_id = %session_id, "Event hub unavailable, detached lifecycle dropped");
+        return;
+    };
+    let supervisor = app.state::<Arc<crate::acp::lifecycle::SessionSupervisor>>();
+    let projection_registry = app.state::<Arc<ProjectionRegistry>>();
+    let transcript_projection_registry = app.state::<Arc<TranscriptProjectionRegistry>>();
+    let runtime_registry = app.try_state::<Arc<SessionGraphRuntimeRegistry>>();
+    let db = app.state::<DbConn>();
+
+    if let Err(error) = supervisor
+        .inner()
+        .transition_lifecycle_state(
+            db.inner(),
+            projection_registry.inner(),
+            session_id,
+            crate::acp::lifecycle::LifecycleState::detached(reason),
+        )
+        .await
+    {
+        tracing::error!(
+            session_id = %session_id,
+            error = %error,
+            "Failed to persist supervisor-owned detached lifecycle transition"
+        );
+        return;
+    }
+
+    let revision = match load_live_session_graph_revision(
+        db.inner(),
+        transcript_projection_registry.inner(),
+        runtime_registry
+            .as_ref()
+            .map(|registry| registry.inner().as_ref()),
+        session_id,
+    )
+    .await
+    {
+        Ok(revision) => revision,
+        Err(error) => {
+            tracing::error!(
+                session_id = %session_id,
+                error = %error,
+                "Failed to determine session graph revision for detached envelope"
+            );
+            return;
+        }
+    };
+
+    if let Some(runtime_registry) = runtime_registry.as_ref() {
+        if let Some(envelope) = runtime_registry
+            .inner()
+            .build_snapshot_envelope_for_session(
+                db.inner(),
+                session_id,
+                revision,
+                projection_registry.inner(),
+                transcript_projection_registry.inner(),
+            )
+            .await
+        {
+            publish_session_state_envelope(hub, envelope);
+        }
+    }
+}
+
 async fn load_live_session_graph_revision(
     db: &DbConn,
     transcript_projection_registry: &TranscriptProjectionRegistry,
@@ -1119,19 +1574,10 @@ async fn load_live_session_graph_revision(
 
 fn runtime_snapshot_for_refresh(
     runtime_registry: Option<&SessionGraphRuntimeRegistry>,
-    stored_runtime: Option<&crate::acp::lifecycle::LifecycleCheckpoint>,
     session_id: &str,
 ) -> SessionGraphRuntimeSnapshot {
-    let live_runtime = runtime_registry
+    runtime_registry
         .map(|registry| registry.snapshot_for_session(session_id))
-        .unwrap_or_default();
-
-    if live_runtime.graph_revision > 0 {
-        return live_runtime;
-    }
-
-    stored_runtime
-        .map(SessionGraphRuntimeSnapshot::from_checkpoint)
         .unwrap_or_default()
 }
 
@@ -1146,23 +1592,6 @@ fn projection_snapshot_with_runtime(
         projection_snapshot.runtime = Some(runtime_snapshot.into_checkpoint());
     }
     projection_snapshot
-}
-
-async fn projection_snapshot_with_persisted_runtime(
-    db: &DbConn,
-    projection_registry: &ProjectionRegistry,
-    session_id: &str,
-) -> Result<SessionProjectionSnapshot, SerializableAcpError> {
-    let mut projection_snapshot = projection_registry.session_projection(session_id);
-    projection_snapshot.runtime = SessionProjectionSnapshotRepository::get(db, session_id)
-        .await
-        .map_err(|error| SerializableAcpError::InvalidState {
-            message: format!(
-                "Failed to load stored runtime checkpoint for session {session_id}: {error}"
-            ),
-        })?
-        .and_then(|snapshot| snapshot.runtime);
-    Ok(projection_snapshot)
 }
 
 pub(crate) fn publish_session_state_envelope(
@@ -1262,6 +1691,30 @@ async fn load_transcript_snapshot_for_resume_with_app(
                 "Failed to resolve replay context for resumed session {session_id}: {error}"
             ),
         })?;
+    if let Some(replay_context) = replay_context.as_ref() {
+        let serialized_events = SessionJournalEventRepository::list_serialized(db, session_id)
+            .await
+            .map_err(|error| SerializableAcpError::InvalidState {
+                message: format!(
+                    "Failed to load local transcript journal for resumed session {session_id}: {error}"
+                ),
+            })?;
+        let journal_events =
+            crate::acp::session_journal::decode_serialized_events(replay_context, serialized_events)
+                .map_err(|error| SerializableAcpError::InvalidState {
+                    message: format!(
+                        "Failed to decode local transcript journal for resumed session {session_id}: {error}"
+                    ),
+                })?;
+        if let Some(transcript_snapshot) =
+            crate::acp::session_journal::rebuild_completed_local_transcript_snapshot(
+                replay_context,
+                &journal_events,
+            )
+        {
+            return Ok(transcript_snapshot);
+        }
+    }
     if has_metadata && journal_max == Some(1) {
         let first_event = crate::db::entities::session_journal_event::Entity::find()
             .filter(crate::db::entities::session_journal_event::Column::SessionId.eq(session_id))
@@ -1283,16 +1736,12 @@ async fn load_transcript_snapshot_for_resume_with_app(
     if let Some(app) = app {
         if let Some(replay_context) = replay_context.as_ref() {
             if let Some(provider_snapshot) =
-                crate::history::commands::session_loading::ensure_canonical_session_materialized(
+                crate::history::commands::session_loading::load_provider_owned_session_snapshot(
                     app.clone(),
                     replay_context,
                 )
                 .await
-                .map_err(|error| SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to load provider-owned transcript for resumed session {session_id}: {error}"
-                    ),
-                })?
+                .map_err(SerializableAcpError::from)?
             {
                 return Ok(TranscriptSnapshot::from_stored_entries(
                     journal_max.unwrap_or(0),
@@ -1301,13 +1750,7 @@ async fn load_transcript_snapshot_for_resume_with_app(
             }
         }
     }
-    if let Some(metadata) = metadata {
-        if let Some(transcript) =
-            rebuild_transcript_snapshot_from_journal(db, session_id, &metadata).await?
-        {
-            return Ok(transcript);
-        }
-
+    if metadata.is_some() {
         return Ok(TranscriptSnapshot::from_stored_entries(
             journal_max.unwrap_or(0),
             &[],
@@ -1317,38 +1760,6 @@ async fn load_transcript_snapshot_for_resume_with_app(
     Err(SerializableAcpError::InvalidState {
         message: format!("Missing canonical transcript snapshot for resumed session {session_id}"),
     })
-}
-
-async fn rebuild_transcript_snapshot_from_journal(
-    db: &DbConn,
-    session_id: &str,
-    metadata: &SessionMetadataRow,
-) -> Result<Option<TranscriptSnapshot>, SerializableAcpError> {
-    let Some(agent_id) = metadata.agent_id_enum() else {
-        return Ok(None);
-    };
-
-    let replay_context = SessionReplayContext {
-        local_session_id: session_id.to_string(),
-        history_session_id: metadata.history_session_id().to_string(),
-        agent_id: agent_id.clone(),
-        parser_agent_type: crate::acp::parsers::AgentType::from_canonical(&agent_id),
-        project_path: metadata.project_path.clone(),
-        worktree_path: metadata.worktree_path.clone(),
-        effective_cwd: metadata
-            .effective_project_path()
-            .unwrap_or(metadata.project_path.as_str())
-            .to_string(),
-        source_path: SessionMetadataRepository::normalized_source_path(&metadata.file_path),
-        compatibility: SessionDescriptorCompatibility::Canonical,
-    };
-    crate::acp::session_journal::load_transcript_from_journal(db, &replay_context)
-        .await
-        .map_err(|error| SerializableAcpError::InvalidState {
-            message: format!(
-                "Failed to rebuild transcript snapshot from journal for resumed session {session_id}: {error}"
-            ),
-        })
 }
 
 /// The heavy async work extracted from `acp_resume_session`.
@@ -1414,25 +1825,15 @@ async fn async_resume_session_work(
     )
     .await?;
 
-    if let Some(provider_session_id) = resume_descriptor.provider_session_id.as_deref() {
-        session_registry
-            .bind_provider_session_id(session_id, provider_session_id)
-            .map_err(SerializableAcpError::from)?;
-    }
-
     let replay_context: crate::acp::session_descriptor::SessionReplayContext =
         resume_descriptor.clone().into();
     let restored_thread_snapshot =
-        crate::history::commands::session_loading::ensure_canonical_session_materialized(
-        app.clone(),
-        &replay_context,
-    )
-    .await
-    .map_err(|error| SerializableAcpError::InvalidState {
-        message: format!(
-            "Failed to materialize canonical session state for resumed session {session_id}: {error}"
-        ),
-    })?;
+        crate::history::commands::session_loading::load_provider_owned_session_snapshot(
+            app.clone(),
+            &replay_context,
+        )
+        .await
+        .map_err(SerializableAcpError::from)?;
     let transcript_snapshot = if let Some(snapshot) = restored_thread_snapshot.as_ref() {
         let last_event_seq = SessionJournalEventRepository::max_event_seq(db.inner(), session_id)
             .await
@@ -1466,31 +1867,7 @@ async fn async_resume_session_work(
         );
     }
 
-    let db = app.state::<DbConn>();
-    let runtime_registry = app.state::<Arc<SessionGraphRuntimeRegistry>>();
-    let stored_projection = load_stored_projection(db.inner(), &replay_context)
-        .await
-        .map_err(|error| SerializableAcpError::InvalidState {
-            message: format!(
-                "Failed to load stored session projection for session {session_id}: {error}"
-            ),
-        })?;
-    if let Some(stored_projection) = stored_projection {
-        if let Some(runtime_checkpoint) = stored_projection.runtime.clone() {
-            runtime_registry.restore_session_checkpoint(session_id.to_string(), runtime_checkpoint);
-        }
-        if projection_contains_restorable_content(&stored_projection) {
-            projection_registry.restore_session_projection(stored_projection);
-        } else if let Some(snapshot) = restored_thread_snapshot.as_ref() {
-            projection_registry.restore_session_projection(
-                ProjectionRegistry::project_thread_snapshot(
-                    session_id,
-                    Some(replay_context.agent_id.clone()),
-                    snapshot,
-                ),
-            );
-        }
-    } else if let Some(snapshot) = restored_thread_snapshot.as_ref() {
+    if let Some(snapshot) = restored_thread_snapshot.as_ref() {
         projection_registry.restore_session_projection(
             ProjectionRegistry::project_thread_snapshot(
                 session_id,
@@ -1510,6 +1887,7 @@ mod transcript_buffer_tests {
     use crate::acp::event_hub::{AcpEventEnvelope, AcpEventHubState};
     use crate::acp::session_state_engine::protocol::{SessionStateDelta, SessionStatePayload};
     use crate::acp::session_state_engine::revision::SessionGraphRevision;
+    use crate::acp::session_state_engine::selectors::SessionGraphActivity;
     use crate::acp::session_state_engine::SessionStateEnvelope;
     use serde_json::{json, to_value};
 
@@ -1535,7 +1913,14 @@ mod transcript_buffer_tests {
                             delta: SessionStateDelta {
                                 from_revision: SessionGraphRevision::new(6, 6, 6),
                                 to_revision: SessionGraphRevision::new(7, 7, 7),
+                                activity: SessionGraphActivity::idle(),
+                                turn_state: crate::acp::projections::SessionTurnState::Idle,
+                                active_turn_failure: None,
+                                last_terminal_turn_id: None,
+                                last_agent_message_id: None,
                                 transcript_operations: vec![],
+                                operation_patches: vec![],
+                                interaction_patches: vec![],
                                 changed_fields: vec!["transcriptSnapshot".to_string()],
                             },
                         },
@@ -1557,7 +1942,14 @@ mod transcript_buffer_tests {
                             delta: SessionStateDelta {
                                 from_revision: SessionGraphRevision::new(7, 7, 7),
                                 to_revision: SessionGraphRevision::new(8, 8, 8),
+                                activity: SessionGraphActivity::idle(),
+                                turn_state: crate::acp::projections::SessionTurnState::Idle,
+                                active_turn_failure: None,
+                                last_terminal_turn_id: None,
+                                last_agent_message_id: None,
                                 transcript_operations: vec![],
+                                operation_patches: vec![],
+                                interaction_patches: vec![],
                                 changed_fields: vec!["transcriptSnapshot".to_string()],
                             },
                         },
@@ -1686,9 +2078,10 @@ pub async fn acp_fork_session(
                 &cwd,
             )
             .await?;
-            let session_open =
-                build_new_session_open_result(&app, &result.session_id, &agent_id_enum).await?;
+            let session_open = build_new_session_open_result(&app, &result, &agent_id_enum).await?;
             Ok(NewSessionResponse {
+                creation_attempt_id: None,
+                deferred_creation: false,
                 sequence_id,
                 session_open: Some(session_open),
                 ..result
@@ -1741,7 +2134,14 @@ pub async fn acp_close_session(app: AppHandle, session_id: String) -> CommandRes
             let session_policy = app.state::<Arc<SessionPolicyRegistry>>();
             let projection_registry = app.state::<Arc<ProjectionRegistry>>();
             let transcript_projection_registry = app.state::<Arc<TranscriptProjectionRegistry>>();
-            let db = app.state::<DbConn>();
+            let hub = app
+                .try_state::<Arc<AcpEventHubState>>()
+                .map(|state| state.inner().clone());
+            if let Some(buffer) = app.try_state::<Arc<
+                crate::acp::pre_reservation_event_buffer::PreReservationEventBuffer,
+            >>() {
+                buffer.inner().discard(&session_id, "session_closed");
+            }
 
             let agent_id_str = session_registry
                 .get_agent_id(&session_id)
@@ -1766,32 +2166,20 @@ pub async fn acp_close_session(app: AppHandle, session_id: String) -> CommandRes
 
             session_policy.remove(&session_id);
 
+            // GOD: emit a Detached(ClosedByClient) lifecycle envelope so canonical
+            // readers see the disconnect through the canonical channel — no
+            // client-side synthesis. Must run before projection cleanup so the
+            // snapshot can still be built.
+            emit_detached_lifecycle(
+                &app,
+                &hub,
+                &session_id,
+                crate::acp::lifecycle::DetachedReason::ClosedByClient,
+            )
+            .await;
+
             // Clean up streaming accumulator state for this session
             crate::acp::streaming_accumulator::cleanup_session_streaming(&session_id);
-            let runtime_projection = projection_snapshot_with_persisted_runtime(
-                db.inner(),
-                projection_registry.inner().as_ref(),
-                &session_id,
-            )
-            .await?;
-            if let Some(runtime_checkpoint) = runtime_projection.runtime.clone() {
-                SessionProjectionSnapshotRepository::set(
-                    db.inner(),
-                    &session_id,
-                    &SessionProjectionSnapshot {
-                        session: None,
-                        operations: Vec::new(),
-                        interactions: Vec::new(),
-                        runtime: Some(runtime_checkpoint),
-                    },
-                )
-                .await
-                .map_err(|error| SerializableAcpError::InvalidState {
-                    message: format!(
-                        "Failed to persist runtime checkpoint for session {session_id}: {error}"
-                    ),
-                })?;
-            }
             projection_registry.remove_session(&session_id);
             transcript_projection_registry.remove_session(&session_id);
 
@@ -1821,10 +2209,10 @@ mod tests {
     use crate::acp::session_descriptor::{
         SessionCompatibilityInput, SessionDescriptorCompatibility, SessionReplayContext,
     };
-    use crate::acp::session_journal::load_stored_projection;
-    use crate::acp::session_state_engine::{
-        SessionGraphLifecycleStatus, SessionGraphRuntimeRegistry,
+    use crate::acp::session_state_engine::selectors::{
+        SessionGraphCapabilities, SessionGraphLifecycle,
     };
+    use crate::acp::session_state_engine::SessionGraphRuntimeRegistry;
     use crate::acp::session_update::{ContentChunk, PermissionData, SessionUpdate};
     use crate::acp::transcript_projection::TranscriptProjectionRegistry;
     use crate::acp::types::{CanonicalAgentId, ContentBlock};
@@ -1857,8 +2245,21 @@ mod tests {
         .expect("replay context")
     }
 
+    fn seed_lifecycle(
+        registry: &SessionGraphRuntimeRegistry,
+        session_id: &str,
+        graph_revision: i64,
+    ) {
+        registry.restore_session_state(
+            session_id.to_string(),
+            graph_revision,
+            SessionGraphLifecycle::reserved(),
+            SessionGraphCapabilities::empty(),
+        );
+    }
+
     #[tokio::test]
-    async fn load_stored_projection_rebuilds_from_journal_events() {
+    async fn session_update_and_interaction_transition_are_persisted_to_journal() {
         let db = setup_test_db().await;
         SessionMetadataRepository::upsert(
             &db,
@@ -1912,25 +2313,13 @@ mod tests {
         .await
         .unwrap();
 
-        let replay_context = replay_context_for_session(&db, "session-priority").await;
-        let stored_projection = load_stored_projection(&db, &replay_context)
+        let events = SessionJournalEventRepository::list_serialized(&db, "session-priority")
             .await
-            .unwrap()
-            .expect("expected stored projection");
-
-        let permission = stored_projection
-            .interactions
+            .expect("list journal events");
+        assert_eq!(events.len(), 2);
+        assert!(events
             .iter()
-            .find(|interaction| interaction.id == "permission-1")
-            .expect("expected permission interaction");
-        assert_eq!(permission.state, InteractionState::Approved);
-        assert_eq!(
-            stored_projection
-                .session
-                .expect("expected session projection")
-                .last_event_seq,
-            2
-        );
+            .any(|event| event.event_kind == "interaction_transition"));
     }
 
     #[tokio::test]
@@ -1965,6 +2354,126 @@ mod tests {
             .expect("load transcript snapshot");
 
         assert_eq!(transcript.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn resume_rebuilds_completed_assistant_transcript_from_local_journal() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "journal-transcript-session",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("seed metadata");
+
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "journal-transcript-session",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "Ra".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("journal-transcript-session".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        )
+        .await
+        .expect("append first assistant chunk");
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "journal-transcript-session",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "incoats survive resume".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("journal-transcript-session".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        )
+        .await
+        .expect("append second assistant chunk");
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "journal-transcript-session",
+            &SessionUpdate::TurnComplete {
+                session_id: Some("journal-transcript-session".to_string()),
+                turn_id: Some("turn-1".to_string()),
+            },
+        )
+        .await
+        .expect("append turn complete");
+
+        let transcript = load_transcript_snapshot_for_resume(&db, "journal-transcript-session")
+            .await
+            .expect("load transcript snapshot");
+        let assistant_text = transcript
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.role == crate::acp::transcript_projection::TranscriptEntryRole::Assistant
+            })
+            .flat_map(|entry| entry.segments.iter())
+            .map(|segment| match segment {
+                crate::acp::transcript_projection::TranscriptSegment::Text { text, .. } => {
+                    text.as_str()
+                }
+            })
+            .collect::<String>();
+
+        assert_eq!(assistant_text, "Raincoats survive resume");
+    }
+
+    #[tokio::test]
+    async fn resume_does_not_trust_partial_local_transcript_without_terminal_turn() {
+        let db = setup_test_db().await;
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "partial-journal-transcript-session",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("seed metadata");
+
+        SessionJournalEventRepository::append_session_update(
+            &db,
+            "partial-journal-transcript-session",
+            &SessionUpdate::AgentMessageChunk {
+                chunk: ContentChunk {
+                    content: ContentBlock::Text {
+                        text: "Ra".to_string(),
+                    },
+                    aggregation_hint: None,
+                },
+                part_id: None,
+                message_id: None,
+                session_id: Some("partial-journal-transcript-session".to_string()),
+                produced_at_monotonic_ms: None,
+            },
+        )
+        .await
+        .expect("append partial assistant chunk");
+
+        let transcript =
+            load_transcript_snapshot_for_resume(&db, "partial-journal-transcript-session")
+                .await
+                .expect("load transcript snapshot");
+
+        assert!(transcript.entries.is_empty());
     }
 
     #[tokio::test]
@@ -2026,6 +2535,7 @@ mod tests {
             .expect("append barrier");
 
         let runtime_registry = SessionGraphRuntimeRegistry::new();
+        seed_lifecycle(&runtime_registry, "live-session", 8);
         runtime_registry.apply_session_update_with_graph_seed(
             "live-session",
             8,
@@ -2033,6 +2543,7 @@ mod tests {
                 session_id: "live-session".to_string(),
                 attempt_id: 1,
                 error: "disconnected".to_string(),
+                failure_reason: crate::acp::lifecycle::FailureReason::ResumeFailed,
             },
         );
 
@@ -2051,7 +2562,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn state_lookup_rebuilds_stale_transcript_snapshot_from_journal() {
+    async fn state_lookup_returns_empty_transcript_without_provider_backed_content() {
         let db = setup_test_db().await;
         SessionMetadataRepository::ensure_exists(
             &db,
@@ -2062,23 +2573,9 @@ mod tests {
         )
         .await
         .expect("seed metadata");
-        SessionJournalEventRepository::append_session_update(
-            &db,
-            "state-session",
-            &SessionUpdate::AgentMessageChunk {
-                chunk: ContentChunk {
-                    content: ContentBlock::Text {
-                        text: "hello".to_string(),
-                    },
-                    aggregation_hint: None,
-                },
-                part_id: Some("part-1".to_string()),
-                message_id: Some("assistant-1".to_string()),
-                session_id: Some("state-session".to_string()),
-            },
-        )
-        .await
-        .expect("append assistant chunk");
+        SessionJournalEventRepository::append_materialization_barrier(&db, "state-session")
+            .await
+            .expect("append state frontier barrier");
 
         let replay_context = replay_context_for_session(&db, "state-session").await;
         let transcript = load_transcript_snapshot_for_state_lookup(
@@ -2093,13 +2590,13 @@ mod tests {
         .expect("load transcript snapshot");
 
         assert_eq!(transcript.revision, 1);
-        assert_eq!(transcript.entries.len(), 1);
-        assert_eq!(transcript.entries[0].entry_id, "assistant-1");
+        assert!(transcript.entries.is_empty());
     }
 
     #[test]
     fn runtime_snapshot_for_refresh_prefers_runtime_registry_state() {
         let registry = SessionGraphRuntimeRegistry::new();
+        seed_lifecycle(&registry, "session-1", 0);
         registry.apply_session_update(
             "session-1",
             &SessionUpdate::ConnectionComplete {
@@ -2117,49 +2614,22 @@ mod tests {
             },
         );
 
-        let snapshot = runtime_snapshot_for_refresh(Some(&registry), None, "session-1");
+        let snapshot = runtime_snapshot_for_refresh(Some(&registry), "session-1");
 
         assert_eq!(
             snapshot.lifecycle.status,
-            SessionGraphLifecycleStatus::Ready
+            crate::acp::lifecycle::LifecycleStatus::Ready
         );
         assert_eq!(snapshot.capabilities.available_commands.len(), 1);
     }
 
     #[test]
-    fn runtime_snapshot_for_refresh_falls_back_to_stored_runtime_state() {
-        let stored_runtime = crate::acp::lifecycle::LifecycleCheckpoint::new(
-            12,
-            crate::acp::lifecycle::LifecycleState::ready(),
-            crate::acp::session_state_engine::selectors::SessionGraphCapabilities {
-                models: None,
-                modes: Some(crate::acp::client_session::SessionModes {
-                    current_mode_id: "plan".to_string(),
-                    available_modes: Vec::new(),
-                }),
-                available_commands: vec![crate::acp::session_update::AvailableCommand {
-                    name: "compact".to_string(),
-                    description: "Compact".to_string(),
-                    input: None,
-                }],
-                config_options: Vec::new(),
-                autonomous_enabled: false,
-            },
-        );
+    fn runtime_snapshot_for_refresh_defaults_without_live_runtime_state() {
+        let snapshot = runtime_snapshot_for_refresh(None, "session-1");
 
-        let snapshot = runtime_snapshot_for_refresh(None, Some(&stored_runtime), "session-1");
-
-        assert_eq!(snapshot.graph_revision, 12);
-        assert_eq!(
-            snapshot
-                .capabilities
-                .modes
-                .as_ref()
-                .expect("modes")
-                .current_mode_id,
-            "plan"
-        );
-        assert_eq!(snapshot.capabilities.available_commands.len(), 1);
+        assert_eq!(snapshot.graph_revision, 0);
+        assert!(snapshot.capabilities.modes.is_none());
+        assert!(snapshot.capabilities.available_commands.is_empty());
     }
 
     #[tokio::test]
@@ -2265,36 +2735,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_resolution_rejects_existing_claude_session_missing_provider_id() {
-        let db = setup_test_db().await;
-
-        SessionMetadataRepository::ensure_exists(
-            &db,
-            "session-claude",
-            "/project",
-            "claude-code",
-            None,
-        )
-        .await
-        .unwrap();
-
-        let error =
-            resolve_resume_session_target(&db, None, "session-claude", "/fallback-project", None)
-                .await
-                .expect_err("resume should fail");
-
-        match error {
-            SerializableAcpError::ProtocolError { message } => {
-                assert_eq!(
-                    message,
-                    "session session-claude is not resumable because persisted descriptor facts are missing: provider_session_id"
-                );
-            }
-            other => panic!("expected protocol error, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
     async fn resume_resolution_rejects_existing_session_with_incompatible_override() {
         let db = setup_test_db().await;
 
@@ -2379,62 +2819,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fork_resolution_uses_provider_history_id_for_claude_sessions() {
+    async fn fork_resolution_uses_canonical_provider_id_for_claude_sessions() {
         let db = setup_test_db().await;
 
         SessionMetadataRepository::ensure_exists(
             &db,
-            "session-claude",
+            "provider-session-1",
             "/project",
             "claude-code",
             None,
-        )
-        .await
-        .unwrap();
-        SessionMetadataRepository::set_provider_session_id(
-            &db,
-            "session-claude",
-            "provider-session-1",
         )
         .await
         .unwrap();
 
         let resolved =
-            resolve_fork_session_target(&db, "session-claude", "/fallback-project", None)
+            resolve_fork_session_target(&db, "provider-session-1", "/fallback-project", None)
                 .await
                 .expect("fork target");
 
         assert_eq!(resolved.launch_agent_id, CanonicalAgentId::ClaudeCode);
         assert_eq!(resolved.fork_parent_session_id, "provider-session-1");
-    }
-
-    #[tokio::test]
-    async fn fork_resolution_rejects_existing_claude_session_missing_provider_id() {
-        let db = setup_test_db().await;
-
-        SessionMetadataRepository::ensure_exists(
-            &db,
-            "session-claude",
-            "/project",
-            "claude-code",
-            None,
-        )
-        .await
-        .unwrap();
-
-        let error = resolve_fork_session_target(&db, "session-claude", "/fallback-project", None)
-            .await
-            .expect_err("fork should fail");
-
-        match error {
-            SerializableAcpError::ProtocolError { message } => {
-                assert_eq!(
-                    message,
-                    "session session-claude is not forkable because persisted descriptor facts are missing: provider_session_id"
-                );
-            }
-            other => panic!("expected protocol error, got {:?}", other),
-        }
     }
 
     #[tokio::test]

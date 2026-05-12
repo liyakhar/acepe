@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * - Session CRUD operations (add, update, remove)
- * - History loading from disk
+ * - History loading from persisted provider-owned session files
  * - Session preloading and scanning
  * - Converting history entries to Session format
  *
@@ -14,6 +14,10 @@
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { HistoryEntry } from "../../../services/claude-history-types.js";
 import { tauriClient } from "../../../utils/tauri-client.js";
+import {
+	buildPartialSessionLinkedPr,
+	type SessionPrLinkMode,
+} from "../../application/dto/session-linked-pr.js";
 import { AgentError, type AppError } from "../../errors/app-error.js";
 import { createLogger } from "../../utils/logger.js";
 import { api } from "../api.js";
@@ -75,6 +79,17 @@ function resolveSessionTitle(
 	}
 
 	return null;
+}
+
+function normalizeSessionPrLinkMode(
+	prNumber: number | null | undefined,
+	prLinkMode: string | null | undefined
+): SessionPrLinkMode | undefined {
+	if (prLinkMode === "automatic" || prLinkMode === "manual") {
+		return prLinkMode;
+	}
+
+	return prNumber == null ? undefined : "automatic";
 }
 
 /**
@@ -345,7 +360,7 @@ export class SessionRepository {
 	}
 
 	/**
-	 * Preload full session details from disk.
+	 * Preload full session details from the provider-owned persisted history.
 	 */
 	preloadSessions(
 		sessionIds: string[]
@@ -366,12 +381,21 @@ export class SessionRepository {
 					if (openResult.outcome !== "found") {
 						return okAsync({ id, success: false as const });
 					}
-					this.stateWriter.replaceSessionOpenSnapshot(openResult);
-					const title = openResult.sessionTitle || undefined;
-					if (title && title !== session.title) {
-						this.stateWriter.updateSession(openResult.canonicalSessionId, { title });
-					}
-					return okAsync({ id: openResult.canonicalSessionId, success: true as const });
+					return ResultAsync.fromPromise(
+						Promise.resolve().then(() => {
+							this.stateWriter.replaceSessionOpenSnapshot(openResult);
+							const title = openResult.sessionTitle || undefined;
+							if (title && title !== session.title) {
+								this.stateWriter.updateSession(openResult.canonicalSessionId, { title });
+							}
+							return { id: openResult.canonicalSessionId, success: true as const };
+						}),
+						(error) =>
+							new AgentError(
+								"preloadSession",
+								error instanceof Error ? error : new Error(String(error))
+							)
+					);
 				})
 				.match(
 					(result) => result,
@@ -399,7 +423,7 @@ export class SessionRepository {
 	}
 
 	/**
-	 * Load a historical session from disk.
+	 * Load a historical session from persisted provider history metadata.
 	 */
 	loadHistoricalSession(
 		id: string,
@@ -541,6 +565,12 @@ export class SessionRepository {
 		for (const session of mergedSessions) {
 			const canonicalAliasSession = aliasMetadataByCanonicalId.get(session.id);
 			if (canonicalAliasSession !== undefined) {
+				const mergedPrNumber = session.prNumber ?? canonicalAliasSession.prNumber;
+				const mergedPrLinkMode = normalizeSessionPrLinkMode(
+					mergedPrNumber,
+					session.prLinkMode ?? canonicalAliasSession.prLinkMode
+				);
+
 				reconciledSessions.push({
 					id: session.id,
 					projectPath: session.projectPath,
@@ -553,8 +583,10 @@ export class SessionRepository {
 					sessionLifecycleState:
 						session.sessionLifecycleState ?? canonicalAliasSession.sessionLifecycleState,
 					parentId: session.parentId,
-					prNumber: session.prNumber ?? canonicalAliasSession.prNumber,
+					prNumber: mergedPrNumber,
 					prState: session.prState ?? canonicalAliasSession.prState,
+					prLinkMode: mergedPrLinkMode,
+					linkedPr: session.linkedPr ?? canonicalAliasSession.linkedPr,
 					worktreeDeleted: session.worktreeDeleted ?? canonicalAliasSession.worktreeDeleted,
 					sequenceId: session.sequenceId ?? canonicalAliasSession.sequenceId,
 				});
@@ -618,6 +650,11 @@ export class SessionRepository {
 			worktreePath: entry.worktreePath === null ? undefined : entry.worktreePath,
 			worktreeDeleted: entry.worktreeDeleted === null ? undefined : entry.worktreeDeleted,
 			prNumber: entry.prNumber === null ? undefined : entry.prNumber,
+			prLinkMode: normalizeSessionPrLinkMode(entry.prNumber, entry.prLinkMode),
+			linkedPr:
+				entry.prNumber === null || entry.prNumber === undefined
+					? undefined
+					: buildPartialSessionLinkedPr(entry.prNumber, undefined),
 			sequenceId: entry.sequenceId === null ? undefined : entry.sequenceId,
 		};
 	}

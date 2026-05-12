@@ -35,6 +35,7 @@ const NO_ERROR: PanelErrorInfo = {
 	details: null,
 	referenceId: null,
 	referenceSearchable: false,
+	failureReason: null,
 };
 const HAS_ERROR: PanelErrorInfo = {
 	showError: true,
@@ -43,6 +44,7 @@ const HAS_ERROR: PanelErrorInfo = {
 	details: "Connection failed",
 	referenceId: null,
 	referenceSearchable: false,
+	failureReason: null,
 };
 
 function makeInput(overrides: Partial<Parameters<typeof derivePanelViewState>[0]> = {}) {
@@ -50,6 +52,7 @@ function makeInput(overrides: Partial<Parameters<typeof derivePanelViewState>[0]
 		runtimeState: makeRuntimeState(),
 		entriesCount: 0,
 		hasSession: true,
+		isAwaitingModelResponse: false,
 		showProjectSelection: false,
 		hasEffectiveProjectPath: true,
 		errorInfo: NO_ERROR,
@@ -92,6 +95,7 @@ describe("derivePanelViewState", () => {
 					details: null,
 					referenceId: null,
 					referenceSearchable: false,
+					failureReason: null,
 				},
 				entriesCount: 0,
 			})
@@ -100,6 +104,25 @@ describe("derivePanelViewState", () => {
 		if (result.kind === "error") {
 			expect(result.details).toBeTypeOf("string");
 			expect(result.details.length).toBeGreaterThan(0);
+		}
+	});
+
+	it("should return error when runtime connection failed without canonical details", () => {
+		const result = derivePanelViewState(
+			makeInput({
+				entriesCount: 0,
+				runtimeState: makeRuntimeState({
+					connectionPhase: "failed",
+					contentPhase: "loading",
+					showConversation: false,
+					showReadyPlaceholder: false,
+				}),
+			})
+		);
+
+		expect(result.kind).toBe("error");
+		if (result.kind === "error") {
+			expect(result.details).toBe("Unable to connect to the agent.");
 		}
 	});
 
@@ -174,6 +197,34 @@ describe("derivePanelViewState", () => {
 			})
 		);
 		expect(result.kind).toBe("conversation");
+	});
+
+	it("should show conversation for an awaiting-model session with no entries", () => {
+		const result = derivePanelViewState(
+			makeInput({
+				entriesCount: 0,
+				hasSession: true,
+				isAwaitingModelResponse: true,
+			})
+		);
+
+		expect(result.kind).toBe("conversation");
+	});
+
+	it("should return loading while restored session content is materializing", () => {
+		const result = derivePanelViewState(
+			makeInput({
+				entriesCount: 0,
+				hasSession: true,
+				runtimeState: makeRuntimeState({
+					contentPhase: "loading",
+					showConversation: false,
+					showReadyPlaceholder: false,
+				}),
+			})
+		);
+
+		expect(result.kind).toBe("loading");
 	});
 
 	// ── Bug fix regression: entries > 0 NEVER produces ready ───

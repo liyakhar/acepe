@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
 import type { SessionEntry } from "../../../../application/dto/session.js";
+import { createLongSessionFixture } from "../../../../testing/long-session-fixture.js";
 
-import { aggregateFileEdits } from "../aggregate-file-edits.js";
+import { aggregateFileEdits, aggregateFileEditsFromToolCalls } from "../aggregate-file-edits.js";
 
 function createEditEntry(
 	id: string,
@@ -190,6 +191,20 @@ describe("aggregateFileEdits", () => {
 			expect(result.files[0].totalRemoved).toBe(0);
 		});
 
+		it("aggregates directly from operation-backed tool calls without transcript entries", () => {
+			const entry = createEditEntry("1", "/src/app.ts", "line1", "line1\nline2");
+			if (entry.type !== "tool_call") {
+				throw new Error("Expected edit fixture entry to be a tool call");
+			}
+
+			const result = aggregateFileEditsFromToolCalls([entry.message]);
+
+			expect(result.fileCount).toBe(1);
+			expect(result.totalEditCount).toBe(1);
+			expect(result.files[0].filePath).toBe("/src/app.ts");
+			expect(result.files[0].totalAdded).toBe(1);
+		});
+
 		it("should handle write operation (new file)", () => {
 			const entries = [createWriteEntry("1", "/src/new-file.ts", "line1\nline2\nline3")];
 			const result = aggregateFileEdits(entries);
@@ -325,6 +340,28 @@ describe("aggregateFileEdits", () => {
 			expect(result.fileCount).toBe(2);
 			expect(result.totalEditCount).toBe(2);
 		});
+
+		it("characterizes full-entry scan cost for unrelated long-session history", () => {
+			const fixture = createLongSessionFixture({ scale: "long" });
+			const entries = fixture.entries.concat([
+				createEditEntry("latest-edit", "/src/app.ts", "a", "a\nb"),
+			]);
+			let numericReads = 0;
+			const observedEntries = new Proxy(entries, {
+				get(target, property, receiver) {
+					if (typeof property === "string" && /^[0-9]+$/.test(property)) {
+						numericReads += 1;
+					}
+					return Reflect.get(target, property, receiver);
+				},
+			});
+
+			const result = aggregateFileEdits(observedEntries);
+
+			expect(result.fileCount).toBe(1);
+			expect(result.totalEditCount).toBe(1);
+			expect(numericReads).toBeGreaterThanOrEqual(entries.length);
+		});
 	});
 
 	describe("nested task children", () => {
@@ -394,6 +431,15 @@ describe("aggregateFileEdits", () => {
 			expect(result.totalEditCount).toBe(2);
 			expect(result.byPath.has("/src/agent-input-ui.svelte")).toBe(true);
 			expect(result.byPath.has("/src/review-panel.svelte")).toBe(true);
+
+			if (parentTaskEntry.type !== "tool_call") {
+				throw new Error("Expected parent task fixture entry to be a tool call");
+			}
+			const operationBackedResult = aggregateFileEditsFromToolCalls([parentTaskEntry.message]);
+			expect(operationBackedResult.fileCount).toBe(2);
+			expect(operationBackedResult.totalEditCount).toBe(2);
+			expect(operationBackedResult.byPath.has("/src/agent-input-ui.svelte")).toBe(true);
+			expect(operationBackedResult.byPath.has("/src/review-panel.svelte")).toBe(true);
 		});
 	});
 });

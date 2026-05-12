@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { SessionEntry } from "../../../application/dto/session-entry.js";
 import type { SessionStatus } from "../../../application/dto/session-status.js";
 import type { ToolCall } from "../../../types/tool-call.js";
+import type { CanonicalSessionProjection } from "../../canonical-session-projection.js";
 import { deriveSessionState } from "../../session-state.js";
 import type { UrgencyInfo } from "../../urgency.js";
 import { classifyItem } from "../queue-section-utils.js";
@@ -14,6 +15,55 @@ const DEFAULT_URGENCY: UrgencyInfo = {
 	timestamp: 0,
 	detail: null,
 };
+
+function makeCanonicalProjection(
+	status: CanonicalSessionProjection["lifecycle"]["status"],
+	activityKind: CanonicalSessionProjection["activity"]["kind"],
+	errorMessage: string | null = null
+): CanonicalSessionProjection {
+	return {
+		lifecycle: {
+			status,
+			errorMessage,
+			detachedReason: null,
+			failureReason: null,
+			actionability: {
+				canSend: status === "ready",
+				canResume: status === "detached",
+				canRetry: status === "failed",
+				canArchive: true,
+				canConfigure: status === "ready",
+				recommendedAction: status === "ready" ? "send" : "wait",
+				recoveryPhase: "none",
+				compactStatus: status,
+			},
+		},
+		activity: {
+			kind: activityKind,
+			activeOperationCount: activityKind === "running_operation" ? 1 : 0,
+			activeSubagentCount: 0,
+			dominantOperationId: activityKind === "running_operation" ? "op-1" : null,
+			blockingInteractionId: null,
+		},
+		turnState: activityKind === "idle" ? "Idle" : "Running",
+		activeTurnFailure: null,
+		lastTerminalTurnId: null,
+		capabilities: {
+			models: null,
+			modes: null,
+			availableCommands: [],
+			configOptions: [],
+			autonomousEnabled: false,
+		},
+		tokenStream: new Map(),
+		clockAnchor: null,
+		revision: {
+			graphRevision: 1,
+			transcriptRevision: 1,
+			lastEventSeq: 1,
+		},
+	};
+}
 
 function createToolCall(
 	id: string,
@@ -272,7 +322,7 @@ describe("buildQueueItem", () => {
 });
 
 describe("buildQueueSessionSnapshot", () => {
-	it("preserves paused hot status over running runtime activity", () => {
+	it("preserves canonical paused activity over running runtime activity", () => {
 		const snapshot = buildQueueSessionSnapshot({
 			id: "session-1",
 			agentId: "opencode",
@@ -296,11 +346,10 @@ describe("buildQueueSessionSnapshot", () => {
 				showConversation: true,
 				showReadyPlaceholder: false,
 			},
-			hotState: {
-				status: "paused",
-				currentMode: { id: "plan", name: "Plan" },
-				connectionError: null,
-			},
+			currentModeId: "plan",
+			connectionError: null,
+			activeTurnFailure: null,
+			canonicalProjection: makeCanonicalProjection("ready", "paused"),
 			interactionSnapshot: {
 				pendingQuestion: null,
 				pendingPermission: null,
@@ -337,11 +386,10 @@ describe("buildQueueSessionSnapshot", () => {
 				showConversation: true,
 				showReadyPlaceholder: false,
 			},
-			hotState: {
-				status: "ready",
-				currentMode: null,
-				connectionError: null,
-			},
+			currentModeId: null,
+			connectionError: null,
+			activeTurnFailure: null,
+			canonicalProjection: makeCanonicalProjection("ready", "idle"),
 			interactionSnapshot: {
 				pendingQuestion: null,
 				pendingPermission: null,
@@ -356,7 +404,7 @@ describe("buildQueueSessionSnapshot", () => {
 		expect(snapshot.status).toBe("streaming");
 	});
 
-	it("surfaces connectionError as error status even when runtime stays connected", () => {
+	it("uses graph-backed running activity when no live tool call is available", () => {
 		const snapshot = buildQueueSessionSnapshot({
 			id: "session-1",
 			agentId: "opencode",
@@ -380,11 +428,10 @@ describe("buildQueueSessionSnapshot", () => {
 				showConversation: true,
 				showReadyPlaceholder: false,
 			},
-			hotState: {
-				status: "ready",
-				currentMode: null,
-				connectionError: "Resume failed",
-			},
+			currentModeId: "build",
+			connectionError: null,
+			activeTurnFailure: null,
+			canonicalProjection: makeCanonicalProjection("ready", "running_operation"),
 			interactionSnapshot: {
 				pendingQuestion: null,
 				pendingPermission: null,
@@ -393,6 +440,122 @@ describe("buildQueueSessionSnapshot", () => {
 			hasUnseenCompletion: false,
 		});
 
+		expect(snapshot.isStreaming).toBe(true);
+		expect(snapshot.isThinking).toBe(false);
+		expect(snapshot.state.activity.kind).toBe("streaming");
+		expect(snapshot.status).toBe("streaming");
+	});
+
+	it("keeps graph-backed planning visible for reserved sessions", () => {
+		const snapshot = buildQueueSessionSnapshot({
+			id: "session-1",
+			agentId: "cursor",
+			projectPath: "/repo",
+			title: "Queue item",
+			entries: [],
+			currentStreamingToolCall: null,
+			currentToolKind: null,
+			lastToolCall: null,
+			lastTodoToolCall: null,
+			updatedAt: new Date("2026-03-30T12:00:00.000Z"),
+			runtimeState: null,
+			currentModeId: null,
+			connectionError: null,
+			activeTurnFailure: null,
+			canonicalProjection: makeCanonicalProjection("reserved", "awaiting_model"),
+			interactionSnapshot: {
+				pendingQuestion: null,
+				pendingPermission: null,
+				pendingPlanApproval: null,
+			},
+			hasUnseenCompletion: false,
+		});
+
+		expect(snapshot.isThinking).toBe(true);
+		expect(snapshot.isStreaming).toBe(false);
+		expect(snapshot.state.activity.kind).toBe("thinking");
+		expect(snapshot.status).toBe("streaming");
+	});
+
+	it("surfaces canonical connectionError even when runtime stays connected", () => {
+		const snapshot = buildQueueSessionSnapshot({
+			id: "session-1",
+			agentId: "opencode",
+			projectPath: "/repo",
+			title: "Queue item",
+			entries: [],
+			currentStreamingToolCall: null,
+			currentToolKind: null,
+			lastToolCall: null,
+			lastTodoToolCall: null,
+			updatedAt: new Date("2026-03-30T12:00:00.000Z"),
+			runtimeState: {
+				connectionPhase: "connected",
+				contentPhase: "loaded",
+				activityPhase: "idle",
+				canSubmit: true,
+				canCancel: false,
+				showStop: false,
+				showThinking: false,
+				showConnectingOverlay: false,
+				showConversation: true,
+				showReadyPlaceholder: false,
+			},
+			currentModeId: null,
+			connectionError: "Resume failed",
+			activeTurnFailure: null,
+			canonicalProjection: makeCanonicalProjection("failed", "idle", "Resume failed"),
+			interactionSnapshot: {
+				pendingQuestion: null,
+				pendingPermission: null,
+				pendingPlanApproval: null,
+			},
+			hasUnseenCompletion: false,
+		});
+
+		expect(snapshot.connectionError).toBe("Resume failed");
 		expect(snapshot.status).toBe("error");
+	});
+
+	it("uses neutral work state without canonical input", () => {
+		const snapshot = buildQueueSessionSnapshot({
+			id: "session-1",
+			agentId: "opencode",
+			projectPath: "/repo",
+			title: "Queue item",
+			entries: [],
+			currentStreamingToolCall: null,
+			currentToolKind: null,
+			lastToolCall: null,
+			lastTodoToolCall: null,
+			updatedAt: new Date("2026-03-30T12:00:00.000Z"),
+			runtimeState: {
+				connectionPhase: "connected",
+				contentPhase: "loaded",
+				activityPhase: "idle",
+				canSubmit: true,
+				canCancel: false,
+				showStop: false,
+				showThinking: false,
+				showConnectingOverlay: false,
+				showConversation: true,
+				showReadyPlaceholder: false,
+			},
+			currentModeId: null,
+			connectionError: null,
+			activeTurnFailure: null,
+			canonicalProjection: null,
+			interactionSnapshot: {
+				pendingQuestion: null,
+				pendingPermission: null,
+				pendingPlanApproval: null,
+			},
+			hasUnseenCompletion: false,
+		});
+
+		expect(snapshot.currentModeId).toBeNull();
+		expect(snapshot.connectionError).toBeNull();
+		expect(snapshot.activeTurnFailure).toBeNull();
+		expect(snapshot.status).toBe("idle");
 	});
 });

@@ -125,7 +125,7 @@ pub struct RateLimitInfo {
 // ============================================================================
 
 /// Error types for assistant messages
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum AssistantMessageError {
     /// Authentication failed

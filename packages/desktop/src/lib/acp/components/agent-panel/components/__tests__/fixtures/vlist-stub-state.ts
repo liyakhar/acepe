@@ -1,20 +1,39 @@
+import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
+
 export const dataLengthHistory: number[] = [];
 
 export const scrollToIndexCalls: Array<{
 	index: number;
 	options?: { align?: string };
 }> = [];
+export const renderedItemHistory: Array<{
+	index: number;
+	isUndefined: boolean;
+}> = [];
+export const conversationEntryHistory: AgentPanelSceneEntryModel[] = [];
 
 let defaultViewportSize = 100;
 let suppressRenderedChildren = false;
 let undefinedRenderedIndexes = new Set<number>();
+let useIndexKeys = false;
 
 export function clearHistory(): void {
 	dataLengthHistory.length = 0;
 	scrollToIndexCalls.length = 0;
+	renderedItemHistory.length = 0;
+	conversationEntryHistory.length = 0;
 	defaultViewportSize = 100;
 	suppressRenderedChildren = false;
 	undefinedRenderedIndexes = new Set<number>();
+	useIndexKeys = false;
+}
+
+export function recordRenderedItem(index: number, isUndefined: boolean): void {
+	renderedItemHistory.push({ index, isUndefined });
+}
+
+export function recordConversationEntry(entry: AgentPanelSceneEntryModel): void {
+	conversationEntryHistory.push(entry);
 }
 
 export function getDefaultViewportSize(): number {
@@ -35,6 +54,14 @@ export function setSuppressRenderedChildren(value: boolean): void {
 
 export function setUndefinedRenderedIndexes(indexes: readonly number[]): void {
 	undefinedRenderedIndexes = new Set<number>(indexes);
+}
+
+export function shouldUseIndexKeys(): boolean {
+	return useIndexKeys;
+}
+
+export function setUseIndexKeys(value: boolean): void {
+	useIndexKeys = value;
 }
 
 export function getRenderedItemAt<T>(data: readonly T[], index: number): T | undefined {

@@ -57,6 +57,7 @@ const queueInputs = $derived.by(() => {
 
 		const runtimeState = sessionStore.getSessionRuntimeState(sessionId);
 		const hotState = sessionStore.getHotState(sessionId);
+		const canonicalProjection = sessionStore.getCanonicalSessionProjection(sessionId);
 		const interactionSnapshot = buildSessionOperationInteractionSnapshot(
 			identity.id,
 			operationStore,
@@ -74,7 +75,10 @@ const queueInputs = $derived.by(() => {
 			lastTodoToolCall: operationStore.getLastTodoToolCall(sessionId),
 			updatedAt: metadata.updatedAt,
 			runtimeState,
-			hotState,
+			currentModeId: sessionStore.getSessionCurrentModeId(sessionId),
+			connectionError: sessionStore.getSessionConnectionError(sessionId),
+			activeTurnFailure: sessionStore.getSessionActiveTurnFailure(sessionId),
+			canonicalProjection,
 			interactionSnapshot,
 			hasUnseenCompletion: unseenStore.isUnseen(panelId),
 		});

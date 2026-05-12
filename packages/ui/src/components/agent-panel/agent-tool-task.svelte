@@ -43,6 +43,21 @@
 
 	const isPending = $derived(status === "pending" || status === "running");
 	const isDone = $derived(status === "done");
+	const titleText = $derived.by(() => {
+		if (isPending) return description ?? runningFallback;
+		if (status === "blocked") return description ?? "Blocked";
+		if (status === "degraded") return description ?? "Degraded";
+		if (status === "cancelled") return description ?? "Cancelled";
+		if (status === "error") return description ?? "Task failed";
+		return description ?? doneFallback;
+	});
+	const titleToneClass = $derived.by(() => {
+		if (status === "blocked") return "text-amber-600 dark:text-amber-400";
+		if (status === "degraded") return "text-orange-600 dark:text-orange-400";
+		if (status === "cancelled") return "text-muted-foreground/70";
+		if (status === "error") return "text-destructive";
+		return "text-muted-foreground";
+	});
 
 	const taskChildren = $derived(Array.from(children));
 
@@ -63,8 +78,8 @@
 	const shouldShowDoneIcon = $derived(showDoneIcon && isDone);
 	const cardClass = $derived(compact ? "bg-accent/30 border-border/60" : "");
 	const headerClass = $derived(compact
-		? "flex min-w-0 items-center justify-between gap-1 px-1 py-0.5 text-[10px]"
-		: "flex h-7 items-center justify-between gap-1 px-2 text-xs");
+		? "flex min-w-0 items-center justify-between gap-1 px-1 py-0.5 text-sm"
+		: "flex h-7 items-center justify-between gap-1 px-2 text-sm");
 	const headerBorderClass = $derived(hasBorder
 		? compact
 			? "border-b border-border/60"
@@ -73,22 +88,22 @@
 	const headerContentClass = $derived(compact
 		? "flex min-w-0 flex-1 items-center justify-start gap-1"
 		: "flex min-w-0 flex-1 items-center justify-start gap-2");
-	const titleClass = $derived(compact ? "font-mono text-[10px]" : "font-mono text-[11px]");
+	const titleClass = $derived("font-sans text-sm");
 	const promptButtonClass = $derived(compact
-		? "w-full flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
-		: "w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer");
+		? "w-full flex items-center gap-1 px-1 py-0.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
+		: "w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer");
 	const promptBodyClass = $derived(compact ? "px-1 pb-0.5" : "px-3 pb-2");
 	const promptContentClass = $derived(compact
-		? "text-[10px] text-muted-foreground whitespace-pre-wrap break-words leading-relaxed"
-		: "text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed");
+		? "text-sm text-muted-foreground whitespace-pre-wrap break-words leading-relaxed"
+		: "text-sm text-muted-foreground whitespace-pre-wrap break-words leading-relaxed");
 	const resultSectionClass = $derived(compact ? "border-t border-border/60" : "border-t border-border");
 	const resultButtonClass = $derived(compact
-		? "w-full flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
-		: "w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer");
+		? "w-full flex items-center gap-1 px-1 py-0.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer"
+		: "w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted/30 transition-colors border-none bg-transparent cursor-pointer");
 	const resultBodyClass = $derived(compact ? "px-1 pb-1" : "px-3 pb-3");
 	const resultContentClass = $derived(compact
-		? "text-[10px] bg-muted/30 rounded-sm p-1 whitespace-pre-wrap break-words leading-relaxed"
-		: "text-xs bg-muted/30 rounded-md p-3 whitespace-pre-wrap break-words leading-relaxed");
+		? "text-sm bg-muted/30 rounded-sm p-1 whitespace-pre-wrap break-words leading-relaxed"
+		: "text-sm bg-muted/30 rounded-md p-3 whitespace-pre-wrap break-words leading-relaxed");
 	const rowSectionClass = $derived(compact ? "border-t border-border/60 py-0.5" : "border-t border-border py-1.5");
 	const showLiveToolRow = $derived(!compact && hasChildren && lastToolCall !== null);
 	const tallyInline = $derived(false);
@@ -103,15 +118,15 @@
 			<span class={titleClass}>
 				{#if isPending}
 					<TextShimmer class="font-medium text-muted-foreground">
-						{description ?? runningFallback}
+						{titleText}
 					</TextShimmer>
 				{:else}
-					<span class="font-medium text-muted-foreground">{description ?? doneFallback}</span>
+					<span class="font-medium {titleToneClass}">{titleText}</span>
 				{/if}
 			</span>
 		</div>
 		{#if durationLabel}
-			<span class="shrink-0 font-mono text-[10px] text-muted-foreground/70">{durationLabel}</span>
+			<span class="shrink-0 font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 		{/if}
 		{#if shouldShowDoneIcon}
 			<IconCircleCheckFilled

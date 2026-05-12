@@ -1,0 +1,969 @@
+<script lang="ts">
+import { AgentPanelConversationEntry } from "@acepe/ui/agent-panel";
+import { setIconConfig } from "@acepe/ui/icon-context";
+import type {
+	AgentPanelQuestionSelectEvent,
+	AgentPanelSceneEntryModel,
+	AssistantRenderBlockContext,
+} from "@acepe/ui/agent-panel";
+import { setContext, untrack } from "svelte";
+import { VList, type VListHandle } from "virtua/svelte";
+import { SESSION_CONTEXT_KEY_EXPORT } from "../../../hooks/use-session-context.js";
+import { getChatPreferencesStore } from "../../../store/chat-preferences-store.svelte.js";
+import type { TurnState } from "../../../store/types.js";
+import type { ModifiedFilesState } from "../../../types/modified-files-state.js";
+import { DEFAULT_STREAMING_ANIMATION_MODE } from "../../../types/streaming-animation-mode.js";
+import ContentBlockRouter from "../../messages/content-block-router.svelte";
+import MessageWrapper from "../../messages/message-wrapper.svelte";
+import {
+	createAutoScroll,
+	type ScrollPositionProvider,
+} from "../logic/create-auto-scroll.svelte.js";
+import {
+	createGraphSceneEntryIndex,
+	findGraphSceneEntryForDisplayEntry,
+} from "../logic/graph-scene-entry-match.js";
+import {
+	THREAD_FOLLOW_CONTROLLER_CONTEXT,
+	ThreadFollowController,
+} from "../logic/thread-follow-controller.svelte.js";
+import {
+	buildSceneDisplayRows,
+	getLatestSceneDisplayRevealTargetKey,
+	getSceneDisplayRowKey,
+	getSceneDisplayRowTimestampMs,
+	resolveSceneDisplayRowThinkingDurationMs,
+	shouldObserveSceneDisplayRowRevealResize,
+	THINKING_DISPLAY_ENTRY,
+	type SceneDisplayRow,
+} from "../logic/scene-display-rows.js";
+import {
+	buildNativeFallbackWindow,
+	shouldRetryNativeFallback,
+	type IndexedViewportEntry,
+	type ViewportFallbackReason,
+} from "../logic/viewport-fallback-controller.svelte.js";
+import { useTheme } from "../../../../components/theme/context.svelte.js";
+import { getWorkerPool } from "../../../utils/worker-pool-singleton.js";
+import {
+	pierreDiffsUnsafeCSS,
+	registerCursorThemeForPierreDiffs,
+} from "../../../utils/pierre-diffs-theme.js";
+
+const MAX_VIEWPORT_RECOVERY_FRAMES = 8;
+const MAX_EMPTY_RENDER_FRAMES = 4;
+const NATIVE_FALLBACK_ENTRY_LIMIT = 80;
+type SceneContentViewportProps = {
+	panelId: string;
+	sceneEntries?: readonly AgentPanelSceneEntryModel[];
+	turnState: TurnState;
+	isWaitingForResponse: boolean;
+	waitingLabel?: string | null;
+	projectPath: string | undefined;
+	/** Session ID for detecting session changes */
+	sessionId: string | null;
+	/** Whether the panel is in fullscreen mode (centers content with max-width) */
+	isFullscreen?: boolean;
+	/** Pre-computed modified files state from parent (avoids duplicate aggregateFileEdits calls) */
+	modifiedFilesState?: ModifiedFilesState | null;
+	/** Callback fired when near-bottom state changes (edge-triggered) */
+	onNearBottomChange?: (isNearBottom: boolean) => void;
+	/** Callback fired when near-top state changes */
+	onNearTopChange?: (isNearTop: boolean) => void;
+	onQuestionSelect?: (event: AgentPanelQuestionSelectEvent) => void;
+};
+
+type IndexedDisplayEntry = IndexedViewportEntry<SceneDisplayRow>;
+
+let {
+	panelId,
+	sceneEntries,
+	turnState,
+	isWaitingForResponse,
+	waitingLabel = null,
+	projectPath,
+	sessionId,
+	isFullscreen = false,
+	modifiedFilesState = null,
+	onNearBottomChange,
+	onNearTopChange,
+	onQuestionSelect,
+}: SceneContentViewportProps = $props();
+
+// Derive isStreaming from turnState for scroll behavior
+const isStreaming = $derived(turnState === "streaming");
+const chatPrefs = getChatPreferencesStore();
+const streamingAnimationMode = $derived(
+	chatPrefs?.streamingAnimationMode ?? DEFAULT_STREAMING_ANIMATION_MODE
+);
+const sceneEntriesById = $derived(createGraphSceneEntryIndex(sceneEntries));
+
+// ===== EDIT TOOL THEME =====
+const themeState = useTheme();
+const editToolTheme = $derived({
+	theme: themeState.effectiveTheme,
+	themeNames: { dark: "Cursor Dark", light: "pierre-light" },
+	workerPool: getWorkerPool(),
+	onBeforeRender: registerCursorThemeForPierreDiffs,
+	unsafeCSS: pierreDiffsUnsafeCSS,
+});
+
+// ===== ICON CONTEXT (for nested components) =====
+setIconConfig({ basePath: "/svgs/icons" });
+
+// ===== SESSION CONTEXT (for nested components) =====
+// Set consolidated session context for all nested message/tool-call components
+// This eliminates prop drilling for projectPath, turnState, and modifiedFilesState
+// Use getters to ensure reactivity (values update when they change)
+setContext(SESSION_CONTEXT_KEY_EXPORT, {
+	get sessionId() {
+			return sessionId ?? undefined;
+		},
+	get panelId() {
+		return panelId;
+	},
+	get projectPath() {
+		return projectPath;
+	},
+	get turnState() {
+		return turnState;
+	},
+	get modifiedFilesState() {
+		return modifiedFilesState ?? undefined;
+	},
+});
+
+// Also maintain legacy modifiedFilesState context for backward compatibility
+setContext("modifiedFilesState", {
+	get current() {
+		return modifiedFilesState;
+	},
+});
+
+// ===== REFS =====
+let vlistRef: VListHandle | undefined = $state(undefined);
+let wrapperRef: HTMLDivElement | null = $state(null);
+let fallbackViewportRef: HTMLDivElement | null = $state(null);
+let viewportNudgeOffsetPx = $state(0);
+let useNativeFallback = $state(false);
+let nativeFallbackReason = $state<ViewportFallbackReason | null>(null);
+let nativeFallbackRetryCount = $state(0);
+const fallbackRowRefs = new Map<string, HTMLElement>();
+
+// ===== AUTO-SCROLL =====
+const autoScroll = createAutoScroll();
+const followController = new ThreadFollowController({
+	isFollowing: () => autoScroll.following,
+	isNearBottom: () => autoScroll.isNearBottom(),
+	revealListBottom: (force?: boolean) => autoScroll.revealLatest(force),
+	getLatestTargetKey: () => {
+		return getLatestSceneDisplayRevealTargetKey(displayEntries);
+	},
+	getLatestUserTargetKey: () => {
+		for (let i = displayEntries.length - 1; i >= 0; i -= 1) {
+			const entry = displayEntries[i];
+			if (entry?.type === "user") {
+				return getKey(entry);
+			}
+		}
+		return null;
+	},
+});
+setContext(THREAD_FOLLOW_CONTROLLER_CONTEXT, followController);
+
+// Sync VList ref to auto-scroll — Virtua's VListHandle satisfies ScrollPositionProvider directly.
+// Cleanup clears the stale provider and cancels pending RAFs on unmount, preventing
+// "null is not an object (evaluating 'get(ref).getScrollSize')" when virtua's internal
+// ref is disposed before ThreadFollowController's pending RAF fires.
+function createFallbackScrollProvider(viewport: HTMLDivElement): ScrollPositionProvider {
+	return {
+		getScrollSize: () => viewport.scrollHeight,
+		getViewportSize: () => viewport.clientHeight,
+		getScrollOffset: () => viewport.scrollTop,
+		scrollToIndex: (index: number) => {
+			const entry = displayEntries[index];
+			if (!entry) {
+				return;
+			}
+			const row = fallbackRowRefs.get(getKey(entry));
+			if (row) {
+				row.scrollIntoView({ block: "end" });
+				return;
+			}
+			viewport.scrollTop = viewport.scrollHeight;
+		},
+	};
+}
+
+function bindFallbackRow(node: HTMLElement, key: string): { destroy: () => void } {
+	fallbackRowRefs.set(key, node);
+	return {
+		destroy() {
+			fallbackRowRefs.delete(key);
+		},
+	};
+}
+
+$effect(() => {
+	const provider =
+		shouldUseNativeList && fallbackViewportRef
+			? createFallbackScrollProvider(fallbackViewportRef)
+			: vlistRef;
+	autoScroll.setVListRef(provider);
+	return () => {
+		// Detach the autoScroll provider so any in-flight scroll RAF stops
+		// reading the about-to-be-stale provider. Do NOT call followController.reset()
+		// here: provider swap (e.g., VList → native fallback when streaming starts)
+		// is not a session change. Resetting drops `prepareForNextUserReveal` /
+		// pending state set by the user's send click, which produces the visible
+		// "send teleports to top, no streaming" symptom because the freshly
+		// mounted fallback never receives the pending reveal request.
+		// Targets self-clean via their action's destroy hook, and the controller's
+		// generation guard already neutralizes stale RAFs scheduled against the
+		// old provider. Reset remains owned by the session-change effect below.
+		autoScroll.setVListRef(undefined);
+	};
+});
+
+// ===== HELPERS =====
+function getKey(entry: SceneDisplayRow | undefined, index?: number): string {
+	if (!entry) {
+		reportMissingVirtualizedEntry(index);
+		return `missing-entry-${String(index ?? "unknown")}`;
+	}
+
+	return getSceneDisplayRowKey(entry);
+}
+
+function createMergedAssistantSceneEntry(
+	entry: SceneDisplayRow | undefined,
+	thinkingDurationMs: number | null
+): AgentPanelSceneEntryModel | undefined {
+	if (entry?.type !== "assistant_merged") {
+		return undefined;
+	}
+
+	const isStreaming = entry.isStreaming ?? false;
+
+	return {
+		id: entry.key,
+		type: "assistant",
+		markdown: entry.markdown,
+		message: {
+			chunks: entry.message.chunks,
+			model: entry.message.model,
+			displayModel: entry.message.displayModel,
+			receivedAt: entry.message.receivedAt,
+			thinkingDurationMs: thinkingDurationMs ?? entry.message.thinkingDurationMs,
+		},
+		isStreaming,
+		tokenRevealCss: entry.tokenRevealCss,
+		timestampMs: entry.timestamp?.getTime(),
+	};
+}
+
+function createThinkingSceneEntry(
+	entry: SceneDisplayRow | undefined,
+	thinkingDurationMs: number | null
+): AgentPanelSceneEntryModel | undefined {
+	if (entry?.type !== "thinking") {
+		return undefined;
+	}
+
+	if (entry.label !== null && entry.label !== undefined) {
+		return {
+			id: entry.id,
+			type: "thinking",
+			durationMs: thinkingDurationMs,
+			startedAtMs: entry.startedAtMs,
+			label: entry.label,
+		};
+	}
+
+	return {
+		id: entry.id,
+		type: "thinking",
+		durationMs: thinkingDurationMs,
+		startedAtMs: entry.startedAtMs,
+	};
+}
+
+function createMissingSceneEntry(
+	entry: SceneDisplayRow | undefined,
+	index: number | undefined
+): AgentPanelSceneEntryModel {
+	const displayKey = entry ? getSceneDisplayRowKey(entry) : `missing-entry-${String(index ?? "unknown")}`;
+	reportMissingSceneEntry(entry, index, displayKey);
+	return {
+		id: `missing:${displayKey}`,
+		type: "missing",
+		diagnosticLabel: displayKey,
+	};
+}
+
+function getSharedEntry(
+	entry: SceneDisplayRow | undefined,
+	thinkingDurationMs: number | null,
+	index?: number
+): AgentPanelSceneEntryModel {
+	const graphEntry = getGraphSceneEntry(entry);
+	if (graphEntry !== undefined) {
+		return graphEntry;
+	}
+
+	const mergedAssistantEntry = createMergedAssistantSceneEntry(entry, thinkingDurationMs);
+	if (mergedAssistantEntry !== undefined) {
+		return mergedAssistantEntry;
+	}
+
+	const thinkingEntry = createThinkingSceneEntry(entry, thinkingDurationMs);
+	if (thinkingEntry !== undefined) {
+		return thinkingEntry;
+	}
+
+	return createMissingSceneEntry(entry, index);
+}
+
+function getGraphSceneEntry(
+	entry: SceneDisplayRow | undefined
+): AgentPanelSceneEntryModel | undefined {
+	return findGraphSceneEntryForDisplayEntry(entry, sceneEntriesById);
+}
+
+
+let warnedMissingEntryKeys = new Set<string>();
+
+function reportMissingVirtualizedEntry(index: number | undefined): void {
+	if (!import.meta.env.DEV) {
+		return;
+	}
+
+	const warningKey = `${sessionId ?? "pre-session"}:${String(index ?? "unknown")}:${displayEntries.length}`;
+	if (warnedMissingEntryKeys.has(warningKey)) {
+		return;
+	}
+	warnedMissingEntryKeys.add(warningKey);
+
+	const nearbyEntries = displayEntries
+		.slice(Math.max(0, (index ?? 0) - 2), Math.min(displayEntries.length, (index ?? 0) + 3))
+		.map((entry) => {
+			if (!entry) {
+				return { type: "missing" };
+			}
+
+			return {
+				type: entry.type,
+				key: getSceneDisplayRowKey(entry),
+			};
+		});
+
+	console.warn("[AGENT_PANEL_MISSING_ENTRY]", {
+		panelId,
+		sessionId,
+		index,
+		displayEntriesLength: displayEntries.length,
+		mergedEntriesLength: mergedEntries.length,
+		isWaitingForResponse,
+		turnState,
+		nearbyEntries,
+	});
+}
+
+let warnedMissingSceneEntryKeys = new Set<string>();
+
+function reportMissingSceneEntry(
+	entry: SceneDisplayRow | undefined,
+	index: number | undefined,
+	displayKey: string
+): void {
+	if (!import.meta.env.DEV) {
+		return;
+	}
+
+	const warningKey = `${sessionId ?? "pre-session"}:${displayKey}`;
+	if (warnedMissingSceneEntryKeys.has(warningKey)) {
+		return;
+	}
+	warnedMissingSceneEntryKeys.add(warningKey);
+
+	console.warn("[AGENT_PANEL_MISSING_SCENE_ENTRY]", {
+		panelId,
+		sessionId,
+		index,
+		displayKey,
+		displayEntryType: entry?.type,
+		sceneEntryCount: sceneEntries?.length ?? 0,
+	});
+}
+
+// ===== DISPLAY ENTRIES =====
+const mergedEntries = $derived(buildSceneDisplayRows(sceneEntries ?? []));
+
+const thinkingIndicatorStartedAtMs = $derived.by(() => {
+	if (!isWaitingForResponse) {
+		return null;
+	}
+
+	for (let index = mergedEntries.length - 1; index >= 0; index -= 1) {
+		const entry = mergedEntries[index];
+		if (!entry) {
+			continue;
+		}
+		const timestampMs = getSceneDisplayRowTimestampMs(entry);
+		if (timestampMs !== null) {
+			return timestampMs;
+		}
+	}
+
+	return null;
+});
+// Avoid spread-based allocation on every streaming update — reuse the merged
+// reference directly when no thinking indicator is needed. When waiting, pre-allocate
+// the result array to the known size rather than using concat/spread.
+const displayEntriesRaw = $derived.by((): readonly SceneDisplayRow[] => {
+	if (!isWaitingForResponse) return mergedEntries;
+	const result: SceneDisplayRow[] = [];
+	result.length = mergedEntries.length + 1;
+	let writeIndex = 0;
+	for (const entry of mergedEntries) {
+		result[writeIndex] = entry;
+		writeIndex += 1;
+	}
+	result[writeIndex] = {
+		type: THINKING_DISPLAY_ENTRY.type,
+		id: THINKING_DISPLAY_ENTRY.id,
+		startedAtMs: thinkingIndicatorStartedAtMs,
+		label: waitingLabel,
+	};
+	return result;
+});
+
+// Restored historical sessions can mount while the panel is still settling into the
+// layout tree. Virtua's root ResizeObserver ignores callbacks when offsetParent is null,
+// leaving the viewport size at 0 and the rendered range empty even though totalSize is set.
+// Fix: on the first mount with preloaded entries, give VList an empty dataset for one frame
+// and then remount it with the real entries once layout has settled.
+let shouldDeferInitialHydration = untrack(() => displayEntriesRaw.length > 0);
+let hydrationFrameId: number | null = null;
+let initialHydrationComplete = $state(!shouldDeferInitialHydration);
+let lastRenderedSessionId = $state(untrack(() => sessionId));
+const displayEntries = $derived(
+	initialHydrationComplete ? displayEntriesRaw : ([] as readonly SceneDisplayRow[])
+);
+const hasLiveAssistantDisplayEntry = $derived(
+	displayEntries.some(
+		(entry) =>
+			entry.type === "assistant_merged" &&
+			(entry.isStreaming === true || entry.tokenRevealCss !== undefined)
+	)
+);
+
+let holdNativeAfterRevealHandoff = $state(false);
+const hasActiveLiveTail = $derived(isWaitingForResponse || isStreaming || hasLiveAssistantDisplayEntry);
+const shouldUseNativeListForLiveTail = $derived(useNativeFallback || hasActiveLiveTail);
+const shouldUseNativeList = $derived(shouldUseNativeListForLiveTail || holdNativeAfterRevealHandoff);
+let previousShouldUseNativeList = $state(untrack(() => shouldUseNativeList));
+let previousShouldUseNativeListForLiveTail = $state(untrack(() => shouldUseNativeListForLiveTail));
+const nativeFallbackEntries = $derived.by((): readonly IndexedDisplayEntry[] => {
+	return buildNativeFallbackWindow(displayEntries, NATIVE_FALLBACK_ENTRY_LIMIT);
+});
+const vlistRenderKey = $derived(initialHydrationComplete ? "hydrated" : "deferred");
+const wrapperStyle = $derived(
+	viewportNudgeOffsetPx === 0 ? "height: 100%;" : `height: calc(100% - ${viewportNudgeOffsetPx}px);`
+);
+
+$effect(() => {
+	if (initialHydrationComplete || !shouldDeferInitialHydration) {
+		return;
+	}
+
+	if (hydrationFrameId !== null) {
+		return;
+	}
+
+	hydrationFrameId = requestAnimationFrame(() => {
+		hydrationFrameId = null;
+		initialHydrationComplete = true;
+		shouldDeferInitialHydration = false;
+	});
+
+	return () => {
+		if (hydrationFrameId !== null) {
+			cancelAnimationFrame(hydrationFrameId);
+			hydrationFrameId = null;
+		}
+	};
+});
+
+// Fullscreen session switches reuse this component instance now, so reset only the
+// scroll/follow machinery instead of remounting the whole list and replaying hydration.
+$effect(() => {
+	if (sessionId === lastRenderedSessionId) {
+		return;
+	}
+
+	lastRenderedSessionId = sessionId;
+	warnedMissingEntryKeys.clear();
+	warnedMissingSceneEntryKeys.clear();
+	autoScroll.reset();
+	followController.reset();
+	useNativeFallback = false;
+	holdNativeAfterRevealHandoff = false;
+	nativeFallbackReason = null;
+	nativeFallbackRetryCount = 0;
+	viewportNudgeOffsetPx = 0;
+	historicalScrollApplied = false;
+
+	let frameCount = 0;
+	let sessionSwitchRafId: number | null = null;
+	const revealAfterSwitchSettle = () => {
+		frameCount += 1;
+		if (frameCount < 2) {
+			sessionSwitchRafId = requestAnimationFrame(revealAfterSwitchSettle);
+			return;
+		}
+		sessionSwitchRafId = null;
+		autoScroll.revealLatest(true);
+	};
+
+	if (displayEntries.length > 0) {
+		sessionSwitchRafId = requestAnimationFrame(revealAfterSwitchSettle);
+	}
+
+	return () => {
+		if (sessionSwitchRafId !== null) {
+			cancelAnimationFrame(sessionSwitchRafId);
+		}
+	};
+});
+
+$effect(() => {
+	if (!initialHydrationComplete || useNativeFallback || displayEntries.length === 0 || !vlistRef) {
+		viewportNudgeOffsetPx = 0;
+		return;
+	}
+
+	let cancelled = false;
+	let attempts = 0;
+	let recoveryFrameId: number | null = null;
+	const recoverySessionId = sessionId;
+
+	const recoverViewport = () => {
+		if (cancelled || sessionId !== recoverySessionId) {
+			return;
+		}
+
+		const viewportSize = vlistRef?.getViewportSize() ?? 0;
+		if (viewportSize > 0) {
+			viewportNudgeOffsetPx = 0;
+			return;
+		}
+
+		if (attempts >= MAX_VIEWPORT_RECOVERY_FRAMES) {
+			viewportNudgeOffsetPx = 0;
+			if (import.meta.env.DEV) {
+				console.warn(
+					"[VLIST_FALLBACK]",
+					"reason=zero_viewport",
+					`sessionId=${sessionId}`,
+					`entries=${displayEntries.length}`
+				);
+			}
+			useNativeFallback = true;
+			nativeFallbackReason = "zero_viewport";
+			return;
+		}
+
+		viewportNudgeOffsetPx = viewportNudgeOffsetPx === 0 ? 1 : 0;
+		attempts += 1;
+		recoveryFrameId = requestAnimationFrame(recoverViewport);
+	};
+
+	recoveryFrameId = requestAnimationFrame(recoverViewport);
+
+	return () => {
+		cancelled = true;
+		viewportNudgeOffsetPx = 0;
+		if (recoveryFrameId !== null) {
+			cancelAnimationFrame(recoveryFrameId);
+		}
+	};
+});
+
+$effect(() => {
+	if (
+		!initialHydrationComplete ||
+		useNativeFallback ||
+		displayEntries.length === 0 ||
+		!wrapperRef
+	) {
+		return;
+	}
+
+	let cancelled = false;
+	let remainingFrames = MAX_EMPTY_RENDER_FRAMES;
+	let probeFrameId: number | null = null;
+	const probeSessionId = sessionId;
+
+	const probeRenderedEntries = () => {
+		if (cancelled || sessionId !== probeSessionId) {
+			return;
+		}
+
+		const renderedEntryCount = wrapperRef?.querySelectorAll("[data-entry-key]").length ?? 0;
+		if (renderedEntryCount > 0) {
+			return;
+		}
+
+		if (remainingFrames <= 0) {
+			viewportNudgeOffsetPx = 0;
+			if (import.meta.env.DEV) {
+				console.warn(
+					"[VLIST_FALLBACK]",
+					"reason=no_rendered_entries",
+					`sessionId=${sessionId}`,
+					`entries=${displayEntries.length}`
+				);
+			}
+			useNativeFallback = true;
+			nativeFallbackReason = "no_rendered_entries";
+			return;
+		}
+
+		remainingFrames -= 1;
+		probeFrameId = requestAnimationFrame(probeRenderedEntries);
+	};
+
+	probeFrameId = requestAnimationFrame(probeRenderedEntries);
+
+	return () => {
+		cancelled = true;
+		if (probeFrameId !== null) {
+			cancelAnimationFrame(probeFrameId);
+		}
+	};
+});
+
+$effect(() => {
+	if (
+		!useNativeFallback ||
+		!shouldRetryNativeFallback({
+			reason: nativeFallbackReason,
+			retryCount: nativeFallbackRetryCount,
+		})
+	) {
+		return;
+	}
+
+	let cancelled = false;
+	let frameCount = 0;
+	let retryFrameId: number | null = null;
+	const fallbackSessionId = sessionId;
+
+	const retryVirtuaAfterFallback = () => {
+		if (cancelled || sessionId !== fallbackSessionId) {
+			return;
+		}
+
+		frameCount += 1;
+		if (frameCount < 2) {
+			retryFrameId = requestAnimationFrame(retryVirtuaAfterFallback);
+			return;
+		}
+
+		retryFrameId = null;
+		nativeFallbackRetryCount += 1;
+		nativeFallbackReason = null;
+		useNativeFallback = false;
+	};
+
+	retryFrameId = requestAnimationFrame(retryVirtuaAfterFallback);
+
+	return () => {
+		cancelled = true;
+		if (retryFrameId !== null) {
+			cancelAnimationFrame(retryFrameId);
+		}
+	};
+});
+
+$effect(() => {
+	const wasUsingNativeListForLiveTail = previousShouldUseNativeListForLiveTail;
+	previousShouldUseNativeListForLiveTail = shouldUseNativeListForLiveTail;
+
+	if (shouldUseNativeListForLiveTail) {
+		holdNativeAfterRevealHandoff = false;
+		return;
+	}
+
+	if (wasUsingNativeListForLiveTail && autoScroll.following && displayEntries.length > 0) {
+		holdNativeAfterRevealHandoff = true;
+	}
+});
+
+$effect(() => {
+	if (holdNativeAfterRevealHandoff && !autoScroll.following) {
+		holdNativeAfterRevealHandoff = false;
+	}
+});
+
+function revealLatestNativeFallbackRow(): boolean {
+	const latestIndex = displayEntries.length - 1;
+	const latestEntry = displayEntries[latestIndex];
+	if (!latestEntry) {
+		return false;
+	}
+
+	const row = fallbackRowRefs.get(getKey(latestEntry, latestIndex));
+	if (row) {
+		row.scrollIntoView({ block: "end" });
+		return true;
+	}
+
+	if (fallbackViewportRef) {
+		fallbackViewportRef.scrollTop = fallbackViewportRef.scrollHeight;
+		return true;
+	}
+
+	return false;
+}
+
+function scheduleRevealLatestAfterListMount(preferNativeFallback: boolean): () => void {
+	let cancelled = false;
+	let frameCount = 0;
+	let revealFrameId: number | null = null;
+
+	const revealAfterMount = () => {
+		if (cancelled) {
+			return;
+		}
+		frameCount += 1;
+		if (frameCount < 2) {
+			revealFrameId = requestAnimationFrame(revealAfterMount);
+			return;
+		}
+		revealFrameId = null;
+		if (preferNativeFallback && revealLatestNativeFallbackRow()) {
+			return;
+		}
+		autoScroll.revealLatest();
+	};
+
+	revealFrameId = requestAnimationFrame(revealAfterMount);
+
+	return () => {
+		cancelled = true;
+		if (revealFrameId !== null) {
+			cancelAnimationFrame(revealFrameId);
+		}
+	};
+}
+
+$effect(() => {
+	if (
+		shouldUseNativeList &&
+		hasActiveLiveTail &&
+		fallbackViewportRef &&
+		initialHydrationComplete &&
+		displayEntries.length > 0 &&
+		autoScroll.following
+	) {
+		return scheduleRevealLatestAfterListMount(true);
+	}
+});
+
+$effect(() => {
+	const wasUsingNativeList = previousShouldUseNativeList;
+	previousShouldUseNativeList = shouldUseNativeList;
+
+	if (
+		!wasUsingNativeList ||
+		shouldUseNativeList ||
+		!initialHydrationComplete ||
+		displayEntries.length === 0
+	) {
+		return;
+	}
+
+	return scheduleRevealLatestAfterListMount(false);
+});
+
+// ===== SCROLL TO BOTTOM ON HISTORICAL SESSION LOAD =====
+// When a session mounts with pre-existing entries (historical), shouldDeferInitialHydration
+// is true. Once hydration completes and VList renders, force a scroll to the bottom so the
+// user sees the most recent messages instead of the top of the conversation.
+const isHistoricalLoad = shouldDeferInitialHydration;
+let historicalScrollApplied = false;
+$effect(() => {
+	if (!isHistoricalLoad || historicalScrollApplied || !initialHydrationComplete) return;
+	if (displayEntries.length === 0) return;
+
+	historicalScrollApplied = true;
+
+	// Wait two frames: one for VList to process the entries, one for layout to settle.
+	let frameCount = 0;
+	let scrollRafId: number | null = null;
+	const scrollAfterSettle = () => {
+		frameCount += 1;
+		if (frameCount < 2) {
+			scrollRafId = requestAnimationFrame(scrollAfterSettle);
+			return;
+		}
+		scrollRafId = null;
+		autoScroll.revealLatest(true);
+	};
+	scrollRafId = requestAnimationFrame(scrollAfterSettle);
+
+	return () => {
+		if (scrollRafId !== null) {
+			cancelAnimationFrame(scrollRafId);
+		}
+	};
+});
+
+// Sync item count for scrollToIndex calculations
+const displayEntryCount = $derived(displayEntries.length);
+$effect(() => {
+	autoScroll.setItemCount(displayEntryCount);
+});
+
+function revealDisplayIndex(index: number, force?: boolean): boolean {
+	return autoScroll.revealIndex(index, force);
+}
+
+// Handle VList scroll events — Virtua's onscroll fires with (offset: number)
+// but autoScroll.handleScroll reads from the provider internally
+function handleVListScroll(_offset: number): void {
+	autoScroll.handleScroll();
+}
+
+function handleFallbackScroll(): void {
+	autoScroll.handleScroll();
+}
+
+// ===== NEAR-BOTTOM NOTIFICATION =====
+// Read autoScroll.nearBottom (reactive $state) so this $effect re-runs
+// whenever scroll position changes. Using autoScroll.isNearBottom() would
+// only read from the non-reactive provider, giving no reactive dependency.
+$effect(() => {
+	onNearBottomChange?.(autoScroll.nearBottom);
+});
+
+$effect(() => {
+	onNearTopChange?.(autoScroll.nearTop);
+});
+
+// ===== PASSIVE WHEEL LISTENER =====
+function wheelAction(node: HTMLElement): { destroy: () => void } {
+	node.addEventListener("wheel", autoScroll.handleWheel, { passive: true });
+	return {
+		destroy() {
+			node.removeEventListener("wheel", autoScroll.handleWheel);
+		},
+	};
+}
+
+// ===== PUBLIC API =====
+export function scrollToBottom(options?: { force?: boolean }) {
+	followController.requestLatestReveal({ force: options?.force });
+}
+
+export function prepareForNextUserReveal(options?: { force?: boolean }) {
+	followController.prepareForNextUserReveal(options);
+}
+
+export function scrollToTop() {
+	if (shouldUseNativeList && fallbackViewportRef) {
+		fallbackViewportRef.scrollTop = 0;
+		return;
+	}
+	vlistRef?.scrollToIndex(0);
+}
+</script>
+
+<!--
+	Virtual scrolling using Virtua with passive wheel detection.
+	VList config:
+	- bufferSize: pixels of content to render outside viewport (800px = ~6 items)
+	- itemSize: estimated average item height in px for initial layout calculations
+	- contain: strict prevents layout recalculation from propagating to parent
+-->
+<div bind:this={wrapperRef} use:wheelAction class="h-full min-h-0" style={wrapperStyle}>
+	{#snippet renderAssistantBlock(context: AssistantRenderBlockContext)}
+		{#if context.group.type === "text"}
+			<ContentBlockRouter
+				block={{ type: "text", text: context.group.text }}
+				isStreaming={context.isStreaming}
+				tokenRevealCss={context.tokenRevealCss}
+				{projectPath}
+				{streamingAnimationMode}
+			/>
+		{:else}
+			<ContentBlockRouter block={context.group.block} {projectPath} />
+		{/if}
+	{/snippet}
+
+	{#snippet renderEntry(entry: SceneDisplayRow | undefined, index: number)}
+		{#if entry}
+			{@const mergedThoughtDurationMs = resolveSceneDisplayRowThinkingDurationMs(
+				displayEntries,
+				index
+			)}
+			{@const sharedEntry = getSharedEntry(entry, mergedThoughtDurationMs, index)}
+			<MessageWrapper
+				entryIndex={index}
+				entryKey={getKey(entry, index)}
+				messageId={entry.type === "user" ? entry.id : undefined}
+				observeRevealResize={entry
+					? shouldObserveSceneDisplayRowRevealResize(displayEntries, entry, isStreaming)
+					: false}
+				revealEntryIndex={revealDisplayIndex}
+				{isFullscreen}
+			>
+				<AgentPanelConversationEntry
+					entry={sharedEntry}
+					iconBasePath="/svgs/icons"
+					{editToolTheme}
+					{projectPath}
+					{streamingAnimationMode}
+					renderAssistantBlock={renderAssistantBlock}
+					{onQuestionSelect}
+				/>
+			</MessageWrapper>
+		{:else}
+			{@const _missingEntryWarning = reportMissingVirtualizedEntry(index)}
+		{/if}
+	{/snippet}
+
+	{#if shouldUseNativeList}
+		<div
+			bind:this={fallbackViewportRef}
+			data-testid="native-fallback"
+			class="h-full overflow-y-auto"
+			onscroll={handleFallbackScroll}
+		>
+			{#each nativeFallbackEntries as item (getKey(item.entry))}
+				<div use:bindFallbackRow={getKey(item.entry)}>
+					{@render renderEntry(item.entry, item.index)}
+				</div>
+			{/each}
+		</div>
+	{:else}
+		{#key `${sessionId ?? "pre-session"}:${vlistRenderKey}`}
+			<VList
+				bind:this={vlistRef}
+				data={displayEntries}
+				{getKey}
+				onscroll={handleVListScroll}
+				bufferSize={800}
+				itemSize={120}
+				class="h-full"
+				style="contain: strict;"
+			>
+				{#snippet children(entry: SceneDisplayRow, index: number)}
+					{@render renderEntry(entry, index)}
+				{/snippet}
+			</VList>
+		{/key}
+	{/if}
+</div>

@@ -1,5 +1,6 @@
 use super::*;
 use crate::acp::types::CanonicalAgentId;
+use crate::cc_sdk::AssistantMessageError;
 use crate::session_jsonl::types::{ContentBlock, HistoryEntry, SessionMessage, StoredEntry};
 use anyhow::Result;
 use std::fs;
@@ -124,6 +125,28 @@ async fn test_extract_thread_metadata_empty_file() {
     let entry = result.unwrap();
     assert_eq!(entry.session_id, session_id);
     assert_eq!(entry.timestamp, 0);
+}
+
+#[tokio::test]
+async fn test_parse_full_session_preserves_assistant_message_error() {
+    let (_temp_dir, claude_dir) = setup_test_claude_dir().unwrap();
+    let projects_dir = claude_dir.join("projects").join("test-project");
+    fs::create_dir_all(&projects_dir).unwrap();
+
+    let session_id = "550e8400-e29b-41d4-a716-446655440000";
+    let file_path = projects_dir.join(format!("{}.jsonl", session_id));
+    let content = r#"{"parentUuid":null,"isSidechain":false,"userType":"external","cwd":"/Users/test","sessionId":"550e8400-e29b-41d4-a716-446655440000","version":"2.1.119","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Failed to authenticate. API Error: 401 {\"error\":{\"message\":\"User not found.\",\"code\":401}}"}]},"error":"authentication_failed","isApiErrorMessage":true,"apiErrorStatus":401,"uuid":"assistant-auth-error","timestamp":"2026-04-27T20:20:29.813Z"}"#;
+    fs::write(&file_path, content).unwrap();
+
+    let session = parse_full_session_from_path(session_id, "/Users/test", &file_path)
+        .await
+        .unwrap();
+
+    assert_eq!(session.messages.len(), 1);
+    assert_eq!(
+        session.messages[0].error,
+        Some(AssistantMessageError::AuthenticationFailed)
+    );
 }
 
 #[tokio::test]
@@ -1385,6 +1408,7 @@ fn test_process_cached_entry_for_project_corrects_mismatch() {
         parent_id: None,
         worktree_path: None,
         pr_number: None,
+        pr_link_mode: None,
         worktree_deleted: None,
         session_lifecycle_state: Some(crate::db::repository::SessionLifecycleState::Persisted),
         sequence_id: None,
@@ -1425,6 +1449,7 @@ fn test_process_cached_entry_for_project_no_change_when_matching() {
         parent_id: None,
         worktree_path: None,
         pr_number: None,
+        pr_link_mode: None,
         worktree_deleted: None,
         session_lifecycle_state: Some(crate::db::repository::SessionLifecycleState::Persisted),
         sequence_id: None,

@@ -1,10 +1,12 @@
 <script lang="ts">
 import type { ActivityEntryQuestion } from "@acepe/ui";
-import { ActivityEntry, ProjectLetterBadge, RichTokenText } from "@acepe/ui";
+import { ActivityEntry, PrChecksSummary, ProjectLetterBadge } from "@acepe/ui";
 import * as DropdownMenu from "@acepe/ui/dropdown-menu";
+import { IconCheck } from "@tabler/icons-svelte";
 import { IconChevronDown } from "@tabler/icons-svelte";
 import { IconChevronRight } from "@tabler/icons-svelte";
 import { IconDotsVertical } from "@tabler/icons-svelte";
+import { IconX } from "@tabler/icons-svelte";
 import { Archive } from "phosphor-svelte";
 import { Tree } from "phosphor-svelte";
 import { COLOR_NAMES, Colors } from "$lib/acp/utils/colors.js";
@@ -38,7 +40,6 @@ import {
 	deriveLiveSessionWorkProjection,
 } from "$lib/acp/store/live-session-work.js";
 import {
-	formatRichSessionTitle,
 	formatSessionTitleForDisplay,
 } from "$lib/acp/store/session-title-policy.js";
 import { createLogger } from "$lib/acp/utils/logger.js";
@@ -51,10 +52,10 @@ import { selectSessionWorkBucket } from "$lib/acp/store/session-work-projection.
 import { sectionColor, type SectionedFeedSectionId } from "@acepe/ui/attention-queue";
 import { useTheme } from "$lib/components/theme/context.svelte.js";
 import { Input } from "$lib/components/ui/input/index.js";
-import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 import { makeWorkspaceRelative } from "$lib/acp/utils/path-utils.js";
 import { tauriClient } from "$lib/utils/tauri-client/index.js";
 import type { SessionDisplayItem as BaseSessionDisplayItem } from "$lib/acp/types/thread-display-item.js";
+import PrChecksSurface from "$lib/acp/components/shared/pr-checks-surface.svelte";
 
 const logger = createLogger({ id: "session-item", name: "Session Item" });
 
@@ -111,6 +112,7 @@ const QUESTION_COLORS = [
 	Colors[COLOR_NAMES.PINK],
 	Colors[COLOR_NAMES.ORANGE],
 ];
+let archiveConfirmOpen = $state(false);
 
 function getThemedAgentIcon(agentId?: string): string {
 	return getAgentIcon(agentId ?? "claude-code", themeState.effectiveTheme);
@@ -150,6 +152,22 @@ function handleChevronClick(event: MouseEvent) {
 
 async function handleArchive() {
 	await onArchive?.(session);
+	archiveConfirmOpen = false;
+}
+
+function handleArchiveClick(event: MouseEvent) {
+	event.stopPropagation();
+	archiveConfirmOpen = true;
+}
+
+function handleCancelArchive(event: MouseEvent) {
+	event.stopPropagation();
+	archiveConfirmOpen = false;
+}
+
+function handleConfirmArchive(event: MouseEvent) {
+	event.stopPropagation();
+	void handleArchive();
 }
 
 async function handleExportMarkdown() {
@@ -227,7 +245,8 @@ const basePadding = 1;
 const paddingLeft = $derived(`${basePadding + depth * 16}px`);
 
 const runtimeState = $derived(sessionStore.getSessionRuntimeState(session.id));
-const hotState = $derived(sessionStore.getHotState(session.id));
+const canonicalProjection = $derived(sessionStore.getCanonicalSessionProjection(session.id));
+const currentModeId = $derived(sessionStore.getSessionCurrentModeId(session.id));
 const currentStreamingToolCall = $derived(operationStore.getCurrentStreamingToolCall(session.id));
 const lastToolCall = $derived(operationStore.getLastToolCall(session.id));
 const lastTodoToolCall = $derived(operationStore.getLastTodoToolCall(session.id));
@@ -241,7 +260,8 @@ const hasUnseenCompletion = $derived(activePanel ? unseenStore.isUnseen(activePa
 const liveSessionState = $derived.by(() =>
 	deriveLiveSessionState({
 		runtimeState,
-		hotState,
+		canonicalProjection,
+		currentModeId,
 		currentStreamingToolCall,
 		interactionSnapshot,
 		hasUnseenCompletion,
@@ -250,7 +270,8 @@ const liveSessionState = $derived.by(() =>
 const sessionWorkProjection = $derived.by(() =>
 	deriveLiveSessionWorkProjection({
 		runtimeState,
-		hotState,
+		canonicalProjection,
+		currentModeId,
 		currentStreamingToolCall,
 		interactionSnapshot,
 		hasUnseenCompletion,
@@ -359,7 +380,11 @@ const statusText = $derived.by(() => {
 	}
 
 	if (sessionWorkProjection.hasError) {
-		return hotState.connectionError ?? "Connection error";
+		const canonicalErrorMessage =
+			canonicalProjection?.lifecycle.errorMessage ??
+			canonicalProjection?.activeTurnFailure?.message ??
+			null;
+		return canonicalErrorMessage ?? "Connection error";
 	}
 
 	if (previewActivityKind === "thinking") {
@@ -430,9 +455,7 @@ const activityEntryToolContent = $derived(
 const activityEntryShowToolShimmer = $derived(
 	suppressPlanApprovalToolPreview ? false : (activityProjection?.showToolShimmer ?? false)
 );
-const richTitleResult = $derived(formatRichSessionTitle(session.title, session.projectName));
-const displayTitle = $derived(richTitleResult.plainText);
-const richTitle = $derived(richTitleResult.richText);
+const displayTitle = $derived(formatSessionTitleForDisplay(session.title, session.projectName));
 
 const queueTimeAgo = $derived(formatTimeAgoSafe(session.updatedAt ?? session.createdAt));
 const sessionBoardStatus = $derived(selectSessionWorkBucket(sessionWorkProjection));
@@ -563,24 +586,30 @@ function handleNextQuestion() {
 }
 </script>
 
-<Tooltip.Root>
-	<Tooltip.Trigger>
-		{#snippet child({ props })}
-		<div
-			{...props}
-			bind:this={rowElement}
-			class="group relative z-10 flex items-stretch gap-1 py-0"
-			style="padding-left: {paddingLeft}; padding-right: {paddingLeft}"
-			data-session-id={session.id}
-			onpointerenter={(e) => {
-				isRowHovered = true;
-				highlightCtx?.updateHighlight(e.currentTarget as HTMLElement);
-			}}
-			onpointerleave={() => {
-				isRowHovered = false;
-				highlightCtx?.clearHighlight();
-			}}
-		>
+{#if session.linkedPr}
+	{#key `${session.projectPath}:${session.linkedPr.prNumber}`}
+		<PrChecksSurface
+			projectPath={session.projectPath}
+			prNumber={session.linkedPr.prNumber}
+			surfaceId={`session-item:${session.id}`}
+		/>
+	{/key}
+{/if}
+
+<div
+	bind:this={rowElement}
+	class="group relative z-10 flex cursor-pointer items-stretch gap-1 overflow-hidden py-0"
+	style="padding-left: {paddingLeft}; padding-right: {paddingLeft}"
+	data-session-id={session.id}
+	onpointerenter={(e) => {
+		isRowHovered = true;
+		highlightCtx?.updateHighlight(e.currentTarget as HTMLElement);
+	}}
+	onpointerleave={() => {
+		isRowHovered = false;
+		highlightCtx?.clearHighlight();
+	}}
+>
 			{#if hasChildren}
 				<button
 					type="button"
@@ -597,25 +626,25 @@ function handleNextQuestion() {
 			{/if}
 
 			<div class="flex-1 min-w-0">
-			{#snippet agentBadge()}
-				<img
-					src={getThemedAgentIcon(session.agentId)}
-					alt={"Agent"}
-					class="{getAgentIconClass()} shrink-0 m-0.5"
-					width="12"
-					height="12"
-				/>
-				{#if session.sequenceId != null && session.projectName != null && session.projectColor != null}
-					<ProjectLetterBadge
-						name={session.projectName}
-						color={session.projectColor}
-						iconSrc={session.projectIconSrc}
-						size={12}
-						sequenceId={session.sequenceId}
-						showLetter={false}
-						class="font-mono"
+				{#snippet agentBadge()}
+					<img
+						src={getThemedAgentIcon(session.agentId)}
+						alt={"Agent"}
+						class="{getAgentIconClass()} shrink-0 m-0.5"
+						width="12"
+						height="12"
 					/>
-				{/if}
+					{#if session.sequenceId != null && session.projectName != null && session.projectColor != null}
+						<ProjectLetterBadge
+							name={session.projectName}
+							color={session.projectColor}
+							iconSrc={session.projectIconSrc}
+							size={12}
+							sequenceId={session.sequenceId}
+							showLetter={false}
+							class="font-mono"
+						/>
+					{/if}
 					{#if session.worktreePath}
 						<Tree
 							size={12}
@@ -637,6 +666,13 @@ function handleNextQuestion() {
 								state={session.prState ?? "OPEN"}
 								size={11}
 							/>
+							{#if session.linkedPr}
+								<PrChecksSummary
+									checks={session.linkedPr.checks}
+									isLoading={session.linkedPr.isChecksLoading}
+									hasResolved={session.linkedPr.hasResolvedChecks}
+								/>
+							{/if}
 							<span class="text-[10px] font-mono leading-none text-muted-foreground">
 								#{session.prNumber}
 							</span>
@@ -647,23 +683,43 @@ function handleNextQuestion() {
 				{#snippet rowActions()}
 					<div class="flex items-center shrink-0">
 						{#if onArchive}
-							<button
-								type="button"
-								class="shrink-0 h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:[&_svg]:text-foreground"
-								onclick={(e) => {
-									e.stopPropagation();
-									void handleArchive();
-								}}
-								aria-label="Archive session"
-								title="Archive"
-							>
-								<Archive
-									class="h-3.5 w-3.5 text-muted-foreground transition-colors"
-									weight="fill"
-									color="currentColor"
-									aria-hidden="true"
-								/>
-							</button>
+							{#if archiveConfirmOpen}
+								<div class="flex items-center gap-1">
+									<button
+										type="button"
+										class="shrink-0 h-5 w-5 flex items-center justify-center rounded bg-destructive/10 text-destructive hover:bg-destructive/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										onclick={handleConfirmArchive}
+										aria-label="Confirm archive session"
+										title="Confirm archive"
+									>
+										<IconCheck class="h-3.5 w-3.5" stroke={2} aria-hidden="true" />
+									</button>
+									<button
+										type="button"
+										class="shrink-0 h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring text-muted-foreground hover:text-foreground"
+										onclick={handleCancelArchive}
+										aria-label="Cancel archive session"
+										title="Cancel"
+									>
+										<IconX class="h-3.5 w-3.5" stroke={2} aria-hidden="true" />
+									</button>
+								</div>
+							{:else}
+								<button
+									type="button"
+									class="shrink-0 h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:[&_svg]:text-foreground"
+									onclick={handleArchiveClick}
+									aria-label="Archive session"
+									title="Archive"
+								>
+									<Archive
+										class="h-3.5 w-3.5 text-muted-foreground transition-colors"
+										weight="fill"
+										color="currentColor"
+										aria-hidden="true"
+									/>
+								</button>
+							{/if}
 						{/if}
 						<DropdownMenu.Root bind:open={isActionsMenuOpen}>
 							<DropdownMenu.Trigger
@@ -735,12 +791,8 @@ function handleNextQuestion() {
 							onclick={(event: MouseEvent) => event.stopPropagation()}
 							aria-label="Rename session"
 						/>
-					{:else if richTitle}
-						<div class="truncate" title={displayTitle}>
-							<RichTokenText text={richTitle} class="text-xs font-medium" />
-						</div>
 					{:else}
-						<div class="text-xs font-medium truncate" title={displayTitle}>
+						<div class="text-xs font-medium truncate">
 							{displayTitle}
 						</div>
 					{/if}
@@ -799,9 +851,3 @@ function handleNextQuestion() {
 				/>
 			</div>
 		</div>
-		{/snippet}
-	</Tooltip.Trigger>
-	<Tooltip.Content side="right" sideOffset={8} class="max-w-60">
-		{displayTitle}
-	</Tooltip.Content>
-</Tooltip.Root>

@@ -4,6 +4,15 @@ The **session lifecycle** is Acepe's canonical model for whether a session is li
 
 It exists so shared code does not have to guess from transport status, frontend hot-state, or provider-specific timing.
 
+Lifecycle is not the whole session-activity answer.
+
+For this pipeline, lifecycle and session activity are related but separate canonical graph-backed fields:
+
+- **lifecycle** answers whether the session is detached, ready, failed, reconnecting, and what actions are allowed,
+- **activity** answers whether the session is awaiting model output, running work, blocked on an interaction, paused, in error, or idle.
+
+Shared UI may render both, but it must not reconstruct session activity from lifecycle alone once the graph activity contract exists.
+
 ## Authority chain
 
 Acepe's lifecycle truth flows through one path:
@@ -120,6 +129,8 @@ Canonical lifecycle payloads also carry fields like:
 
 That is what lets the UI show the right CTA without reconstructing policy from local booleans.
 
+The same rule applies to session activity copy: "Planning next moves", working/tool activity, waiting-for-user prompts, and paused/error affordances must flow from graph-backed activity materialized by desktop stores, not from ad hoc lifecycle/status heuristics.
+
 ## Capability rule
 
 Capabilities follow the same authority discipline as lifecycle:
@@ -134,9 +145,11 @@ flowchart LR
 
 If preview-selected options are invalid at activation time, the supervisor rejects the activation before prompt dispatch and leaves the session correctable.
 
-## Relationship to the current plan stack
+## Relationship to the final GOD stack
 
-- The proving slice establishes this lifecycle model end to end on the root provider path.
-- The follow-on convergence work removes the remaining compatibility bridge, hot-state, and non-canonical desktop derivations.
+- The final GOD stack promotes this seven-state lifecycle into graph materializations.
+- Provider adapters emit facts; only the supervisor/graph reducer emits canonical lifecycle conclusions.
+- Desktop lifecycle, actionability, compact copy, send enablement, retry/resume/archive affordances, and recovery UI derive from canonical selectors.
+- Four-state compatibility projection, hot-state lifecycle authority, and frontend-local send/retry/resume gates are not lifecycle authorities. Any remaining transient projection exists only for non-authoritative compatibility/config/telemetry reactivity while canonical selectors own product behavior.
 
-Conceptually: **prove the authority model first, then converge the rest of the app onto it.**
+Conceptually: **one lifecycle authority, many projections.**

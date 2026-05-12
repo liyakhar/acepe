@@ -9,3 +9,4 @@ export {
 } from "./create-renderer.js";
 
 export { SUPPORTED_LANGUAGES } from "./constants.js";
+export { countWordsInMarkdown } from "./plugins/token-word-wrap.js";

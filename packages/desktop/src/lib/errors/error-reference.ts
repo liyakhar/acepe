@@ -39,6 +39,25 @@ export function createLocalReferenceDetails(): ErrorReferenceDetails {
 	};
 }
 
+/**
+ * Build a deterministic, content-derived local reference id from a stable
+ * fingerprint string (e.g. `${title}|${details}`). Returns the same id for
+ * identical inputs, allowing callers to mint reference ids inside `$derived`
+ * without resorting to `$effect` to keep the id stable across reactive reads.
+ *
+ * Uses a 32-bit FNV-1a hash; collisions are acceptable for support-correlation
+ * UX and the value is rendered as an 8-char lowercase hex code prefixed with
+ * `local-` to make it visually distinguishable from backend correlation ids.
+ */
+export function deriveLocalReferenceId(fingerprint: string): string {
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < fingerprint.length; index += 1) {
+		hash ^= fingerprint.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+	return `local-${hash.toString(16).padStart(8, "0")}`;
+}
+
 export function attachErrorReference<T extends Error>(error: T, details: ErrorReferenceDetails): T {
 	(error as ErrorWithReference).__acepeReferenceDetails = details;
 	return error;

@@ -3,6 +3,7 @@ import type {
 	AgentToolKind,
 	AgentToolStatus,
 } from "../agent-panel/types.js";
+import type { PrChecksItem } from "../pr-checks/types.js";
 import type { SectionedFeedSectionId } from "../attention-queue/types.js";
 
 export interface KanbanToolData {
@@ -19,6 +20,21 @@ export interface KanbanTaskCardData {
 	readonly isStreaming: boolean;
 	readonly latestTool: KanbanToolData | null;
 	readonly toolCalls: readonly AgentToolEntry[];
+}
+
+export interface KanbanPrFooterData {
+	readonly prNumber: number;
+	readonly state: "OPEN" | "CLOSED" | "MERGED";
+	readonly title: string | null;
+	readonly url: string | null;
+	readonly additions: number | null;
+	readonly deletions: number | null;
+	readonly isLoading: boolean;
+	readonly hasResolvedDetails: boolean;
+	readonly checks: readonly PrChecksItem[];
+	readonly isChecksLoading: boolean;
+	readonly hasResolvedChecks: boolean;
+	readonly onOpenCheck?: (check: PrChecksItem, event: MouseEvent) => void;
 }
 
 export interface KanbanCardData {
@@ -45,6 +61,8 @@ export interface KanbanCardData {
 	readonly sequenceId: number | null;
 	readonly isWorktreeSession?: boolean;
 	readonly worktreeDeleted?: boolean;
+	readonly prFooter?: KanbanPrFooterData | null;
+	readonly hideHeaderDiff?: boolean;
 }
 
 export interface KanbanColumnGroup {

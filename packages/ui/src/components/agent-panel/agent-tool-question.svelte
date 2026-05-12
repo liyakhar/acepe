@@ -118,7 +118,7 @@
 
 {#if isAnswered || isCancelled}
 	<!-- Answered / Cancelled: compact embedded card -->
-	<div class="question-card">
+	<div class="question-card text-sm">
 		<EmbeddedPanelHeader class="bg-accent/40">
 			<HeaderTitleCell compactPadding>
 				{#if isCancelled}
@@ -133,7 +133,7 @@
 			</HeaderTitleCell>
 			{#if durationLabel}
 				<HeaderActionCell>
-					<span class="inline-flex items-center px-2 font-mono text-[10px] text-muted-foreground/70">
+					<span class="inline-flex items-center px-2 font-sans text-sm text-muted-foreground/70">
 						{durationLabel}
 					</span>
 				</HeaderActionCell>
@@ -142,21 +142,21 @@
 
 		<div class="question-body">
 			{#if isCancelled}
-				<div class="text-xs text-muted-foreground">{cancelledDescription}</div>
+				<div class="text-sm text-muted-foreground">{cancelledDescription}</div>
 			{:else if questions}
 				{#each questions as question, qIndex (qIndex)}
 					{#if qIndex > 0}
 						<div class="border-t border-border/50 my-2"></div>
 					{/if}
-					<div class="text-xs text-foreground mb-0.5">{question.question}</div>
-					<div class="text-xs text-muted-foreground">{formatAnswerLabels(qIndex)}</div>
+					<div class="text-sm text-foreground mb-0.5">{question.question}</div>
+					<div class="text-sm text-muted-foreground">{formatAnswerLabels(qIndex)}</div>
 				{/each}
 			{/if}
 		</div>
 	</div>
 {:else if questions}
 	<!-- Interactive / Display question UI: embedded card -->
-	<div class="question-card">
+	<div class="question-card text-sm">
 		<!-- Header bar -->
 		<EmbeddedPanelHeader class="bg-accent/40">
 			<HeaderTitleCell compactPadding>
@@ -168,7 +168,7 @@
 			</HeaderTitleCell>
 			{#if durationLabel}
 				<HeaderActionCell>
-					<span class="inline-flex items-center px-2 font-mono text-[10px] text-muted-foreground/70">
+					<span class="inline-flex items-center px-2 font-sans text-sm text-muted-foreground/70">
 						{durationLabel}
 					</span>
 				</HeaderActionCell>
@@ -182,7 +182,7 @@
 					<div class="border-t border-border/50 my-2"></div>
 				{/if}
 
-				<div class="text-xs text-foreground mb-2">{question.question}</div>
+				<div class="text-sm text-foreground mb-2">{question.question}</div>
 				<div class="space-y-1">
 					{#if question.options && question.options.length > 0}
 						{#each question.options as option, i (i)}
@@ -219,9 +219,9 @@
 										<Check size={14} class="text-foreground shrink-0 mt-0.5" />
 									{/if}
 									<div class="flex flex-col min-w-0">
-										<span class="text-xs text-foreground">{option.label}</span>
+										<span class="text-sm text-foreground">{option.label}</span>
 										{#if option.description}
-											<span class="text-xs text-muted-foreground mt-0.5">{option.description}</span>
+											<span class="text-sm text-muted-foreground mt-0.5">{option.description}</span>
 										{/if}
 									</div>
 								</div>
@@ -242,7 +242,7 @@
 								{/if}
 								<input
 									type="text"
-									class="flex-1 px-2 py-1 text-xs rounded-sm border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+									class="flex-1 px-2 py-1 text-sm rounded-sm border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
 									placeholder={otherPlaceholder}
 									value={currentOtherText}
 									oninput={(e) =>
@@ -252,7 +252,7 @@
 								/>
 								<kbd
 									aria-label="Press Enter to submit"
-									class="pointer-events-none inline-flex h-5 shrink-0 items-center justify-center rounded border border-border/60 bg-background/70 px-1.5 font-mono text-[10px] text-muted-foreground/80"
+									class="pointer-events-none inline-flex h-5 shrink-0 items-center justify-center rounded border border-border/60 bg-background/70 px-1.5 font-sans text-sm text-muted-foreground/80"
 								>
 									Enter
 								</kbd>
@@ -292,9 +292,9 @@
 {:else if isPending}
 	<!-- Loading state while questions stream in -->
 	<div class="flex w-full items-center justify-between gap-2">
-		<TextShimmer class="text-xs text-muted-foreground font-medium">{waitingLabel}</TextShimmer>
+		<TextShimmer class="text-sm text-muted-foreground font-medium">{waitingLabel}</TextShimmer>
 		{#if durationLabel}
-			<span class="shrink-0 font-mono text-[10px] text-muted-foreground/70">{durationLabel}</span>
+			<span class="shrink-0 font-sans text-sm text-muted-foreground/70">{durationLabel}</span>
 		{/if}
 	</div>
 {/if}
@@ -308,21 +308,21 @@
 	}
 
 	.question-title {
-		font-size: 0.6875rem;
+		font-size: 0.875rem;
 		font-weight: 600;
-		font-family: var(--font-mono, ui-monospace, monospace);
+		font-family: var(--font-sans, system-ui, sans-serif);
 		color: var(--foreground);
 		user-select: none;
 		line-height: 1;
 	}
 
 	.question-badge {
-		font-size: 0.625rem;
+		font-size: 0.875rem;
 		padding: 1px 6px;
 		border-radius: 0.25rem;
 		background: var(--muted);
 		color: var(--muted-foreground);
-		font-family: var(--font-mono, ui-monospace, monospace);
+		font-family: var(--font-sans, system-ui, sans-serif);
 	}
 
 	.question-body {
@@ -352,9 +352,9 @@
 		gap: 4px;
 		padding: 4px 8px;
 		font: inherit;
-		font-size: 0.625rem;
+		font-size: 0.875rem;
 		font-weight: 500;
-		font-family: var(--font-mono, ui-monospace, monospace);
+		font-family: var(--font-sans, system-ui, sans-serif);
 		color: var(--muted-foreground);
 		background: transparent;
 		border: none;

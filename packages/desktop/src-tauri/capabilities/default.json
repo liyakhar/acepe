@@ -24,6 +24,7 @@
 			]
 		},
 		"pty:default",
+		"mcp-bridge:default",
 		"notification:default",
 		"updater:default",
 		"process:default"

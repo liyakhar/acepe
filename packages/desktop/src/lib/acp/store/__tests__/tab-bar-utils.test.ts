@@ -7,10 +7,15 @@ import {
 	panelToTab,
 } from "../tab-bar-utils.js";
 import type {
+	LifecycleStatus,
+	SessionGraphActivityKind,
+} from "../../../services/acp-types.js";
+import type { CanonicalSessionProjection } from "../canonical-session-projection.js";
+import type {
 	BrowserWorkspacePanel,
 	FileWorkspacePanel,
 	Panel,
-	SessionHotState,
+	SessionTransientProjection,
 	TerminalWorkspacePanel,
 } from "../types.js";
 
@@ -34,20 +39,65 @@ function makePanel(overrides: Partial<Panel> = {}): Panel {
 	};
 }
 
-function makeHotState(overrides: Partial<SessionHotState> = {}): SessionHotState {
+function makeHotState(
+	overrides: Partial<SessionTransientProjection> = {}
+): SessionTransientProjection {
 	return {
-		status: "idle",
-		isConnected: true,
-		turnState: "idle",
 		acpSessionId: null,
-		connectionError: null,
-		autonomousEnabled: false,
 		autonomousTransition: "idle",
-		currentModel: null,
-		currentMode: null,
-		availableCommands: [],
 		statusChangedAt: Date.now(),
 		...overrides,
+	};
+}
+
+function makeCanonicalProjection(
+	status: LifecycleStatus = "ready",
+	activityKind: SessionGraphActivityKind = "idle",
+	currentModeId: string | null = null,
+	errorMessage: string | null = null,
+	activeTurnFailure: CanonicalSessionProjection["activeTurnFailure"] = null
+): CanonicalSessionProjection {
+	return {
+		lifecycle: {
+			status,
+			errorMessage,
+			detachedReason: null,
+			failureReason: null,
+			actionability: {
+				canSend: status === "ready",
+				canResume: status === "detached",
+				canRetry: status === "failed",
+				canArchive: true,
+				canConfigure: status === "ready",
+				recommendedAction: status === "ready" ? "send" : "wait",
+				recoveryPhase: "none",
+				compactStatus: status,
+			},
+		},
+		activity: {
+			kind: activityKind,
+			activeOperationCount: activityKind === "running_operation" ? 1 : 0,
+			activeSubagentCount: 0,
+			dominantOperationId: activityKind === "running_operation" ? "op-1" : null,
+			blockingInteractionId: null,
+		},
+		turnState: activityKind === "idle" ? "Idle" : "Running",
+		activeTurnFailure,
+		lastTerminalTurnId: null,
+		capabilities: {
+			models: null,
+			modes: currentModeId === null ? null : { currentModeId, availableModes: [] },
+			availableCommands: [],
+			configOptions: [],
+			autonomousEnabled: false,
+		},
+		tokenStream: new Map(),
+		clockAnchor: null,
+		revision: {
+			graphRevision: 1,
+			transcriptRevision: 1,
+			lastEventSeq: 1,
+		},
 	};
 }
 
@@ -104,9 +154,9 @@ describe("panelToTab", () => {
 			expect(tab.isFocused).toBe(false);
 		});
 
-		it("extracts currentModeId from hotState", () => {
+		it("extracts currentModeId from canonical projection", () => {
 			const tab = panelToTab(
-				makeInput({ hotState: makeHotState({ currentMode: { id: "plan", name: "Plan" } }) })
+				makeInput({ canonicalProjection: makeCanonicalProjection("ready", "idle", "plan") })
 			);
 			expect(tab.currentModeId).toBe("plan");
 		});
@@ -141,58 +191,92 @@ describe("panelToTab", () => {
 	});
 
 	describe("state derivation — various panel states", () => {
-		it("derives connected streaming state from status=streaming", () => {
-			const tab = panelToTab(makeInput({ hotState: makeHotState({ status: "streaming" }) }));
+		it("derives connected thinking state from canonical awaiting-model activity", () => {
+			const tab = panelToTab(
+				makeInput({ canonicalProjection: makeCanonicalProjection("ready", "awaiting_model") })
+			);
 			expect(tab.state.connection).toBe("connected");
+			expect(tab.state.activity.kind).toBe("thinking");
+		});
+
+		it("derives connecting state from canonical activating lifecycle", () => {
+			const tab = panelToTab(
+				makeInput({ canonicalProjection: makeCanonicalProjection("activating", "idle") })
+			);
+			expect(tab.state.connection).toBe("connecting");
+		});
+
+		it("prefers graph-backed running activity over missing live tool-call truthiness", () => {
+			const tab = panelToTab(
+				makeInput({
+					canonicalProjection: makeCanonicalProjection("ready", "running_operation", "build"),
+					runtimeState: {
+						connectionPhase: "connected",
+						contentPhase: "loaded",
+						activityPhase: "idle",
+						canSubmit: true,
+						canCancel: false,
+						showStop: false,
+						showThinking: false,
+						showConnectingOverlay: false,
+						showConversation: true,
+						showReadyPlaceholder: false,
+					},
+					currentStreamingToolCall: null,
+				})
+			);
+
+			expect(tab.workBucket).toBe("working");
 			expect(tab.state.activity.kind).toBe("streaming");
 		});
 
-		it("derives connecting state from status=connecting", () => {
-			const tab = panelToTab(makeInput({ hotState: makeHotState({ status: "connecting" }) }));
+		it("derives connecting state from canonical reconnecting lifecycle", () => {
+			const tab = panelToTab(
+				makeInput({ canonicalProjection: makeCanonicalProjection("reconnecting", "idle") })
+			);
 			expect(tab.state.connection).toBe("connecting");
 		});
 
-		it("derives connecting state from status=loading", () => {
-			const tab = panelToTab(makeInput({ hotState: makeHotState({ status: "loading" }) }));
-			expect(tab.state.connection).toBe("connecting");
-		});
-
-		it("derives error state from status=error", () => {
-			const tab = panelToTab(makeInput({ hotState: makeHotState({ status: "error" }) }));
+		it("derives error state from canonical failed lifecycle", () => {
+			const tab = panelToTab(
+				makeInput({ canonicalProjection: makeCanonicalProjection("failed", "idle") })
+			);
 			expect(tab.state.connection).toBe("error");
 		});
 
-		it("classifies connectionError-only sessions as error work buckets", () => {
+		it("classifies canonical connection errors as error work buckets", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({ status: "ready", connectionError: "Resume failed" }),
+					canonicalProjection: makeCanonicalProjection(
+						"failed",
+						"idle",
+						null,
+						"Resume failed"
+					),
 				})
 			);
-			expect(tab.state.connection).toBe("connected");
+			expect(tab.state.connection).toBe("error");
 			expect(tab.workBucket).toBe("error");
 		});
 
-		it("classifies activeTurnFailure-only sessions as error work buckets", () => {
+		it("classifies canonical activeTurnFailure sessions as error work buckets", () => {
 			const tab = panelToTab(
 				makeInput({
-					hotState: makeHotState({
-						status: "ready",
-						activeTurnFailure: {
-							turnId: "turn-1",
-							message: "Usage limit reached",
-							code: "429",
-							kind: "recoverable",
-							source: "process",
-						},
+					canonicalProjection: makeCanonicalProjection("ready", "idle", null, null, {
+						turnId: "turn-1",
+						message: "Usage limit reached",
+						code: "429",
+						kind: "recoverable",
+						source: "process",
 					}),
 				})
 			);
-			expect(tab.state.connection).toBe("connected");
+			expect(tab.state.connection).toBe("error");
 			expect(tab.workBucket).toBe("error");
 		});
 
 		it("derives disconnected state from status=idle (no session)", () => {
-			const tab = panelToTab(makeInput({ hotState: makeHotState({ status: "idle" }) }));
+			const tab = panelToTab(makeInput({ canonicalProjection: null }));
 			expect(tab.state.connection).toBe("disconnected");
 		});
 
@@ -260,8 +344,10 @@ describe("panelToTab", () => {
 			expect(tab.state.attention.hasUnseenCompletion).toBe(true);
 		});
 
-		it("derives paused state from status=paused", () => {
-			const tab = panelToTab(makeInput({ hotState: makeHotState({ status: "paused" }) }));
+		it("derives paused state from canonical paused activity", () => {
+			const tab = panelToTab(
+				makeInput({ canonicalProjection: makeCanonicalProjection("ready", "paused") })
+			);
 			expect(tab.state.activity.kind).toBe("paused");
 		});
 
@@ -280,7 +366,7 @@ describe("panelToTab", () => {
 						showConversation: true,
 						showReadyPlaceholder: false,
 					},
-					hotState: makeHotState({ status: "ready" }),
+					canonicalProjection: makeCanonicalProjection("ready", "idle"),
 				})
 			);
 			expect(tab.state.activity.kind).toBe("thinking");

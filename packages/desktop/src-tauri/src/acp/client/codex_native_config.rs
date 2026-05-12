@@ -199,6 +199,8 @@ pub fn build_codex_native_new_session_response_with_state(
 ) -> NewSessionResponse {
     NewSessionResponse {
         session_id,
+        creation_attempt_id: None,
+        deferred_creation: false,
         sequence_id: None,
         session_open: None,
         models: build_codex_native_session_model_state_with_state(state),
@@ -326,7 +328,7 @@ fn build_collaboration_mode(
     }
 }
 
-fn build_codex_native_session_model_state_with_state(
+pub(crate) fn build_codex_native_session_model_state_with_state(
     state: &CodexNativeConfigState,
 ) -> SessionModelState {
     let current_model_id = normalize_model_id(&state.current_model_id);

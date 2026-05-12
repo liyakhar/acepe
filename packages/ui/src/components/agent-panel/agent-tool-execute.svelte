@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { Terminal, CheckCircle, XCircle, CaretDown } from "phosphor-svelte";
-	import { TextShimmer } from "../text-shimmer/index.js";
+	import { CheckCircle, XCircle, CaretDown } from "phosphor-svelte";
 	import AgentToolCard from "./agent-tool-card.svelte";
-	import { Colors } from "../../lib/colors.js";
+	import ToolHeaderLeading from "./tool-header-leading.svelte";
 	import type { AgentToolStatus } from "./types.js";
 	import {
 		splitCommandSegments,
@@ -48,7 +47,7 @@
 		ariaExpandOutput = "Expand output",
 	}: Props = $props();
 
-	let isExpanded = $state(true);
+	let isExpanded = $state(false);
 
 	const isPending = $derived(status === "pending" || status === "running");
 	const isSuccess = $derived(exitCode === 0);
@@ -71,6 +70,10 @@
 		if (isPending) {
 			return durationLabel ? `Executing for ${durationLabel}` : runningLabel;
 		}
+		if (status === "blocked") return "Blocked";
+		if (status === "degraded") return "Degraded";
+		if (status === "cancelled") return "Cancelled";
+		if (status === "error") return "Command failed";
 		return durationLabel ? `Executed in ${durationLabel}` : finishedLabel;
 	});
 
@@ -100,18 +103,12 @@
 
 <AgentToolCard>
 	<!-- ── Header ── -->
-	<div class="flex h-7 items-center gap-1.5 px-2.5">
-		<Terminal weight="fill" size={12} class="shrink-0" style="color: {Colors.purple}" />
-
-		{#if isPending}
-			<TextShimmer class="flex-1 text-xs leading-none">
+	<div class="flex h-7 items-center gap-2 px-2.5">
+		<div class="flex-1 truncate">
+			<ToolHeaderLeading kind="execute" status={status}>
 				{headerText}
-			</TextShimmer>
-		{:else}
-			<span class="flex-1 text-xs text-muted-foreground">
-				{headerText}
-			</span>
-		{/if}
+			</ToolHeaderLeading>
+		</div>
 
 		<div class="ml-auto flex shrink-0 items-center gap-1.5">
 
@@ -199,8 +196,8 @@
 	}
 
 	.execute-block {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.75rem;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.875rem;
 		line-height: 1.4;
 		white-space: pre-wrap;
 		word-break: break-all;
@@ -259,8 +256,8 @@
 	}
 
 	.execute-output {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.6875rem;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.875rem;
 		line-height: 1.5;
 		margin: 0;
 		white-space: pre-wrap;
@@ -282,8 +279,8 @@
 
 	/* Shiki-highlighted streams (log grammar, dual-theme spans) */
 	.execute-output-shiki {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.6875rem;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.875rem;
 		line-height: 1.5;
 		margin: 0;
 		white-space: pre-wrap;
@@ -293,6 +290,17 @@
 	.execute-output-shiki :global(.line) {
 		display: block;
 		min-height: 1.5em;
+	}
+
+	/* Shiki dual-theme token coloring */
+	.execute-block :global(span),
+	.execute-output-shiki :global(span) {
+		color: var(--shiki-light);
+	}
+
+	:global(.dark) .execute-block :global(span),
+	:global(.dark) .execute-output-shiki :global(span) {
+		color: var(--shiki-dark);
 	}
 
 	.execute-output-shiki.execute-output-stderr.execute-stderr-warn {

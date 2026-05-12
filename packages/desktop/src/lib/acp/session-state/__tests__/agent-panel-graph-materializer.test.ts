@@ -1,0 +1,1472 @@
+import { describe, expect, it } from "bun:test";
+import type {
+	InteractionSnapshot,
+	OperationSnapshot,
+	SessionGraphActionability,
+	SessionGraphActivity,
+	SessionGraphCapabilities,
+	SessionGraphLifecycle,
+	SessionStateGraph,
+	TranscriptEntry,
+	TranscriptSnapshot,
+} from "../../../services/acp-types.js";
+import {
+	AGENT_PANEL_SCENE_TEXT_LIMITS,
+	applySceneTextLimits,
+	materializeAgentPanelSceneFromGraph,
+} from "../agent-panel-graph-materializer.js";
+import type { AgentToolEntry, AgentUserEntry } from "@acepe/ui/agent-panel";
+import type { SessionEntry } from "../../application/dto/session-entry.js";
+
+function createActionability(): SessionGraphActionability {
+	return {
+		canSend: true,
+		canResume: false,
+		canRetry: false,
+		canArchive: true,
+		canConfigure: true,
+		recommendedAction: "send",
+		recoveryPhase: "none",
+		compactStatus: "ready",
+	};
+}
+
+function createLifecycle(): SessionGraphLifecycle {
+	return {
+		status: "ready",
+		actionability: createActionability(),
+	};
+}
+
+function createActivity(): SessionGraphActivity {
+	return {
+		kind: "idle",
+		activeOperationCount: 0,
+		activeSubagentCount: 0,
+		dominantOperationId: null,
+		blockingInteractionId: null,
+	};
+}
+
+function createCapabilities(): SessionGraphCapabilities {
+	return {
+		models: null,
+		modes: null,
+		availableCommands: [],
+		configOptions: [],
+		autonomousEnabled: false,
+	};
+}
+
+function createTranscriptEntry(
+	entryId: string,
+	role: TranscriptEntry["role"],
+	text: string
+): TranscriptEntry {
+	return createTranscriptEntryFromSegments(entryId, role, [text]);
+}
+
+function createTranscriptEntryFromSegments(
+	entryId: string,
+	role: TranscriptEntry["role"],
+	segments: readonly string[],
+	attemptId?: string | null
+): TranscriptEntry {
+	return {
+		entryId,
+		role,
+		segments: segments.map((text, index) => {
+			return {
+				kind: "text" as const,
+				segmentId: `${entryId}-segment-${index + 1}`,
+				text,
+			};
+		}),
+		attemptId: attemptId ?? null,
+	};
+}
+
+function createTranscriptSnapshot(entries: TranscriptEntry[]): TranscriptSnapshot {
+	return {
+		revision: 7,
+		entries,
+	};
+}
+
+function createOperationSnapshot(overrides: Partial<OperationSnapshot> = {}): OperationSnapshot {
+	return {
+		id: overrides.id ?? "op:session-1:tool-1",
+		session_id: overrides.session_id ?? "session-1",
+		tool_call_id: overrides.tool_call_id ?? "tool-1",
+		name: overrides.name ?? "bash",
+		kind: overrides.kind ?? "execute",
+		provider_status: overrides.provider_status ?? "completed",
+		title: overrides.title ?? "Run",
+		arguments: overrides.arguments ?? { kind: "execute", command: "bun test" },
+		progressive_arguments: overrides.progressive_arguments ?? null,
+		result: overrides.result ?? { stdout: "ok", stderr: null, exitCode: 0 },
+		command: overrides.command ?? "bun test",
+		normalized_todos: overrides.normalized_todos ?? null,
+		parent_tool_call_id: overrides.parent_tool_call_id ?? null,
+		parent_operation_id: overrides.parent_operation_id ?? null,
+		child_tool_call_ids: overrides.child_tool_call_ids ?? [],
+		child_operation_ids: overrides.child_operation_ids ?? [],
+		operation_provenance_key: overrides.operation_provenance_key ?? "tool-1",
+		operation_state: overrides.operation_state ?? "completed",
+		locations: overrides.locations ?? null,
+		skill_meta: overrides.skill_meta ?? null,
+		normalized_questions: overrides.normalized_questions ?? null,
+		question_answer: overrides.question_answer ?? null,
+		awaiting_plan_approval: overrides.awaiting_plan_approval ?? false,
+		plan_approval_request_id: overrides.plan_approval_request_id ?? null,
+		started_at_ms: overrides.started_at_ms ?? null,
+		completed_at_ms: overrides.completed_at_ms ?? null,
+		source_link: overrides.source_link ?? {
+			kind: "transcript_linked",
+			entry_id: "tool-1",
+		},
+		degradation_reason: overrides.degradation_reason ?? null,
+	};
+}
+
+function createQuestionInteraction(input: {
+	id: string;
+	jsonRpcRequestId: number | null;
+	replyHandler:
+		| {
+				kind: "json_rpc";
+				requestId: string;
+		  }
+		| {
+				kind: "http";
+				requestId: string;
+		  };
+}): InteractionSnapshot {
+	return {
+		id: input.id,
+		session_id: "session-1",
+		kind: "Question",
+		state: "Pending",
+		json_rpc_request_id: input.jsonRpcRequestId,
+		reply_handler: input.replyHandler,
+		tool_reference: {
+			messageId: "",
+			callId: input.id,
+		},
+		responded_at_event_seq: null,
+		response: null,
+		payload: {
+			Question: {
+				id: input.id,
+				sessionId: "session-1",
+				jsonRpcRequestId: input.jsonRpcRequestId,
+				replyHandler: input.replyHandler,
+				questions: [
+					{
+						question: "Which archive button should get the confirm step?",
+						header: "Location",
+						options: [
+							{
+								label: "Sidebar session list",
+								description: "Archive action on sessions in the left sidebar",
+							},
+							{
+								label: "Settings table",
+								description: "Archive item in the settings table",
+							},
+						],
+						multiSelect: false,
+					},
+				],
+				tool: {
+					messageId: "",
+					callId: input.id,
+				},
+			},
+		},
+		canonical_operation_id: null,
+	};
+}
+
+function createGraph(input: {
+	transcriptSnapshot: TranscriptSnapshot;
+	operations?: OperationSnapshot[];
+	interactions?: InteractionSnapshot[];
+	turnState?: SessionStateGraph["turnState"];
+	lastAgentMessageId?: string | null;
+	lifecycle?: SessionGraphLifecycle;
+	activity?: SessionGraphActivity;
+}): SessionStateGraph {
+	const lifecycle = input.lifecycle ?? createLifecycle();
+	const activity = input.activity ?? createActivity();
+	return {
+		requestedSessionId: "session-1",
+		canonicalSessionId: "session-1",
+		isAlias: false,
+		agentId: "claude-code",
+		projectPath: "/repo",
+		worktreePath: null,
+		sourcePath: null,
+		revision: {
+			graphRevision: 9,
+			transcriptRevision: input.transcriptSnapshot.revision,
+			lastEventSeq: 42,
+		},
+		transcriptSnapshot: input.transcriptSnapshot,
+		operations: input.operations ?? [],
+		interactions: input.interactions ?? [],
+		turnState: input.turnState ?? "Completed",
+		messageCount: input.transcriptSnapshot.entries.length,
+		lastAgentMessageId: input.lastAgentMessageId ?? null,
+		activeTurnFailure: null,
+		lastTerminalTurnId: null,
+		lifecycle,
+		activity,
+		capabilities: createCapabilities(),
+	};
+}
+
+describe("agent panel graph materializer", () => {
+	it("renders only the blocking pending question interaction when duplicate question records exist", () => {
+		const transcriptSnapshot = createTranscriptSnapshot([
+			createTranscriptEntry("user-1", "user", "Can you retry the AskUserQuestion?"),
+		]);
+		const graph = createGraph({
+			transcriptSnapshot,
+			turnState: "Running",
+			activity: {
+				kind: "waiting_for_user",
+				activeOperationCount: 0,
+				activeSubagentCount: 0,
+				dominantOperationId: null,
+				blockingInteractionId: "question-1",
+			},
+			interactions: [
+				createQuestionInteraction({
+					id: "question-1",
+					jsonRpcRequestId: 1,
+					replyHandler: {
+						kind: "json_rpc",
+						requestId: "1",
+					},
+				}),
+				createQuestionInteraction({
+					id: "question-duplicate",
+					jsonRpcRequestId: null,
+					replyHandler: {
+						kind: "http",
+						requestId: "question-duplicate",
+					},
+				}),
+			],
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Question session",
+			},
+		});
+
+		expect(scene.conversation.entries).toHaveLength(2);
+		expect(scene.conversation.entries.map((entry) => entry.id)).toEqual(["user-1", "question-1"]);
+		expect(scene.conversation.entries[1]).toMatchObject({
+			id: "question-1",
+			type: "tool_call",
+			title: "Question",
+			status: "running",
+			question: {
+				question: "Which archive button should get the confirm step?",
+				header: "Location",
+				options: [
+					{
+						label: "Sidebar session list",
+						description: "Archive action on sessions in the left sidebar",
+					},
+					{
+						label: "Settings table",
+						description: "Archive item in the settings table",
+					},
+				],
+				multiSelect: false,
+			},
+		});
+	});
+
+	it("materializes rich tool entries from canonical operations instead of transcript placeholders", () => {
+		const transcriptSnapshot = createTranscriptSnapshot([
+			createTranscriptEntry("user-1", "user", "Run the checks"),
+			createTranscriptEntry("tool-1", "tool", "Run"),
+			createTranscriptEntry("assistant-1", "assistant", "Checks are green."),
+		]);
+		const graph = createGraph({
+			transcriptSnapshot,
+			operations: [createOperationSnapshot()],
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.status).toBe("done");
+		expect(scene.conversation.entries[0]).toEqual({
+			id: "user-1",
+			type: "user",
+			text: "Run the checks",
+		});
+		expect(scene.conversation.entries[1]).toMatchObject({
+			id: "tool-1",
+			type: "tool_call",
+			kind: "execute",
+			title: "Run",
+			command: "bun test",
+			stdout: "ok",
+			status: "done",
+			presentationState: "resolved",
+		});
+		expect(scene.conversation.entries[2]).toEqual({
+			id: "assistant-1",
+			type: "assistant",
+			markdown: "Checks are green.",
+			message: {
+				chunks: [
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: "Checks are green.",
+						},
+					},
+				],
+			},
+			isStreaming: false,
+		});
+	});
+
+	it("preserves editDiffs through scene text limit filtering for edit tool calls", () => {
+		const transcriptSnapshot = createTranscriptSnapshot([
+			createTranscriptEntry("user-1", "user", "Apply the patch"),
+			createTranscriptEntry("tool-edit", "tool", "Edit"),
+		]);
+		const graph = createGraph({
+			transcriptSnapshot,
+			operations: [
+				createOperationSnapshot({
+					id: "op:session-1:tool-edit",
+					tool_call_id: "tool-edit",
+					name: "Edit",
+					kind: "edit",
+					title: "Edit",
+					command: null,
+					arguments: {
+						kind: "edit",
+						edits: [
+							{
+								filePath: "/repo/foo.ts",
+								oldString: "const x = 1;",
+								newString: "const x = 2;",
+							},
+						],
+					},
+					result: null,
+					source_link: { kind: "transcript_linked", entry_id: "tool-edit" },
+				}),
+			],
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: { title: "Edit session" },
+		});
+
+		const editEntry = scene.conversation.entries.find(
+			(entry) => entry.type === "tool_call" && entry.kind === "edit"
+		);
+		expect(editEntry).toBeDefined();
+		expect(editEntry).toMatchObject({
+			kind: "edit",
+			editDiffs: [
+				{
+					filePath: "/repo/foo.ts",
+					oldString: "const x = 1;",
+					newString: "const x = 2;",
+				},
+			],
+		});
+	});
+
+	it("preserves lifecycle actionability and resume actions in the scene contract", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("assistant-1", "assistant", "Restored history."),
+			]),
+			turnState: "Idle",
+			lifecycle: {
+				status: "detached",
+				detachedReason: "restoredRequiresAttach",
+				failureReason: null,
+				errorMessage: null,
+				actionability: {
+					canSend: false,
+					canResume: true,
+					canRetry: false,
+					canArchive: true,
+					canConfigure: false,
+					recommendedAction: "resume",
+					recoveryPhase: "detached",
+					compactStatus: "detached",
+				},
+			},
+			activity: {
+				kind: "paused",
+				activeOperationCount: 0,
+				activeSubagentCount: 0,
+				dominantOperationId: null,
+				blockingInteractionId: null,
+			},
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.status).toBe("idle");
+		expect(scene.lifecycle).toMatchObject({
+			status: "detached",
+			detachedReason: "restoredRequiresAttach",
+			actionability: {
+				canResume: true,
+				recommendedAction: "resume",
+				recoveryPhase: "detached",
+			},
+		});
+		expect(scene.header.actions).toEqual([
+			{
+				id: "status.resume",
+				label: "Resume",
+				state: "enabled",
+			},
+			{
+				id: "status.archive",
+				label: "Archive",
+				state: "enabled",
+			},
+		]);
+	});
+
+	it("surfaces canonical turn failures as error status before lifecycle catches up", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("assistant-1", "assistant", "Rate limited."),
+			]),
+			turnState: "Failed",
+			lifecycle: createLifecycle(),
+			activity: {
+				kind: "error",
+				activeOperationCount: 0,
+				activeSubagentCount: 0,
+				dominantOperationId: null,
+				blockingInteractionId: null,
+			},
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.status).toBe("error");
+		expect(scene.header.status).toBe("error");
+	});
+
+	it("concatenates assistant transcript token segments without markdown line breaks", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntryFromSegments("assistant-1", "assistant", [
+					"The fl",
+					"icker is",
+					" caused by co",
+					"arse-grained reactivity.",
+				]),
+			]),
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toEqual({
+			id: "assistant-1",
+			type: "assistant",
+			markdown: "The flicker is caused by coarse-grained reactivity.",
+			message: {
+				chunks: [
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: "The fl",
+						},
+					},
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: "icker is",
+						},
+					},
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: " caused by co",
+						},
+					},
+					{
+						type: "message",
+						block: {
+							type: "text",
+							text: "arse-grained reactivity.",
+						},
+					},
+				],
+			},
+			isStreaming: false,
+		});
+	});
+
+	it("renders committed missing-operation tool rows as explicit degraded presentation", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("tool-missing", "tool", "Provider said a tool ran"),
+			]),
+			operations: [],
+			turnState: "Completed",
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toMatchObject({
+			id: "tool-missing",
+			type: "tool_call",
+			kind: "other",
+			status: "degraded",
+			title: "Unresolved tool",
+			subtitle: "Provider said a tool ran",
+			presentationState: "degraded_operation",
+			degradedReason: "No canonical operation was found for this restored transcript tool row.",
+		});
+	});
+
+	it("does not join transcript rows through coincidental operation ids", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("tool-coincidental", "tool", "Provider said a tool ran"),
+			]),
+			operations: [
+				createOperationSnapshot({
+					id: "tool-coincidental",
+					tool_call_id: "tool-coincidental",
+					operation_provenance_key: "tool-coincidental",
+					source_link: {
+						kind: "synthetic",
+						reason: "synthetic_test_operation",
+					},
+				}),
+			],
+			turnState: "Completed",
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toMatchObject({
+			id: "tool-coincidental",
+			type: "tool_call",
+			kind: "other",
+			status: "degraded",
+			title: "Unresolved tool",
+			presentationState: "degraded_operation",
+		});
+	});
+
+	it("uses canonical operation state instead of provider status for presentation", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("tool-1", "tool", "Run"),
+			]),
+			operations: [
+				createOperationSnapshot({
+					provider_status: "completed",
+					operation_state: "degraded",
+					degradation_reason: {
+						code: "classification_failure",
+						detail: "Tool classification was insufficient for canonical presentation.",
+					},
+				}),
+			],
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toMatchObject({
+			id: "tool-1",
+			type: "tool_call",
+			status: "degraded",
+			presentationState: "degraded_operation",
+			degradedReason: "Tool operation could not be classified safely.",
+		});
+	});
+
+	it("renders valid unclassified operations without degraded warning styling", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("tool-1", "tool", "write_bash"),
+			]),
+			operations: [
+				createOperationSnapshot({
+					name: "write_bash",
+					kind: "unclassified",
+					title: "",
+					arguments: {
+						kind: "unclassified",
+						raw_name: "write_bash",
+						raw_kind_hint: null,
+						title: null,
+						arguments_preview: null,
+						signals_tried: ["ProviderNameMap", "ArgumentShape"],
+					},
+					provider_status: "completed",
+					operation_state: "completed",
+					degradation_reason: null,
+				}),
+			],
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toMatchObject({
+			id: "tool-1",
+			type: "tool_call",
+			kind: "other",
+			status: "done",
+			title: "Write Bash",
+			presentationState: "resolved",
+		});
+	});
+
+	it("renders blocked from canonical operation state even when provider status is stale", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([createTranscriptEntry("tool-1", "tool", "Run")]),
+			operations: [
+				createOperationSnapshot({
+					provider_status: "completed",
+					operation_state: "blocked",
+				}),
+			],
+			turnState: "Running",
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toMatchObject({
+			id: "tool-1",
+			type: "tool_call",
+			status: "blocked",
+			presentationState: "resolved",
+		});
+	});
+
+	it("keeps live transcript-before-operation races pending until canonical operation data arrives", () => {
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("tool-live", "tool", "Run"),
+			]),
+			operations: [],
+			turnState: "Running",
+			activity: {
+				kind: "awaiting_model",
+				activeOperationCount: 0,
+				activeSubagentCount: 0,
+				dominantOperationId: null,
+				blockingInteractionId: null,
+			},
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Live session",
+			},
+		});
+
+		expect(scene.conversation.entries[0]).toMatchObject({
+			id: "tool-live",
+			type: "tool_call",
+			kind: "other",
+			status: "pending",
+			title: "Tool pending",
+			presentationState: "pending_operation",
+		});
+	});
+
+	it("recursively materializes task children from canonical child operations", () => {
+		const transcriptSnapshot = createTranscriptSnapshot([
+			createTranscriptEntry("task-entry", "tool", "Task completed"),
+		]);
+		const parentOperation = createOperationSnapshot({
+			id: "operation-parent",
+			tool_call_id: "task-tool",
+			name: "task",
+			kind: "task",
+			title: "Task completed",
+			arguments: {
+				kind: "think",
+				description: "Run subagent",
+				prompt: "Investigate",
+				subagent_type: "general-purpose",
+				skill: null,
+				skill_args: null,
+				raw: null,
+			},
+			result: "done",
+			command: null,
+			child_tool_call_ids: ["child-tool"],
+			child_operation_ids: ["operation-child"],
+			operation_provenance_key: "task-tool",
+			source_link: {
+				kind: "transcript_linked",
+				entry_id: "task-entry",
+			},
+		});
+		const childOperation = createOperationSnapshot({
+			id: "operation-child",
+			tool_call_id: "child-tool",
+			name: "bash",
+			kind: "execute",
+			title: "Run",
+			arguments: { kind: "execute", command: "bun test src/lib/acp" },
+			result: { stdout: "child ok", stderr: null, exitCode: 0 },
+			command: "bun test src/lib/acp",
+			parent_tool_call_id: "task-tool",
+			parent_operation_id: "operation-parent",
+			child_tool_call_ids: [],
+			child_operation_ids: [],
+			operation_provenance_key: "child-tool",
+			source_link: {
+				kind: "synthetic",
+				reason: "task_child_operation",
+			},
+		});
+		const graph = createGraph({
+			transcriptSnapshot,
+			operations: [parentOperation, childOperation],
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+		const taskEntry = scene.conversation.entries[0];
+		if (taskEntry.type !== "tool_call" || !taskEntry.taskChildren) {
+			throw new Error("Expected task tool with children");
+		}
+
+		expect(taskEntry).toMatchObject({
+			type: "tool_call",
+			kind: "task",
+			taskDescription: "Run subagent",
+			taskResultText: "done",
+			presentationState: "resolved",
+		});
+		expect(taskEntry.taskChildren[0]).toMatchObject({
+			type: "tool_call",
+			kind: "execute",
+			command: "bun test src/lib/acp",
+			stdout: "child ok",
+			status: "done",
+			presentationState: "resolved",
+		});
+	});
+
+	it("bounds display output before values enter scene DTOs", () => {
+		const longOutput = "x".repeat(AGENT_PANEL_SCENE_TEXT_LIMITS.output + 100);
+		const graph = createGraph({
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("tool-1", "tool", "Run"),
+			]),
+			operations: [
+				createOperationSnapshot({
+					result: { stdout: longOutput, stderr: null, exitCode: 0 },
+				}),
+			],
+		});
+
+		const scene = materializeAgentPanelSceneFromGraph({
+			panelId: "panel-1",
+			graph,
+			header: {
+				title: "Restored session",
+			},
+		});
+		const entry = scene.conversation.entries[0];
+		if (entry.type !== "tool_call") {
+			throw new Error("Expected tool entry");
+		}
+
+		expect(entry.stdout?.length).toBeLessThan(longOutput.length);
+		expect(entry.stdout?.endsWith("[truncated]")).toBe(true);
+	});
+
+	it("applySceneTextLimits passes through every populated AgentToolEntry field unchanged except the declared truncation targets", () => {
+		const fullEntry: AgentToolEntry = {
+			id: "tool-1",
+			type: "tool_call",
+			kind: "execute",
+			title: "Run build",
+			subtitle: "in repo root",
+			detailsText: "short details",
+			scriptText: "echo hello",
+			editDiffs: [
+				{
+					filePath: "/repo/foo.ts",
+					oldString: "a",
+					newString: "b",
+				},
+			],
+			filePath: "/repo/foo.ts",
+			sourceExcerpt: "const x = 1;",
+			sourceRangeLabel: "L1-L1",
+			status: "done",
+			command: "bun run build",
+			stdout: "build ok",
+			stderr: "",
+			exitCode: 0,
+			query: "needle",
+			searchPath: "/repo",
+			searchFiles: ["/repo/a.ts", "/repo/b.ts"],
+			searchResultCount: 2,
+			searchMode: "content",
+			searchNumFiles: 2,
+			searchNumMatches: 4,
+			searchMatches: [
+				{
+					filePath: "/repo/a.ts",
+					fileName: "a.ts",
+					lineNumber: 1,
+					content: "needle",
+					isMatch: true,
+				},
+			],
+			url: "https://example.com",
+			resultText: "result body",
+			webSearchLinks: [
+				{ title: "T", url: "https://example.com", domain: "example.com" },
+			],
+			webSearchSummary: "summary",
+			skillName: "ce-debug",
+			skillArgs: "--quick",
+			skillDescription: "debug",
+			taskDescription: "task desc",
+			taskPrompt: "task prompt",
+			taskResultText: "task result",
+			taskChildren: [
+				{
+					id: "child-1",
+					type: "tool_call",
+					title: "Child tool",
+					status: "done",
+				},
+			],
+			presentationState: "resolved",
+			degradedReason: null,
+			todos: [{ content: "do it", status: "pending" }],
+			question: { question: "Pick one", options: [{ label: "A" }] },
+			lintDiagnostics: [
+				{ filePath: "/repo/a.ts", line: 1, severity: "error", message: "boom" },
+			],
+		};
+
+		const limited = applySceneTextLimits(fullEntry);
+
+		// Every key present in the input must be present in the output.
+		// This is the structural contract that protects against the allow-list
+		// footgun: if someone reverts to manual rebuild and forgets a field,
+		// this check fails for that field.
+		for (const key of Object.keys(fullEntry) as Array<keyof AgentToolEntry>) {
+			expect(limited).toHaveProperty(key);
+		}
+
+		// Non-truncated fields are pass-through (reference-equal where applicable).
+		expect(limited.id).toBe(fullEntry.id);
+		expect(limited.kind).toBe(fullEntry.kind);
+		expect(limited.title).toBe(fullEntry.title);
+		expect(limited.subtitle).toBe(fullEntry.subtitle);
+		expect(limited.scriptText).toBe(fullEntry.scriptText);
+		expect(limited.editDiffs).toBe(fullEntry.editDiffs);
+		expect(limited.filePath).toBe(fullEntry.filePath);
+		expect(limited.sourceExcerpt).toBe(fullEntry.sourceExcerpt);
+		expect(limited.sourceRangeLabel).toBe(fullEntry.sourceRangeLabel);
+		expect(limited.status).toBe(fullEntry.status);
+		expect(limited.command).toBe(fullEntry.command);
+		expect(limited.exitCode).toBe(fullEntry.exitCode);
+		expect(limited.query).toBe(fullEntry.query);
+		expect(limited.searchPath).toBe(fullEntry.searchPath);
+		expect(limited.searchFiles).toBe(fullEntry.searchFiles);
+		expect(limited.searchResultCount).toBe(fullEntry.searchResultCount);
+		expect(limited.searchMode).toBe(fullEntry.searchMode);
+		expect(limited.searchNumFiles).toBe(fullEntry.searchNumFiles);
+		expect(limited.searchNumMatches).toBe(fullEntry.searchNumMatches);
+		expect(limited.searchMatches).toBe(fullEntry.searchMatches);
+		expect(limited.url).toBe(fullEntry.url);
+		expect(limited.webSearchLinks).toBe(fullEntry.webSearchLinks);
+		expect(limited.webSearchSummary).toBe(fullEntry.webSearchSummary);
+		expect(limited.skillName).toBe(fullEntry.skillName);
+		expect(limited.skillArgs).toBe(fullEntry.skillArgs);
+		expect(limited.skillDescription).toBe(fullEntry.skillDescription);
+		expect(limited.taskDescription).toBe(fullEntry.taskDescription);
+		expect(limited.taskPrompt).toBe(fullEntry.taskPrompt);
+		expect(limited.presentationState).toBe(fullEntry.presentationState);
+		expect(limited.degradedReason).toBe(fullEntry.degradedReason);
+		expect(limited.todos).toBe(fullEntry.todos);
+		expect(limited.question).toBe(fullEntry.question);
+		expect(limited.lintDiagnostics).toBe(fullEntry.lintDiagnostics);
+
+		// Truncation targets pass through unchanged when under the limit.
+		expect(limited.detailsText).toBe(fullEntry.detailsText);
+		expect(limited.stdout).toBe(fullEntry.stdout);
+		expect(limited.stderr).toBe(fullEntry.stderr);
+		expect(limited.resultText).toBe(fullEntry.resultText);
+		expect(limited.taskResultText).toBe(fullEntry.taskResultText);
+
+		// taskChildren is rebuilt (recursion) but contents preserved by identity for non-tool children
+		// and structurally for tool children.
+		expect(limited.taskChildren).toHaveLength(1);
+		expect(limited.taskChildren?.[0]).toMatchObject({
+			id: "child-1",
+			type: "tool_call",
+			title: "Child tool",
+		});
+	});
+
+	it("applySceneTextLimits preserves empty arrays as empty arrays (does not nullify)", () => {
+		const entry: AgentToolEntry = {
+			id: "tool-empty",
+			type: "tool_call",
+			title: "Empty",
+			status: "done",
+			editDiffs: [],
+			searchFiles: [],
+			todos: [],
+		};
+
+		const limited = applySceneTextLimits(entry);
+
+		expect(limited.editDiffs).toEqual([]);
+		expect(limited.searchFiles).toEqual([]);
+		expect(limited.todos).toEqual([]);
+	});
+
+	describe("optimistic pending entry support", () => {
+		function createOptimisticUserEntry(id: string, text: string): SessionEntry {
+			return {
+				id,
+				type: "user",
+				message: {
+					content: { type: "text", text },
+					chunks: [{ type: "text", text }],
+				},
+			};
+		}
+
+		it("appends the optimistic entry as the last entry with isOptimistic: true when graph is present", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("user-1", "user", "First message"),
+				createTranscriptEntry("assistant-1", "assistant", "Response"),
+			]);
+			const graph = createGraph({ transcriptSnapshot });
+			const pendingUserEntry = createOptimisticUserEntry("pending-1", "New pending message");
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: { pendingUserEntry },
+			});
+
+			expect(scene.conversation.entries).toHaveLength(3);
+			const last = scene.conversation.entries[2] as AgentUserEntry;
+			expect(last.id).toBe("pending-1");
+			expect(last.type).toBe("user");
+			expect(last.text).toBe("New pending message");
+			expect(last.isOptimistic).toBe(true);
+		});
+
+		it("graph + no optimistic → output identical to today (regression guard)", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("user-1", "user", "First message"),
+				createTranscriptEntry("assistant-1", "assistant", "Response"),
+			]);
+			const graph = createGraph({ transcriptSnapshot });
+
+			const sceneWithout = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const sceneWithNull = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: null,
+			});
+
+			expect(sceneWithout.conversation.entries).toHaveLength(2);
+			expect(sceneWithNull.conversation.entries).toHaveLength(2);
+			expect(sceneWithout.conversation.entries[0]).toEqual({
+				id: "user-1",
+				type: "user",
+				text: "First message",
+				isOptimistic: undefined,
+			});
+			expect(sceneWithout.conversation.entries[1]).toEqual({
+				id: "assistant-1",
+				type: "assistant",
+				markdown: "Response",
+				message: {
+					chunks: [
+						{
+							type: "message",
+							block: {
+								type: "text",
+								text: "Response",
+							},
+						},
+					],
+				},
+				isStreaming: false,
+			});
+		});
+
+		it("graph === null + optimistic entry → single-entry scene with isOptimistic: true, warming status", () => {
+			const pendingUserEntry = createOptimisticUserEntry("pending-1", "Hello agent");
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph: null,
+				header: { title: "Pre-session" },
+				optimistic: { pendingUserEntry },
+			});
+
+			expect(scene.status).toBe("warming");
+			expect(scene.lifecycle?.status).toBe("activating");
+			expect(scene.conversation.isStreaming).toBe(false);
+			expect(scene.conversation.entries).toHaveLength(1);
+			const entry = scene.conversation.entries[0] as AgentUserEntry;
+			expect(entry.id).toBe("pending-1");
+			expect(entry.type).toBe("user");
+			expect(entry.text).toBe("Hello agent");
+			expect(entry.isOptimistic).toBe(true);
+			expect(scene.header.title).toBe("Pre-session");
+		});
+
+		it("graph === null + no optimistic → empty conversation, warming status, no crash", () => {
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph: null,
+				header: { title: "Pre-session" },
+			});
+
+			expect(scene.status).toBe("warming");
+			expect(scene.lifecycle?.status).toBe("activating");
+			expect(scene.conversation.entries).toHaveLength(0);
+			expect(scene.conversation.isStreaming).toBe(false);
+			expect(scene.panelId).toBe("panel-1");
+		});
+
+		it("empty graph (non-null, no entries) + optimistic → single-entry scene with isOptimistic: true", () => {
+			const graph = createGraph({ transcriptSnapshot: createTranscriptSnapshot([]) });
+			const pendingUserEntry = createOptimisticUserEntry("pending-1", "First message");
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: { pendingUserEntry },
+			});
+
+			expect(scene.conversation.entries).toHaveLength(1);
+			const entry = scene.conversation.entries[0] as AgentUserEntry;
+			expect(entry.id).toBe("pending-1");
+			expect(entry.type).toBe("user");
+			expect(entry.text).toBe("First message");
+			expect(entry.isOptimistic).toBe(true);
+		});
+
+		it("both canonical and optimistic entries appear when they have independent UUIDs", () => {
+			// Dedup contract: optimistic and canonical IDs are independent crypto.randomUUID() calls
+			// and therefore never collide. The materializer does NOT id-dedup — it trusts that
+			// clearPendingUserEntry() will be called no later than the canonical entry lands in the
+			// graph (asserted by the ordering invariant tests in send-path-ordering.vitest.ts).
+			// This test verifies the materializer's contract: when both IDs are present, both entries
+			// appear in the scene. The absence of duplicates in production is a responsibility of the
+			// send path's clearPendingUserEntry() call timing, not of id-matching logic here.
+			const canonicalEntryId = "canonical-uuid-aaaa-bbbb-cccc";
+			const optimisticEntryId = "optimistic-uuid-xxxx-yyyy-zzzz";
+
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry(canonicalEntryId, "user", "Canonical user message"),
+			]);
+			const graph = createGraph({ transcriptSnapshot });
+			const pendingUserEntry = createOptimisticUserEntry(optimisticEntryId, "Optimistic message");
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: { pendingUserEntry },
+			});
+
+			// Both entries are present — the materializer surfaces the race condition that
+			// clearPendingUserEntry() ordering is designed to prevent.
+			expect(scene.conversation.entries).toHaveLength(2);
+			const canonicalEntry = scene.conversation.entries[0] as AgentUserEntry;
+			expect(canonicalEntry.id).toBe(canonicalEntryId);
+			expect(canonicalEntry.type).toBe("user");
+			expect(canonicalEntry.isOptimistic).toBeUndefined();
+
+			const optimisticEntry = scene.conversation.entries[1] as AgentUserEntry;
+			expect(optimisticEntry.id).toBe(optimisticEntryId);
+			expect(optimisticEntry.type).toBe("user");
+			expect(optimisticEntry.isOptimistic).toBe(true);
+		});
+
+		it("surfaces only the canonical user entry once matching attemptId has landed", () => {
+			const pendingUserEntry = createOptimisticUserEntry("optimistic-uuid-1", "Hello world");
+			const graph = createGraph({
+				transcriptSnapshot: createTranscriptSnapshot([
+					createTranscriptEntryFromSegments(
+						"canonical-user-1",
+						"user",
+						["Hello world"],
+						"attempt-123"
+					),
+				]),
+			});
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+				optimistic: null,
+			});
+
+			expect(scene.conversation.entries).toHaveLength(1);
+			const entry = scene.conversation.entries[0] as AgentUserEntry;
+			expect(entry.id).toBe("canonical-user-1");
+			expect(entry.isOptimistic).toBeUndefined();
+			void pendingUserEntry;
+		});
+
+		it("rejects transient live assistant overlay while canonical transcript is still on the user turn", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("user-1", "user", "stream this reply"),
+			]);
+			const graph = createGraph({
+				transcriptSnapshot,
+				turnState: "Running",
+				activity: {
+					kind: "awaiting_model",
+					activeOperationCount: 0,
+					activeSubagentCount: 0,
+					dominantOperationId: null,
+					blockingInteractionId: null,
+				},
+				lastAgentMessageId: null,
+			});
+			const liveAssistantEntry: SessionEntry = {
+				id: "assistant-live-1",
+				type: "assistant",
+				message: {
+					chunks: [
+						{
+							type: "message",
+							block: { type: "text", text: "partial streamed answer" },
+						},
+					],
+				},
+				isStreaming: true,
+			};
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			expect(scene.conversation.entries).toHaveLength(1);
+			expect(scene.conversation.entries[0]).toEqual({
+				id: "user-1",
+				type: "user",
+				text: "stream this reply",
+				isOptimistic: undefined,
+			});
+			void liveAssistantEntry;
+		});
+	});
+
+	describe("assistant isStreaming derivation", () => {
+		it("marks only the latest assistant entry as isStreaming when turnState is Running", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "First question"),
+				createTranscriptEntry("a1", "assistant", "First answer"),
+				createTranscriptEntry("u2", "user", "Second question"),
+				createTranscriptEntry("a2", "assistant", "Second answer still coming in"),
+			]);
+			const graph = createGraph({ transcriptSnapshot, turnState: "Running" });
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(2);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+			expect((assistantEntries[1] as { isStreaming?: boolean }).isStreaming).toBe(true);
+		});
+
+		it("marks no assistant entry as isStreaming when turnState is Completed", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Question"),
+				createTranscriptEntry("a1", "assistant", "Answer"),
+			]);
+			const graph = createGraph({ transcriptSnapshot, turnState: "Completed" });
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(1);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+		});
+
+		it("does not let stale live assistant text hide a completed canonical answer", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Question"),
+				createTranscriptEntryFromSegments("a1", "assistant", [
+					"Umb",
+					"rellas",
+					" keep",
+					" you",
+					" dry",
+					" when",
+					" it",
+					" rains",
+					".",
+				]),
+			]);
+			const graph = createGraph({ transcriptSnapshot, turnState: "Completed" });
+			const staleLiveEntry: Extract<SessionEntry, { type: "assistant" }> = {
+				id: "a1",
+				type: "assistant",
+				message: {
+					chunks: [
+						{
+							type: "message",
+							block: {
+								type: "text",
+								text: "Umb",
+							},
+						},
+					],
+				},
+				isStreaming: true,
+				timestamp: new Date("2026-05-05T15:00:00.000Z"),
+			};
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			expect(scene.conversation.entries).toContainEqual(
+				expect.objectContaining({
+					id: "a1",
+					type: "assistant",
+					markdown: "Umbrellas keep you dry when it rains.",
+					isStreaming: false,
+				})
+			);
+			void staleLiveEntry;
+		});
+
+		it("does not restart streaming reveal for the previous assistant while waiting for the next response", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "First question"),
+				createTranscriptEntry("a1", "assistant", "First answer"),
+				createTranscriptEntry("u2", "user", "repeat in french"),
+			]);
+			const graph = createGraph({ transcriptSnapshot, turnState: "Running" });
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(1);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+		});
+
+		it("marks the latest assistant as isStreaming even when tool entries follow it", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Do the thing"),
+				createTranscriptEntry("a1", "assistant", "Running the tool"),
+				createTranscriptEntry("tool-1", "tool", "result"),
+				createTranscriptEntry("a2", "assistant", "Here is what I found"),
+			]);
+			const graph = createGraph({
+				transcriptSnapshot,
+				operations: [createOperationSnapshot()],
+				turnState: "Running",
+			});
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(2);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+			expect((assistantEntries[1] as { isStreaming?: boolean }).isStreaming).toBe(true);
+		});
+
+		it("does not mark completed assistant text as streaming while a trailing tool is active", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Do the thing"),
+				createTranscriptEntry("a1", "assistant", "Running the tool"),
+				createTranscriptEntry("tool-1", "tool", "result"),
+			]);
+			const graph = createGraph({
+				transcriptSnapshot,
+				operations: [
+					createOperationSnapshot({
+						provider_status: "pending",
+						operation_state: "running",
+						result: null,
+					}),
+				],
+				turnState: "Running",
+				lastAgentMessageId: "a1",
+				activity: {
+					kind: "running_operation",
+					activeOperationCount: 1,
+					activeSubagentCount: 0,
+					dominantOperationId: "op:session-1:tool-1",
+					blockingInteractionId: null,
+				},
+			});
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(1);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
+		});
+
+		it("keeps the open assistant streaming after a completed trailing tool while awaiting model text", () => {
+			const transcriptSnapshot = createTranscriptSnapshot([
+				createTranscriptEntry("u1", "user", "Do the thing"),
+				createTranscriptEntry("a1", "assistant", "Running the tool, then continuing"),
+				createTranscriptEntry("tool-1", "tool", "result"),
+			]);
+			const graph = createGraph({
+				transcriptSnapshot,
+				operations: [createOperationSnapshot()],
+				turnState: "Running",
+				lastAgentMessageId: "a1",
+				activity: {
+					kind: "awaiting_model",
+					activeOperationCount: 0,
+					activeSubagentCount: 0,
+					dominantOperationId: null,
+					blockingInteractionId: null,
+				},
+			});
+
+			const scene = materializeAgentPanelSceneFromGraph({
+				panelId: "panel-1",
+				graph,
+				header: { title: "Session" },
+			});
+
+			const assistantEntries = scene.conversation.entries.filter((e) => e.type === "assistant");
+			expect(assistantEntries).toHaveLength(1);
+			expect((assistantEntries[0] as { isStreaming?: boolean }).isStreaming).toBe(true);
+		});
+	});
+});

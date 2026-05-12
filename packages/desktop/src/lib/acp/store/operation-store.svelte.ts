@@ -1,10 +1,11 @@
 import { getContext, setContext } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
-import type { OperationSnapshot } from "../../services/acp-types.js";
-import type { ToolArguments } from "../../services/converted-session-types.js";
-import type { Operation } from "../types/operation.js";
+import type { OperationSnapshot, OperationSourceLink } from "../../services/acp-types.js";
+import type { Operation, OperationState } from "../types/operation.js";
 import type { ToolCall } from "../types/tool-call.js";
 import type { ToolKind } from "../types/tool-kind.js";
+import { mapOperationStateToToolPresentationStatus } from "../utils/tool-state-utils.js";
+import { normalizeToolResult } from "./services/tool-result-normalizer.js";
 
 const OPERATION_STORE_KEY = Symbol("operation-store");
 
@@ -12,85 +13,51 @@ function createSessionToolKey(sessionId: string, toolCallId: string): string {
 	return `${sessionId}::${toolCallId}`;
 }
 
-function normalizeCommand(value: string | null | undefined): string | null {
-	if (value == null) {
-		return null;
-	}
-
-	const trimmed = value.trim();
-	if (trimmed.length === 0) {
-		return null;
-	}
-
-	return trimmed.replace(/\s+/g, " ");
-}
-
-function extractCommandFromArguments(argumentsValue: ToolArguments | undefined): string | null {
-	if (argumentsValue?.kind !== "execute") {
-		return null;
-	}
-
-	return normalizeCommand(argumentsValue.command);
-}
-
 export function buildOperationId(sessionId: string, toolCallId: string): string {
-	return `${sessionId}:${toolCallId}`;
+	return buildCanonicalOperationId(sessionId, toolCallId);
 }
 
-export function extractToolOperationCommand(toolCall: ToolCall): string | null {
-	const progressiveCommand = extractCommandFromArguments(toolCall.progressiveArguments);
-	if (progressiveCommand !== null) {
-		return progressiveCommand;
-	}
-
-	const argumentCommand = extractCommandFromArguments(toolCall.arguments);
-	if (argumentCommand !== null) {
-		return argumentCommand;
-	}
-
-	if (toolCall.title == null) {
-		return null;
-	}
-
-	const titleMatch = /^`(.+)`$/.exec(toolCall.title);
-	if (titleMatch?.[1] == null) {
-		return null;
-	}
-
-	return normalizeCommand(titleMatch[1]);
+export function buildCanonicalOperationId(sessionId: string, provenanceKey: string): string {
+	return `op:${sessionId.length}:${sessionId}:${provenanceKey.length}:${provenanceKey}`;
 }
 
-function isStreamingOperationStatus(status: Operation["status"]): boolean {
-	return status === "pending" || status === "in_progress";
+function isTerminalOperationState(state: OperationState | undefined): boolean {
+	if (state === undefined) {
+		return false;
+	}
+
+	switch (state) {
+		case "completed":
+		case "failed":
+		case "cancelled":
+		case "degraded":
+			return true;
+		case "pending":
+		case "running":
+		case "blocked":
+			return false;
+	}
+}
+
+function isStreamingOperationState(state: OperationState): boolean {
+	return state === "pending" || state === "running" || state === "blocked";
+}
+
+function transcriptSourceEntryId(sourceLink: OperationSourceLink): string | null {
+	return sourceLink.kind === "transcript_linked" ? sourceLink.entry_id : null;
 }
 
 export class OperationStore {
 	/**
-	 * Canonical runtime owner for resolved tool execution state.
-	 *
-	 * `ToolCallManager` remains the mutation/reconciliation adapter that updates
-	 * transcript entries. `OperationStore` is the canonical read/query layer
-	 * those mutations feed so projection consumers stop reconstructing semantics
-	 * from raw transport artifacts.
+	 * Canonical runtime owner for resolved tool execution state. Operations enter
+	 * this store only through Rust-authored session graph snapshots and patches.
 	 */
 	private readonly operationsById = new SvelteMap<string, Operation>();
 	private readonly operationIdByToolCallKey = new SvelteMap<string, string>();
+	private readonly operationIdByProvenanceKey = new SvelteMap<string, string>();
 	private readonly operationIdByEntryKey = new SvelteMap<string, string>();
 	private readonly sessionOperationIds = new SvelteMap<string, Array<string>>();
-
-	upsertFromToolCall(
-		sessionId: string,
-		sourceEntryId: string | null,
-		toolCall: ToolCall
-	): Operation {
-		return this.upsertToolCall(
-			sessionId,
-			sourceEntryId,
-			toolCall,
-			null,
-			toolCall.parentToolUseId ?? null
-		);
-	}
+	private readonly currentStreamingOperationIdBySession = new SvelteMap<string, string>();
 
 	getById(operationId: string): Operation | undefined {
 		return this.operationsById.get(operationId);
@@ -99,6 +66,17 @@ export class OperationStore {
 	getByToolCallId(sessionId: string, toolCallId: string): Operation | undefined {
 		const operationId = this.operationIdByToolCallKey.get(
 			createSessionToolKey(sessionId, toolCallId)
+		);
+		if (operationId == null) {
+			return undefined;
+		}
+
+		return this.operationsById.get(operationId);
+	}
+
+	getByProvenanceKey(sessionId: string, provenanceKey: string): Operation | undefined {
+		const operationId = this.operationIdByProvenanceKey.get(
+			createSessionToolKey(sessionId, provenanceKey)
 		);
 		if (operationId == null) {
 			return undefined;
@@ -137,14 +115,25 @@ export class OperationStore {
 		return operations;
 	}
 
-	getCurrentStreamingToolCall(sessionId: string): ToolCall | null {
-		const operations = this.getSessionOperations(sessionId);
-		for (let index = operations.length - 1; index >= 0; index -= 1) {
-			const operation = operations[index];
-			if (!isStreamingOperationStatus(operation.status)) {
+	getSessionToolCalls(sessionId: string): Array<ToolCall> {
+		const operationIds = this.sessionOperationIds.get(sessionId) ?? [];
+		const toolCalls: Array<ToolCall> = [];
+		for (const operationId of operationIds) {
+			const operation = this.operationsById.get(operationId);
+			if (operation == null || operation.parentOperationId !== null) {
 				continue;
 			}
+			const toolCall = this.materializeToolCall(operation.id, new Set<string>());
+			if (toolCall !== null) {
+				toolCalls.push(toolCall);
+			}
+		}
+		return toolCalls;
+	}
 
+	getCurrentStreamingToolCall(sessionId: string): ToolCall | null {
+		const operation = this.getCurrentStreamingOperation(sessionId);
+		if (operation !== null) {
 			const toolCall = this.materializeToolCall(operation.id, new Set<string>());
 			if (toolCall !== null) {
 				return toolCall;
@@ -152,6 +141,20 @@ export class OperationStore {
 		}
 
 		return null;
+	}
+
+	getCurrentStreamingOperation(sessionId: string): Operation | null {
+		const operationId = this.currentStreamingOperationIdBySession.get(sessionId);
+		if (operationId === undefined) {
+			return null;
+		}
+
+		const operation = this.operationsById.get(operationId);
+		if (operation !== undefined && isStreamingOperationState(operation.operationState)) {
+			return operation;
+		}
+
+		return this.recomputeCurrentStreamingOperation(sessionId);
 	}
 
 	getLastToolCall(sessionId: string): ToolCall | null {
@@ -179,12 +182,12 @@ export class OperationStore {
 	}
 
 	getCurrentToolKind(sessionId: string): ToolKind | null {
-		const currentToolCall = this.getCurrentStreamingToolCall(sessionId);
-		if (currentToolCall == null) {
+		const currentOperation = this.getCurrentStreamingOperation(sessionId);
+		if (currentOperation == null) {
 			return null;
 		}
 
-		return currentToolCall.kind ?? "other";
+		return currentOperation.kind ?? "other";
 	}
 
 	clearSession(sessionId: string): void {
@@ -196,127 +199,158 @@ export class OperationStore {
 			}
 
 			this.operationsById.delete(operationId);
-			this.operationIdByToolCallKey.delete(createSessionToolKey(sessionId, operation.toolCallId));
-			if (operation.sourceEntryId != null) {
-				this.operationIdByEntryKey.delete(createSessionToolKey(sessionId, operation.sourceEntryId));
-			}
+			this.unindexOperation(operation);
 		}
 
 		this.sessionOperationIds.delete(sessionId);
+		this.currentStreamingOperationIdBySession.delete(sessionId);
 	}
 
 	replaceSessionOperations(sessionId: string, snapshots: ReadonlyArray<OperationSnapshot>): void {
 		this.clearSession(sessionId);
 		const nextSessionOperationIds: Array<string> = [];
+		let currentStreamingOperationId: string | null = null;
 		for (const snapshot of snapshots) {
-			const operation: Operation = {
-				id: snapshot.id,
-				sessionId: snapshot.session_id,
-				toolCallId: snapshot.tool_call_id,
-				sourceEntryId: null,
-				name: snapshot.name,
-				kind: snapshot.kind,
-				status: snapshot.status,
-				title: snapshot.title,
-				arguments: snapshot.arguments,
-				progressiveArguments: snapshot.progressive_arguments ?? undefined,
-				result: snapshot.result,
-				locations: undefined,
-				skillMeta: undefined,
-				normalizedQuestions: undefined,
-				normalizedTodos: snapshot.normalized_todos ?? undefined,
-				questionAnswer: undefined,
-				awaitingPlanApproval: false,
-				planApprovalRequestId: undefined,
-				startedAtMs: undefined,
-				completedAtMs: undefined,
-				command: snapshot.command,
-				parentToolCallId: snapshot.parent_tool_call_id,
-				parentOperationId: snapshot.parent_operation_id,
-				childToolCallIds: snapshot.child_tool_call_ids,
-				childOperationIds: snapshot.child_operation_ids,
-			};
+			const operation = this.operationFromSnapshot(snapshot);
 			this.operationsById.set(operation.id, operation);
-			this.operationIdByToolCallKey.set(
-				createSessionToolKey(sessionId, operation.toolCallId),
-				operation.id
-			);
+			this.indexOperation(operation);
 			nextSessionOperationIds.push(operation.id);
+			if (isStreamingOperationState(operation.operationState)) {
+				currentStreamingOperationId = operation.id;
+			}
 		}
 		this.sessionOperationIds.set(sessionId, nextSessionOperationIds);
+		if (currentStreamingOperationId === null) {
+			this.currentStreamingOperationIdBySession.delete(sessionId);
+		} else {
+			this.currentStreamingOperationIdBySession.set(sessionId, currentStreamingOperationId);
+		}
 	}
 
-	private upsertToolCall(
+	applySessionOperationPatches(
 		sessionId: string,
-		sourceEntryId: string | null,
-		toolCall: ToolCall,
-		parentOperationId: string | null,
-		parentToolCallId: string | null
-	): Operation {
-		const operationId = buildOperationId(sessionId, toolCall.id);
-		const existingOperation = this.operationsById.get(operationId);
-		const nextSourceEntryId = sourceEntryId ?? existingOperation?.sourceEntryId ?? null;
-		const nextParentToolCallId = toolCall.parentToolUseId ?? parentToolCallId ?? null;
-		const childToolCallIds: Array<string> = [];
-		const childOperationIds: Array<string> = [];
-
-		for (const childToolCall of toolCall.taskChildren ?? []) {
-			const childOperation = this.upsertToolCall(
-				sessionId,
-				null,
-				childToolCall,
-				operationId,
-				toolCall.id
-			);
-			childToolCallIds.push(childToolCall.id);
-			childOperationIds.push(childOperation.id);
+		snapshots: ReadonlyArray<OperationSnapshot>
+	): void {
+		for (const snapshot of snapshots) {
+			const operation = this.operationFromSnapshot(snapshot);
+			const existingOperation = this.operationsById.get(operation.id);
+			if (
+				existingOperation !== undefined &&
+				isTerminalOperationState(existingOperation.operationState) &&
+				!isTerminalOperationState(operation.operationState)
+			) {
+				continue;
+			}
+			if (existingOperation !== undefined) {
+				this.unindexOperation(existingOperation);
+			}
+			this.operationsById.set(operation.id, operation);
+			this.indexOperation(operation);
+			const sessionOperationIds = this.sessionOperationIds.get(sessionId) ?? [];
+			if (!sessionOperationIds.includes(operation.id)) {
+				const nextSessionOperationIds = sessionOperationIds.slice();
+				nextSessionOperationIds.push(operation.id);
+				this.sessionOperationIds.set(sessionId, nextSessionOperationIds);
+			}
+			this.updateCurrentStreamingOperation(sessionId, operation);
 		}
+	}
 
-		const nextOperation: Operation = {
-			id: operationId,
-			sessionId,
-			toolCallId: toolCall.id,
-			sourceEntryId: nextSourceEntryId,
-			name: toolCall.name,
-			kind: toolCall.kind,
-			status: toolCall.status,
-			title: toolCall.title,
-			arguments: toolCall.arguments,
-			progressiveArguments: toolCall.progressiveArguments,
-			result: toolCall.result,
-			locations: toolCall.locations,
-			skillMeta: toolCall.skillMeta,
-			normalizedQuestions: toolCall.normalizedQuestions,
-			normalizedTodos: toolCall.normalizedTodos,
-			questionAnswer: toolCall.questionAnswer,
-			awaitingPlanApproval: toolCall.awaitingPlanApproval,
-			planApprovalRequestId: toolCall.planApprovalRequestId,
-			startedAtMs: toolCall.startedAtMs,
-			completedAtMs: toolCall.completedAtMs,
-			command: extractToolOperationCommand(toolCall),
-			parentToolCallId: nextParentToolCallId,
-			parentOperationId,
-			childToolCallIds,
-			childOperationIds,
+	private operationFromSnapshot(snapshot: OperationSnapshot): Operation {
+		const providerStatus = snapshot.provider_status;
+		return {
+			id: snapshot.id,
+			sessionId: snapshot.session_id,
+			toolCallId: snapshot.tool_call_id,
+			sourceLink: snapshot.source_link,
+			name: snapshot.name,
+			kind: snapshot.kind,
+			status: providerStatus,
+			operationState: snapshot.operation_state,
+			operationProvenanceKey: snapshot.operation_provenance_key ?? snapshot.tool_call_id,
+			title: snapshot.title,
+			arguments: snapshot.arguments,
+			progressiveArguments: snapshot.progressive_arguments ?? undefined,
+			result: snapshot.result,
+			locations: snapshot.locations ?? undefined,
+			skillMeta: snapshot.skill_meta ?? undefined,
+			normalizedQuestions: snapshot.normalized_questions ?? undefined,
+			normalizedTodos: snapshot.normalized_todos ?? undefined,
+			questionAnswer: snapshot.question_answer ?? undefined,
+			awaitingPlanApproval: snapshot.awaiting_plan_approval ?? false,
+			planApprovalRequestId: snapshot.plan_approval_request_id ?? undefined,
+			startedAtMs: snapshot.started_at_ms ?? undefined,
+			completedAtMs: snapshot.completed_at_ms ?? undefined,
+			command: snapshot.command,
+			parentToolCallId: snapshot.parent_tool_call_id,
+			parentOperationId: snapshot.parent_operation_id,
+			childToolCallIds: snapshot.child_tool_call_ids,
+			childOperationIds: snapshot.child_operation_ids,
+			degradationReason: snapshot.degradation_reason ?? null,
 		};
+	}
 
-		this.operationsById.set(operationId, nextOperation);
-		this.operationIdByToolCallKey.set(createSessionToolKey(sessionId, toolCall.id), operationId);
-		if (nextSourceEntryId != null) {
+	private unindexOperation(operation: Operation): void {
+		this.operationIdByToolCallKey.delete(
+			createSessionToolKey(operation.sessionId, operation.toolCallId)
+		);
+		this.operationIdByProvenanceKey.delete(
+			createSessionToolKey(
+				operation.sessionId,
+				operation.operationProvenanceKey ?? operation.toolCallId
+			)
+		);
+		const transcriptEntryId = transcriptSourceEntryId(operation.sourceLink);
+		if (transcriptEntryId !== null) {
+			this.operationIdByEntryKey.delete(createSessionToolKey(operation.sessionId, transcriptEntryId));
+		}
+	}
+
+	private indexOperation(operation: Operation): void {
+		this.operationIdByToolCallKey.set(
+			createSessionToolKey(operation.sessionId, operation.toolCallId),
+			operation.id
+		);
+		this.operationIdByProvenanceKey.set(
+			createSessionToolKey(
+				operation.sessionId,
+				operation.operationProvenanceKey ?? operation.toolCallId
+			),
+			operation.id
+		);
+		const transcriptEntryId = transcriptSourceEntryId(operation.sourceLink);
+		if (transcriptEntryId !== null) {
 			this.operationIdByEntryKey.set(
-				createSessionToolKey(sessionId, nextSourceEntryId),
-				operationId
+				createSessionToolKey(operation.sessionId, transcriptEntryId),
+				operation.id
 			);
 		}
+	}
 
-		const sessionOperationIds = this.sessionOperationIds.get(sessionId) ?? [];
-		if (!sessionOperationIds.includes(operationId)) {
-			const nextSessionOperationIds = sessionOperationIds.slice();
-			nextSessionOperationIds.push(operationId);
-			this.sessionOperationIds.set(sessionId, nextSessionOperationIds);
+	private updateCurrentStreamingOperation(sessionId: string, operation: Operation): void {
+		if (isStreamingOperationState(operation.operationState)) {
+			this.currentStreamingOperationIdBySession.set(sessionId, operation.id);
+			return;
 		}
 
-		return nextOperation;
+		if (this.currentStreamingOperationIdBySession.get(sessionId) === operation.id) {
+			this.recomputeCurrentStreamingOperation(sessionId);
+		}
+	}
+
+	private recomputeCurrentStreamingOperation(sessionId: string): Operation | null {
+		const operationIds = this.sessionOperationIds.get(sessionId) ?? [];
+		for (let index = operationIds.length - 1; index >= 0; index -= 1) {
+			const operationId = operationIds[index];
+			const operation = this.operationsById.get(operationId);
+			if (operation !== undefined && isStreamingOperationState(operation.operationState)) {
+				this.currentStreamingOperationIdBySession.set(sessionId, operation.id);
+				return operation;
+			}
+		}
+
+		this.currentStreamingOperationIdBySession.delete(sessionId);
+		return null;
 	}
 
 	private materializeToolCall(operationId: string, visited: Set<string>): ToolCall | null {
@@ -344,6 +378,11 @@ export class OperationStore {
 			arguments: operation.arguments,
 			status: operation.status,
 			result: operation.result,
+			normalizedResult: normalizeToolResult({
+				kind: operation.kind,
+				arguments: operation.arguments,
+				result: operation.result,
+			}),
 			kind: operation.kind,
 			title: operation.title ?? null,
 			locations: operation.locations ?? null,
@@ -358,6 +397,7 @@ export class OperationStore {
 			progressiveArguments: operation.progressiveArguments,
 			startedAtMs: operation.startedAtMs,
 			completedAtMs: operation.completedAtMs,
+			presentationStatus: mapOperationStateToToolPresentationStatus(operation.operationState),
 		};
 	}
 }

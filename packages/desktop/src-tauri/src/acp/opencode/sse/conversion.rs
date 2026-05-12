@@ -629,6 +629,7 @@ pub(super) fn convert_message_part_to_session_update(properties: &Value) -> Part
                 part_id: None,
                 message_id: Some(part.message_id),
                 session_id: Some(part.session_id),
+                produced_at_monotonic_ms: None,
             }))
         }
 
@@ -862,6 +863,7 @@ pub(super) fn convert_message_part_to_session_update(properties: &Value) -> Part
                             part_id: Some(part.id),
                             message_id: Some(part.message_id),
                             session_id: Some(part.session_id),
+                            produced_at_monotonic_ms: None,
                         },
                     ));
                 }
@@ -931,6 +933,7 @@ pub(super) fn convert_message_part_delta_to_session_update(
             part_id: None,
             message_id: Some(event.message_id),
             session_id: Some(event.session_id),
+            produced_at_monotonic_ms: None,
         })),
     }
 }

@@ -82,7 +82,17 @@ where
     match update_type.as_str() {
         "userMessageChunk" => {
             let chunk = deserialize_content_chunk::<E>(&raw.data)?;
-            Ok(SessionUpdate::UserMessageChunk { chunk, session_id })
+            let attempt_id = raw
+                .data
+                .get("attemptId")
+                .or_else(|| raw.data.get("attempt_id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Ok(SessionUpdate::UserMessageChunk {
+                chunk,
+                session_id,
+                attempt_id,
+            })
         }
         "agentMessageChunk" => {
             let chunk = deserialize_content_chunk::<E>(&raw.data)?;
@@ -101,6 +111,7 @@ where
                 part_id,
                 message_id,
                 session_id,
+                produced_at_monotonic_ms: None,
             })
         }
         "agentThoughtChunk" => {

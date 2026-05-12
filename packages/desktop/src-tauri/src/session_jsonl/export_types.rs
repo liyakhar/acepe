@@ -1,6 +1,7 @@
 // Module to export TypeScript types from Rust types using specta
 // Run: cargo test --lib session_jsonl::export_types::tests::export_types
 
+use crate::acp::capability_resolution::{ResolvedCapabilities, ResolvedCapabilityStatus};
 use crate::acp::client::{
     AvailableMode, AvailableModel, NewSessionResponse, ResumeSessionResponse, SessionModelState,
     SessionModes,
@@ -8,23 +9,31 @@ use crate::acp::client::{
 use crate::acp::domain_events::{
     SessionDomainEvent, SessionDomainEventKind, SessionDomainEventPayload,
 };
+use crate::acp::lifecycle::{
+    DetachedReason, FailureReason, LifecycleCheckpoint, LifecycleState, LifecycleStatus,
+};
 use crate::acp::model_display::{
     DisplayModelGroup, DisplayableModel, ModelDisplayFamily, ModelPresentationMetadata,
     ModelsForDisplay, UsageMetricsPresentation,
 };
 use crate::acp::projections::{
     InteractionKind, InteractionPayload, InteractionResponse, InteractionSnapshot,
-    InteractionState, OperationSnapshot, PlanApprovalSource, SessionProjectionSnapshot,
+    InteractionState, OperationDegradationCode, OperationDegradationReason, OperationSnapshot,
+    OperationSourceLink, OperationState, PlanApprovalSource, SessionProjectionSnapshot,
     SessionSnapshot, SessionTurnState, TurnFailureSnapshot,
 };
 use crate::acp::session_open_snapshot::{
-    SessionOpenError, SessionOpenFound, SessionOpenMissing, SessionOpenResult,
+    SessionOpenError, SessionOpenErrorReason, SessionOpenFound, SessionOpenMissing,
+    SessionOpenResult,
 };
 use crate::acp::session_state_engine::{
-    SessionGraphCapabilities, SessionGraphLifecycle, SessionGraphLifecycleStatus,
-    SessionGraphRevision, SessionStateDelta, SessionStateEnvelope, SessionStateGraph,
-    SessionStatePayload, SessionStateSnapshotMaterialization,
+    CapabilityPreviewState, SessionGraphActionability, SessionGraphActivity,
+    SessionGraphActivityKind, SessionGraphCapabilities, SessionGraphLifecycle,
+    SessionGraphRevision, SessionRecommendedAction, SessionRecoveryPhase, SessionStateDelta,
+    SessionStateEnvelope, SessionStateGraph, SessionStatePayload,
+    SessionStateSnapshotMaterialization,
 };
+use crate::acp::session_state_engine::protocol::AssistantTextDeltaPayload;
 use crate::acp::session_update::{
     AvailableCommand, AvailableCommandsData, ChunkAggregationHint, CommandInput, ConfigOptionData,
     ConfigOptionUpdateData, ConfigOptionValue, ContentChunk, CurrentModeData, EditEntry,
@@ -66,6 +75,8 @@ export type ProviderVariantGroup = "plain" | "reasoningEffort";
 
 export type PreconnectionSlashMode = "startupGlobal" | "projectScoped" | "unsupported";
 
+export type PreconnectionCapabilityMode = "startupGlobal" | "projectScoped" | "unsupported";
+
 export type ProviderMetadataProjection = {
 	providerBrand: ProviderBrand;
 	displayName: string;
@@ -75,7 +86,10 @@ export type ProviderMetadataProjection = {
 	defaultAlias?: string;
 	reasoningEffortSupport: boolean;
 	preconnectionSlashMode: PreconnectionSlashMode;
+	preconnectionCapabilityMode: PreconnectionCapabilityMode;
 };
+
+export type FrontendProviderProjection = ProviderMetadataProjection;
 
 export type ModelsForDisplayWithProvider = ModelsForDisplay;
 
@@ -89,6 +103,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: "default",
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "startupGlobal",
+		preconnectionCapabilityMode: "startupGlobal",
 	},
 	copilot: {
 		providerBrand: "copilot",
@@ -99,6 +114,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "projectScoped",
+		preconnectionCapabilityMode: "projectScoped",
 	},
 	cursor: {
 		providerBrand: "cursor",
@@ -109,6 +125,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: "auto",
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "startupGlobal",
+		preconnectionCapabilityMode: "startupGlobal",
 	},
 	opencode: {
 		providerBrand: "opencode",
@@ -119,6 +136,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "projectScoped",
+		preconnectionCapabilityMode: "projectScoped",
 	},
 	codex: {
 		providerBrand: "codex",
@@ -129,6 +147,7 @@ export const BUILTIN_PROVIDER_METADATA_BY_AGENT_ID: Record<string, ProviderMetad
 		defaultAlias: undefined,
 		reasoningEffortSupport: true,
 		preconnectionSlashMode: "startupGlobal",
+		preconnectionCapabilityMode: "startupGlobal",
 	},
 };
 
@@ -144,6 +163,8 @@ function cloneProviderMetadataProjection(
 		defaultAlias: providerMetadata.defaultAlias,
 		reasoningEffortSupport: providerMetadata.reasoningEffortSupport,
 		preconnectionSlashMode: providerMetadata.preconnectionSlashMode,
+		preconnectionCapabilityMode:
+			providerMetadata.preconnectionCapabilityMode ?? providerMetadata.preconnectionSlashMode,
 	};
 }
 
@@ -170,6 +191,7 @@ export function resolveProviderMetadataProjection(
 		defaultAlias: undefined,
 		reasoningEffortSupport: false,
 		preconnectionSlashMode: "unsupported",
+		preconnectionCapabilityMode: "unsupported",
 	};
 }
 
@@ -217,6 +239,18 @@ fn ts_config() -> Typescript {
     Typescript::default().bigint(specta_typescript::BigIntExportBehavior::Number)
 }
 
+fn trim_generated_trailing_whitespace(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    for line in input.lines() {
+        output.push_str(line.trim_end());
+        output.push('\n');
+    }
+    if !input.ends_with('\n') {
+        output.pop();
+    }
+    output
+}
+
 /// Exports all TypeScript types for session_jsonl module
 pub fn export_all_types() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -239,12 +273,16 @@ pub fn export_all_types() {
         canonical_agent_id_type, session_lifecycle_state_type, history_types, startup_sessions_response_type
     );
     let history_path = Path::new(manifest_dir).join(CLAUDE_HISTORY_TYPES_PATH);
-    fs::write(&history_path, history_output).expect("Failed to write claude-history-types.ts");
+    fs::write(
+        &history_path,
+        trim_generated_trailing_whitespace(&history_output),
+    )
+    .expect("Failed to write claude-history-types.ts");
     eprintln!("Exported HistoryEntry to {}", history_path.display());
 
     // Export session update and stored entry types to converted-session-types.ts
     let mut converted_types = String::from(
-        "// This file was generated by specta. Do not edit this file manually.\n\nimport type { SessionModelState, SessionModes, TodoUpdate, TodoUpdateOperation } from \"./acp-types.js\";\n\n// JsonValue represents any valid JSON value\nexport type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };\n\n",
+        "// This file was generated by specta. Do not edit this file manually.\n\nimport type { FailureReason, SessionModelState, SessionModes, TodoUpdate, TodoUpdateOperation } from \"./acp-types.js\";\n\n// JsonValue represents any valid JSON value\nexport type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };\n\n",
     );
 
     macro_rules! export_type {
@@ -321,8 +359,11 @@ pub fn export_all_types() {
     export_type!(FileExplorerPreviewResponse);
 
     let converted_path = Path::new(manifest_dir).join(CONVERTED_SESSION_TYPES_PATH);
-    fs::write(&converted_path, converted_types)
-        .expect("Failed to write converted-session-types.ts");
+    fs::write(
+        &converted_path,
+        trim_generated_trailing_whitespace(&converted_types),
+    )
+    .expect("Failed to write converted-session-types.ts");
     eprintln!(
         "Exported session update types to {}",
         converted_path.display()
@@ -354,6 +395,8 @@ pub fn export_all_types() {
     export_acp_type!(ModelsForDisplay);
     export_acp_type!(SessionModelState);
     export_acp_type!(SessionModes);
+    export_acp_type!(ResolvedCapabilityStatus);
+    export_acp_type!(ResolvedCapabilities);
     export_acp_type!(ConfigOptionValue);
     export_acp_type!(ConfigOptionData);
     export_acp_type!(NewSessionResponse);
@@ -375,6 +418,11 @@ pub fn export_all_types() {
     export_acp_type!(QuestionData);
     export_acp_type!(UsageTelemetryData);
     export_acp_type!(UsageTelemetryTokens);
+    export_acp_type!(PlanStepStatus);
+    export_acp_type!(PlanStep);
+    export_acp_type!(PlanSource);
+    export_acp_type!(PlanConfidence);
+    export_acp_type!(PlanData);
     export_acp_type!(TodoStatus);
     export_acp_type!(TodoItem);
     export_acp_type!(TodoUpdateOperation);
@@ -388,8 +436,15 @@ pub fn export_all_types() {
     export_acp_type!(SessionDomainEventKind);
     export_acp_type!(SessionDomainEventPayload);
     export_acp_type!(SessionDomainEvent);
+    export_acp_type!(ToolCallLocation);
+    export_acp_type!(SkillMeta);
+    export_acp_type!(QuestionAnswer);
     export_acp_type!(SessionTurnState);
     export_acp_type!(SessionSnapshot);
+    export_acp_type!(OperationState);
+    export_acp_type!(OperationDegradationCode);
+    export_acp_type!(OperationDegradationReason);
+    export_acp_type!(OperationSourceLink);
     export_acp_type!(OperationSnapshot);
     export_acp_type!(InteractionKind);
     export_acp_type!(InteractionState);
@@ -400,18 +455,30 @@ pub fn export_all_types() {
     export_acp_type!(TurnErrorKind);
     export_acp_type!(TurnErrorSource);
     export_acp_type!(TurnFailureSnapshot);
+    export_acp_type!(LifecycleStatus);
+    export_acp_type!(DetachedReason);
+    export_acp_type!(FailureReason);
+    export_acp_type!(LifecycleState);
+    export_acp_type!(LifecycleCheckpoint);
     export_acp_type!(SessionProjectionSnapshot);
+    export_acp_type!(SessionOpenErrorReason);
     export_acp_type!(SessionOpenError);
     export_acp_type!(SessionOpenFound);
     export_acp_type!(SessionOpenMissing);
     export_acp_type!(SessionOpenResult);
     export_acp_type!(SessionGraphRevision);
-    export_acp_type!(SessionGraphLifecycleStatus);
+    export_acp_type!(SessionRecommendedAction);
+    export_acp_type!(SessionRecoveryPhase);
+    export_acp_type!(SessionGraphActionability);
     export_acp_type!(SessionGraphLifecycle);
     export_acp_type!(SessionGraphCapabilities);
+    export_acp_type!(CapabilityPreviewState);
+    export_acp_type!(SessionGraphActivityKind);
+    export_acp_type!(SessionGraphActivity);
     export_acp_type!(SessionStateGraph);
     export_acp_type!(SessionStateSnapshotMaterialization);
     export_acp_type!(SessionStateDelta);
+    export_acp_type!(AssistantTextDeltaPayload);
     export_acp_type!(SessionStatePayload);
     export_acp_type!(SessionStateEnvelope);
 
@@ -444,7 +511,8 @@ pub fn export_all_types() {
     acp_types.push('\n');
 
     let acp_path = Path::new(manifest_dir).join(ACP_TYPES_PATH);
-    fs::write(&acp_path, acp_types).expect("Failed to write acp-types.ts");
+    fs::write(&acp_path, trim_generated_trailing_whitespace(&acp_types))
+        .expect("Failed to write acp-types.ts");
     eprintln!("Exported ACP types to {}", acp_path.display());
 
     // Export checkpoint types
@@ -455,7 +523,11 @@ pub fn export_all_types() {
         checkpoint_types
     );
     let checkpoint_path = Path::new(manifest_dir).join(CHECKPOINT_TYPES_PATH);
-    fs::write(&checkpoint_path, checkpoint_output).expect("Failed to write checkpoint-types.ts");
+    fs::write(
+        &checkpoint_path,
+        trim_generated_trailing_whitespace(&checkpoint_output),
+    )
+    .expect("Failed to write checkpoint-types.ts");
     eprintln!("Exported checkpoint types to {}", checkpoint_path.display());
 
     eprintln!("TypeScript types exported successfully");
@@ -482,6 +554,23 @@ mod tests {
         assert!(
             contents.contains("export type SessionDomainEvent"),
             "expected acp-types.ts to export SessionDomainEvent, but it did not"
+        );
+        assert!(
+            contents.contains("export type CapabilityPreviewState ="),
+            "expected acp-types.ts to export CapabilityPreviewState compat helpers, but it did not"
+        );
+        assert!(
+            contents.contains("export type LifecycleCheckpoint ="),
+            "expected acp-types.ts to export LifecycleCheckpoint compat helpers, but it did not"
+        );
+        assert!(
+            contents
+                .contains("export type FrontendProviderProjection = ProviderMetadataProjection;"),
+            "expected acp-types.ts to alias FrontendProviderProjection, but it did not"
+        );
+        assert!(
+            contents.contains("export type AssistantTextDeltaPayload ="),
+            "expected acp-types.ts to export AssistantTextDeltaPayload, but it did not"
         );
     }
 

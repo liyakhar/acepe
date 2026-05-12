@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "svelte-sonner";
 import type { MergeStrategy } from "$lib/utils/tauri-client/git.js";
 import { tauriClient } from "$lib/utils/tauri-client.js";
+import type { GitStackedPrStep } from "../../../../utils/tauri-client/git.js";
 import { getErrorCauseDetails } from "../../../errors/error-cause-details.js";
 import type { ModifiedFilesState } from "../../../types/modified-files-state.js";
 import { createLogger } from "../../../utils/logger.js";
@@ -15,8 +16,11 @@ import type { ShipCardData } from "../../ship-card/ship-card-parser.js";
 const logger = createLogger({ id: "agent-panel-ship-workflow", name: "AgentPanelShipWorkflow" });
 
 export interface CreatePrWorkflowDeps {
-	updateSessionPrNumber: (sessionId: string, prNumber: number) => void;
-	persistSessionPrNumber: (sessionId: string, prNumber: number) => void;
+	applyAutomaticSessionPrLink: (
+		sessionId: string,
+		projectPath: string,
+		pr: GitStackedPrStep
+	) => Promise<number | null>;
 }
 
 /**
@@ -161,9 +165,8 @@ export async function runCreatePrWorkflow(args: {
 				}
 			}
 			if (ok.pr.status === "created" || ok.pr.status === "opened_existing") {
-				if (ok.pr.number != null && sessionId) {
-					deps.updateSessionPrNumber(sessionId, ok.pr.number);
-					void deps.persistSessionPrNumber(sessionId, ok.pr.number);
+				if (sessionId) {
+					void deps.applyAutomaticSessionPrLink(sessionId, path, ok.pr);
 				}
 				if (ok.pr.url) void openUrl(ok.pr.url).catch(() => {});
 			}

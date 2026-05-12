@@ -67,6 +67,89 @@ describe("groupAllPanelsByProject", () => {
 		expect(groups[0].browserPanels).toHaveLength(1);
 	});
 
+	it("orders agent panels by descending project sequence within each project", () => {
+		const groups = groupAllPanelsByProject(
+			[
+				{
+					id: "agent-1",
+					sessionProjectPath: "/tmp/project-a",
+					sessionSequenceId: 1,
+				},
+				{
+					id: "agent-4",
+					sessionProjectPath: "/tmp/project-a",
+					sessionSequenceId: 4,
+				},
+				{
+					id: "agent-2",
+					sessionProjectPath: "/tmp/project-a",
+					sessionSequenceId: 2,
+				},
+			],
+			[],
+			[],
+			[],
+			[],
+			[],
+			[
+				{
+					path: "/tmp/project-a",
+					name: "Project A",
+					color: "#123456",
+					createdAt: new Date(),
+					iconPath: null,
+				},
+			]
+		);
+
+		expect(groups[0]?.agentPanels.map((panel) => panel.id)).toEqual([
+			"agent-4",
+			"agent-2",
+			"agent-1",
+		]);
+	});
+
+	it("places unsequenced agent panels before sequenced panels while keeping their relative order", () => {
+		const groups = groupAllPanelsByProject(
+			[
+				{
+					id: "unsequenced-a",
+					sessionProjectPath: "/tmp/project-a",
+				},
+				{
+					id: "sequenced",
+					sessionProjectPath: "/tmp/project-a",
+					sessionSequenceId: 1,
+				},
+				{
+					id: "unsequenced-b",
+					sessionProjectPath: "/tmp/project-a",
+					sessionSequenceId: null,
+				},
+			],
+			[],
+			[],
+			[],
+			[],
+			[],
+			[
+				{
+					path: "/tmp/project-a",
+					name: "Project A",
+					color: "#123456",
+					createdAt: new Date(),
+					iconPath: null,
+				},
+			]
+		);
+
+		expect(groups[0]?.agentPanels.map((panel) => panel.id)).toEqual([
+			"unsequenced-a",
+			"unsequenced-b",
+			"sequenced",
+		]);
+	});
+
 	it("keeps multiple terminal panel groups for one project", () => {
 		const groups = groupAllPanelsByProject(
 			[],
@@ -159,6 +242,23 @@ describe("sortProjectGroupsForMultiLayout", () => {
 		const snapshot = input.map((g) => g.projectPath);
 		sortProjectGroupsForMultiLayout(input);
 		expect(input.map((g) => g.projectPath)).toEqual(snapshot);
+	});
+
+	it("pins the selected project group first when requested", () => {
+		const sorted = sortProjectGroupsForMultiLayout(
+			[
+				makeGroup("/tmp/zulu", "zulu"),
+				makeGroup("/tmp/alpha", "Alpha"),
+				makeGroup("/tmp/bravo", "bravo"),
+			],
+			{ pinnedProjectPath: "/tmp/zulu" }
+		);
+
+		expect(sorted.map((g) => g.projectPath)).toEqual([
+			"/tmp/zulu",
+			"/tmp/alpha",
+			"/tmp/bravo",
+		]);
 	});
 });
 

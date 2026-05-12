@@ -1,5 +1,39 @@
+import type {
+	SessionGraphActivity,
+	SessionGraphLifecycle,
+	SessionTurnState,
+} from "$lib/services/acp-types.js";
 import type { SessionStatus } from "../../../application/dto/session";
 import type { SessionStatusUI } from "../types";
+
+export interface CanonicalSessionPresentationStatusInput {
+	readonly lifecycle: SessionGraphLifecycle | null | undefined;
+	readonly activity?: SessionGraphActivity | null;
+	readonly turnState?: SessionTurnState | null;
+	readonly hasEntries?: boolean;
+}
+
+export interface CanonicalAgentPanelSessionStateInput
+	extends CanonicalSessionPresentationStatusInput {
+	readonly hasOptimisticPendingEntry?: boolean;
+	readonly hasLocalPendingSendIntent?: boolean;
+	readonly hasLocalObservedTerminalTurn?: boolean;
+}
+
+export interface EffectiveCanonicalTurnPresentation {
+	readonly activity: SessionGraphActivity | null | undefined;
+	readonly turnState: SessionTurnState | null | undefined;
+	readonly hasTerminalOverride: boolean;
+}
+
+export interface CanonicalAgentPanelSessionState {
+	readonly sessionStatus: SessionStatusUI;
+	readonly isConnected: boolean;
+	readonly isStreaming: boolean;
+	readonly showPlanningIndicator: boolean;
+	readonly canSubmit: boolean;
+	readonly showStop: boolean;
+}
 
 /**
  * Maps domain session status to UI display status.
@@ -43,4 +77,108 @@ export function mapSessionStatusToUI(status: SessionStatus | undefined | null): 
 		default:
 			return "empty";
 	}
+}
+
+export function mapCanonicalSessionToPanelStatus(
+	input: CanonicalSessionPresentationStatusInput
+): SessionStatusUI {
+	if (input.lifecycle === null || input.lifecycle === undefined) {
+		return input.hasEntries === true ? "idle" : "empty";
+	}
+
+	if (
+		input.lifecycle.status === "reserved" ||
+		input.lifecycle.status === "activating" ||
+		input.lifecycle.status === "reconnecting"
+	) {
+		return "warming";
+	}
+
+	if (input.lifecycle.status === "failed") {
+		return "error";
+	}
+
+	if (input.lifecycle.status === "detached" || input.lifecycle.status === "archived") {
+		return "idle";
+	}
+
+	if (
+		input.activity?.kind === "running_operation" ||
+		input.activity?.kind === "awaiting_model" ||
+		input.activity?.kind === "waiting_for_user" ||
+		input.turnState === "Running"
+	) {
+		return "running";
+	}
+
+	if (input.turnState === "Completed") {
+		return "done";
+	}
+
+	return "connected";
+}
+
+function isCanonicalBusy(
+	activity: SessionGraphActivity | null | undefined,
+	turnState: SessionTurnState | null | undefined
+): boolean {
+	return (
+		activity?.kind === "running_operation" ||
+		activity?.kind === "awaiting_model" ||
+		activity?.kind === "waiting_for_user" ||
+		turnState === "Running"
+	);
+}
+
+export function deriveEffectiveCanonicalTurnPresentation(
+	input: CanonicalAgentPanelSessionStateInput
+): EffectiveCanonicalTurnPresentation {
+	return {
+		activity: input.activity,
+		turnState: input.turnState,
+		hasTerminalOverride: false,
+	};
+}
+
+export function deriveCanonicalAgentPanelSessionState(
+	input: CanonicalAgentPanelSessionStateInput
+): CanonicalAgentPanelSessionState {
+	const effectivePresentation = deriveEffectiveCanonicalTurnPresentation(input);
+	const effectiveActivity = effectivePresentation.activity;
+	const effectiveTurnState = effectivePresentation.turnState;
+	const isBusy = isCanonicalBusy(effectiveActivity, effectiveTurnState);
+	const showPlanningIndicator =
+		input.hasOptimisticPendingEntry === true ||
+		input.hasLocalPendingSendIntent === true ||
+		effectiveActivity?.kind === "awaiting_model";
+	const baseStatus =
+		input.lifecycle === null || input.lifecycle === undefined
+			? input.hasOptimisticPendingEntry === true
+				? "warming"
+				: mapCanonicalSessionToPanelStatus({
+						lifecycle: input.lifecycle,
+						activity: effectiveActivity,
+						turnState: effectiveTurnState,
+						hasEntries: input.hasEntries,
+					})
+			: mapCanonicalSessionToPanelStatus({
+					lifecycle: input.lifecycle,
+					activity: effectiveActivity,
+					turnState: effectiveTurnState,
+					hasEntries: input.hasEntries,
+				});
+	const sessionStatus =
+		input.hasLocalPendingSendIntent === true && baseStatus === "done" ? "connected" : baseStatus;
+
+	return {
+		sessionStatus,
+		isConnected: input.lifecycle?.status === "ready",
+		isStreaming: isBusy,
+		showPlanningIndicator,
+		canSubmit:
+			input.hasLocalPendingSendIntent === true
+				? false
+				: !isBusy && input.lifecycle?.actionability.canSend === true,
+		showStop: isBusy,
+	};
 }
