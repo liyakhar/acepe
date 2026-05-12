@@ -293,10 +293,6 @@ function handleClose() {
 }
 </script>
 
-<p class="demo-hint">
-	Interactive demo — select connections, browse tables, click cells to mark edits, sort columns, and filter rows.
-</p>
-
 <div class="studio-wrapper">
 		<SqlStudioLayout
 			{connections}
@@ -360,20 +356,9 @@ function handleClose() {
 </div>
 
 <style>
-	.demo-hint {
-		margin-bottom: 1rem;
-		padding: 0.75rem;
-		border-radius: 0.375rem;
-		background: hsl(var(--muted) / 0.5);
-		color: hsl(var(--muted-foreground));
-		font-size: 0.875rem;
-		text-align: center;
-	}
-
 	.studio-wrapper {
-		height: 560px;
-		border-radius: 0.5rem;
-		border: 1px solid hsl(var(--border) / 0.3);
+		height: 100%;
+		min-height: 360px;
 		overflow: hidden;
 	}
 </style>

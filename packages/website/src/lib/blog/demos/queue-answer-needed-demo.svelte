@@ -50,23 +50,74 @@ const demoItem: DemoItem = {
 	question: {
 		question: "Which authentication strategy should I use?",
 		multiSelect: false,
-		options: [{ label: "JWT tokens" }, { label: "Session cookies" }, { label: "OAuth 2.0" }],
+		options: [{ label: "JWT tokens" }, { label: "Session cookies" }],
 	},
-	projectName: "Demo",
+	projectName: "acme-api",
 	projectColor: TAG_COLORS[1],
+};
+
+const billingQuestionItem: DemoItem = {
+	id: "billing-demo",
+	title: "Stripe webhook retry policy",
+	mode: "build",
+	timeAgo: "2m",
+	insertions: 0,
+	deletions: 0,
+	isStreaming: false,
+	statusText: null,
+	showStatusShimmer: false,
+	fileToolDisplayText: null,
+	toolContent: null,
+	showToolShimmer: false,
+	taskSubagentSummaries: [],
+	showTaskSubagentList: false,
+	todoProgress: null,
+	question: {
+		question: "Retry failed webhooks how?",
+		multiSelect: false,
+		options: [{ label: "Exponential backoff" }, { label: "Dead-letter queue" }],
+	},
+	projectName: "billing",
+	projectColor: TAG_COLORS[3],
+};
+
+const reviewItem: DemoItem = {
+	id: "dashboard-review",
+	title: "Refactor dashboard charts",
+	mode: "build",
+	timeAgo: "5m",
+	insertions: 184,
+	deletions: 92,
+	isStreaming: false,
+	statusText: "Ready for review · 12 files",
+	showStatusShimmer: false,
+	fileToolDisplayText: null,
+	toolContent: null,
+	showToolShimmer: false,
+	taskSubagentSummaries: [],
+	showTaskSubagentList: false,
+	todoProgress: null,
+	question: null,
+	projectName: "web",
+	projectColor: TAG_COLORS[5],
 };
 
 const groups: readonly SectionedFeedGroup<DemoItem>[] = [
 	{
 		id: "answer_needed",
 		label: "Input Needed",
-		items: [demoItem],
+		items: [demoItem, billingQuestionItem],
+	},
+	{
+		id: "needs_review",
+		label: "Needs Review",
+		items: [reviewItem],
 	},
 ];
 
-// Interactive state
+// Interactive state — per-item answer tracking
 let selectedItemId = $state<string | null>(null);
-let selectedAnswers = $state<Set<string>>(new Set());
+let answersByItem = $state<Record<string, string | null>>({});
 
 const QUESTION_COLORS = [
 	Colors[COLOR_NAMES.GREEN],
@@ -75,32 +126,28 @@ const QUESTION_COLORS = [
 	Colors[COLOR_NAMES.ORANGE],
 ];
 
-function getQuestionOptions(): readonly ActivityEntryQuestionOption[] {
-	if (!demoItem.question) return [];
-	return demoItem.question.options.map((opt, i) => ({
+function getQuestionOptions(item: DemoItem): readonly ActivityEntryQuestionOption[] {
+	if (!item.question) return [];
+	const selected = answersByItem[item.id] ?? null;
+	return item.question.options.map((opt, i) => ({
 		label: opt.label,
-		selected: selectedAnswers.has(opt.label),
+		selected: selected === opt.label,
 		color: QUESTION_COLORS[i % QUESTION_COLORS.length],
 	}));
 }
 
-function handleAnswerChange(answerId: string) {
-	if (selectedAnswers.has(answerId)) {
-		selectedAnswers.delete(answerId);
-	} else {
-		selectedAnswers = new Set([answerId]);
-	}
+function handleAnswerChange(itemId: string, answerId: string) {
+	answersByItem = {
+		...answersByItem,
+		[itemId]: answersByItem[itemId] === answerId ? null : answerId,
+	};
 }
 </script>
 
 <div class="demo-container">
-	<p class="demo-hint">
-		Try selecting an answer to see how interactive questions work in the attention queue.
-	</p>
-
 	<SectionedFeed
 		{groups}
-		totalCount={1}
+		totalCount={3}
 	>
 		{#snippet itemRenderer(rawItem)}
 			{@const item = rawItem as DemoItem}
@@ -145,15 +192,15 @@ function handleAnswerChange(answerId: string) {
 				currentQuestionIndex={0}
 				questionId={item.id}
 				questionProgress={[]}
-				currentQuestionAnswered={false}
-				currentAnswerDisplay={''}
-				currentQuestionOptions={getQuestionOptions()}
+				currentQuestionAnswered={!!answersByItem[item.id]}
+				currentAnswerDisplay={answersByItem[item.id] ?? ''}
+				currentQuestionOptions={getQuestionOptions(item)}
 				otherText={''}
-				otherPlaceholder={''}
-				showSubmitButton={false}
-				canSubmit={false}
-				submitLabel={''}
-				onOptionSelect={(optionLabel) => handleAnswerChange(optionLabel)}
+				otherPlaceholder={'Type your answer...'}
+				showSubmitButton={!!answersByItem[item.id]}
+				canSubmit={!!answersByItem[item.id]}
+				submitLabel={'Submit'}
+				onOptionSelect={(optionLabel) => handleAnswerChange(item.id, optionLabel)}
 				onOtherInput={() => {}}
 				onOtherKeydown={() => {}}
 				onSubmitAll={() => {}}
@@ -166,21 +213,6 @@ function handleAnswerChange(answerId: string) {
 
 <style>
 	.demo-container {
-		max-width: 800px;
-		margin: 2rem auto;
-		padding: 1.5rem;
-		border-radius: 0.5rem;
-		border: 1px solid hsl(var(--border) / 0.5);
-		background: hsl(var(--card) / 0.3);
-	}
-
-	.demo-hint {
-		margin-bottom: 1rem;
-		padding: 0.75rem;
-		border-radius: 0.375rem;
-		background: hsl(var(--muted) / 0.5);
-		color: hsl(var(--muted-foreground));
-		font-size: 0.875rem;
-		text-align: center;
+		width: 100%;
 	}
 </style>

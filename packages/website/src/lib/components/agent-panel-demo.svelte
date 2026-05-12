@@ -718,9 +718,15 @@ function handleSubmit(panel: DemoPanel): void {
 		panel.editorRef.textContent = "";
 	}
 }
+
+interface Props {
+	bare?: boolean;
+}
+
+let { bare = false }: Props = $props();
 </script>
 
-<LandingDemoFrame interactive={true}>
+<LandingDemoFrame interactive={true} {bare}>
 	{#snippet children()}
 		{#snippet panelComposer(panel: DemoPanel)}
 			{@const currentModel = getCurrentModel(panel)}

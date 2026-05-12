@@ -358,9 +358,15 @@ const groups = $derived.by((): readonly KanbanSceneColumnGroup[] => {
 		},
 	];
 });
+
+interface Props {
+	bare?: boolean;
+}
+
+let { bare = false }: Props = $props();
 </script>
 
-<LandingDemoFrame>
+<LandingDemoFrame {bare}>
 	{#snippet children()}
 		<div class="landing-kanban-demo h-full w-full">
 			<KanbanSceneBoard {groups} emptyHint="No agents" />
