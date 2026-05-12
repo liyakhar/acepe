@@ -116,7 +116,9 @@ function createSessionStateGraph(overrides: Partial<SessionStateGraph> = {}): Se
 	};
 }
 
-function createSnapshotEnvelope(graph: SessionStateGraph = createSessionStateGraph()): SessionStateEnvelope {
+function createSnapshotEnvelope(
+	graph: SessionStateGraph = createSessionStateGraph()
+): SessionStateEnvelope {
 	return {
 		sessionId: graph.canonicalSessionId,
 		graphRevision: graph.revision.graphRevision,

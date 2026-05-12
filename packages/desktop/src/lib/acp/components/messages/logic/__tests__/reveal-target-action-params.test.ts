@@ -1,13 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
 import {
-	shouldRestartRevealTargetAction,
 	type RevealTargetActionParams,
+	shouldRestartRevealTargetAction,
 } from "../reveal-target-action-params.js";
 
-function createParams(
-	overrides: Partial<RevealTargetActionParams> = {}
-): RevealTargetActionParams {
+function createParams(overrides: Partial<RevealTargetActionParams> = {}): RevealTargetActionParams {
 	return {
 		controller: overrides.controller,
 		entryIndex: overrides.entryIndex ?? 1,

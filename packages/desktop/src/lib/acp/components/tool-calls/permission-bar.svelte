@@ -69,9 +69,7 @@ const isRepresentedByToolCall = $derived.by(() => {
 	return isPermissionRepresentedByToolCall(currentPermission, sessionId, operationStore);
 });
 const sessionProgress = $derived(permissionStore.getSessionProgress(sessionId));
-const effectiveTurnState = $derived(
-	turnStateProp ?? sessionStore.getSessionTurnState(sessionId)
-);
+const effectiveTurnState = $derived(turnStateProp ?? sessionStore.getSessionTurnState(sessionId));
 const currentToolCall = $derived.by((): ToolCall | null => {
 	const toolCallId = currentPermission?.tool?.callID;
 	if (!toolCallId) {

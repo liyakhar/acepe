@@ -17,6 +17,7 @@ import {
 	type AgentToolStatus,
 } from "@acepe/ui/agent-panel";
 import type { ContentBlock, SessionPlanResponse } from "../../../../services/claude-history.js";
+import type { JsonValue } from "../../../../services/converted-session-types.js";
 import type { SessionStatus } from "../../../application/dto/session.js";
 import type { SessionEntry } from "../../../application/dto/session-entry.js";
 import { formatOtherToolName } from "../../../registry/index.js";
@@ -29,12 +30,11 @@ import type {
 	NormalizedSearchResult,
 	NormalizedWebSearchResult,
 } from "../../../types/normalized-tool-result.js";
-import type { JsonValue } from "../../../../services/converted-session-types.js";
 import type { ToolCall } from "../../../types/tool-call.js";
 import type { ToolKind } from "../../../types/tool-kind.js";
-import { calculateDiffStats, getFileName } from "../../../utils/file-utils.js";
 import { stripAnsiCodes } from "../../../utils/ansi-utils.js";
 import { extractSkillCallInput } from "../../../utils/extract-skill-call-input.js";
+import { calculateDiffStats, getFileName } from "../../../utils/file-utils.js";
 import { resolveToolCallEditDiffs } from "../../../utils/tool-call-edit/logic/resolve-tool-call-edit-diffs.js";
 import type { SceneDisplayRow } from "../logic/scene-display-rows.js";
 
@@ -823,8 +823,7 @@ function mapEditDiffEntriesForToolCall(toolCall: ToolCall): readonly AgentToolEd
 
 	return resolved.map((diff, index): AgentToolEditDiffEntry => {
 		const filePath =
-			normalizeNullableFilePath(diff.filePath) ??
-			(index === 0 ? locationPath : null);
+			normalizeNullableFilePath(diff.filePath) ?? (index === 0 ? locationPath : null);
 		const oldString = diff.oldString ?? null;
 		const newString = diff.newString ?? null;
 		const stats = calculateDiffStats({

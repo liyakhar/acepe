@@ -1,57 +1,57 @@
 <script lang="ts">
-	import { onMount } from "svelte";
-	import {
-		getAgentPanelRenderCount,
-		recordAgentPanelDestroy,
-		recordAgentPanelMount,
-		recordAgentPanelRender,
-	} from "./panels-container-agent-panel-stub-state";
+import { onMount } from "svelte";
+import {
+	getAgentPanelRenderCount,
+	recordAgentPanelDestroy,
+	recordAgentPanelMount,
+	recordAgentPanelRender,
+} from "./panels-container-agent-panel-stub-state";
 
-	interface ProjectRef {
-		readonly path: string;
-	}
+interface ProjectRef {
+	readonly path: string;
+}
 
-	interface AgentRef {
-		readonly id: string;
-	}
+interface AgentRef {
+	readonly id: string;
+}
 
-	interface FilePanelRef {
-		readonly id: string;
-	}
+interface FilePanelRef {
+	readonly id: string;
+}
 
-	interface Props {
-		panelId: string;
-		project?: ProjectRef | null;
-		selectedAgentId?: string | null;
-		pendingProjectSelection?: boolean;
-		isFullscreen?: boolean;
-		availableAgents?: readonly AgentRef[];
-		attachedFilePanels?: readonly FilePanelRef[];
-	}
+interface Props {
+	panelId: string;
+	project?: ProjectRef | null;
+	selectedAgentId?: string | null;
+	pendingProjectSelection?: boolean;
+	isFullscreen?: boolean;
+	availableAgents?: readonly AgentRef[];
+	attachedFilePanels?: readonly FilePanelRef[];
+}
 
-	let {
-		panelId,
-		project = null,
-		selectedAgentId = null,
-		pendingProjectSelection = false,
-		isFullscreen = false,
-		availableAgents = [],
-		attachedFilePanels = [],
-	}: Props = $props();
+let {
+	panelId,
+	project = null,
+	selectedAgentId = null,
+	pendingProjectSelection = false,
+	isFullscreen = false,
+	availableAgents = [],
+	attachedFilePanels = [],
+}: Props = $props();
 
-	onMount(() => {
-		recordAgentPanelMount(panelId);
-		return () => recordAgentPanelDestroy(panelId);
-	});
+onMount(() => {
+	recordAgentPanelMount(panelId);
+	return () => recordAgentPanelDestroy(panelId);
+});
 
-	const projectPath = $derived(project?.path ?? "no-project");
-	const selectedAgent = $derived(selectedAgentId ?? "no-agent");
-	const availableAgentCount = $derived(availableAgents.length);
-	const attachedFileCount = $derived(attachedFilePanels.length);
-	const renderTick = $derived.by(() => {
-		recordAgentPanelRender(panelId);
-		return getAgentPanelRenderCount(panelId);
-	});
+const projectPath = $derived(project?.path ?? "no-project");
+const selectedAgent = $derived(selectedAgentId ?? "no-agent");
+const availableAgentCount = $derived(availableAgents.length);
+const attachedFileCount = $derived(attachedFilePanels.length);
+const renderTick = $derived.by(() => {
+	recordAgentPanelRender(panelId);
+	return getAgentPanelRenderCount(panelId);
+});
 </script>
 
 <div

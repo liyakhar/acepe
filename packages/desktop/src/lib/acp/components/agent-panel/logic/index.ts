@@ -6,29 +6,29 @@
  */
 
 export { mapCanonicalTurnStateToHotTurnState } from "../../../store/canonical-turn-state-mapping";
-export { copySessionToClipboard, copyTextToClipboard } from "./clipboard-manager";
-export { derivePanelErrorInfo } from "./connection-ui";
-export { createAutoScroll } from "./create-auto-scroll.svelte.js";
-export { resolveEffectiveProjectPath } from "./effective-project-path";
-export { calculateLoadingProgress, isLoadingComplete } from "./loading-animator";
-export { loadSessionPlan } from "./plan-loader";
 export {
-	resolveOptimisticUserEntryForGraph,
-	resolveVisibleEntryCount,
-} from "./optimistic-user-entry.js";
-export {
-	applyAgentPanelDisplayMemory,
-	applyAgentPanelDisplayModelToSceneEntries,
-	buildAgentPanelBaseModel,
-	createAgentPanelDisplayMemory,
 	type AgentPanelBaseModel,
 	type AgentPanelDisplayInput,
 	type AgentPanelDisplayMemory,
 	type AgentPanelDisplayModel,
 	type AgentPanelDisplayResult,
 	type AgentPanelDisplayRow,
+	applyAgentPanelDisplayMemory,
+	applyAgentPanelDisplayModelToSceneEntries,
+	buildAgentPanelBaseModel,
+	createAgentPanelDisplayMemory,
 } from "./agent-panel-display-model.js";
 export { backfillSceneEntryTimestamps } from "./backfill-scene-entry-timestamps.js";
+export { copySessionToClipboard, copyTextToClipboard } from "./clipboard-manager";
+export { derivePanelErrorInfo } from "./connection-ui";
+export { createAutoScroll } from "./create-auto-scroll.svelte.js";
+export { resolveEffectiveProjectPath } from "./effective-project-path";
+export { calculateLoadingProgress, isLoadingComplete } from "./loading-animator";
+export {
+	resolveOptimisticUserEntryForGraph,
+	resolveVisibleEntryCount,
+} from "./optimistic-user-entry.js";
+export { loadSessionPlan } from "./plan-loader";
 export {
 	deriveCanonicalAgentPanelSessionState,
 	deriveEffectiveCanonicalTurnPresentation,

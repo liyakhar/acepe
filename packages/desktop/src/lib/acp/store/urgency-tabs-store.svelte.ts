@@ -252,8 +252,7 @@ export class UrgencyTabsStore {
 			sessionId !== null ? this.sessionStore.getSessionActiveTurnFailure(sessionId) : null;
 		const canonicalHasError =
 			lifecycleStatus === "failed" || failureMessage !== null || failureRecord !== null;
-		const effectiveWorkBucket =
-			workBucket === "error" && !canonicalHasError ? "idle" : workBucket;
+		const effectiveWorkBucket = workBucket === "error" && !canonicalHasError ? "idle" : workBucket;
 		const urgencyStatus = (() => {
 			switch (effectiveWorkBucket) {
 				case "answer_needed":
@@ -269,8 +268,7 @@ export class UrgencyTabsStore {
 			}
 		})();
 
-		const isConnecting =
-			lifecycleStatus === "activating" || lifecycleStatus === "reconnecting";
+		const isConnecting = lifecycleStatus === "activating" || lifecycleStatus === "reconnecting";
 		const urgency = deriveUrgency({
 			status: urgencyStatus,
 			hasPendingQuestion: pendingQuestion !== null || pendingPlanApproval !== null,

@@ -581,12 +581,7 @@ describe("openPersistedSession", () => {
 			parentId: null,
 		}));
 		sessionStore.connectSession = mock(() =>
-			errAsync(
-				new ConnectionError(
-					"session-1",
-					new Error("Resource not found: Session session-1")
-				)
-			)
+			errAsync(new ConnectionError("session-1", new Error("Resource not found: Session session-1")))
 		);
 
 		openPersistedSession({
@@ -605,7 +600,9 @@ describe("openPersistedSession", () => {
 		expect(sessionStore.setLocalCreatedSessionLoaded).not.toHaveBeenCalled();
 		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
 		// Must NOT carry symbols of the deleted gate.
-		expect((sessionStore as unknown as Record<string, unknown>)["setSessionOpenMissing"]).toBeUndefined();
+		expect(
+			(sessionStore as unknown as Record<string, unknown>)["setSessionOpenMissing"]
+		).toBeUndefined();
 		expect(
 			(sessionStore as unknown as Record<string, unknown>)["setLocalPersistedSessionProbeStatus"]
 		).toBeUndefined();

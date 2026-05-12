@@ -176,10 +176,7 @@ function handleSelectPullRequest(pr: PrListItem): void {
  * 1. Unlink `otherSessionId` (set its prNumber to null, manual mode).
  * 2. Link current session to the same PR (manual mode).
  */
-async function handleTransferPrLink(
-	otherSessionId: string,
-	prNumber: number
-): Promise<void> {
+async function handleTransferPrLink(otherSessionId: string, prNumber: number): Promise<void> {
 	// Unlink the other session first.
 	const unlinkResult = await sessionStore.updateSessionPrLink(
 		otherSessionId,

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import type {
-	LifecycleStatus,
-	SessionGraphActivityKind,
-} from "../../../services/acp-types.js";
+import type { LifecycleStatus, SessionGraphActivityKind } from "../../../services/acp-types.js";
 import type { SessionEntry } from "../../application/dto/session-entry.js";
 import type { CanonicalSessionProjection } from "../canonical-session-projection.js";
 import { type PanelToTabInput, panelToTab } from "../tab-bar-utils.js";

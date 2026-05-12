@@ -87,7 +87,7 @@ function mergeAssistantMessages(
 	};
 }
 
-function getLastMessageTextGroupIndex(entry: MergedAssistantDisplayEntry): number | null {
+function _getLastMessageTextGroupIndex(entry: MergedAssistantDisplayEntry): number | null {
 	const groups = groupAssistantChunks(entry.message.chunks).messageGroups;
 	for (let index = groups.length - 1; index >= 0; index -= 1) {
 		if (groups[index]?.type === "text") {
@@ -324,9 +324,7 @@ export function buildVirtualizedDisplayEntriesFromScene(
  * Returns the index of the last assistant entry in a scene entries array, or -1 if none.
  * Scene-native equivalent of the legacy `findLastAssistantIndex(SessionEntry[])` helper.
  */
-export function findLastAssistantSceneIndex(
-	entries: readonly AgentPanelSceneEntryModel[]
-): number {
+export function findLastAssistantSceneIndex(entries: readonly AgentPanelSceneEntryModel[]): number {
 	return entries.findLastIndex((e) => e.type === "assistant");
 }
 

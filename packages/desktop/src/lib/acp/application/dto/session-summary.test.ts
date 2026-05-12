@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type {
 	LifecycleStatus,
+	SessionGraphActionability,
 	SessionGraphActivity,
 	SessionGraphActivityKind,
-	SessionGraphActionability,
 	SessionGraphLifecycle,
 	SessionTurnState,
 } from "$lib/services/acp-types.js";
@@ -86,24 +86,21 @@ describe("deriveSessionListStateFromCanonical", () => {
 		["reserved", "idle", false, false],
 		["detached", "idle", false, false],
 		["archived", "idle", false, false],
-	] as const)(
-		"maps %s lifecycle to %s summary state",
-		(lifecycleStatus, status, isConnected, isStreaming) => {
-			expect(
-				deriveSessionListStateFromCanonical(
-					projection({
-						lifecycleStatus,
-						activityKind: "idle",
-						turnState: "Idle",
-					})
-				)
-			).toEqual({
-				status,
-				isConnected,
-				isStreaming,
-			});
-		}
-	);
+	] as const)("maps %s lifecycle to %s summary state", (lifecycleStatus, status, isConnected, isStreaming) => {
+		expect(
+			deriveSessionListStateFromCanonical(
+				projection({
+					lifecycleStatus,
+					activityKind: "idle",
+					turnState: "Idle",
+				})
+			)
+		).toEqual({
+			status,
+			isConnected,
+			isStreaming,
+		});
+	});
 
 	it.each([
 		["idle", "Idle", "ready", true, false],
@@ -117,24 +114,21 @@ describe("deriveSessionListStateFromCanonical", () => {
 		["error", "Running", "error", false, false],
 		["idle", "Completed", "ready", true, false],
 		["idle", "Failed", "ready", true, false],
-	] as const)(
-		"maps ready lifecycle with %s activity and %s turn state",
-		(activityKind, turnState, status, isConnected, isStreaming) => {
-			expect(
-				deriveSessionListStateFromCanonical(
-					projection({
-						lifecycleStatus: "ready",
-						activityKind,
-						turnState,
-					})
-				)
-			).toEqual({
-				status,
-				isConnected,
-				isStreaming,
-			});
-		}
-	);
+	] as const)("maps ready lifecycle with %s activity and %s turn state", (activityKind, turnState, status, isConnected, isStreaming) => {
+		expect(
+			deriveSessionListStateFromCanonical(
+				projection({
+					lifecycleStatus: "ready",
+					activityKind,
+					turnState,
+				})
+			)
+		).toEqual({
+			status,
+			isConnected,
+			isStreaming,
+		});
+	});
 });
 
 describe("buildSessionSummaryFromCold", () => {

@@ -8,10 +8,10 @@
  * - Event subscription handling (via SessionEventService)
  */
 
+import { countWordsInMarkdown } from "@acepe/ui/markdown";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { getContext, setContext } from "svelte";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
-import { countWordsInMarkdown } from "@acepe/ui/markdown";
 import type {
 	ModelsForDisplay,
 	ProviderMetadataProjection,
@@ -211,7 +211,7 @@ function buildCanonicalUsageTelemetry(
 	};
 }
 
-function mapTurnStateToHotState(
+function _mapTurnStateToHotState(
 	turnState: SessionTurnState
 ): "idle" | "streaming" | "completed" | "error" {
 	switch (turnState) {
@@ -659,9 +659,7 @@ function emptyRowTokenStream(): ReadonlyMap<string, RowTokenStream> {
 	return new Map<string, RowTokenStream>();
 }
 
-function preserveCanonicalStreamingState(
-	projection: CanonicalSessionProjection | null
-): {
+function preserveCanonicalStreamingState(projection: CanonicalSessionProjection | null): {
 	readonly tokenStream: ReadonlyMap<string, RowTokenStream>;
 	readonly clockAnchor: SessionClockAnchor | null;
 } {
@@ -1048,7 +1046,7 @@ function cloneSessionGraphActivity(activity: SessionGraphActivity): SessionGraph
 
 type ProjectedGraphCapabilities = ReturnType<typeof projectGraphCapabilities>;
 
-function mergeProjectedCapabilities(
+function _mergeProjectedCapabilities(
 	agentId: string,
 	capabilities: SessionGraphCapabilities,
 	previousCapabilities: SessionGraphCapabilities | null
@@ -1854,7 +1852,10 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 				input.previousProjection.lastTerminalTurnId !== input.lastTerminalTurnId);
 
 		if (isNewCompletedTurn) {
-			this.messagingSvc.handleStreamComplete(input.sessionId, input.lastTerminalTurnId ?? undefined);
+			this.messagingSvc.handleStreamComplete(
+				input.sessionId,
+				input.lastTerminalTurnId ?? undefined
+			);
 			this.callbacks.onTurnComplete?.(input.sessionId);
 		}
 
@@ -3440,10 +3441,7 @@ export class SessionStore implements SessionEventHandler, ISessionStateReader, I
 		this.entryStore.applyTranscriptDelta(sessionId, delta, new Date());
 	}
 
-	private applyAssistantTextDelta(
-		sessionId: string,
-		delta: AssistantTextDeltaPayload
-	): void {
+	private applyAssistantTextDelta(sessionId: string, delta: AssistantTextDeltaPayload): void {
 		const projection = this.canonicalProjections.get(sessionId) ?? null;
 		if (projection === null) {
 			logger.warn("Received assistant text delta before canonical projection", {

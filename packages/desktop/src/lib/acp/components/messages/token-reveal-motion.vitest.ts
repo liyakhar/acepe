@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	shouldKeepTokenRevealTiming,
 	TOKEN_REVEAL_FADE_MS,
 	TOKEN_REVEAL_STEP_MS,
-	shouldKeepTokenRevealTiming,
 } from "./token-reveal-motion.js";
 
 describe("shouldKeepTokenRevealTiming", () => {

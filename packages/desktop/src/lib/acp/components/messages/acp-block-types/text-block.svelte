@@ -21,7 +21,6 @@ let {
 	projectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
 }: Props = $props();
-
 </script>
 
 <MarkdownText

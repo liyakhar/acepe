@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { AgentToolEntry, AgentUserEntry } from "@acepe/ui/agent-panel";
 import type {
 	InteractionSnapshot,
 	OperationSnapshot,
@@ -10,13 +11,12 @@ import type {
 	TranscriptEntry,
 	TranscriptSnapshot,
 } from "../../../services/acp-types.js";
+import type { SessionEntry } from "../../application/dto/session-entry.js";
 import {
 	AGENT_PANEL_SCENE_TEXT_LIMITS,
 	applySceneTextLimits,
 	materializeAgentPanelSceneFromGraph,
 } from "../agent-panel-graph-materializer.js";
-import type { AgentToolEntry, AgentUserEntry } from "@acepe/ui/agent-panel";
-import type { SessionEntry } from "../../application/dto/session-entry.js";
 
 function createActionability(): SessionGraphActionability {
 	return {
@@ -697,7 +697,9 @@ describe("agent panel graph materializer", () => {
 
 	it("renders blocked from canonical operation state even when provider status is stale", () => {
 		const graph = createGraph({
-			transcriptSnapshot: createTranscriptSnapshot([createTranscriptEntry("tool-1", "tool", "Run")]),
+			transcriptSnapshot: createTranscriptSnapshot([
+				createTranscriptEntry("tool-1", "tool", "Run"),
+			]),
 			operations: [
 				createOperationSnapshot({
 					provider_status: "completed",
@@ -910,9 +912,7 @@ describe("agent panel graph materializer", () => {
 			],
 			url: "https://example.com",
 			resultText: "result body",
-			webSearchLinks: [
-				{ title: "T", url: "https://example.com", domain: "example.com" },
-			],
+			webSearchLinks: [{ title: "T", url: "https://example.com", domain: "example.com" }],
 			webSearchSummary: "summary",
 			skillName: "ce-debug",
 			skillArgs: "--quick",
@@ -932,9 +932,7 @@ describe("agent panel graph materializer", () => {
 			degradedReason: null,
 			todos: [{ content: "do it", status: "pending" }],
 			question: { question: "Pick one", options: [{ label: "A" }] },
-			lintDiagnostics: [
-				{ filePath: "/repo/a.ts", line: 1, severity: "error", message: "boom" },
-			],
+			lintDiagnostics: [{ filePath: "/repo/a.ts", line: 1, severity: "error", message: "boom" }],
 		};
 
 		const limited = applySceneTextLimits(fullEntry);

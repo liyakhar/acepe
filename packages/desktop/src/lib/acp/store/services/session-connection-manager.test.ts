@@ -45,11 +45,13 @@ const canonicalOverlapHotStateFields = [
 	"modelsDisplay",
 ] as const;
 
-function createResidualHotState(input: {
-	acpSessionId?: string | null;
-	autonomousTransition?: SessionTransientProjection["autonomousTransition"];
-	modelPerMode?: Record<string, string>;
-} = {}): SessionTransientProjection {
+function createResidualHotState(
+	input: {
+		acpSessionId?: string | null;
+		autonomousTransition?: SessionTransientProjection["autonomousTransition"];
+		modelPerMode?: Record<string, string>;
+	} = {}
+): SessionTransientProjection {
 	return {
 		acpSessionId: input.acpSessionId ?? null,
 		autonomousTransition: input.autonomousTransition ?? "idle",
@@ -67,7 +69,7 @@ function expectNoCanonicalOverlapHotStateWrites(updateHotState: ReturnType<typeo
 	for (const call of updateHotState.mock.calls) {
 		const updates = call[1];
 		for (const field of canonicalOverlapHotStateFields) {
-			expect(Object.prototype.hasOwnProperty.call(updates, field)).toBe(false);
+			expect(Object.hasOwn(updates, field)).toBe(false);
 		}
 	}
 }
@@ -1361,7 +1363,7 @@ describe("SessionConnectionManager.createSession", () => {
 		result._unsafeUnwrap();
 
 		const initUpdate = (hotState.initializeHotState as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
-		expect(Object.prototype.hasOwnProperty.call(initUpdate, "availableCommands")).toBe(false);
+		expect(Object.hasOwn(initUpdate, "availableCommands")).toBe(false);
 	});
 
 	it("keeps a newly created session disconnected until canonical connect materializes readiness", async () => {
@@ -1767,7 +1769,7 @@ describe("SessionConnectionManager.createSession", () => {
 		expect(setSessionAutonomous).toHaveBeenCalledWith(sessionId, true);
 
 		const initUpdate = (hotState.initializeHotState as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
-		expect(Object.prototype.hasOwnProperty.call(initUpdate, "autonomousEnabled")).toBe(false);
+		expect(Object.hasOwn(initUpdate, "autonomousEnabled")).toBe(false);
 	});
 });
 
@@ -2316,7 +2318,9 @@ describe("SessionConnectionManager.cancelStreaming", () => {
 		(stateReader.getHotState as ReturnType<typeof vi.fn>).mockReturnValue(
 			createResidualHotState({ acpSessionId: sessionId })
 		);
-		(stateReader.getSessionLifecycleStatus as ReturnType<typeof vi.fn>).mockReturnValue("activating");
+		(stateReader.getSessionLifecycleStatus as ReturnType<typeof vi.fn>).mockReturnValue(
+			"activating"
+		);
 	});
 
 	it("sends sendResponseComplete to transition machine STREAMING → READY on success", async () => {

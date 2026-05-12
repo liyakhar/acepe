@@ -1,8 +1,8 @@
 export {
+	type AcpCreationFailureKind,
 	AcpError,
 	CreationFailedAcpError,
 	ProviderHistoryFailedAcpError,
-	type AcpCreationFailureKind,
 	type ProviderHistoryFailureKind,
 } from "./acp-error.js";
 export { CommandPaletteError, type CommandPaletteErrorCode } from "./command-palette-error.js";

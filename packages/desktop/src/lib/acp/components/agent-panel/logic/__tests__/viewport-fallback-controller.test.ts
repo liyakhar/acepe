@@ -24,12 +24,8 @@ describe("viewport-fallback-controller", () => {
 	});
 
 	it("retries only no-render fallbacks and only once", () => {
-		expect(shouldRetryNativeFallback({ reason: "no_rendered_entries", retryCount: 0 })).toBe(
-			true
-		);
-		expect(shouldRetryNativeFallback({ reason: "no_rendered_entries", retryCount: 1 })).toBe(
-			false
-		);
+		expect(shouldRetryNativeFallback({ reason: "no_rendered_entries", retryCount: 0 })).toBe(true);
+		expect(shouldRetryNativeFallback({ reason: "no_rendered_entries", retryCount: 1 })).toBe(false);
 		expect(shouldRetryNativeFallback({ reason: "zero_viewport", retryCount: 0 })).toBe(false);
 		expect(shouldRetryNativeFallback({ reason: null, retryCount: 0 })).toBe(false);
 	});

@@ -100,8 +100,7 @@ describe("GitHub Badge Detection - Regex Patterns", () => {
 		});
 
 		it("should not match all-digit timestamps as bare commit SHAs", () => {
-			const text =
-				"FIXQA4-1777748119374 Smooth streaming keeps token cadence. 1777748119374";
+			const text = "FIXQA4-1777748119374 Smooth streaming keeps token cadence. 1777748119374";
 			const matches = [...text.matchAll(GITHUB_COMMIT_SHA_PATTERN)];
 			expect(matches).toHaveLength(0);
 		});

@@ -12,7 +12,10 @@ import type { ToolCall } from "../../types/tool-call.js";
 import type { ToolKind } from "../../types/tool-kind.js";
 import { mapToolCallToSceneEntry } from "../agent-panel/scene/desktop-agent-panel-scene.js";
 
-export type CompactToolDisplay = Pick<AgentToolEntry, "id" | "kind" | "title" | "filePath" | "status">;
+export type CompactToolDisplay = Pick<
+	AgentToolEntry,
+	"id" | "kind" | "title" | "filePath" | "status"
+>;
 
 export type CompactActivityKind = "idle" | "thinking" | "streaming" | "paused";
 
@@ -244,12 +247,15 @@ export function projectTaskActivity(
 			? rawChildren[preferredChildIndex]
 			: null;
 	const preferredSummary = preferredRawChild ? getChildSummary(preferredRawChild) : null;
-	const latestEntry = orderedChildren.length > 0 ? orderedChildren[orderedChildren.length - 1] : null;
+	const latestEntry =
+		orderedChildren.length > 0 ? orderedChildren[orderedChildren.length - 1] : null;
 	const latestTaskSubagentTool: CompactToolDisplay | null = latestEntry
 		? {
 				id: latestEntry.id,
 				kind: latestEntry.kind,
-				title: latestEntry.filePath ? latestEntry.title : (latestEntry.subtitle ?? latestEntry.title),
+				title: latestEntry.filePath
+					? latestEntry.title
+					: (latestEntry.subtitle ?? latestEntry.title),
 				filePath: latestEntry.filePath,
 				status: latestEntry.status,
 			}

@@ -3,10 +3,7 @@ import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 type AssistantSceneEntry = Extract<AgentPanelSceneEntryModel, { type: "assistant" }>;
 type StreamingReproAssistantMessageChunks = NonNullable<AssistantSceneEntry["message"]>["chunks"];
 
-export type StreamingReproAnswer =
-	| "streaming_visible"
-	| "streaming_not_visible"
-	| "unclear";
+export type StreamingReproAnswer = "streaming_visible" | "streaming_not_visible" | "unclear";
 
 export type StreamingReproFollowState = "following" | "detached";
 export type StreamingReproFallbackState = "healthy" | "fallback";
@@ -96,8 +93,7 @@ const CORE_STREAMING_PRESET: StreamingReproPreset = {
 		{
 			id: "assistant-part-2",
 			label: "Next words arrive",
-			assistantText:
-				"Umbrellas are useful because they make bad weather easier to ignore.",
+			assistantText: "Umbrellas are useful because they make bad weather easier to ignore.",
 			turnState: "Running",
 			activityKind: "awaiting_model",
 			lastAgentMessageId: "assistant-1",

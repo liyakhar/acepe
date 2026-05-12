@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-	CreationFailedAcpError,
-	ProviderHistoryFailedAcpError,
-} from "./acp-error.js";
+import { CreationFailedAcpError, ProviderHistoryFailedAcpError } from "./acp-error.js";
 import { deserializeAcpError } from "./deserialize-acp-error.js";
 
 describe("deserializeAcpError", () => {

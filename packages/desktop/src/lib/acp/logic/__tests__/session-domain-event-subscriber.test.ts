@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionDomainEvent } from "$lib/services/acp-types.js";
 import type { AcpEventEnvelope } from "../acp-event-bridge.js";
 import { SessionDomainEventSubscriber } from "../session-domain-event-subscriber.js";
+import { createTestAcpEventDrain } from "./fixtures/acp-event-drain-stub.js";
 
 const mockOpenAcpEventSource = vi.fn();
 
 vi.mock("../acp-event-bridge.js", () => ({
+	createAcpEventDrain: createTestAcpEventDrain,
 	openAcpEventSource: (handler: (envelope: AcpEventEnvelope) => void) =>
 		mockOpenAcpEventSource(handler),
 }));

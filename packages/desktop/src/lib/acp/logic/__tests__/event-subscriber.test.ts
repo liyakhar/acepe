@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProtocolError } from "../../errors/index.js";
 import type { AcpEventEnvelope } from "../acp-event-bridge.js";
 import { EventSubscriber } from "../event-subscriber.js";
+import { createTestAcpEventDrain } from "./fixtures/acp-event-drain-stub.js";
 
 const mockOpenAcpEventSource = vi.fn();
 
 vi.mock("../acp-event-bridge.js", () => ({
+	createAcpEventDrain: createTestAcpEventDrain,
 	openAcpEventSource: (...args: Parameters<typeof mockOpenAcpEventSource>) =>
 		mockOpenAcpEventSource(...args),
 }));

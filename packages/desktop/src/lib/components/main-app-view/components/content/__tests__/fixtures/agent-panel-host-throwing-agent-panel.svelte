@@ -1,17 +1,17 @@
 <script lang="ts">
-	interface Props {
-		onClose?: () => void;
+interface Props {
+	onClose?: () => void;
+}
+
+let { onClose }: Props = $props();
+
+let shouldCrash = $state(false);
+const crash = $derived.by(() => {
+	if (shouldCrash) {
+		throw new Error("agent panel render failed");
 	}
-
-	let { onClose }: Props = $props();
-
-	let shouldCrash = $state(false);
-	const crash = $derived.by(() => {
-		if (shouldCrash) {
-			throw new Error("agent panel render failed");
-		}
-		return "stable";
-	});
+	return "stable";
+});
 </script>
 
 <button

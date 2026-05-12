@@ -50,9 +50,7 @@ function createIdleActivity(): SessionGraphActivity {
 	};
 }
 
-function createSessionStateGraph(
-	overrides: Partial<SessionStateGraph> = {}
-): SessionStateGraph {
+function createSessionStateGraph(overrides: Partial<SessionStateGraph> = {}): SessionStateGraph {
 	return {
 		requestedSessionId: overrides.requestedSessionId ?? "session-1",
 		canonicalSessionId: overrides.canonicalSessionId ?? "session-1",
@@ -318,8 +316,6 @@ describe("SessionStore assistantTextDelta canonical projection", () => {
 		expect(replayStore.getRowTokenStream("session-1", "turn-1", "assistant-1")).toEqual(
 			liveStore.getRowTokenStream("session-1", "turn-1", "assistant-1")
 		);
-		expect(replayStore.getClockAnchor("session-1")).toEqual(
-			liveStore.getClockAnchor("session-1")
-		);
+		expect(replayStore.getClockAnchor("session-1")).toEqual(liveStore.getClockAnchor("session-1"));
 	});
 });

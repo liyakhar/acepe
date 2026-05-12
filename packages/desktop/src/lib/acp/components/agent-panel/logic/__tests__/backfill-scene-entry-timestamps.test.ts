@@ -1,5 +1,5 @@
-import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import { describe, expect, it } from "bun:test";
+import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import type { SessionEntry } from "../../../../application/dto/session-entry.js";
 import { backfillSceneEntryTimestamps } from "../backfill-scene-entry-timestamps.js";
 

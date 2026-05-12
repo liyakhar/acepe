@@ -38,7 +38,6 @@ $effect(() => {
 		hasInitializedReveal = false;
 	}
 });
-
 </script>
 
 {#if isTextBlock(block) && block.text === "thinking"}

@@ -45,9 +45,9 @@ describe("long-session fixture", () => {
 		expect(fixture.entries.some((entry) => entry.type === "user")).toBe(true);
 		expect(fixture.entries.some((entry) => entry.type === "assistant")).toBe(true);
 		expect(fixture.entries.some((entry) => entry.type === "tool_call")).toBe(true);
-		expect(fixture.operationSnapshots.some((operation) => operation.provider_status === "completed")).toBe(
-			true
-		);
+		expect(
+			fixture.operationSnapshots.some((operation) => operation.provider_status === "completed")
+		).toBe(true);
 		expect(fixture.changedOperationSnapshot.provider_status).toBe("in_progress");
 		expect(fixture.activeStreamingOperationId).toBe(fixture.changedOperationSnapshot.id);
 		expect(

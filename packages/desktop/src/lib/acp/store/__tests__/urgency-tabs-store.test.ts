@@ -116,46 +116,46 @@ function createSessionStore(input: {
 		parentId: null,
 	});
 	sessionStore.getSessionIdentity = () => ({
-			id: "session-1",
-			projectPath: "/repo",
-			agentId: "codex",
-			worktreePath: undefined,
-		});
+		id: "session-1",
+		projectPath: "/repo",
+		agentId: "codex",
+		worktreePath: undefined,
+	});
 	sessionStore.getSessionMetadata = () => ({
-			title: "Session",
-			updatedAt: new Date("2026-04-28T00:00:00.000Z"),
-			createdAt: new Date("2026-04-28T00:00:00.000Z"),
-			sourcePath: undefined,
-			sessionLifecycleState: "persisted",
-			parentId: null,
-		});
+		title: "Session",
+		updatedAt: new Date("2026-04-28T00:00:00.000Z"),
+		createdAt: new Date("2026-04-28T00:00:00.000Z"),
+		sourcePath: undefined,
+		sessionLifecycleState: "persisted",
+		parentId: null,
+	});
 	sessionStore.getHotState = () => input.hotState;
 	sessionStore.getOperationStore = () => operationStore;
 	sessionStore.getSessionRuntimeState = () => null;
 	sessionStore.getCanonicalSessionProjection = () =>
-			input.lifecycle === null
-				? null
-				: {
-						lifecycle: input.lifecycle,
-						activity,
-						turnState: input.lifecycle.status === "failed" ? "Failed" : "Idle",
-						activeTurnFailure: null,
-						lastTerminalTurnId: null,
-						capabilities: {
-							models: null,
-							modes: null,
-							availableCommands: [],
-							configOptions: [],
-							autonomousEnabled: false,
-						},
-						tokenStream: new Map(),
-						clockAnchor: null,
-						revision: {
-							graphRevision: 1,
-							transcriptRevision: 1,
-							lastEventSeq: 1,
-						},
-					};
+		input.lifecycle === null
+			? null
+			: {
+					lifecycle: input.lifecycle,
+					activity,
+					turnState: input.lifecycle.status === "failed" ? "Failed" : "Idle",
+					activeTurnFailure: null,
+					lastTerminalTurnId: null,
+					capabilities: {
+						models: null,
+						modes: null,
+						availableCommands: [],
+						configOptions: [],
+						autonomousEnabled: false,
+					},
+					tokenStream: new Map(),
+					clockAnchor: null,
+					revision: {
+						graphRevision: 1,
+						transcriptRevision: 1,
+						lastEventSeq: 1,
+					},
+				};
 	sessionStore.getSessionLifecycleStatus = () => input.lifecycle?.status ?? null;
 	sessionStore.getSessionConnectionError = () => input.lifecycle?.errorMessage ?? null;
 	sessionStore.getSessionActiveTurnFailure = () => null;

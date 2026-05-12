@@ -1,9 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import {
-	DEFAULT_TRANSIENT_PROJECTION,
-	type SessionTransientProjection,
-} from "../types.js";
+import { DEFAULT_TRANSIENT_PROJECTION, type SessionTransientProjection } from "../types.js";
 
 describe("SessionTransientProjection", () => {
 	it("defaults to only local residual fields", () => {
@@ -12,6 +9,7 @@ describe("SessionTransientProjection", () => {
 			autonomousTransition: "idle",
 			modelPerMode: {},
 			pendingSendIntent: null,
+			observedTerminalTurn: null,
 			capabilityMutationState: {
 				pendingMutationId: null,
 				previewState: null,
@@ -25,6 +23,7 @@ describe("SessionTransientProjection", () => {
 			"autonomousTransition",
 			"capabilityMutationState",
 			"modelPerMode",
+			"observedTerminalTurn",
 			"pendingSendIntent",
 			"statusChangedAt",
 		]);
@@ -51,25 +50,33 @@ describe("SessionTransientProjection", () => {
 					timestamp: new Date(456),
 				},
 			},
+			observedTerminalTurn: {
+				turnId: "turn-1",
+				observedAt: 789,
+			},
 			capabilityMutationState: {
 				pendingMutationId: "mutation-1",
 				previewState: "pending",
 			},
 		};
 
-			expect(projection).toMatchObject({
-				acpSessionId: "acp-1",
-				autonomousTransition: "enabling",
-				modelPerMode: { build: "gpt-5" },
-				pendingSendIntent: {
-					attemptId: "attempt-1",
-					optimisticEntry: {
-						id: "optimistic-1",
-					},
+		expect(projection).toMatchObject({
+			acpSessionId: "acp-1",
+			autonomousTransition: "enabling",
+			modelPerMode: { build: "gpt-5" },
+			pendingSendIntent: {
+				attemptId: "attempt-1",
+				optimisticEntry: {
+					id: "optimistic-1",
 				},
-				capabilityMutationState: {
-					pendingMutationId: "mutation-1",
-					previewState: "pending",
+			},
+			observedTerminalTurn: {
+				turnId: "turn-1",
+				observedAt: 789,
+			},
+			capabilityMutationState: {
+				pendingMutationId: "mutation-1",
+				previewState: "pending",
 			},
 		});
 	});

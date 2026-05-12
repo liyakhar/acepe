@@ -398,7 +398,9 @@ describe("OperationStore", () => {
 		const operationStore = new OperationStore();
 		operationStore.replaceSessionOperations("session-1", fixture.operationSnapshots);
 		operationStore.getSessionOperations = () => {
-			throw new Error("fixture-backed current streaming lookup must not materialize every operation");
+			throw new Error(
+				"fixture-backed current streaming lookup must not materialize every operation"
+			);
 		};
 
 		expect(operationStore.getCurrentStreamingOperation("session-1")?.id).toBe(

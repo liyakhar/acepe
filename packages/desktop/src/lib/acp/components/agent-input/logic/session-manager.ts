@@ -1,7 +1,5 @@
 import type { ResultAsync } from "neverthrow";
-
-import type { SessionCreationResult } from "../../../store/session-store.svelte.js";
-import type { SessionStore } from "../../../store/session-store.svelte.js";
+import type { SessionCreationResult, SessionStore } from "../../../store/session-store.svelte.js";
 import { MessageSendError, SessionCreationError } from "../errors/agent-input-error.js";
 import type { Attachment } from "../types/attachment.js";
 

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import type {
-	LifecycleStatus,
-	SessionGraphActivityKind,
-} from "../../../services/acp-types.js";
+import type { LifecycleStatus, SessionGraphActivityKind } from "../../../services/acp-types.js";
 import type { SessionRuntimeState } from "../../logic/session-ui-state.js";
 import type { ToolCall } from "../../types/tool-call.js";
 import type { ActiveTurnFailure } from "../../types/turn-error.js";

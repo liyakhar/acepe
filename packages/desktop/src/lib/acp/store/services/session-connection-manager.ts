@@ -22,8 +22,8 @@ import type {
 	SessionModelState as AcpSessionModelState,
 	SessionOpenResult,
 } from "../../../services/acp-types.js";
-import { tauriClient } from "../../../utils/tauri-client.js";
 import { TauriCommandError } from "../../../utils/tauri-client/invoke.js";
+import { tauriClient } from "../../../utils/tauri-client.js";
 import type { AppError } from "../../errors/app-error.js";
 import {
 	AgentError,
@@ -116,16 +116,18 @@ function canonicalCapabilities(
 	reader: ISessionStateReader,
 	sessionId: string
 ): SessionCapabilities {
-	return reader.getSessionCapabilities?.(sessionId) ?? {
-		availableModes: [],
-		availableModels: [],
-		availableCommands: [],
-		revision: null,
-		pendingMutationId: null,
-		previewState: undefined,
-		modelsDisplay: undefined,
-		providerMetadata: undefined,
-	};
+	return (
+		reader.getSessionCapabilities?.(sessionId) ?? {
+			availableModes: [],
+			availableModels: [],
+			availableCommands: [],
+			revision: null,
+			pendingMutationId: null,
+			previewState: undefined,
+			modelsDisplay: undefined,
+			providerMetadata: undefined,
+		}
+	);
 }
 
 function canonicalWireOpen(reader: ISessionStateReader, sessionId: string): boolean {
@@ -344,7 +346,10 @@ export class SessionConnectionManager {
 					const modelState = getProviderAwareSessionModelState(result.models);
 					const rawModels = modelState.availableModels ?? [];
 					const rawProviderMetadata = modelState.providerMetadata;
-					const providerMetadata = this.resolveProviderMetadata(options.agentId, rawProviderMetadata);
+					const providerMetadata = this.resolveProviderMetadata(
+						options.agentId,
+						rawProviderMetadata
+					);
 					const availableModels: Model[] = rawModels.map((m) => ({
 						id: m.modelId,
 						name: m.name,

@@ -24,7 +24,7 @@ import type {
 } from "$lib/services/acp-types.js";
 import { materializeAgentPanelSceneFromGraph } from "../../session-state/agent-panel-graph-materializer.js";
 import { InteractionStore } from "../interaction-store.svelte.js";
-import { SessionEntryStore } from "../session-entry-store.svelte.js";
+import type { SessionEntryStore } from "../session-entry-store.svelte.js";
 import { SessionStore } from "../session-store.svelte.js";
 
 type ProjectionFailureOverride = Partial<TurnFailureSnapshot> | null;
@@ -2836,9 +2836,7 @@ describe("SessionStore.applySessionStateEnvelope", () => {
 			)
 		);
 
-		expect(store.getEntries("session-1").map((entry) => entry.id)).toEqual([
-			"assistant-history-1",
-		]);
+		expect(store.getEntries("session-1").map((entry) => entry.id)).toEqual(["assistant-history-1"]);
 		expect(store.getSessionStateGraph("session-1")?.revision).toEqual({
 			graphRevision: 8,
 			transcriptRevision: 7,
@@ -3207,12 +3205,10 @@ describe("SessionStore.applySessionStateEnvelope", () => {
 		});
 
 		expect(
-			store.getSessionStateGraph("session-1")?.transcriptSnapshot.entries.map((entry) => entry.entryId)
-		).toEqual([
-			"provider-message",
-			"user-2",
-			expect.stringContaining("provider-message:turn:8"),
-		]);
+			store
+				.getSessionStateGraph("session-1")
+				?.transcriptSnapshot.entries.map((entry) => entry.entryId)
+		).toEqual(["provider-message", "user-2", expect.stringContaining("provider-message:turn:8")]);
 		expect(store.getEntries("session-1").map((entry) => entry.type)).toEqual([
 			"assistant",
 			"user",
@@ -3746,9 +3742,11 @@ describe("SessionStore.applySessionStateEnvelope", () => {
 		const result = await store.sendMessage("session-1", "cursor UI diagnostic ping - reply ok");
 
 		expect(result.isOk()).toBe(true);
-		expect(sendPromptMock).toHaveBeenCalledWith("session-1", [
-			{ type: "text", text: "cursor UI diagnostic ping - reply ok" },
-		], expect.any(String));
+		expect(sendPromptMock).toHaveBeenCalledWith(
+			"session-1",
+			[{ type: "text", text: "cursor UI diagnostic ping - reply ok" }],
+			expect.any(String)
+		);
 		expect(connectSession).not.toHaveBeenCalled();
 	});
 
@@ -4156,9 +4154,11 @@ describe("SessionStore.applySessionStateEnvelope", () => {
 
 		expect(result.isOk()).toBe(true);
 		expect(connectSession).toHaveBeenCalledWith("session-1");
-		expect(sendPromptMock).toHaveBeenCalledWith("session-1", [
-			{ type: "text", text: "cursor restored follow-up - reply ok" },
-		], expect.any(String));
+		expect(sendPromptMock).toHaveBeenCalledWith(
+			"session-1",
+			[{ type: "text", text: "cursor restored follow-up - reply ok" }],
+			expect.any(String)
+		);
 	});
 
 	it("fails closed for restored local created sessions without canonical lifecycle", async () => {

@@ -225,5 +225,4 @@ describe("PanelStore workspacePanels", () => {
 			},
 		]);
 	});
-
 });

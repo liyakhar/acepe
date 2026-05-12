@@ -222,7 +222,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("drops queued assistant fallback chunks when a canonical delta envelope arrives first", async () => {
@@ -472,7 +471,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("keeps tool_call_update without streamingInputDelta non-authoritative on the raw lane", () => {
@@ -492,7 +490,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("keeps tool_call_update with undefined streamingInputDelta non-authoritative on the raw lane", () => {
@@ -512,7 +509,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("keeps status updates with streamingInputDelta non-authoritative on the raw lane", () => {
@@ -532,7 +528,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("keeps completion updates with streamingArguments non-authoritative on the raw lane", () => {
@@ -562,7 +557,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("does not synthesize turn completion from a plan payload", () => {
@@ -632,7 +626,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(firstUpdate, handler);
 		service.handleSessionUpdate(secondUpdate, handler);
-
 	});
 
 	it("keeps streamingArguments updates across multiple tools non-authoritative on the raw lane", () => {
@@ -671,7 +664,6 @@ describe("SessionEventService streaming delta handling", () => {
 			},
 			handler
 		);
-
 	});
 
 	it("keeps lifecycle-bearing tool updates non-authoritative on the raw lane", () => {
@@ -688,7 +680,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("keeps later terminal tool updates non-authoritative on the raw lane", () => {
@@ -717,7 +708,6 @@ describe("SessionEventService streaming delta handling", () => {
 			},
 			handler
 		);
-
 	});
 
 	it("should not aggregate text chunk when session does not exist yet", () => {
@@ -735,7 +725,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, missingSessionHandler);
-
 	});
 
 	it("ignores raw assistant chunks even when message_id and part_id are both present", () => {
@@ -946,7 +935,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, disconnectedHandler);
-
 	});
 
 	it("drops duplicate raw tool-call replays without mutating known disconnected sessions", () => {
@@ -979,7 +967,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, disconnectedHandler, 303);
 		service.handleSessionUpdate(update, disconnectedHandler, 303);
-
 	});
 
 	it("does not buffer raw permissionRequest updates for disconnected sessions", () => {
@@ -1016,7 +1003,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(update, disconnectedHandler);
 
 		service.flushPendingEvents("session-123", disconnectedHandler);
-
 	});
 
 	it("does not buffer raw questionRequest updates for disconnected sessions", () => {
@@ -1055,7 +1041,6 @@ describe("SessionEventService streaming delta handling", () => {
 		service.handleSessionUpdate(update, disconnectedHandler);
 
 		service.flushPendingEvents("session-123", disconnectedHandler);
-
 	});
 
 	it("keeps raw tool calls non-authoritative while connecting", () => {
@@ -1088,7 +1073,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, connectingHandler);
-
 	});
 
 	it("[regression] leaves reconnect-time raw tool calls to canonical envelopes while connecting", () => {
@@ -1120,7 +1104,6 @@ describe("SessionEventService streaming delta handling", () => {
 		};
 
 		service.handleSessionUpdate(update, reconnectingHandler, 500);
-
 	});
 
 	it("[regression] does not buffer transcript deltas while connecting", () => {
@@ -1331,7 +1314,6 @@ describe("SessionEventService streaming delta handling", () => {
 			turnState: "streaming",
 		});
 		service.flushPendingEvents("session-123", disconnectedHandler);
-
 	});
 
 	it("[characterize] raw permissionRequest does not reappear after reconnect flush", () => {
@@ -1369,7 +1351,6 @@ describe("SessionEventService streaming delta handling", () => {
 			turnState: "idle",
 		});
 		service.flushPendingEvents("session-123", disconnectedHandler);
-
 	});
 
 	it("[characterize] raw questionRequest does not reappear after reconnect flush", () => {
@@ -1409,7 +1390,6 @@ describe("SessionEventService streaming delta handling", () => {
 			turnState: "idle",
 		});
 		service.flushPendingEvents("session-123", disconnectedHandler);
-
 	});
 
 	it("rejects canonical connection waiters from lifecycle error envelopes", async () => {
@@ -1590,7 +1570,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler, 101);
 		service.handleSessionUpdate(update, handler, 101);
-
 	});
 
 	it("keeps richer raw toolCall arguments non-authoritative", () => {
@@ -1632,7 +1611,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(placeholder, handler);
 		service.handleSessionUpdate(enriched, handler);
-
 	});
 
 	it("leaves duplicate assistant text chunks to canonical envelopes during active streaming", () => {
@@ -1656,7 +1634,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("does not synthesize replay assistant chunks from raw event replays", () => {
@@ -1680,7 +1657,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler, 202);
 		service.handleSessionUpdate(update, handler, 202);
-
 	});
 
 	it("does not force streaming state from raw replay assistant chunks", () => {
@@ -1727,7 +1703,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(update, handler);
 		service.handleSessionUpdate(update, handler);
-
 	});
 
 	it("treats raw user chunks as coordination-only during reopened sends", () => {
@@ -1820,7 +1795,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(firstUpdate, handler);
 		service.handleSessionUpdate(secondUpdate, handler);
-
 	});
 
 	it("keeps repeated parent task raw tool calls non-authoritative when child structure grows", () => {
@@ -1886,7 +1860,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(initialParentUpdate, handler);
 		service.handleSessionUpdate(enrichedParentUpdate, handler);
-
 	});
 
 	it("keeps repeated parent task raw tool calls non-authoritative when child count grows", () => {
@@ -1940,7 +1913,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(initialParentUpdate, handler);
 		service.handleSessionUpdate(enrichedParentUpdate, handler);
-
 	});
 
 	it("keeps repeated parent task raw tool calls non-authoritative when child payload grows", () => {
@@ -2020,7 +1992,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(initialParentUpdate, handler);
 		service.handleSessionUpdate(enrichedParentUpdate, handler);
-
 	});
 
 	it("keeps repeated raw tool calls non-authoritative when top-level arguments grow", () => {
@@ -2073,7 +2044,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(initialUpdate, handler);
 		service.handleSessionUpdate(enrichedUpdate, handler);
-
 	});
 
 	it("keeps repeated raw tool calls non-authoritative when top-level results grow", () => {
@@ -2128,7 +2098,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(initialUpdate, handler);
 		service.handleSessionUpdate(enrichedUpdate, handler);
-
 	});
 
 	it("keeps distinct raw toolCallUpdate argument changes non-authoritative", () => {
@@ -2175,7 +2144,6 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(initialUpdate, handler);
 		service.handleSessionUpdate(enrichedUpdate, handler);
-
 	});
 
 	it("keeps distinct raw toolCallUpdate raw-output changes non-authoritative", () => {
@@ -2207,7 +2175,5 @@ describe("SessionEventService streaming delta handling", () => {
 
 		service.handleSessionUpdate(initialUpdate, handler);
 		service.handleSessionUpdate(enrichedUpdate, handler);
-
 	});
-
 });

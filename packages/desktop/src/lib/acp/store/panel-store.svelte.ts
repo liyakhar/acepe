@@ -498,7 +498,9 @@ export class PanelStore {
 		if (existing) {
 			return existing;
 		}
-		const ref = createReactiveValue<Panel | null>(this.topLevelAgentPanelsById.get(panelId) ?? null);
+		const ref = createReactiveValue<Panel | null>(
+			this.topLevelAgentPanelsById.get(panelId) ?? null
+		);
 		this.topLevelAgentPanelRefs.set(panelId, ref);
 		return ref;
 	}

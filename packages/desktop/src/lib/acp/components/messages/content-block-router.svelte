@@ -27,7 +27,6 @@ let {
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
 }: Props = $props();
 
-
 const sessionContext = useSessionContext();
 const projectPath = $derived(propProjectPath ?? sessionContext?.projectPath);
 const validationResult = $derived(validateContentBlock(block));

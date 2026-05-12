@@ -1,7 +1,4 @@
-import type {
-	OperationDegradationReason,
-	OperationSourceLink,
-} from "../../services/acp-types.js";
+import type { OperationDegradationReason, OperationSourceLink } from "../../services/acp-types.js";
 import type {
 	JsonValue,
 	QuestionAnswer,

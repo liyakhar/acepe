@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-
+import type { StreamingReproPreset } from "../streaming-repro-controller";
 import {
 	applyStreamingReproTokenReveal,
 	buildStreamingReproTokenRevealCss,
 } from "../streaming-repro-token-reveal";
-import type { StreamingReproPreset } from "../streaming-repro-controller";
 
 const PRESET: StreamingReproPreset = {
 	id: "test",
@@ -67,8 +66,8 @@ describe("buildStreamingReproTokenRevealCss", () => {
 				phaseIndex: 2,
 				phase: PRESET.phases[2]!,
 				phaseElapsedMs: 0,
-			})
-		?.mode).toBe("instant");
+			})?.mode
+		).toBe("instant");
 	});
 
 	it("keeps token timing after streaming stops while reveal animations are still pending", () => {
