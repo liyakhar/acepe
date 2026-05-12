@@ -52,7 +52,7 @@ async function initShader() {
 			u_softness: 0.3,
 			u_intensity: 0.8,
 			u_noise: 0.15,
-			u_shape: GrainGradientShapes.corners,
+			u_shape: GrainGradientShapes.blob,
 			u_noiseTexture: noiseTexture,
 			// Sizing uniforms
 			u_fit: ShaderFitOptions.cover,
