@@ -2,8 +2,8 @@
 import { ArrowRightIcon, BrandLockup, PillButton } from "@acepe/ui";
 import { CheckpointTimeline } from "@acepe/ui/checkpoint";
 import { PlanCard } from "@acepe/ui/plan-card";
-import { AgentSelectionGrid } from "@acepe/ui/agent-panel";
-import type { AgentGridItem } from "@acepe/ui/agent-panel";
+import { AgentPanelPrCard, AgentSelectionGrid } from "@acepe/ui/agent-panel";
+import type { AgentGridItem, AgentPanelPrCardModel } from "@acepe/ui/agent-panel";
 import { AppSessionItem as AppSessionItemComponent } from "@acepe/ui/app-layout";
 import type { AppSessionItemType } from "@acepe/ui/app-layout";
 import AgentIconsRow from "$lib/components/agent-icons-row.svelte";
@@ -146,6 +146,60 @@ const mockSessions: AppSessionItemType[] = [
 		isActive: false,
 	},
 ];
+
+const mockPrCardModel: AgentPanelPrCardModel = {
+	mode: "pr",
+	number: 342,
+	title: "Redesign settings page with new tab layout",
+	state: "MERGED",
+	additions: 218,
+	deletions: 179,
+	descriptionHtml:
+		"<p>Ships a reviewable settings redesign with the generated PR summary, resolved checks, and commit trail in the same card Acepe uses in active sessions.</p>",
+	commits: [
+		{
+			sha: "a84f13c",
+			message: "feat(settings): add tabbed settings layout",
+			insertions: 124,
+			deletions: 82,
+		},
+		{
+			sha: "bf29d01",
+			message: "fix(settings): preserve keyboard shortcut bindings",
+			insertions: 53,
+			deletions: 64,
+		},
+		{
+			sha: "d71ac98",
+			message: "test(settings): cover appearance preferences",
+			insertions: 41,
+			deletions: 33,
+		},
+	],
+	checks: [
+		{
+			name: "Frontend",
+			status: "COMPLETED",
+			conclusion: "SUCCESS",
+			detailsUrl: null,
+			startedAt: "2026-05-12T15:02:00Z",
+			completedAt: "2026-05-12T15:04:10Z",
+			workflowName: "CI",
+		},
+		{
+			name: "Structural test guard",
+			status: "COMPLETED",
+			conclusion: "SUCCESS",
+			detailsUrl: null,
+			startedAt: "2026-05-12T15:02:00Z",
+			completedAt: "2026-05-12T15:03:18Z",
+			workflowName: "CI",
+		},
+	],
+	isChecksLoading: false,
+	hasResolvedChecks: true,
+	checksCollapseThreshold: 4,
+};
 
 const features = [
 	{
@@ -675,20 +729,13 @@ class:md:[direction:rtl]={i % 2 === 1}
 </div>
 </div>
 {:else if feature.id === "pr"}
-<div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl">
-<div class="border-b border-border/50 bg-success/10 px-3 py-2 flex items-center gap-2">
-<GitPullRequest size={14} class="text-success" />
-<span class="font-mono text-[11px] font-medium text-success">Merged · #342</span>
-</div>
-<div class="p-3 space-y-2">
-<div class="text-[13px] font-semibold">Redesign settings page with new tab layout</div>
-<div class="font-mono text-[10px] text-muted-foreground">bob-dev · 7 files · +218 −179</div>
-<div class="space-y-1 pt-2">
-{#each ["+45 −112  src/routes/settings/+page.svelte", "+38   src/routes/settings/tabs/general.svelte", "+52   src/routes/settings/tabs/appearance.svelte", "+31   src/routes/settings/tabs/keys.svelte", "  −67  src/routes/settings/settings.css"] as line}
-<div class="font-mono text-[10px] text-muted-foreground/80 truncate">{line}</div>
-{/each}
-</div>
-</div>
+<div class="w-full max-w-[440px] text-[13px] shadow-2xl">
+<AgentPanelPrCard
+visible={true}
+model={mockPrCardModel}
+initiallyExpanded={true}
+initiallyExpandedChecks={true}
+/>
 </div>
 {:else if feature.id === "review"}
 <div class="overflow-hidden rounded-lg border border-border/50 bg-card shadow-2xl h-full w-full">
