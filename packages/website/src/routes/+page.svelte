@@ -711,7 +711,12 @@ const features = [
 				<!-- Feature cards -->
 				<div class="flex flex-col gap-6 md:gap-8">
 					{#each features as feature}
-						<Card class="feature-card feature-section-card flex h-auto flex-col gap-6 overflow-hidden rounded-xl border-0 bg-card p-6 shadow-none md:min-h-[560px] md:gap-8 md:p-10">
+						<Card class="feature-card feature-section-card relative isolate flex h-auto flex-col gap-6 overflow-hidden rounded-xl border-0 bg-card p-6 shadow-none md:min-h-[560px] md:gap-8 md:p-10">
+								<!-- Grained orange shader bg (matches site Grain Gradient) -->
+								<div class="pointer-events-none absolute inset-0 -z-10">
+									<FeatureCardShader />
+									<div class="absolute inset-0 bg-gradient-to-b from-transparent via-background/10 to-background/50"></div>
+								</div>
 								<div class="mb-6 flex flex-col items-start text-left">
 									<h3 class="mb-3 text-2xl font-semibold tracking-[-0.02em] md:text-4xl">
 										{feature.label}
