@@ -294,8 +294,8 @@ function createKeyboardNavConversation(): DemoConversationEntry[] {
 				{
 					filePath: "packages/desktop/src/lib/keyboard/panel-keyboard-handler.ts",
 					fileName: "panel-keyboard-handler.ts",
-					oldString: "case \"l\":",
-					newString: "case \"l\":\ncase \"[\":\ncase \"]\":",
+					oldString: 'case "l":',
+					newString: 'case "l":\ncase "[":\ncase "]":',
 					additions: 2,
 					deletions: 0,
 				},

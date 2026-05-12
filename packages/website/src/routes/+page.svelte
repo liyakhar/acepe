@@ -4,8 +4,19 @@ import { CheckpointTimeline } from "@acepe/ui/checkpoint";
 import { PlanCard } from "@acepe/ui/plan-card";
 import { AgentPanelPrCard } from "@acepe/ui/agent-panel";
 import type { AgentGridItem } from "@acepe/ui/agent-panel";
-import { AppSessionItem as AppSessionItemComponent } from "@acepe/ui/app-layout";
-import type { AppSessionItemType } from "@acepe/ui/app-layout";
+import { AppTabBar, AppSessionItem as AppSessionItemComponent } from "@acepe/ui/app-layout";
+import type { AppTab, AppSessionItemType } from "@acepe/ui/app-layout";
+import { SqlStudioDataGrid } from "@acepe/ui/sql-studio";
+import { SectionedFeed, ActivityEntry } from "@acepe/ui/attention-queue";
+import type {
+	ActivityEntryMode,
+	ActivityEntryQuestion,
+	ActivityEntryQuestionOption,
+	ActivityEntryQuestionProgress,
+	ActivityEntryTodoProgress,
+	SectionedFeedGroup,
+	SectionedFeedItemData,
+} from "@acepe/ui/attention-queue";
 import AgentIconsRow from "$lib/components/agent-icons-row.svelte";
 import Header from "$lib/components/header.svelte";
 import FeatureShowcase from "$lib/components/feature-showcase.svelte";
@@ -30,6 +41,7 @@ import {
 	Globe,
 	Terminal,
 	Microphone,
+	Check,
 	ShieldCheck,
 	Plug,
 } from "phosphor-svelte";
@@ -72,6 +84,36 @@ const mockGridAgents: AgentGridItem[] = $derived([
 		available: true,
 	},
 ]);
+
+const mockTabs: AppTab[] = [
+	{
+		id: "1",
+		title: "Fix login flow",
+		projectName: "backend",
+		projectColor: "#3b82f6",
+		mode: "build",
+		status: "running",
+		isFocused: true,
+	},
+	{
+		id: "2",
+		title: "Write unit tests",
+		projectName: "backend",
+		projectColor: "#3b82f6",
+		mode: "build",
+		status: "done",
+		isFocused: false,
+	},
+	{
+		id: "3",
+		title: "Plan API redesign",
+		projectName: "api",
+		projectColor: "#f97316",
+		mode: "plan",
+		status: "question",
+		isFocused: false,
+	},
+];
 
 const mockPlanContent = `Implementation Plan
 
@@ -1033,88 +1075,6 @@ const features = [
 
 	:global(.feature-section-card) {
 		backdrop-filter: none;
-	}
-
-	/* Queue card has its own scroll inside if content overflows. */
-
-	/* Kanban: render at fixed wide size, scale to card. */
-	.kanban-zoom-frame {
-		container-type: size;
-	}
-	.kanban-zoom-inner {
-		width: 1280px;
-		height: 720px;
-		transform-origin: top left;
-		transform: scale(calc(100cqw / 1280));
-	}
-	@container (min-aspect-ratio: 1280/720) {
-		.kanban-zoom-inner {
-			transform: scale(calc(100cqh / 720));
-		}
-	}
-
-	/* Git Panel: render at desktop layout size, scale to card. */
-	.git-zoom-frame {
-		container-type: size;
-	}
-	.git-zoom-inner {
-		width: 1180px;
-		height: 720px;
-		transform-origin: top left;
-		transform: scale(calc(100cqw / 1180));
-	}
-	@container (min-aspect-ratio: 1180/720) {
-		.git-zoom-inner {
-			transform: scale(calc(100cqh / 720));
-		}
-	}
-
-	/* Voice card animated rings + waveform */
-	.voice-ring {
-		position: absolute;
-		width: 56px;
-		height: 56px;
-		border-radius: 9999px;
-		border: 1.5px solid rgba(247, 126, 44, 0.6);
-		opacity: 0;
-		animation: voice-ring-pulse 2.4s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
-	}
-	.voice-ring-1 { animation-delay: 0s; }
-	.voice-ring-2 { animation-delay: 0.8s; }
-	.voice-ring-3 { animation-delay: 1.6s; }
-
-	@keyframes voice-ring-pulse {
-		0%   { transform: scale(0.6); opacity: 0; border-color: rgba(247, 126, 44, 0.7); }
-		15%  { opacity: 0.55; }
-		100% { transform: scale(3.2); opacity: 0; border-color: rgba(247, 126, 44, 0); }
-	}
-
-	.voice-bar {
-		display: inline-block;
-		width: 3px;
-		height: 12px;
-		border-radius: 9999px;
-		background: linear-gradient(180deg, #F77E2C, #C85A12);
-		transform-origin: center;
-		animation: voice-bar-wave 1.1s ease-in-out infinite;
-		animation-delay: calc(var(--i) * 60ms);
-	}
-	@keyframes voice-bar-wave {
-		0%, 100% { transform: scaleY(0.4); opacity: 0.55; }
-		20%      { transform: scaleY(1.6); opacity: 1; }
-		50%      { transform: scaleY(0.8); opacity: 0.8; }
-		75%      { transform: scaleY(2.2); opacity: 1; }
-	}
-
-	.voice-caret {
-		display: inline-block;
-		margin-left: 1px;
-		color: #F77E2C;
-		animation: voice-caret-blink 1s steps(1) infinite;
-	}
-	@keyframes voice-caret-blink {
-		0%, 49%   { opacity: 1; }
-		50%, 100% { opacity: 0; }
 	}
 
 </style>

@@ -120,7 +120,7 @@ async function init(version: number) {
 		meshGradientFragmentShader,
 		baseUniforms,
 		{ alpha: false, premultipliedAlpha: false },
-		0.18,
+		0.18
 	);
 
 	if (ringContainer) {
@@ -160,7 +160,7 @@ async function init(version: number) {
 			pulsingBorderFragmentShader,
 			ringUniforms,
 			{ alpha: true, premultipliedAlpha: false },
-			0.14,
+			0.14
 		);
 	}
 
