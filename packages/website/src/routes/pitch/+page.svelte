@@ -56,10 +56,10 @@ const milestones = [
 const workflowSteps = ["Launch", "Monitor", "Unblock", "Review", "Ship"] as const;
 
 const viewModes = [
-	{ id: "agent", label: "Side by Side", color: "#99FFE4", image: "/images/pitch/pitch-view-agent.png" },
-	{ id: "by-project", label: "By Project", color: "#FF8D20", image: "/images/pitch/pitch-view-by-project.png" },
-	{ id: "single", label: "Single Agent", color: "#9858FF", image: "/images/pitch/pitch-view-single.png" },
-	{ id: "kanban", label: "Kanban", color: "#FF78F7", image: "/images/pitch/pitch-view-kanban.png" },
+	{ id: "agent", label: "Side by Side", color: "#99FFE4", image: "/images/pitch/pitch-view-agent.webp", w: 2540, h: 1650 },
+	{ id: "by-project", label: "By Project", color: "#FF8D20", image: "/images/pitch/pitch-view-by-project.webp", w: 2540, h: 1650 },
+	{ id: "single", label: "Single Agent", color: "#9858FF", image: "/images/pitch/pitch-view-single.webp", w: 2540, h: 1650 },
+	{ id: "kanban", label: "Kanban", color: "#FF78F7", image: "/images/pitch/pitch-view-kanban.webp", w: 2540, h: 1650 },
 ] as const;
 
 let activeView = $state("agent");
@@ -82,6 +82,7 @@ const slideSummaryClass = `max-w-3xl ${slideDescriptionClass}`;
 		name="description"
 		content="Acepe investor pitch: the platform-neutral operating layer for agentic development."
 	/>
+	<link rel="preload" href="/images/pitch/pitch-view-agent.webp" as="image" type="image/webp" />
 	<style>
 		@page {
 			size: 13.333in 7.5in landscape;
@@ -102,6 +103,11 @@ const slideSummaryClass = `max-w-3xl ${slideDescriptionClass}`;
 			opacity: 0.04;
 			mix-blend-mode: soft-light;
 			background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.65' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+		}
+
+		[data-pitch-section]:not(:first-of-type) {
+			content-visibility: auto;
+			contain-intrinsic-size: auto 30rem;
 		}
 
 		@media print {
@@ -217,8 +223,12 @@ const slideSummaryClass = `max-w-3xl ${slideDescriptionClass}`;
 										<img
 											src={view.image}
 											alt="Acepe {view.label} view"
+											width={view.w}
+											height={view.h}
 											class="h-auto w-full"
-											loading="lazy"
+											loading={view.id === "agent" ? "eager" : "lazy"}
+											decoding="async"
+											fetchpriority={view.id === "agent" ? "high" : "low"}
 										/>
 									{/if}
 								{/each}
@@ -287,10 +297,13 @@ const slideSummaryClass = `max-w-3xl ${slideDescriptionClass}`;
 							</div>
 							<div class="relative overflow-hidden rounded-lg border border-border/40">
 								<img
-									src="/images/landing/acepe-working-view.png"
+									src="/images/landing/acepe-working-view.webp"
 									alt="Acepe workspace showing parallel agent sessions, attention queue, and code review"
+									width="3024"
+									height="1898"
 									class="h-auto w-full"
 									loading="lazy"
+									decoding="async"
 								/>
 							</div>
 						</div>
