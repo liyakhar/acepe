@@ -290,9 +290,6 @@ impl SessionMetadataSource for CopilotSource {
             SessionMetadataRepository::get_for_session_ids(db, &session_ids).await?;
         let mut existing_row_map = HashMap::new();
         for row in existing_rows {
-            if let Some(provider_session_id) = row.provider_session_id.clone() {
-                existing_row_map.insert(provider_session_id, row.clone());
-            }
             existing_row_map.insert(row.id.clone(), row);
         }
 

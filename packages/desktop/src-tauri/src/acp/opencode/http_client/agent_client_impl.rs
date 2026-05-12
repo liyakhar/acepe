@@ -1,5 +1,4 @@
 use super::*;
-use crate::acp::model_display::build_models_for_display;
 use std::path::Path;
 
 #[async_trait]
@@ -77,6 +76,8 @@ impl AgentClient for OpenCodeHttpClient {
         let available_commands = self.fetch_available_commands().await;
         let mut response = NewSessionResponse {
             session_id: session.id,
+            creation_attempt_id: None,
+            deferred_creation: false,
             sequence_id: None,
             session_open: None,
             models: SessionModelState {
@@ -103,15 +104,23 @@ impl AgentClient for OpenCodeHttpClient {
             available_commands,
             config_options: Vec::new(),
         };
-        self.provider.apply_session_defaults(
+        let resolved_capabilities = crate::acp::capability_resolution::resolve_live_capabilities(
+            self.provider.as_ref(),
             Path::new(&self.runtime_root),
-            &mut response.models,
-            &mut response.modes,
-        )?;
-        response.models.models_display = build_models_for_display(
-            &response.models.available_models,
-            self.provider.model_presentation_metadata(),
-        );
+            response.models,
+            response.modes,
+        )
+        .await?;
+        response.models = SessionModelState {
+            available_models: resolved_capabilities.available_models,
+            current_model_id: resolved_capabilities.current_model_id,
+            models_display: resolved_capabilities.models_display,
+            provider_metadata: Some(resolved_capabilities.provider_metadata),
+        };
+        response.modes = SessionModes {
+            current_mode_id: resolved_capabilities.current_mode_id,
+            available_modes: resolved_capabilities.available_modes,
+        };
         self.current_mode = Some(response.modes.current_mode_id.clone());
         self.seed_current_model(&response.models.current_model_id)?;
 
@@ -159,15 +168,23 @@ impl AgentClient for OpenCodeHttpClient {
             available_commands,
             config_options: Vec::new(),
         };
-        self.provider.apply_session_defaults(
+        let resolved_capabilities = crate::acp::capability_resolution::resolve_live_capabilities(
+            self.provider.as_ref(),
             Path::new(&self.runtime_root),
-            &mut response.models,
-            &mut response.modes,
-        )?;
-        response.models.models_display = build_models_for_display(
-            &response.models.available_models,
-            self.provider.model_presentation_metadata(),
-        );
+            response.models,
+            response.modes,
+        )
+        .await?;
+        response.models = SessionModelState {
+            available_models: resolved_capabilities.available_models,
+            current_model_id: resolved_capabilities.current_model_id,
+            models_display: resolved_capabilities.models_display,
+            provider_metadata: Some(resolved_capabilities.provider_metadata),
+        };
+        response.modes = SessionModes {
+            current_mode_id: resolved_capabilities.current_mode_id,
+            available_modes: resolved_capabilities.available_modes,
+        };
         self.current_mode = Some(response.modes.current_mode_id.clone());
         self.seed_current_model(&response.models.current_model_id)?;
 

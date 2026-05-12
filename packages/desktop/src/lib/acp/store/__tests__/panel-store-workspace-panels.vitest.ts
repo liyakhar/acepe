@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentStore } from "../agent-store.svelte.js";
 import { PanelStore } from "../panel-store.svelte.js";
@@ -34,6 +34,19 @@ function createStore(): PanelStore {
 	return new PanelStore(sessionStore, agentStore, persist);
 }
 
+beforeEach(() => {
+	const localStorageStub: Pick<Storage, "getItem" | "setItem" | "removeItem"> = {
+		getItem: vi.fn(() => null),
+		setItem: vi.fn(),
+		removeItem: vi.fn(),
+	};
+	vi.stubGlobal("localStorage", localStorageStub);
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
 describe("PanelStore workspacePanels", () => {
 	it("stores agent panels in the canonical workspace panel list", () => {
 		const store = createStore();
@@ -64,6 +77,19 @@ describe("PanelStore workspacePanels", () => {
 			id: panel.id,
 			pendingWorktreeEnabled: true,
 		});
+	});
+
+	it("keeps an existing agent panel ref stable while its host is being removed", () => {
+		const store = createStore();
+		const panel = store.spawnPanel({ projectPath: "/tmp/project" });
+		const panelRef = store.getTopLevelAgentPanelRef(panel.id);
+		const mountedPanelSnapshot = panelRef.current;
+
+		store.closePanel(panel.id);
+
+		expect(panelRef.current).toBe(mountedPanelSnapshot);
+		expect(store.getTopLevelAgentPanel(panel.id)).toBeUndefined();
+		expect(store.getTopLevelAgentPanelRef(panel.id).current).toBeNull();
 	});
 
 	it("stores file, terminal, and browser panels in the canonical workspace panel list", () => {
@@ -153,5 +179,50 @@ describe("PanelStore workspacePanels", () => {
 			sessionTitle: "Hello",
 			pendingWorktreeEnabled: null,
 		});
+	});
+
+	it("derives top-level agent project refs without rebuilding panel snapshots", () => {
+		const sessionStore = {
+			getSessionCold: vi.fn((sessionId: string) =>
+				sessionId === "session-1"
+					? {
+							id: "session-1",
+							projectPath: "/tmp/project-b",
+							agentId: "cursor",
+							title: "Hello",
+							sequenceId: 42,
+						}
+					: undefined
+			),
+		} as unknown as SessionStore;
+		const agentStore = {
+			getDefaultAgentId: vi.fn(() => "claude-code"),
+		} as unknown as AgentStore;
+		const store = new PanelStore(sessionStore, agentStore, vi.fn());
+
+		const disconnectedPanel = store.spawnPanel({
+			projectPath: "/tmp/project-a",
+			selectedAgentId: "claude-code",
+		});
+		const connectedPanel = store.spawnPanel({
+			projectPath: "/tmp/project-a",
+			selectedAgentId: "cursor",
+		});
+
+		store.updatePanelSession(connectedPanel.id, "session-1");
+
+		expect(store.getTopLevelAgentPanelIds()).toEqual([connectedPanel.id, disconnectedPanel.id]);
+		expect(store.getTopLevelAgentPanelProjectRefs()).toEqual([
+			{
+				id: connectedPanel.id,
+				sessionProjectPath: "/tmp/project-b",
+				sessionSequenceId: 42,
+			},
+			{
+				id: disconnectedPanel.id,
+				sessionProjectPath: "/tmp/project-a",
+				sessionSequenceId: null,
+			},
+		]);
 	});
 });

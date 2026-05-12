@@ -2,6 +2,9 @@
  * Presentational types for the shared AgentPanel components.
  * No Tauri, store, or desktop dependencies.
  */
+import type { AssistantMessage } from "../../lib/assistant-message/types.js";
+import type { ChunkGroup } from "../../lib/assistant-message/assistant-chunk-grouper.js";
+import type { StreamingAnimationMode } from "../../lib/assistant-message/types.js";
 
 export type AgentSessionStatus =
 	| "empty"
@@ -11,7 +14,18 @@ export type AgentSessionStatus =
 	| "idle"
 	| "running"
 	| "done";
-export type AgentToolStatus = "pending" | "running" | "done" | "error";
+export type AgentToolStatus =
+	| "pending"
+	| "running"
+	| "done"
+	| "error"
+	| "blocked"
+	| "cancelled"
+	| "degraded";
+export type AgentToolPresentationState =
+	| "resolved"
+	| "pending_operation"
+	| "degraded_operation";
 
 /**
  * Canonical tool kind — maps to icon + label in agent-tool-row.
@@ -19,6 +33,7 @@ export type AgentToolStatus = "pending" | "running" | "done" | "error";
  */
 export type AgentToolKind =
 	| "read"
+	| "read_lints"
 	| "edit"
 	| "delete"
 	| "write"
@@ -39,13 +54,53 @@ export interface AgentUserEntry {
 	id: string;
 	type: "user";
 	text: string;
+	isOptimistic?: boolean;
+	timestampMs?: number;
 }
 
 export interface AgentAssistantEntry {
 	id: string;
 	type: "assistant";
 	markdown: string;
+	message?: AssistantMessage;
 	isStreaming?: boolean;
+	tokenRevealCss?: TokenRevealCss;
+	timestampMs?: number;
+}
+
+export interface TokenRevealCss {
+	revealCount: number;
+	revealedCharCount: number;
+	baselineMs: number;
+	tokStepMs: number;
+	tokFadeDurMs: number;
+	mode: "smooth" | "instant";
+}
+
+export interface AssistantRenderBlockContext {
+	group: ChunkGroup;
+	isStreaming?: boolean;
+	tokenRevealCss?: TokenRevealCss;
+	projectPath?: string;
+	streamingAnimationMode?: StreamingAnimationMode;
+}
+
+/** One file/replace hunk in an edit tool — used by {@link AgentToolEdit}. */
+export interface AgentToolEditDiffEntry {
+	filePath?: string | null;
+	fileName?: string | null;
+	additions?: number;
+	deletions?: number;
+	oldString?: string | null;
+	newString?: string | null;
+}
+
+export interface AgentSearchMatch {
+	filePath: string;
+	fileName: string;
+	lineNumber: number;
+	content: string;
+	isMatch: boolean;
 }
 
 export interface AgentToolEntry {
@@ -56,6 +111,8 @@ export interface AgentToolEntry {
 	subtitle?: string;
 	detailsText?: string | null;
 	scriptText?: string | null;
+	/** Populated for `kind === "edit"` from session tool arguments (drives {@link AgentToolEdit}). */
+	editDiffs?: readonly AgentToolEditDiffEntry[];
 	/** Absolute or relative file path — used to render a FilePathBadge */
 	filePath?: string;
 	sourceExcerpt?: string | null;
@@ -71,6 +128,10 @@ export interface AgentToolEntry {
 	searchPath?: string;
 	searchFiles?: string[];
 	searchResultCount?: number;
+	searchMode?: "content" | "files" | "count";
+	searchNumFiles?: number;
+	searchNumMatches?: number;
+	searchMatches?: AgentSearchMatch[];
 	// Fetch-specific
 	url?: string | null;
 	resultText?: string | null;
@@ -85,6 +146,8 @@ export interface AgentToolEntry {
 	taskPrompt?: string | null;
 	taskResultText?: string | null;
 	taskChildren?: AnyAgentEntry[];
+	presentationState?: AgentToolPresentationState;
+	degradedReason?: string | null;
 	todos?: AgentTodoItem[];
 	question?: AgentQuestion | null;
 	lintDiagnostics?: LintDiagnostic[];
@@ -94,13 +157,24 @@ export interface AgentThinkingEntry {
 	id: string;
 	type: "thinking";
 	durationMs?: number | null;
+	startedAtMs?: number | null;
+	label?: string | null;
+}
+
+export interface AgentMissingEntry {
+	id: string;
+	type: "missing";
+	title?: string | null;
+	message?: string | null;
+	diagnosticLabel?: string | null;
 }
 
 export type AnyAgentEntry =
 	| AgentUserEntry
 	| AgentAssistantEntry
 	| AgentToolEntry
-	| AgentThinkingEntry;
+	| AgentThinkingEntry
+	| AgentMissingEntry;
 
 /** Web search link for display */
 export interface AgentWebSearchLink {
@@ -111,7 +185,11 @@ export interface AgentWebSearchLink {
 }
 
 /** Todo item status */
-export type AgentTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type AgentTodoStatus =
+	| "pending"
+	| "in_progress"
+	| "completed"
+	| "cancelled";
 
 /** Normalized todo item for display */
 export interface AgentTodoItem {
@@ -146,6 +224,13 @@ export interface AgentQuestion {
 	question: string;
 	header?: string | null;
 	options?: AgentQuestionOption[] | null;
+	multiSelect?: boolean;
+}
+
+export interface AgentPanelQuestionSelectEvent {
+	entryId: string;
+	questionIndex: number;
+	label: string;
 	multiSelect?: boolean;
 }
 
@@ -210,7 +295,9 @@ export const AGENT_PANEL_ACTION_IDS = {
 		refresh: "browser.refresh",
 	},
 	status: {
+		resume: "status.resume",
 		retry: "status.retry",
+		archive: "status.archive",
 		install: "status.install",
 	},
 } as const;
@@ -252,9 +339,55 @@ export interface AgentPanelActionDescriptor {
 	destructive?: boolean;
 }
 
-export type AgentPanelActionCallbacks = Partial<Record<AgentPanelActionId, () => void>>;
+export type AgentPanelActionCallbacks = Partial<
+	Record<AgentPanelActionId, () => void>
+>;
 
 export type AgentPanelSessionStatus = AgentSessionStatus;
+
+export type AgentPanelLifecycleStatus =
+	| "reserved"
+	| "activating"
+	| "ready"
+	| "reconnecting"
+	| "detached"
+	| "failed"
+	| "archived";
+
+export type AgentPanelRecommendedAction =
+	| "send"
+	| "resume"
+	| "retry"
+	| "archive"
+	| "wait"
+	| "none";
+
+export type AgentPanelRecoveryPhase =
+	| "none"
+	| "activating"
+	| "reconnecting"
+	| "detached"
+	| "failed"
+	| "archived";
+
+export interface AgentPanelActionabilityModel {
+	canSend: boolean;
+	canResume: boolean;
+	canRetry: boolean;
+	canArchive: boolean;
+	canConfigure: boolean;
+	recommendedAction: AgentPanelRecommendedAction;
+	recoveryPhase: AgentPanelRecoveryPhase;
+	compactStatus: AgentPanelLifecycleStatus;
+}
+
+export interface AgentPanelLifecycleModel {
+	status: AgentPanelLifecycleStatus;
+	detachedReason?: string | null;
+	failureReason?: string | null;
+	errorMessage?: string | null;
+	actionability: AgentPanelActionabilityModel;
+}
 
 export interface AgentPanelBadge {
 	id: string;
@@ -349,6 +482,8 @@ export interface AgentPanelComposerModel {
 	copy?: AgentPanelComposerCopy | null;
 }
 
+import type { PrChecksItem } from "../pr-checks/types.js";
+
 export interface AgentPanelPrCommitItem {
 	sha: string;
 	message: string;
@@ -366,13 +501,22 @@ export interface AgentPanelPrCardModel {
 	deletions?: number;
 	descriptionHtml?: string | null;
 	commits?: readonly AgentPanelPrCommitItem[];
+	checks?: readonly PrChecksItem[];
+	isChecksLoading?: boolean;
+	hasResolvedChecks?: boolean;
+	checksCollapseThreshold?: number;
+	onOpenCheck?: (check: PrChecksItem, event: MouseEvent) => void;
 	isStreaming?: boolean;
 	generatingLabel?: string;
 	creatingLabel?: string;
 	onOpen?: (event: MouseEvent) => void;
 }
 
-export type AgentPanelFileReviewStatus = "accepted" | "partial" | "denied" | "unreviewed";
+export type AgentPanelFileReviewStatus =
+	| "accepted"
+	| "partial"
+	| "denied"
+	| "unreviewed";
 
 export interface AgentPanelModifiedFileItem {
 	id: string;
@@ -387,7 +531,7 @@ export interface AgentPanelModifiedFileItem {
 export type ReviewWorkspaceFileItem = AgentPanelModifiedFileItem;
 
 export function getReviewWorkspaceDefaultIndex(
-	files: readonly ReviewWorkspaceFileItem[]
+	files: readonly ReviewWorkspaceFileItem[],
 ): number | null {
 	if (files.length === 0) {
 		return null;
@@ -405,7 +549,7 @@ export function getReviewWorkspaceDefaultIndex(
 
 export function resolveReviewWorkspaceSelectedIndex(
 	files: readonly ReviewWorkspaceFileItem[],
-	selectedIndex?: number | null
+	selectedIndex?: number | null,
 ): number | null {
 	if (files.length === 0) {
 		return null;
@@ -522,6 +666,7 @@ export type AgentPanelSceneEntryModel = AgentPanelConversationEntry;
 export interface AgentPanelSceneModel {
 	panelId: string;
 	status: AgentPanelSessionStatus;
+	lifecycle?: AgentPanelLifecycleModel | null;
 	header: AgentPanelHeaderModel;
 	conversation: AgentPanelConversationModel;
 	composer?: AgentPanelComposerModel | null;

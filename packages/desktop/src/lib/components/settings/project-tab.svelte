@@ -1,5 +1,9 @@
 <script lang="ts">
 import type { SessionSummary } from "$lib/acp/application/dto/session.js";
+import {
+	buildSessionSummaryFromCold,
+	deriveSessionListStateFromCanonical,
+} from "$lib/acp/application/dto/session-summary.js";
 import type { ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
 
 import { getAgentPreferencesStore, getPanelStore, getSessionStore } from "$lib/acp/store/index.js";
@@ -21,17 +25,15 @@ const archiveStore = getSessionArchiveStore();
 const allSessions = $derived.by((): SessionSummary[] => {
 	const coldSessions = agentPreferencesStore.filterItemsBySelectedAgents(sessionStore.sessions);
 	return coldSessions.map((cold) => {
-		const hot = sessionStore.getHotState(cold.id);
+		const listState = deriveSessionListStateFromCanonical(
+			sessionStore.getCanonicalSessionProjection(cold.id)
+		);
 		const entryCount = sessionStore.getEntries(cold.id).length;
-		return {
-			...cold,
-			title: cold.title,
-			status: hot.status,
+		return buildSessionSummaryFromCold({
+			cold,
+			listState,
 			entryCount,
-			isConnected: hot.isConnected,
-			isStreaming: hot.turnState === "streaming",
-			parentId: cold.parentId,
-		};
+		});
 	});
 });
 const activeSessions = $derived(allSessions.filter((session) => !archiveStore.isArchived(session)));

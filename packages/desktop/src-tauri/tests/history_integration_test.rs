@@ -47,9 +47,6 @@ async fn test_history_context_matches_descriptor_replay_identity() {
     )
     .await
     .expect("ensure exists");
-    SessionMetadataRepository::set_provider_session_id(&db, "acepe-session", "provider-session")
-        .await
-        .expect("set provider session id");
 
     let metadata = SessionMetadataRepository::get_by_id(&db, "acepe-session")
         .await

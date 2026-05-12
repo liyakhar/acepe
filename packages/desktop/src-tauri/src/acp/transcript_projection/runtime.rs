@@ -1,4 +1,4 @@
-use crate::acp::session_update::{SessionUpdate, TurnErrorData};
+use crate::acp::session_update::{SessionUpdate, ToolCallData, ToolKind, TurnErrorData};
 use crate::acp::transcript_projection::delta::{TranscriptDelta, TranscriptDeltaOperation};
 use crate::acp::transcript_projection::snapshot::{
     TranscriptEntry, TranscriptEntryRole, TranscriptSegment, TranscriptSnapshot,
@@ -67,6 +67,7 @@ struct SessionTranscriptProjection {
     revision: i64,
     entries: Vec<TranscriptEntry>,
     entry_indexes: HashMap<String, usize>,
+    assistant_entry_remaps: HashMap<String, String>,
 }
 
 impl SessionTranscriptProjection {
@@ -79,6 +80,7 @@ impl SessionTranscriptProjection {
             revision: snapshot.revision,
             entries: snapshot.entries,
             entry_indexes,
+            assistant_entry_remaps: HashMap::new(),
         }
     }
 
@@ -94,14 +96,19 @@ impl SessionTranscriptProjection {
         for operation in &delta.operations {
             match operation {
                 TranscriptDeltaOperation::AppendEntry { entry } => {
-                    self.upsert_entry(entry.clone());
+                    self.upsert_transcript_entry(delta.event_seq, entry.clone());
                 }
                 TranscriptDeltaOperation::AppendSegment {
                     entry_id,
                     role,
                     segment,
                 } => {
-                    self.append_segment(entry_id.clone(), role.clone(), segment.clone());
+                    self.append_transcript_segment(
+                        delta.event_seq,
+                        entry_id.clone(),
+                        role.clone(),
+                        segment.clone(),
+                    );
                 }
                 TranscriptDeltaOperation::ReplaceSnapshot { snapshot } => {
                     *self = Self::from_snapshot(snapshot.clone());
@@ -115,9 +122,29 @@ impl SessionTranscriptProjection {
         event_seq: i64,
         update: &SessionUpdate,
     ) -> Option<Vec<TranscriptDeltaOperation>> {
-        self.revision = event_seq;
+        let delta = self.apply_session_update_inner(event_seq, update)?;
+        // Transcript revision must only advance, and only when the transcript
+        // actually changed. Non-transcript-bearing updates (telemetry, plan,
+        // tool-call updates, etc.) must not bump the revision — otherwise
+        // synthetic event seqs from the journal's Ok(None) path push revision
+        // ahead of real transcript content, and a later real journaled
+        // transcript event with a smaller event_seq would silently regress
+        // revision and the frontend would drop the snapshot as "stale".
+        if event_seq > self.revision {
+            self.revision = event_seq;
+        }
+        Some(delta)
+    }
+
+    fn apply_session_update_inner(
+        &mut self,
+        event_seq: i64,
+        update: &SessionUpdate,
+    ) -> Option<Vec<TranscriptDeltaOperation>> {
         match update {
-            SessionUpdate::UserMessageChunk { chunk, .. } => {
+            SessionUpdate::UserMessageChunk {
+                chunk, attempt_id, ..
+            } => {
                 let text = text_from_block(&chunk.content)?;
                 let entry = TranscriptEntry {
                     entry_id: format!("user-event-{event_seq}"),
@@ -126,6 +153,7 @@ impl SessionTranscriptProjection {
                         segment_id: format!("user-event-{event_seq}:segment:{event_seq}"),
                         text,
                     }],
+                    attempt_id: attempt_id.clone(),
                 };
                 self.upsert_entry(entry.clone());
                 Some(vec![TranscriptDeltaOperation::AppendEntry { entry }])
@@ -134,35 +162,41 @@ impl SessionTranscriptProjection {
                 chunk, message_id, ..
             } => {
                 let text = text_from_block(&chunk.content)?;
-                let entry_id = message_id
-                    .clone()
-                    .unwrap_or_else(|| format!("assistant-event-{event_seq}"));
+                let entry_id = message_id.clone().unwrap_or_else(|| {
+                    self.synthetic_assistant_entry_id_for_current_turn(event_seq)
+                });
                 let segment = TranscriptSegment::Text {
                     segment_id: format!("{entry_id}:segment:{event_seq}"),
                     text,
                 };
-                if self.entry_indexes.contains_key(&entry_id) {
+                let target_entry_id =
+                    self.resolve_assistant_entry_id_for_event(entry_id.as_str(), event_seq);
+                if self.entry_indexes.contains_key(&target_entry_id) {
                     self.append_segment(
-                        entry_id.clone(),
+                        target_entry_id.clone(),
                         TranscriptEntryRole::Assistant,
                         segment.clone(),
                     );
                     Some(vec![TranscriptDeltaOperation::AppendSegment {
-                        entry_id,
+                        entry_id: target_entry_id,
                         role: TranscriptEntryRole::Assistant,
                         segment,
                     }])
                 } else {
                     let entry = TranscriptEntry {
-                        entry_id,
+                        entry_id: target_entry_id,
                         role: TranscriptEntryRole::Assistant,
                         segments: vec![segment],
+                        attempt_id: None,
                     };
                     self.upsert_entry(entry.clone());
                     Some(vec![TranscriptDeltaOperation::AppendEntry { entry }])
                 }
             }
             SessionUpdate::ToolCall { tool_call, .. } => {
+                if should_skip_unanswered_question_tool_row(tool_call) {
+                    return None;
+                }
                 let entry = TranscriptEntry {
                     entry_id: tool_call.id.clone(),
                     role: TranscriptEntryRole::Tool,
@@ -173,6 +207,7 @@ impl SessionTranscriptProjection {
                             .clone()
                             .unwrap_or_else(|| tool_call.name.clone()),
                     }],
+                    attempt_id: None,
                 };
                 self.upsert_entry(entry.clone());
                 Some(vec![TranscriptDeltaOperation::AppendEntry { entry }])
@@ -184,12 +219,86 @@ impl SessionTranscriptProjection {
                         .unwrap_or_else(|| format!("error-event-{event_seq}")),
                     role: TranscriptEntryRole::Error,
                     segments: vec![error_segment(event_seq, error)],
+                    attempt_id: None,
                 };
                 self.upsert_entry(entry.clone());
                 Some(vec![TranscriptDeltaOperation::AppendEntry { entry }])
             }
             _ => None,
         }
+    }
+
+    fn upsert_transcript_entry(&mut self, event_seq: i64, mut entry: TranscriptEntry) {
+        if entry.role == TranscriptEntryRole::Assistant {
+            entry.entry_id =
+                self.resolve_assistant_entry_id_for_event(entry.entry_id.as_str(), event_seq);
+        }
+
+        self.upsert_entry(entry);
+    }
+
+    fn append_transcript_segment(
+        &mut self,
+        event_seq: i64,
+        entry_id: String,
+        role: TranscriptEntryRole,
+        segment: TranscriptSegment,
+    ) {
+        let target_entry_id = if role == TranscriptEntryRole::Assistant {
+            self.resolve_assistant_entry_id_for_event(entry_id.as_str(), event_seq)
+        } else {
+            entry_id
+        };
+
+        self.append_segment(target_entry_id, role, segment);
+    }
+
+    fn resolve_assistant_entry_id_for_event(&mut self, entry_id: &str, event_seq: i64) -> String {
+        let Some(last_user_index) = self.last_user_index() else {
+            return entry_id.to_string();
+        };
+
+        if let Some(remapped_entry_id) = self.assistant_entry_remaps.get(entry_id) {
+            if self
+                .entry_indexes
+                .get(remapped_entry_id)
+                .is_some_and(|index| *index > last_user_index)
+            {
+                return remapped_entry_id.clone();
+            }
+        }
+
+        match self.entry_indexes.get(entry_id).copied() {
+            Some(existing_index) if existing_index <= last_user_index => {
+                let remapped_entry_id = format!("{entry_id}:turn:{event_seq}");
+                self.assistant_entry_remaps
+                    .insert(entry_id.to_string(), remapped_entry_id.clone());
+                remapped_entry_id
+            }
+            _ => entry_id.to_string(),
+        }
+    }
+
+    fn last_user_index(&self) -> Option<usize> {
+        self.entries
+            .iter()
+            .rposition(|entry| entry.role == TranscriptEntryRole::User)
+    }
+
+    fn synthetic_assistant_entry_id_for_current_turn(&self, event_seq: i64) -> String {
+        let Some(last_user_index) = self.last_user_index() else {
+            return format!("assistant-event-{event_seq}");
+        };
+
+        self.entries
+            .iter()
+            .skip(last_user_index + 1)
+            .rev()
+            .find(|entry| entry.role == TranscriptEntryRole::Assistant)
+            .map_or_else(
+                || format!("assistant-event-{event_seq}"),
+                |entry| entry.entry_id.clone(),
+            )
     }
 
     fn upsert_entry(&mut self, entry: TranscriptEntry) {
@@ -216,8 +325,13 @@ impl SessionTranscriptProjection {
             entry_id,
             role,
             segments: vec![segment],
+            attempt_id: None,
         });
     }
+}
+
+fn should_skip_unanswered_question_tool_row(tool_call: &ToolCallData) -> bool {
+    matches!(tool_call.kind, Some(ToolKind::Question)) && tool_call.question_answer.is_none()
 }
 
 fn text_from_block(block: &ContentBlock) -> Option<String> {
@@ -241,7 +355,8 @@ fn error_segment(event_seq: i64, error: &TurnErrorData) -> TranscriptSegment {
 mod tests {
     use super::TranscriptProjectionRegistry;
     use crate::acp::session_update::{
-        ContentChunk, SessionUpdate, TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
+        ContentChunk, QuestionItem, QuestionOption, SessionUpdate, ToolArguments, ToolCallData,
+        ToolCallStatus, ToolKind, TurnErrorData, TurnErrorInfo, TurnErrorKind, TurnErrorSource,
     };
     use crate::acp::transcript_projection::snapshot::{
         TranscriptEntry, TranscriptEntryRole, TranscriptSegment, TranscriptSnapshot,
@@ -265,6 +380,7 @@ mod tests {
                     part_id: Some("part-1".to_string()),
                     message_id: Some("assistant-1".to_string()),
                     session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
                 },
             )
             .expect("first delta");
@@ -281,6 +397,7 @@ mod tests {
                     part_id: Some("part-1".to_string()),
                     message_id: Some("assistant-1".to_string()),
                     session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
                 },
             )
             .expect("second delta");
@@ -311,6 +428,7 @@ mod tests {
                         segment_id: "assistant-1:chunk:0".to_string(),
                         text: "hello".to_string(),
                     }],
+                    attempt_id: None,
                 }],
             },
         );
@@ -328,6 +446,7 @@ mod tests {
                     part_id: Some("part-1".to_string()),
                     message_id: Some("assistant-1".to_string()),
                     session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
                 },
             )
             .expect("delta");
@@ -341,6 +460,191 @@ mod tests {
             .expect("runtime snapshot");
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(snapshot.entries[0].segments.len(), 2);
+    }
+
+    #[test]
+    fn no_message_id_assistant_chunks_share_current_turn_entry() {
+        let registry = TranscriptProjectionRegistry::new();
+        registry
+            .apply_session_update(
+                1,
+                &SessionUpdate::UserMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "reply shortly".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    session_id: Some("session-1".to_string()),
+                    attempt_id: None,
+                },
+            )
+            .expect("user delta");
+
+        let first = registry
+            .apply_session_update(
+                2,
+                &SessionUpdate::AgentMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "Ra".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    part_id: None,
+                    message_id: None,
+                    session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
+                },
+            )
+            .expect("first assistant delta");
+        let second = registry
+            .apply_session_update(
+                3,
+                &SessionUpdate::AgentMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "inbows arrive".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    part_id: None,
+                    message_id: None,
+                    session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
+                },
+            )
+            .expect("second assistant delta");
+
+        let assistant_entry_id = match &first.operations[0] {
+            TranscriptDeltaOperation::AppendEntry { entry } => entry.entry_id.clone(),
+            other => {
+                panic!("expected first no-id chunk to append an assistant entry, got {other:?}")
+            }
+        };
+        assert!(matches!(
+            &second.operations[0],
+            TranscriptDeltaOperation::AppendSegment { entry_id, role, .. }
+                if entry_id == &assistant_entry_id && role == &TranscriptEntryRole::Assistant
+        ));
+
+        let snapshot = registry
+            .snapshot_for_session("session-1")
+            .expect("runtime snapshot");
+        let assistant_entries: Vec<_> = snapshot
+            .entries
+            .iter()
+            .filter(|entry| entry.role == TranscriptEntryRole::Assistant)
+            .collect();
+        assert_eq!(assistant_entries.len(), 1);
+        assert_eq!(assistant_entries[0].segments.len(), 2);
+    }
+
+    #[test]
+    fn reused_assistant_message_id_after_user_turn_starts_new_entry() {
+        let registry = TranscriptProjectionRegistry::new();
+        registry
+            .apply_session_update(
+                1,
+                &SessionUpdate::AgentMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "English explanation".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    part_id: Some("part-1".to_string()),
+                    message_id: Some("assistant-1".to_string()),
+                    session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
+                },
+            )
+            .expect("first assistant delta");
+        registry
+            .apply_session_update(
+                2,
+                &SessionUpdate::UserMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "repeat, in french".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    session_id: Some("session-1".to_string()),
+                    attempt_id: None,
+                },
+            )
+            .expect("user delta");
+
+        let delta = registry
+            .apply_session_update(
+                3,
+                &SessionUpdate::AgentMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "Explication en francais".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    part_id: Some("part-2".to_string()),
+                    message_id: Some("assistant-1".to_string()),
+                    session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
+                },
+            )
+            .expect("second assistant delta");
+
+        assert!(matches!(
+            &delta.operations[0],
+            TranscriptDeltaOperation::AppendEntry { entry }
+                if entry.entry_id == "assistant-1:turn:3"
+        ));
+        let snapshot = registry
+            .snapshot_for_session("session-1")
+            .expect("runtime snapshot");
+        assert_eq!(snapshot.entries.len(), 3);
+        assert_eq!(snapshot.entries[0].entry_id, "assistant-1");
+        assert_eq!(snapshot.entries[1].entry_id, "user-event-2");
+        assert_eq!(snapshot.entries[2].entry_id, "assistant-1:turn:3");
+        assert_eq!(snapshot.entries[0].segments.len(), 1);
+        assert_eq!(snapshot.entries[2].segments.len(), 1);
+    }
+
+    #[test]
+    fn user_message_chunk_carries_attempt_id_into_canonical_entry() {
+        let registry = TranscriptProjectionRegistry::new();
+        let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+            "type": "userMessageChunk",
+            "content": {
+                "type": "text",
+                "text": "hello"
+            },
+            "sessionId": "session-1",
+            "attemptId": "attempt-123"
+        }))
+        .expect("user update");
+
+        let delta = registry
+            .apply_session_update(9, &update)
+            .expect("user delta");
+        let delta_json = serde_json::to_value(&delta).expect("serialize delta");
+
+        assert!(matches!(
+            &delta.operations[0],
+            TranscriptDeltaOperation::AppendEntry { entry }
+                if entry.entry_id == "user-event-9"
+                    && entry.role == TranscriptEntryRole::User
+        ));
+        assert_eq!(
+            delta_json["operations"][0]["entry"]["attemptId"],
+            "attempt-123"
+        );
+        let snapshot = registry
+            .snapshot_for_session("session-1")
+            .expect("runtime snapshot");
+        let snapshot_json = serde_json::to_value(&snapshot).expect("serialize snapshot");
+        assert_eq!(snapshot.entries[0].entry_id, "user-event-9");
+        assert_eq!(snapshot_json["entries"][0]["attemptId"], "attempt-123");
     }
 
     #[test]
@@ -358,6 +662,7 @@ mod tests {
                         segment_id: "assistant-1:segment:7".to_string(),
                         text: "hello".to_string(),
                     }],
+                    attempt_id: None,
                 },
             }],
         });
@@ -375,6 +680,7 @@ mod tests {
                     part_id: Some("part-1".to_string()),
                     message_id: Some("assistant-1".to_string()),
                     session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
                 },
             )
             .expect("delta");
@@ -382,6 +688,207 @@ mod tests {
             &delta.operations[0],
             TranscriptDeltaOperation::AppendSegment { entry_id, .. } if entry_id == "assistant-1"
         ));
+    }
+
+    #[test]
+    fn live_transcript_skips_unanswered_question_tool_rows() {
+        let registry = TranscriptProjectionRegistry::new();
+        let delta = registry.apply_session_update(
+            9,
+            &SessionUpdate::ToolCall {
+                tool_call: ToolCallData {
+                    id: "toolu-question".to_string(),
+                    name: "AskUserQuestion".to_string(),
+                    arguments: ToolArguments::Other {
+                        raw: serde_json::json!({
+                            "questions": [{
+                                "question": "Which archive button should get the confirm step?",
+                                "header": "Archive confirm",
+                                "options": [{
+                                    "label": "Sidebar session list",
+                                    "description": "Use the archive button in the session list"
+                                }],
+                                "multiSelect": false
+                            }]
+                        }),
+                    },
+                    raw_input: None,
+                    status: ToolCallStatus::Pending,
+                    result: None,
+                    kind: Some(ToolKind::Question),
+                    title: Some("Question".to_string()),
+                    locations: None,
+                    skill_meta: None,
+                    normalized_questions: Some(vec![QuestionItem {
+                        question: "Which archive button should get the confirm step?".to_string(),
+                        header: "Archive confirm".to_string(),
+                        options: vec![QuestionOption {
+                            label: "Sidebar session list".to_string(),
+                            description: "Use the archive button in the session list".to_string(),
+                        }],
+                        multi_select: false,
+                    }]),
+                    normalized_todos: None,
+                    normalized_todo_update: None,
+                    parent_tool_use_id: None,
+                    task_children: None,
+                    question_answer: None,
+                    awaiting_plan_approval: false,
+                    plan_approval_request_id: None,
+                },
+                session_id: Some("session-1".to_string()),
+            },
+        );
+
+        assert!(
+            delta.is_none(),
+            "live AskUserQuestion should render through question UI, not as a tool transcript row"
+        );
+        let snapshot = registry
+            .snapshot_for_session("session-1")
+            .expect("session transcript holder");
+        assert!(
+            snapshot.entries.is_empty(),
+            "skipped question tool must not create a transcript entry"
+        );
+    }
+
+    #[test]
+    fn non_transcript_bearing_update_does_not_advance_transcript_revision() {
+        // Regression: synthetic event seqs (from updates that don't change the transcript,
+        // e.g. UsageTelemetryUpdate, Plan, ToolCallUpdate) must not bump the registry's
+        // transcript revision. Otherwise revision drifts away from real transcript content
+        // and later real transcript-bearing updates can REGRESS the revision, which the
+        // frontend interprets as "stale snapshot, ignore" — silently dropping assistant
+        // entries.
+        let registry = TranscriptProjectionRegistry::new();
+
+        // Seed with a real transcript-bearing update at event_seq=5.
+        registry
+            .apply_session_update(
+                5,
+                &SessionUpdate::UserMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "hello".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    session_id: Some("session-1".to_string()),
+                    attempt_id: None,
+                },
+            )
+            .expect("user delta");
+        let revision_before = registry
+            .snapshot_for_session("session-1")
+            .expect("snapshot")
+            .revision;
+        assert_eq!(revision_before, 5);
+
+        // Apply many non-transcript-bearing updates with synthetic event seqs.
+        for synthetic_seq in [100i64, 150, 220, 221] {
+            let result = registry.apply_session_update(
+                synthetic_seq,
+                &SessionUpdate::UsageTelemetryUpdate {
+                    data: crate::acp::session_update::UsageTelemetryData {
+                        session_id: "session-1".to_string(),
+                        event_id: None,
+                        scope: "step".to_string(),
+                        cost_usd: None,
+                        tokens: Default::default(),
+                        source_model_id: None,
+                        timestamp_ms: None,
+                        context_window_size: None,
+                    },
+                },
+            );
+            assert!(
+                result.is_none(),
+                "telemetry updates must not produce transcript deltas"
+            );
+        }
+
+        let revision_after_telemetry = registry
+            .snapshot_for_session("session-1")
+            .expect("snapshot")
+            .revision;
+        assert_eq!(
+            revision_after_telemetry, 5,
+            "non-transcript-bearing updates must not advance transcript revision \
+             (was bumped to event_seq, regressing later real transcript updates)"
+        );
+    }
+
+    #[test]
+    fn transcript_revision_must_not_regress_after_late_real_event() {
+        // Invariant: the registry's transcript revision is monotonic.
+        // Even if event_seqs arrive out of order (e.g. synthetic event seqs
+        // from the journal Ok(None) path advance ahead of the real journaled
+        // seq), a later real transcript-bearing update with a smaller
+        // event_seq must never regress revision. Otherwise the frontend
+        // would treat the snapshot as stale and silently drop the entry.
+        let registry = TranscriptProjectionRegistry::new();
+
+        // First a real transcript-bearing update at a high event_seq.
+        registry
+            .apply_session_update(
+                221,
+                &SessionUpdate::UserMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "hi".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    session_id: Some("session-1".to_string()),
+                    attempt_id: None,
+                },
+            )
+            .expect("user delta");
+        assert_eq!(
+            registry
+                .snapshot_for_session("session-1")
+                .expect("snapshot")
+                .revision,
+            221
+        );
+
+        // Then a real transcript-bearing update arrives at a smaller event_seq
+        // (simulates real journaled event interleaved with prior higher-seq events).
+        registry
+            .apply_session_update(
+                64,
+                &SessionUpdate::AgentMessageChunk {
+                    chunk: ContentChunk {
+                        content: ContentBlock::Text {
+                            text: "the real assistant response".to_string(),
+                        },
+                        aggregation_hint: None,
+                    },
+                    part_id: None,
+                    message_id: Some("assistant-1".to_string()),
+                    session_id: Some("session-1".to_string()),
+                    produced_at_monotonic_ms: None,
+                },
+            )
+            .expect("assistant delta");
+
+        let snapshot = registry
+            .snapshot_for_session("session-1")
+            .expect("snapshot");
+        assert!(
+            snapshot.revision >= 221,
+            "transcript revision regressed (was 221, now {} after smaller event_seq=64) \
+             — frontend would drop the assistant entry as 'stale snapshot'",
+            snapshot.revision
+        );
+        assert!(
+            snapshot
+                .entries
+                .iter()
+                .any(|e| e.role == TranscriptEntryRole::Assistant),
+            "assistant entry must be present"
+        );
     }
 
     #[test]

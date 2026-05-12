@@ -1,4 +1,5 @@
 <script lang="ts">
+import type { TokenRevealCss } from "@acepe/ui/agent-panel";
 import MarkdownText from "../markdown-text.svelte";
 import {
 	DEFAULT_STREAMING_ANIMATION_MODE,
@@ -8,27 +9,24 @@ import {
 interface Props {
 	text: string;
 	isStreaming?: boolean;
-	revealKey?: string;
+	tokenRevealCss?: TokenRevealCss;
 	projectPath?: string;
 	streamingAnimationMode?: StreamingAnimationMode;
-	onRevealActivityChange?: (active: boolean) => void;
 }
 
 let {
 	text,
 	isStreaming = false,
-	revealKey,
+	tokenRevealCss,
 	projectPath,
 	streamingAnimationMode = DEFAULT_STREAMING_ANIMATION_MODE,
-	onRevealActivityChange,
 }: Props = $props();
 </script>
 
 <MarkdownText
 	{text}
 	{isStreaming}
-	{revealKey}
+	{tokenRevealCss}
 	{projectPath}
 	{streamingAnimationMode}
-	{onRevealActivityChange}
 />

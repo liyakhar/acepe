@@ -56,6 +56,31 @@ fn derive_indexed_session_title(session_id: &str, display: &str, title_overridde
     resolve_indexed_session_title(session_id, display, title_overridden, None)
 }
 
+fn copilot_session_to_history_entry(
+    session: crate::copilot_history::CopilotListedSession,
+) -> HistoryEntry {
+    HistoryEntry {
+        id: session.session_id.clone(),
+        display: session.title,
+        timestamp: session.updated_at_ms,
+        project: session.project_path,
+        session_id: session.session_id.clone(),
+        pasted_contents: serde_json::json!({}),
+        agent_id: CanonicalAgentId::Copilot,
+        updated_at: session.updated_at_ms,
+        source_path: Some(crate::copilot_history::missing_transcript_marker(
+            &session.session_id,
+        )),
+        parent_id: None,
+        worktree_path: session.worktree_path,
+        pr_number: None,
+        pr_link_mode: None,
+        worktree_deleted: None,
+        session_lifecycle_state: Some(SessionLifecycleState::Persisted),
+        sequence_id: None,
+    }
+}
+
 fn filter_hidden_external_file_scan_entries(
     mut entries: Vec<HistoryEntry>,
     external_hidden_paths: &std::collections::HashSet<String>,
@@ -112,10 +137,6 @@ pub async fn get_startup_sessions(
                 .await
                 .map_err(|error| format!("Failed to load startup session metadata: {error}"))?;
 
-            // Build a set of requested IDs for O(1) lookup when detecting alias matches.
-            let requested_ids: std::collections::HashSet<String> =
-                session_ids.iter().cloned().collect();
-
             // Build the ordering map keyed by requested session ID -> original position.
             let startup_order: std::collections::HashMap<String, usize> = session_ids
                 .into_iter()
@@ -123,33 +144,9 @@ pub async fn get_startup_sessions(
                 .map(|(index, session_id)| (session_id, index))
                 .collect();
 
-            // Sort respecting alias matches: look up the row's canonical ID first,
-            // then fall back to its provider_session_id (the alias the caller used).
-            indexed.sort_by_key(|row| {
-                startup_order
-                    .get(&row.id)
-                    .or_else(|| {
-                        row.provider_session_id
-                            .as_ref()
-                            .and_then(|pid| startup_order.get(pid))
-                    })
-                    .copied()
-                    .unwrap_or(usize::MAX)
-            });
+            indexed.sort_by_key(|row| startup_order.get(&row.id).copied().unwrap_or(usize::MAX));
 
-            // Detect alias matches: rows where the canonical `id` differs from the
-            // requested ID because the DB matched via `provider_session_id`.
-            let mut alias_remaps = std::collections::HashMap::new();
-            for row in &indexed {
-                if !requested_ids.contains(&row.id) {
-                    // The canonical ID was not in the request — this row was matched by alias.
-                    if let Some(ref pid) = row.provider_session_id {
-                        if requested_ids.contains(pid) {
-                            alias_remaps.insert(pid.clone(), row.id.clone());
-                        }
-                    }
-                }
-            }
+            let alias_remaps = std::collections::HashMap::new();
 
             let mut entries: Vec<HistoryEntry> = Vec::with_capacity(indexed.len());
             for session in indexed {
@@ -172,6 +169,7 @@ pub async fn get_startup_sessions(
                     worktree_path: session.worktree_path,
                     worktree_deleted,
                     pr_number: session.pr_number.map(|number| number as i64),
+                    pr_link_mode: session.pr_link_mode,
                     session_lifecycle_state: Some(session_lifecycle_state),
                     sequence_id: session.sequence_id,
                 });
@@ -184,6 +182,35 @@ pub async fn get_startup_sessions(
         }
         .await,
     )
+}
+
+fn merge_history_entries_by_id(
+    mut primary: Vec<HistoryEntry>,
+    secondary: Vec<HistoryEntry>,
+) -> Vec<HistoryEntry> {
+    let mut seen = primary
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    for entry in secondary {
+        if seen.insert(entry.id.clone()) {
+            primary.push(entry);
+        }
+    }
+    primary
+}
+
+async fn scan_copilot_history_entries(
+    project_paths: &[String],
+) -> Result<Vec<HistoryEntry>, String> {
+    crate::copilot_history::list_workspace_sessions(project_paths)
+        .await
+        .map(|sessions| {
+            sessions
+                .into_iter()
+                .map(copilot_session_to_history_entry)
+                .collect()
+        })
 }
 
 async fn scan_project_sessions_inner(
@@ -263,12 +290,23 @@ async fn scan_project_sessions_inner(
                 worktree_path: s.worktree_path,
                 worktree_deleted,
                 pr_number: s.pr_number.map(|n| n as i64),
+                pr_link_mode: s.pr_link_mode,
                 session_lifecycle_state: Some(session_lifecycle_state),
                 sequence_id: s.sequence_id,
             });
         }
+        match scan_copilot_history_entries(&project_paths).await {
+            Ok(copilot_entries) => {
+                entries = merge_history_entries_by_id(entries, copilot_entries);
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "Copilot scanner failed while supplementing index");
+            }
+        }
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.timestamp));
         tracing::info!(
-            total_entries = count,
+            total_entries = entries.len(),
+            index_entries = count,
             total_ms = scan_start.elapsed().as_millis(),
             source = "index",
             "Session scan complete (from index)"
@@ -281,11 +319,12 @@ async fn scan_project_sessions_inner(
     let file_scan_start = Instant::now();
 
     // tokio::join! polls on the same task (no Send required), so we share the slice
-    let (claude_result, cursor_result, opencode_result, codex_result) = tokio::join!(
+    let (claude_result, cursor_result, opencode_result, codex_result, copilot_result) = tokio::join!(
         session_jsonl_parser::scan_projects(&project_paths),
         cursor_parser::discover_all_chats(&project_paths),
         opencode_parser::scan_sessions(&project_paths),
         codex_scanner::scan_sessions(&project_paths),
+        scan_copilot_history_entries(&project_paths),
     );
 
     let file_scan_ms = file_scan_start.elapsed().as_millis();
@@ -339,6 +378,18 @@ async fn scan_project_sessions_inner(
         }
     };
 
+    let copilot_count = match copilot_result {
+        Ok(copilot_entries) => {
+            let count = copilot_entries.len();
+            entries.extend(copilot_entries);
+            count
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Copilot scanner failed");
+            0
+        }
+    };
+
     entries = filter_hidden_external_file_scan_entries(entries, &external_hidden_paths);
 
     tracing::info!(
@@ -346,6 +397,7 @@ async fn scan_project_sessions_inner(
         cursor_count,
         opencode_count,
         codex_count,
+        copilot_count,
         total_entries = entries.len(),
         file_scan_ms,
         total_ms = scan_start.elapsed().as_millis(),
@@ -361,12 +413,13 @@ async fn scan_project_sessions_inner(
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_indexed_session_title, derive_title_from_converted_session,
-        filter_hidden_external_file_scan_entries, indexed_source_path,
-        resolve_indexed_session_title,
+        copilot_session_to_history_entry, derive_indexed_session_title,
+        derive_title_from_converted_session, filter_hidden_external_file_scan_entries,
+        indexed_source_path, merge_history_entries_by_id, resolve_indexed_session_title,
     };
     use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
     use crate::acp::types::CanonicalAgentId;
+    use crate::copilot_history::CopilotListedSession;
     use crate::db::repository::{SessionLifecycleState, SessionMetadataRow};
     use crate::session_jsonl::types::HistoryEntry;
     use crate::session_jsonl::types::{StoredContentBlock, StoredEntry, StoredUserMessage};
@@ -408,6 +461,7 @@ mod tests {
             parent_id: None,
             worktree_path: None,
             pr_number: None,
+            pr_link_mode: None,
             worktree_deleted: None,
             session_lifecycle_state: Some(SessionLifecycleState::Persisted),
             sequence_id: None,
@@ -443,9 +497,9 @@ mod tests {
             file_path: "file.jsonl".to_string(),
             file_mtime: 0,
             file_size: 0,
-            provider_session_id: None,
             worktree_path: None,
             pr_number: None,
+            pr_link_mode: None,
             is_acepe_managed: false,
             sequence_id: Some(2),
         };
@@ -486,11 +540,50 @@ mod tests {
         assert_eq!(filtered[0].id, "claude-visible");
         assert_eq!(filtered[0].project, "/visible");
     }
+
+    #[test]
+    fn copilot_sessions_convert_to_visible_history_entries() {
+        let session = CopilotListedSession {
+            session_id: "copilot-session-1".to_string(),
+            title: "Review Acepe".to_string(),
+            updated_at_ms: 1_777_000_000_000,
+            project_path: "/Users/alex/Documents/acepe".to_string(),
+            worktree_path: None,
+            cwd: "/Users/alex/Documents/acepe".to_string(),
+        };
+
+        let entry = copilot_session_to_history_entry(session);
+
+        assert_eq!(entry.id, "copilot-session-1");
+        assert_eq!(entry.project, "/Users/alex/Documents/acepe");
+        assert_eq!(entry.agent_id, CanonicalAgentId::Copilot);
+        assert_eq!(entry.display, "Review Acepe");
+        assert_eq!(
+            entry.session_lifecycle_state,
+            Some(SessionLifecycleState::Persisted)
+        );
+    }
+
+    #[test]
+    fn indexed_entries_can_be_supplemented_with_copilot_file_entries() {
+        let indexed = vec![make_history_entry("claude-1", "/repo", "claude-code")];
+        let copilot = vec![
+            make_history_entry("copilot-1", "/repo", "copilot"),
+            make_history_entry("claude-1", "/repo", "copilot"),
+        ];
+
+        let merged = merge_history_entries_by_id(indexed, copilot);
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].id, "claude-1");
+        assert_eq!(merged[1].id, "copilot-1");
+        assert_eq!(merged[1].agent_id, CanonicalAgentId::Copilot);
+    }
 }
 
 /// Discover all projects with sessions from all agents.
 ///
-/// Scans Claude Code, Cursor, OpenCode, and Codex sources directly without requiring
+/// Scans Claude Code, Cursor, OpenCode, Codex, and Copilot sources directly without requiring
 /// projects to exist in the database first. This resolves the chicken-and-egg
 /// problem where the "Open Project" dialog couldn't show sessions because no
 /// projects were imported yet.
@@ -518,11 +611,12 @@ pub async fn discover_all_projects_with_sessions() -> CommandResult<Vec<HistoryE
 
 async fn discover_all_projects_with_sessions_inner() -> Result<Vec<HistoryEntry>, String> {
     // Scan all sources in parallel
-    let (claude_result, cursor_result, opencode_result, codex_result) = tokio::join!(
+    let (claude_result, cursor_result, opencode_result, codex_result, copilot_result) = tokio::join!(
         session_jsonl_parser::scan_all_threads(),
         cursor_parser::discover_all_chats(&[]),
         opencode_parser::scan_sessions(&[]),
         codex_scanner::scan_sessions(&[]),
+        crate::copilot_history::list_workspace_sessions(&[]),
     );
 
     let mut entries = Vec::new();
@@ -551,6 +645,17 @@ async fn discover_all_projects_with_sessions_inner() -> Result<Vec<HistoryEntry>
     match codex_result {
         Ok(codex_entries) => entries.extend(codex_entries),
         Err(e) => tracing::warn!(error = %e, "Codex discovery failed"),
+    }
+
+    match copilot_result {
+        Ok(copilot_entries) => {
+            entries.extend(
+                copilot_entries
+                    .into_iter()
+                    .map(copilot_session_to_history_entry),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "Copilot discovery failed"),
     }
 
     // Sort by timestamp descending (most recent first)

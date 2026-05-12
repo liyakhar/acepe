@@ -219,6 +219,15 @@ fn convert_assistant_message(
         }
     }
 
+    if let Some(error) = &msg.error {
+        return (
+            Some(crate::session_converter::assistant_provider_error_entry(
+                msg, error,
+            )),
+            tool_entries,
+        );
+    }
+
     let assistant_entry = if !chunks.is_empty() {
         Some(StoredEntry::Assistant {
             id: msg.uuid.clone(),
@@ -251,6 +260,7 @@ pub(crate) async fn parse_converted_session(
 mod tests {
     use super::*;
     use crate::acp::session_update::ToolCallStatus;
+    use crate::cc_sdk::AssistantMessageError;
     use crate::session_jsonl::types::{FullSession, SessionStats, StoredEntry};
     use serde_json::json;
 
@@ -289,6 +299,7 @@ mod tests {
                 ],
                 model: None,
                 usage: None,
+                error: None,
                 request_id: None,
                 is_meta: false,
                 source_tool_use_id: None,
@@ -312,5 +323,51 @@ mod tests {
             tool_entry.result,
             Some(serde_json::Value::String("package main".to_string()))
         );
+    }
+
+    #[test]
+    fn test_convert_full_session_maps_assistant_error_to_error_entry() {
+        let session = FullSession {
+            session_id: "session-1".to_string(),
+            project_path: "/tmp/project".to_string(),
+            title: "Test".to_string(),
+            created_at: "2025-01-01T00:00:00+00:00".to_string(),
+            stats: SessionStats {
+                total_messages: 1,
+                user_messages: 0,
+                assistant_messages: 1,
+                tool_uses: 0,
+                tool_results: 0,
+                thinking_blocks: 0,
+                total_input_tokens: 0,
+                total_output_tokens: 0,
+            },
+            messages: vec![OrderedMessage {
+                uuid: "assistant-1".to_string(),
+                parent_uuid: None,
+                role: "assistant".to_string(),
+                timestamp: "2025-01-01T00:00:01+00:00".to_string(),
+                content_blocks: vec![ContentBlock::Text {
+                    text: "Failed to authenticate. API Error: 401 {\"error\":{\"message\":\"User not found.\",\"code\":401}}".to_string(),
+                }],
+                model: None,
+                usage: None,
+                error: Some(AssistantMessageError::AuthenticationFailed),
+                request_id: None,
+                is_meta: false,
+                source_tool_use_id: None,
+                tool_use_result: None,
+                source_tool_assistant_uuid: None,
+            }],
+        };
+
+        let converted = convert_full_session_to_entries(&session);
+
+        assert!(matches!(
+            &converted.entries[0],
+            StoredEntry::Error { message, .. }
+                if message.content.contains("Failed to authenticate")
+                    && message.code.as_deref() == Some("401")
+        ));
     }
 }

@@ -1,10 +1,15 @@
 {
-  "version": 1,
-  "scripts": {
-    "setup": "bun i",
-    "run": ""
-  },
   "externalCliSessions": {
-    "show": false
+    "show": true
+  },
+  "scripts": {
+    "run": "",
+    "setup": "bun i"
+  },
+  "version": 1,
+  "worktree": {
+    "setupCommands": [
+      "run a ls command"
+    ]
   }
 }

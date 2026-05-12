@@ -44,7 +44,7 @@
 	}
 </script>
 
-<div class="flex min-w-0 flex-1 flex-col">
+<div class="flex min-w-0 flex-1 flex-col text-sm">
 	{#if showHeader}
 		<button
 			type="button"

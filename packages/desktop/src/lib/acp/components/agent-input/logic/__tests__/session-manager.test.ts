@@ -30,7 +30,7 @@ describe("createSession", () => {
 					createdAt: new Date(),
 					parentId: null,
 				};
-				return okAsync(session);
+				return okAsync({ kind: "ready" as const, session });
 			}),
 		} as unknown as SessionStore;
 
@@ -45,7 +45,10 @@ describe("createSession", () => {
 		const result = await createSession(mockStore, options);
 		expect(result.isOk()).toBe(true);
 		if (result.isOk()) {
-			expect(result.value).toBe("session-123");
+			expect(result.value).toEqual({
+				sessionId: "session-123",
+				deferredCreation: false,
+			});
 		}
 		expect(mockStore.createSession).toHaveBeenCalledWith(
 			expect.objectContaining({

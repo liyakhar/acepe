@@ -8,9 +8,9 @@ import { CloseAction, FullscreenAction, OverflowMenuTriggerAction } from "@acepe
 import { DownloadSimple } from "phosphor-svelte";
 import CopyButton from "../../messages/copy-button.svelte";
 import * as Tooltip from "$lib/components/ui/tooltip/index.js";
-import AgentSelector from "../../agent-selector.svelte";
 import AttachmentChip from "../../shared/attachment-chip.svelte";
 
+import { getPreparingThreadLabel } from "../logic/agent-panel-header-labels.js";
 import type { AgentPanelHeaderProps } from "../types/agent-panel-header-props.js";
 
 const isDev = import.meta.env.DEV;
@@ -21,16 +21,17 @@ let {
 	sessionId,
 	sessionTitle,
 	sessionAgentId,
-	currentAgentId,
-	availableAgents,
 	agentIconSrc,
-	agentName: _agentName,
+	agentName,
 	isFullscreen,
 	sessionStatus,
+	projectPath: _projectPath,
 	projectName,
 	projectColor,
 	projectIconSrc,
 	sequenceId,
+	linkedPr: _linkedPr = null,
+	prLinkMode: _prLinkMode = "automatic",
 	hideProjectBadge = false,
 	onClose,
 	onToggleFullscreen,
@@ -39,15 +40,14 @@ let {
 	displayTitle = null,
 	onExportMarkdown,
 	onExportJson,
-	onAgentChange,
 	onScrollToTop,
 	firstMessageAttachments = [],
-	// Debug props
 	debugPanelState,
 }: AgentPanelHeaderProps = $props();
 
 const hasExportSubmenu = $derived(onExportMarkdown != null || onExportJson != null);
 const hasAttachments = $derived((firstMessageAttachments?.length ?? 0) > 0);
+const preparingThreadLabel = $derived(getPreparingThreadLabel(agentName));
 </script>
 
 	<AgentPanelHeaderLayout
@@ -55,7 +55,7 @@ const hasAttachments = $derived((firstMessageAttachments?.length ?? 0) > 0);
 		showTrailingBorder={!isFullscreen}
 		sessionTitle={sessionTitle ? sessionTitle : undefined}
 		displayTitle={displayTitle ? displayTitle : undefined}
-		{agentIconSrc}
+		agentIconSrc={agentIconSrc ? agentIconSrc : undefined}
 		{isFullscreen}
 		{isConnecting}
 		{pendingProjectSelection}
@@ -71,25 +71,17 @@ const hasAttachments = $derived((firstMessageAttachments?.length ?? 0) > 0);
 			<!-- Status is shown via the controls snippet in the action cell -->
 		{/snippet}
 
-		{#snippet leadingControl()}
-			<AgentSelector
-				{availableAgents}
-				{currentAgentId}
-				onAgentChange={(agentId) => onAgentChange?.(agentId)}
-				variant="ghost"
-				buttonClass="size-5 rounded p-0 text-muted-foreground/60 hover:text-foreground hover:bg-accent transition-colors data-[state=open]:bg-accent"
-				contentClass="min-w-[220px]"
-				showChevron={false}
-			/>
-		{/snippet}
-
 		{#snippet controls()}
 			<AgentPanelStatusIcon
 				status={sessionStatus}
 				{isConnecting}
 				agentId={sessionAgentId}
-				warmingLabel={"Preparing thread..."}
-				connectedLabel={"Thread is connected"}
+				warmingLabel={sessionStatus === "running" ? "Thread is running" : preparingThreadLabel}
+				connectedLabel={sessionStatus === "idle"
+					? "Thread is detached"
+					: sessionStatus === "done"
+						? "Thread is complete"
+						: "Thread is connected"}
 				errorLabel={"Thread error - click to retry"}
 			/>
 			<DropdownMenu.Root>

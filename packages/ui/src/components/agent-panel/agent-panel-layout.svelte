@@ -12,10 +12,12 @@
 	import AgentToolFetch from "./agent-tool-fetch.svelte";
 	import AgentToolOther from "./agent-tool-other.svelte";
 	import AgentToolBrowser from "./agent-tool-browser.svelte";
+	import AgentToolReadLints from "./agent-tool-read-lints.svelte";
 	import AgentToolTask from "./agent-tool-task.svelte";
+	import AgentToolSkill from "./agent-tool-skill.svelte";
 	import AgentToolTodo from "./agent-tool-todo.svelte";
 	import AgentToolWebSearch from "./agent-tool-web-search.svelte";
-	import { TextShimmer } from "../text-shimmer/index.js";
+	import ToolHeaderLeading from "./tool-header-leading.svelte";
 
 	interface Props {
 		entries: AnyAgentEntry[];
@@ -50,9 +52,12 @@
 		void entries.length;
 		const el = scrollContainer;
 		if (el) {
-			requestAnimationFrame(() => {
+			const animationFrameId = requestAnimationFrame(() => {
 				el.scrollTop = el.scrollHeight;
 			});
+			return () => {
+				cancelAnimationFrame(animationFrameId);
+			};
 		}
 	});
 </script>
@@ -70,17 +75,25 @@
 		{#each entries as entry (entry.id)}
 			<div class="py-1.5 px-3">
 				{#if entry.type === "user"}
-					<AgentUserMessage text={entry.text} />
+					<AgentUserMessage text={entry.text} timestampMs={entry.timestampMs} />
 				{:else if entry.type === "assistant"}
 					<AgentAssistantMessage
 						message={{
 							chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
 						}}
 						isStreaming={entry.isStreaming}
+						timestampMs={entry.timestampMs}
 						{iconBasePath}
 					/>
 				{:else if entry.type === "tool_call"}
-					{#if entry.kind === "read"}
+					{#if entry.kind === "read_lints"}
+						<AgentToolReadLints
+							status={entry.status}
+							totalDiagnostics={entry.lintDiagnostics?.length ?? 0}
+							totalFiles={0}
+							diagnostics={entry.lintDiagnostics ?? null}
+						/>
+					{:else if entry.kind === "read"}
 						<AgentToolRead
 							filePath={entry.filePath}
 							status={entry.status}
@@ -131,6 +144,13 @@
 							detailsText={entry.detailsText ?? null}
 							status={entry.status}
 						/>
+					{:else if entry.kind === "skill"}
+						<AgentToolSkill
+							skillName={entry.skillName}
+							skillArgs={entry.skillArgs}
+							description={entry.skillDescription}
+							status={entry.status}
+						/>
 					{:else if entry.todos && entry.todos.length > 0}
 						<AgentToolTodo todos={entry.todos} isLive={entry.status === "running"} />
 					{:else if entry.kind === "task"}
@@ -153,8 +173,10 @@
 						/>
 					{/if}
 				{:else if entry.type === "thinking"}
-					<div class="py-2 text-sm text-muted-foreground">
-						<TextShimmer>Planning next moves…</TextShimmer>
+					<div class="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+						<ToolHeaderLeading kind="think" status="running">
+							{entry.label ?? "Planning next moves…"}
+						</ToolHeaderLeading>
 					</div>
 				{/if}
 			</div>

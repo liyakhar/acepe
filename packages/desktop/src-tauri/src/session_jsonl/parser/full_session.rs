@@ -25,6 +25,7 @@ struct RawMessage {
     is_meta: Option<bool>,
     #[serde(rename = "requestId")]
     request_id: Option<String>,
+    error: Option<crate::cc_sdk::AssistantMessageError>,
     message: Option<RawMessageContent>,
     _cwd: Option<String>,
     /// ID of the tool use this meta message is associated with (for skill content)
@@ -45,6 +46,7 @@ struct RawMessageContent {
     content: serde_json::Value,
     model: Option<String>,
     usage: Option<RawUsage>,
+    error: Option<crate::cc_sdk::AssistantMessageError>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -432,6 +434,7 @@ async fn parse_full_session_from_path_with_path(
             content_blocks,
             model: msg_content.model,
             usage,
+            error: raw.error.or(msg_content.error),
             request_id: raw.request_id,
             is_meta: raw.is_meta.unwrap_or(false),
             source_tool_use_id: raw.source_tool_use_id,

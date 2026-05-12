@@ -6,11 +6,11 @@
 //!
 //! ## Ordering guarantee
 //!
-//! `assemble_session_open_result` arms the `event_hub` reservation for
-//! `open_token` **before** assembling snapshot content.  Any delta published
-//! to the hub for `canonical_session_id` after arming is captured in the
+//! Session-open helpers arm the `event_hub` reservation for `open_token`
+//! **before** returning the assembled snapshot content. Any delta published to
+//! the hub for `canonical_session_id` after arming is captured in the
 //! reservation buffer and remains available for ordered flush at connect time
-//! (Unit 3).  A concurrent event that hits the journal within the tiny window
+//! (Unit 3). A concurrent event that hits the journal within the tiny window
 //! between `max_event_seq` read and reservation arming will appear in the
 //! buffer and may also be reflected in the projection — deduplication by
 //! `last_event_seq` at claim time (Unit 3) ensures it is not delivered twice.
@@ -18,17 +18,19 @@
 use crate::acp::event_hub::AcpEventHubState;
 use crate::acp::projections::ProjectionRegistry;
 use crate::acp::projections::{
-    InteractionSnapshot, OperationSnapshot, SessionTurnState, TurnFailureSnapshot,
+    is_terminal_operation_state, InteractionSnapshot, InteractionState, OperationDegradationCode,
+    OperationDegradationReason, OperationSnapshot, OperationState, SessionTurnState,
+    TurnFailureSnapshot,
 };
 use crate::acp::session_descriptor::SessionReplayContext;
-use crate::acp::session_journal::{load_stored_projection, load_transcript_from_journal};
+use crate::acp::session_state_engine::runtime_registry::SessionGraphRuntimeRegistry;
+use crate::acp::session_state_engine::selectors::{
+    SessionGraphCapabilities, SessionGraphLifecycle,
+};
 use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
 use crate::acp::transcript_projection::TranscriptSnapshot;
 use crate::acp::types::CanonicalAgentId;
-use crate::db::repository::{
-    SessionJournalEventRepository, SessionMetadataRepository, SessionProjectionSnapshotRepository,
-    SessionTranscriptSnapshotRepository,
-};
+use crate::db::repository::{SessionJournalEventRepository, SessionMetadataRepository};
 use sea_orm::DbConn;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -68,9 +70,115 @@ pub struct SessionOpenMissing {
 /// be loaded or proven consistent.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub enum SessionOpenErrorReason {
+    ParseFailure,
+    ProviderUnavailable,
+    ProviderHistoryMissing,
+    ProviderUnparseable,
+    ProviderValidationFailed,
+    StaleLineageRecovery,
+    Internal,
+}
+
+/// Payload for the `error` outcome — persisted state was found but could not
+/// be loaded or proven consistent.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionOpenError {
     pub requested_session_id: String,
     pub message: String,
+    pub reason: SessionOpenErrorReason,
+    pub retryable: bool,
+}
+
+impl SessionOpenError {
+    #[must_use]
+    pub fn parse_failure(
+        requested_session_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            requested_session_id: requested_session_id.into(),
+            message: message.into(),
+            reason: SessionOpenErrorReason::ParseFailure,
+            retryable: false,
+        }
+    }
+
+    #[must_use]
+    pub fn provider_unavailable(
+        requested_session_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            requested_session_id: requested_session_id.into(),
+            message: message.into(),
+            reason: SessionOpenErrorReason::ProviderUnavailable,
+            retryable: true,
+        }
+    }
+
+    #[must_use]
+    pub fn provider_history_missing(
+        requested_session_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            requested_session_id: requested_session_id.into(),
+            message: message.into(),
+            reason: SessionOpenErrorReason::ProviderHistoryMissing,
+            retryable: false,
+        }
+    }
+
+    #[must_use]
+    pub fn provider_unparseable(
+        requested_session_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            requested_session_id: requested_session_id.into(),
+            message: message.into(),
+            reason: SessionOpenErrorReason::ProviderUnparseable,
+            retryable: false,
+        }
+    }
+
+    #[must_use]
+    pub fn provider_validation_failed(
+        requested_session_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            requested_session_id: requested_session_id.into(),
+            message: message.into(),
+            reason: SessionOpenErrorReason::ProviderValidationFailed,
+            retryable: false,
+        }
+    }
+
+    #[must_use]
+    pub fn stale_lineage_recovery(
+        requested_session_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            requested_session_id: requested_session_id.into(),
+            message: message.into(),
+            reason: SessionOpenErrorReason::StaleLineageRecovery,
+            retryable: true,
+        }
+    }
+
+    #[must_use]
+    pub fn internal(requested_session_id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            requested_session_id: requested_session_id.into(),
+            message: message.into(),
+            reason: SessionOpenErrorReason::Internal,
+            retryable: true,
+        }
+    }
 }
 
 /// Full payload for a `found` outcome.
@@ -112,6 +220,11 @@ pub struct SessionOpenFound {
     pub turn_state: SessionTurnState,
     pub message_count: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_agent_message_id: Option<String>,
+    // --- Canonical lifecycle/actionability authority ---
+    pub lifecycle: SessionGraphLifecycle,
+    pub capabilities: SessionGraphCapabilities,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub active_turn_failure: Option<TurnFailureSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_terminal_turn_id: Option<String>,
@@ -141,6 +254,8 @@ fn build_projection_from_thread_snapshot(
     replay_context: &SessionReplayContext,
     snapshot: &SessionThreadSnapshot,
 ) -> crate::acp::projections::SessionProjectionSnapshot {
+    // Provider restore enters through ProjectionRegistry so historical tool evidence
+    // is normalized to canonical operation_state before the graph reaches TypeScript.
     ProjectionRegistry::project_thread_snapshot(
         &replay_context.local_session_id,
         Some(replay_context.agent_id.clone()),
@@ -148,9 +263,89 @@ fn build_projection_from_thread_snapshot(
     )
 }
 
+fn operation_can_be_restored_as_historical(operation: &OperationSnapshot) -> bool {
+    is_terminal_operation_state(&operation.operation_state)
+}
+
+fn downgrade_stale_active_operation(mut operation: OperationSnapshot) -> OperationSnapshot {
+    if operation_can_be_restored_as_historical(&operation) {
+        return operation;
+    }
+
+    // The journal frontier proves this active operation is stale; keep the state
+    // explicit instead of relying on provider_status fallback in the UI.
+    operation.operation_state = OperationState::Degraded;
+    if operation.degradation_reason.is_none() {
+        operation.degradation_reason = Some(OperationDegradationReason {
+			code: OperationDegradationCode::AbsentFromHistory,
+			detail: Some(
+				"Provider history is behind the canonical journal; stale active operation was not restored as running."
+					.to_string(),
+			),
+		});
+    }
+    operation
+}
+
+fn cancel_historical_active_operation(mut operation: OperationSnapshot) -> OperationSnapshot {
+    if operation_can_be_restored_as_historical(&operation) {
+        return operation;
+    }
+
+    operation.operation_state = OperationState::Cancelled;
+    operation
+}
+
+fn sanitize_operations_for_projection_frontier(
+    operations: Vec<OperationSnapshot>,
+    projection_is_behind_journal: bool,
+) -> Vec<OperationSnapshot> {
+    if !projection_is_behind_journal {
+        return operations;
+    }
+
+    operations
+        .into_iter()
+        .map(downgrade_stale_active_operation)
+        .collect()
+}
+
+fn sanitize_operations_for_historical_open(
+    operations: Vec<OperationSnapshot>,
+    projection_is_behind_journal: bool,
+) -> Vec<OperationSnapshot> {
+    if projection_is_behind_journal {
+        return sanitize_operations_for_projection_frontier(
+            operations,
+            projection_is_behind_journal,
+        );
+    }
+
+    operations
+        .into_iter()
+        .map(cancel_historical_active_operation)
+        .collect()
+}
+
+fn sanitize_interactions_for_historical_open(
+    interactions: Vec<InteractionSnapshot>,
+) -> Vec<InteractionSnapshot> {
+    interactions
+        .into_iter()
+        .map(|mut interaction| {
+            if interaction.state == InteractionState::Pending {
+                interaction.state = InteractionState::Unresolved;
+                interaction.reply_handler = None;
+            }
+            interaction
+        })
+        .collect()
+}
+
 pub async fn session_open_result_from_thread_snapshot(
     db: &DbConn,
     hub: &Arc<AcpEventHubState>,
+    runtime_registry: Option<&SessionGraphRuntimeRegistry>,
     replay_context: &SessionReplayContext,
     requested_session_id: &str,
     snapshot: &SessionThreadSnapshot,
@@ -161,12 +356,12 @@ pub async fn session_open_result_from_thread_snapshot(
         match SessionJournalEventRepository::max_event_seq(db, canonical_session_id).await {
             Ok(seq) => seq.unwrap_or(0),
             Err(err) => {
-                return SessionOpenResult::Error(SessionOpenError {
-                    requested_session_id: requested_session_id.to_string(),
-                    message: format!(
+                return SessionOpenResult::Error(SessionOpenError::internal(
+                    requested_session_id,
+                    format!(
                     "Failed to determine journal cutoff for session {canonical_session_id}: {err}"
                 ),
-                });
+                ));
             }
         };
 
@@ -184,40 +379,97 @@ pub async fn session_open_result_from_thread_snapshot(
             Ok(metadata) => metadata,
             Err(err) => {
                 hub.supersede_reservation(open_token);
-                return SessionOpenResult::Error(SessionOpenError {
-                    requested_session_id: requested_session_id.to_string(),
-                    message: format!(
+                return SessionOpenResult::Error(SessionOpenError::internal(
+                    requested_session_id,
+                    format!(
                         "Failed to load session metadata for session {canonical_session_id}: {err}"
                     ),
-                });
+                ));
             }
         };
     let Some(session_metadata) = session_metadata else {
         hub.supersede_reservation(open_token);
-        return SessionOpenResult::Error(SessionOpenError {
-            requested_session_id: requested_session_id.to_string(),
-            message: format!("Session metadata missing for session {canonical_session_id}"),
-        });
+        return SessionOpenResult::Error(SessionOpenError::internal(
+            requested_session_id,
+            format!("Session metadata missing for session {canonical_session_id}"),
+        ));
     };
 
     let projection = build_projection_from_thread_snapshot(replay_context, snapshot);
     let session_snap = projection.session.as_ref();
     let operations = projection.operations;
     let interactions = projection.interactions;
-    let graph_revision = session_snap
+    let projected_graph_revision = session_snap
         .map(|session| session.last_event_seq)
         .unwrap_or(last_event_seq);
-    let turn_state = session_snap
+    // Provider history can lag behind the canonical journal frontier. In that
+    // case, preserve transcript content but do not resurrect stale active work.
+    let projection_is_behind_journal = projected_graph_revision < last_event_seq;
+    let graph_revision = projected_graph_revision.max(last_event_seq);
+    let raw_turn_state = session_snap
         .map(|session| session.turn_state.clone())
         .unwrap_or(SessionTurnState::Idle);
-    let message_count = session_snap
-        .map(|session| session.message_count)
-        .unwrap_or(0);
-    let active_turn_failure = session_snap.and_then(|session| session.active_turn_failure.clone());
-    let last_terminal_turn_id =
-        session_snap.and_then(|session| session.last_terminal_turn_id.clone());
+    let had_historical_active_state = raw_turn_state == SessionTurnState::Running
+        || operations
+            .iter()
+            .any(|operation| !is_terminal_operation_state(&operation.operation_state))
+        || interactions
+            .iter()
+            .any(|interaction| interaction.state == InteractionState::Pending);
+    let turn_state = if projection_is_behind_journal {
+        SessionTurnState::Idle
+    } else if raw_turn_state == SessionTurnState::Failed {
+        raw_turn_state
+    } else if had_historical_active_state {
+        if snapshot.entries.is_empty() {
+            SessionTurnState::Idle
+        } else {
+            SessionTurnState::Completed
+        }
+    } else {
+        raw_turn_state
+    };
+    let message_count = if projection_is_behind_journal {
+        0
+    } else {
+        session_snap
+            .map(|session| session.message_count)
+            .unwrap_or(0)
+    };
+    let active_turn_failure = if projection_is_behind_journal {
+        None
+    } else {
+        session_snap.and_then(|session| session.active_turn_failure.clone())
+    };
+    let last_terminal_turn_id = if projection_is_behind_journal {
+        None
+    } else {
+        session_snap.and_then(|session| session.last_terminal_turn_id.clone())
+    };
+    let last_agent_message_id = if projection_is_behind_journal {
+        None
+    } else {
+        session_snap.and_then(|session| session.last_agent_message_id.clone())
+    };
     let transcript_snapshot =
         TranscriptSnapshot::from_stored_entries(last_event_seq, &snapshot.entries);
+    let operations =
+        sanitize_operations_for_historical_open(operations, projection_is_behind_journal);
+    let interactions = sanitize_interactions_for_historical_open(interactions);
+
+    let lifecycle = SessionGraphLifecycle::detached(
+        crate::acp::lifecycle::DetachedReason::RestoredRequiresAttach,
+    );
+    let capabilities = SessionGraphCapabilities::empty();
+
+    if let Some(runtime_registry) = runtime_registry {
+        runtime_registry.restore_session_state(
+            canonical_session_id.clone(),
+            graph_revision,
+            lifecycle.clone(),
+            capabilities.clone(),
+        );
+    }
 
     SessionOpenResult::Found(Box::new(SessionOpenFound {
         requested_session_id: requested_session_id.to_string(),
@@ -239,191 +491,9 @@ pub async fn session_open_result_from_thread_snapshot(
         interactions,
         turn_state,
         message_count,
-        active_turn_failure,
-        last_terminal_turn_id,
-    }))
-}
-
-/// Assemble a `SessionOpenResult` for an existing session from persisted state.
-///
-/// **Ordering guarantee**: the `event_hub` reservation for the returned
-/// `open_token` is armed *before* projection snapshot assembly begins.  Any
-/// delta published to the hub for `canonical_session_id` after arming is
-/// captured in the reservation buffer.
-///
-/// Returns `Error` when any piece of persisted state cannot be proven
-/// consistent with the same journal cutoff.
-pub async fn assemble_session_open_result(
-    db: &DbConn,
-    hub: &Arc<AcpEventHubState>,
-    replay_context: &SessionReplayContext,
-    requested_session_id: &str,
-) -> SessionOpenResult {
-    let canonical_session_id = &replay_context.local_session_id;
-    let is_alias = requested_session_id != canonical_session_id;
-
-    // --- 1. Determine the proven journal cutoff ---
-    let last_event_seq =
-        match SessionJournalEventRepository::max_event_seq(db, canonical_session_id).await {
-            Ok(seq) => seq.unwrap_or(0),
-            Err(err) => {
-                return SessionOpenResult::Error(SessionOpenError {
-                    requested_session_id: requested_session_id.to_string(),
-                    message: format!(
-                    "Failed to determine journal cutoff for session {canonical_session_id}: {err}"
-                ),
-                });
-            }
-        };
-
-    // --- 2. Arm the reservation BEFORE assembling snapshot content ---
-    //
-    // After this point, any event published to the hub for this session is
-    // captured in the buffer, so nothing can slip through the gap between
-    // snapshot assembly and connect-time claim.
-    let open_token = Uuid::new_v4();
-    let epoch_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-    hub.arm_reservation(
-        open_token,
-        canonical_session_id.clone(),
-        last_event_seq,
-        epoch_ms,
-    );
-
-    // --- 3. Load canonical projection at the proven cutoff ---
-    let persisted_projection =
-        match SessionProjectionSnapshotRepository::get(db, canonical_session_id).await {
-            Ok(proj) => proj,
-            Err(err) => {
-                hub.supersede_reservation(open_token);
-                return SessionOpenResult::Error(SessionOpenError {
-                    requested_session_id: requested_session_id.to_string(),
-                    message: format!(
-                        "Failed to load projection for session {canonical_session_id}: {err}"
-                    ),
-                });
-            }
-        };
-    let projection = if persisted_projection
-        .as_ref()
-        .and_then(|snapshot| snapshot.session.as_ref())
-        .is_some_and(|session| session.last_event_seq >= last_event_seq)
-    {
-        persisted_projection
-    } else {
-        match load_stored_projection(db, replay_context).await {
-            Ok(snapshot) => snapshot.or(persisted_projection),
-            Err(err) => {
-                hub.supersede_reservation(open_token);
-                return SessionOpenResult::Error(SessionOpenError {
-                    requested_session_id: requested_session_id.to_string(),
-                    message: format!(
-                        "Failed to rebuild projection for session {canonical_session_id}: {err}"
-                    ),
-                });
-            }
-        }
-    };
-    let Some(projection) = projection else {
-        hub.supersede_reservation(open_token);
-        return SessionOpenResult::Error(SessionOpenError {
-            requested_session_id: requested_session_id.to_string(),
-            message: format!(
-                "Canonical projection snapshot missing for session {canonical_session_id}"
-            ),
-        });
-    };
-
-    let session_snap = projection.session.as_ref();
-    let operations = projection.operations;
-    let interactions = projection.interactions;
-    let graph_revision = session_snap
-        .map(|s| s.last_event_seq)
-        .unwrap_or(last_event_seq);
-    let turn_state = session_snap
-        .map(|s| s.turn_state.clone())
-        .unwrap_or(SessionTurnState::Idle);
-    let message_count = session_snap.map(|s| s.message_count).unwrap_or(0);
-    let active_turn_failure = session_snap.and_then(|s| s.active_turn_failure.clone());
-    let last_terminal_turn_id = session_snap.and_then(|s| s.last_terminal_turn_id.clone());
-
-    // --- 4. Resolve thread content ---
-    let persisted_transcript =
-        match SessionTranscriptSnapshotRepository::get(db, canonical_session_id).await {
-            Ok(snapshot) => snapshot,
-            Err(err) => {
-                hub.supersede_reservation(open_token);
-                return SessionOpenResult::Error(SessionOpenError {
-                    requested_session_id: requested_session_id.to_string(),
-                    message: format!(
-                    "Failed to load transcript snapshot for session {canonical_session_id}: {err}"
-                ),
-                });
-            }
-        };
-    let session_metadata =
-        match SessionMetadataRepository::get_by_id(db, canonical_session_id).await {
-            Ok(metadata) => metadata,
-            Err(err) => {
-                hub.supersede_reservation(open_token);
-                return SessionOpenResult::Error(SessionOpenError {
-                    requested_session_id: requested_session_id.to_string(),
-                    message: format!(
-                        "Failed to load session metadata for session {canonical_session_id}: {err}"
-                    ),
-                });
-            }
-        };
-    let transcript_snapshot = if persisted_transcript
-        .as_ref()
-        .is_some_and(|snapshot| snapshot.revision >= last_event_seq)
-    {
-        persisted_transcript
-    } else {
-        match load_transcript_from_journal(db, replay_context).await {
-            Ok(snapshot) => snapshot.or(persisted_transcript),
-            Err(err) => {
-                hub.supersede_reservation(open_token);
-                return SessionOpenResult::Error(SessionOpenError {
-                    requested_session_id: requested_session_id.to_string(),
-                    message: format!(
-                        "Failed to rebuild transcript snapshot for session {canonical_session_id}: {err}"
-                    ),
-                });
-            }
-        }
-    };
-    let transcript_snapshot = transcript_snapshot
-        .unwrap_or_else(|| TranscriptSnapshot::from_stored_entries(last_event_seq, &[]));
-    let Some(session_metadata) = session_metadata else {
-        hub.supersede_reservation(open_token);
-        return SessionOpenResult::Error(SessionOpenError {
-            requested_session_id: requested_session_id.to_string(),
-            message: format!(
-                "Canonical session metadata missing for session {canonical_session_id}"
-            ),
-        });
-    };
-    let session_title =
-        resolve_canonical_session_title(Some(&session_metadata), canonical_session_id);
-
-    SessionOpenResult::Found(Box::new(SessionOpenFound {
-        requested_session_id: requested_session_id.to_string(),
-        canonical_session_id: canonical_session_id.clone(),
-        is_alias,
-        last_event_seq,
-        graph_revision,
-        open_token: open_token.to_string(),
-        agent_id: replay_context.agent_id.clone(),
-        project_path: replay_context.project_path.clone(),
-        worktree_path: replay_context.worktree_path.clone(),
-        source_path: replay_context.source_path.clone(),
-        transcript_snapshot,
-        session_title,
-        operations,
-        interactions,
-        turn_state,
-        message_count,
+        last_agent_message_id,
+        lifecycle,
+        capabilities,
         active_turn_failure,
         last_terminal_turn_id,
     }))
@@ -434,48 +504,56 @@ pub async fn assemble_session_open_result(
 ///
 /// Arms a reservation at `last_event_seq = 0` (or the proven initial cutoff
 /// when a seed journal event was persisted before this call).
+pub struct NewSessionOpenResultInput {
+    pub session_id: String,
+    pub agent_id: CanonicalAgentId,
+    pub project_path: String,
+    pub worktree_path: Option<String>,
+    pub source_path: Option<String>,
+    pub lifecycle: SessionGraphLifecycle,
+    pub capabilities: SessionGraphCapabilities,
+}
+
 pub async fn session_open_result_for_new_session(
     db: &DbConn,
     hub: &Arc<AcpEventHubState>,
-    session_id: &str,
-    agent_id: CanonicalAgentId,
-    project_path: String,
-    worktree_path: Option<String>,
-    source_path: Option<String>,
+    input: NewSessionOpenResultInput,
 ) -> SessionOpenResult {
-    let last_event_seq = match SessionJournalEventRepository::max_event_seq(db, session_id).await {
+    let session_id = input.session_id;
+    let last_event_seq = match SessionJournalEventRepository::max_event_seq(db, &session_id).await {
         Ok(seq) => seq.unwrap_or(0),
         Err(err) => {
-            return SessionOpenResult::Error(SessionOpenError {
-                requested_session_id: session_id.to_string(),
-                message: format!(
-                    "Failed to determine journal cutoff for new session {session_id}: {err}"
-                ),
-            });
+            return SessionOpenResult::Error(SessionOpenError::internal(
+                &session_id,
+                format!("Failed to determine journal cutoff for new session {session_id}: {err}"),
+            ));
         }
     };
 
     let open_token = Uuid::new_v4();
     let epoch_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-    hub.arm_reservation(open_token, session_id.to_string(), last_event_seq, epoch_ms);
+    hub.arm_reservation(open_token, session_id.clone(), last_event_seq, epoch_ms);
 
     SessionOpenResult::Found(Box::new(SessionOpenFound {
-        requested_session_id: session_id.to_string(),
-        canonical_session_id: session_id.to_string(),
+        requested_session_id: session_id.clone(),
+        canonical_session_id: session_id.clone(),
         is_alias: false,
         last_event_seq,
         graph_revision: last_event_seq,
         open_token: open_token.to_string(),
-        agent_id,
-        project_path,
-        worktree_path,
-        source_path,
+        agent_id: input.agent_id,
+        project_path: input.project_path,
+        worktree_path: input.worktree_path,
+        source_path: input.source_path,
         transcript_snapshot: TranscriptSnapshot::from_stored_entries(last_event_seq, &[]),
-        session_title: default_session_title(session_id),
+        session_title: default_session_title(&session_id),
         operations: vec![],
         interactions: vec![],
         turn_state: SessionTurnState::Idle,
         message_count: 0,
+        last_agent_message_id: None,
+        lifecycle: input.lifecycle,
+        capabilities: input.capabilities,
         active_turn_failure: None,
         last_terminal_turn_id: None,
     }))
@@ -489,11 +567,18 @@ pub async fn session_open_result_for_new_session(
 mod tests {
     use super::*;
     use crate::acp::event_hub::AcpEventHubState;
+    use crate::acp::session_descriptor::{SessionDescriptorCompatibility, SessionReplayContext};
+    use crate::acp::session_thread_snapshot::SessionThreadSnapshot;
     use crate::acp::session_update::{
-        SessionUpdate, ToolArguments, ToolCallData, ToolCallStatus, ToolKind,
+        AvailableCommand, ToolArguments, ToolCallData, ToolCallStatus, ToolKind, TurnErrorKind,
+        TurnErrorSource,
     };
+    use crate::acp::transcript_projection::TranscriptSnapshot;
     use crate::acp::types::CanonicalAgentId;
     use crate::db::repository::{SessionJournalEventRepository, SessionMetadataRepository};
+    use crate::session_jsonl::types::{
+        StoredContentBlock, StoredEntry, StoredErrorMessage, StoredUserMessage,
+    };
     use sea_orm::{Database, DbConn};
     use sea_orm_migration::MigratorTrait;
     use serde_json::json;
@@ -513,19 +598,59 @@ mod tests {
         Arc::new(AcpEventHubState::new())
     }
 
+    fn new_session_open_input(
+        session_id: &str,
+        capabilities: SessionGraphCapabilities,
+    ) -> NewSessionOpenResultInput {
+        NewSessionOpenResultInput {
+            session_id: session_id.to_string(),
+            agent_id: CanonicalAgentId::Copilot,
+            project_path: "/test/project".to_string(),
+            worktree_path: None,
+            source_path: None,
+            lifecycle: SessionGraphLifecycle::reserved(),
+            capabilities,
+        }
+    }
+
     async fn seed_session_metadata(db: &DbConn, session_id: &str, agent_id: &str) {
         SessionMetadataRepository::ensure_exists(db, session_id, "/test/project", agent_id, None)
             .await
             .expect("seed metadata");
     }
 
-    async fn append_tool_call_event(db: &DbConn, session_id: &str) {
-        let update = SessionUpdate::ToolCall {
-            tool_call: ToolCallData {
-                id: format!("tc-{}", uuid::Uuid::new_v4()),
+    async fn append_frontier_barrier(db: &DbConn, session_id: &str) {
+        SessionJournalEventRepository::append_materialization_barrier(db, session_id)
+            .await
+            .expect("append barrier event");
+    }
+
+    fn replay_context_for_session(
+        session_id: &str,
+        agent_id: CanonicalAgentId,
+    ) -> SessionReplayContext {
+        let project_path = "/test/project".to_string();
+        SessionReplayContext {
+            local_session_id: session_id.to_string(),
+            history_session_id: session_id.to_string(),
+            agent_id: agent_id.clone(),
+            parser_agent_type: crate::acp::parsers::AgentType::from_canonical(&agent_id),
+            project_path: project_path.clone(),
+            worktree_path: None,
+            effective_cwd: project_path,
+            source_path: None,
+            compatibility: SessionDescriptorCompatibility::Canonical,
+        }
+    }
+
+    fn make_tool_call_entry(id: &str) -> StoredEntry {
+        StoredEntry::ToolCall {
+            id: id.to_string(),
+            message: ToolCallData {
+                id: id.to_string(),
                 name: "Read".to_string(),
                 arguments: ToolArguments::Read {
-                    file_path: Some("/test/file.rs".to_string()),
+                    file_path: Some("/provider/README.md".to_string()),
                     source_context: None,
                 },
                 raw_input: None,
@@ -544,11 +669,137 @@ mod tests {
                 awaiting_plan_approval: false,
                 plan_approval_request_id: None,
             },
-            session_id: Some(session_id.to_string()),
-        };
-        SessionJournalEventRepository::append_session_update(db, session_id, &update)
-            .await
-            .expect("append journal event");
+            timestamp: None,
+        }
+    }
+
+    fn make_sparse_tool_call_entry(id: &str) -> StoredEntry {
+        StoredEntry::ToolCall {
+            id: format!("{id}-sparse-entry"),
+            message: ToolCallData {
+                id: id.to_string(),
+                name: "Read".to_string(),
+                arguments: ToolArguments::Read {
+                    file_path: Some("/provider/README.md".to_string()),
+                    source_context: None,
+                },
+                raw_input: None,
+                status: ToolCallStatus::Completed,
+                result: None,
+                kind: Some(ToolKind::Read),
+                title: None,
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                normalized_todos: None,
+                normalized_todo_update: None,
+                parent_tool_use_id: None,
+                task_children: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+            },
+            timestamp: None,
+        }
+    }
+
+    fn make_running_tool_call_entry(id: &str) -> StoredEntry {
+        StoredEntry::ToolCall {
+            id: id.to_string(),
+            message: ToolCallData {
+                id: id.to_string(),
+                name: "Read".to_string(),
+                arguments: ToolArguments::Read {
+                    file_path: Some("/provider/README.md".to_string()),
+                    source_context: None,
+                },
+                raw_input: None,
+                status: ToolCallStatus::InProgress,
+                result: None,
+                kind: Some(ToolKind::Read),
+                title: Some("Read file".to_string()),
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                normalized_todos: None,
+                normalized_todo_update: None,
+                parent_tool_use_id: None,
+                task_children: None,
+                question_answer: None,
+                awaiting_plan_approval: false,
+                plan_approval_request_id: None,
+            },
+            timestamp: None,
+        }
+    }
+
+    fn make_pending_plan_approval_entry(id: &str) -> StoredEntry {
+        StoredEntry::ToolCall {
+            id: id.to_string(),
+            message: ToolCallData {
+                id: id.to_string(),
+                name: "create_plan".to_string(),
+                arguments: ToolArguments::Other { raw: json!({}) },
+                raw_input: None,
+                status: ToolCallStatus::Pending,
+                result: None,
+                kind: Some(ToolKind::CreatePlan),
+                title: Some("Create plan".to_string()),
+                locations: None,
+                skill_meta: None,
+                normalized_questions: None,
+                normalized_todos: None,
+                normalized_todo_update: None,
+                parent_tool_use_id: None,
+                task_children: None,
+                question_answer: None,
+                awaiting_plan_approval: true,
+                plan_approval_request_id: Some(42),
+            },
+            timestamp: None,
+        }
+    }
+
+    fn make_provider_thread_snapshot(entry_id: &str, title: &str) -> SessionThreadSnapshot {
+        SessionThreadSnapshot {
+            entries: vec![make_tool_call_entry(entry_id)],
+            title: title.to_string(),
+            created_at: "2026-04-23T00:00:00Z".to_string(),
+            current_mode_id: None,
+        }
+    }
+
+    fn make_text_block(text: &str) -> StoredContentBlock {
+        StoredContentBlock {
+            block_type: "text".to_string(),
+            text: Some(text.to_string()),
+        }
+    }
+
+    fn make_user_entry(id: &str, text: &str) -> StoredEntry {
+        StoredEntry::User {
+            id: id.to_string(),
+            message: StoredUserMessage {
+                id: Some(id.to_string()),
+                content: make_text_block(text),
+                chunks: vec![make_text_block(text)],
+                sent_at: None,
+            },
+            timestamp: None,
+        }
+    }
+
+    fn make_error_entry(id: &str, text: &str) -> StoredEntry {
+        StoredEntry::Error {
+            id: id.to_string(),
+            message: StoredErrorMessage {
+                content: text.to_string(),
+                code: Some("401".to_string()),
+                kind: TurnErrorKind::Fatal,
+                source: Some(TurnErrorSource::Transport),
+            },
+            timestamp: None,
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -559,15 +810,22 @@ mod tests {
         let db = setup_db().await;
         let hub = make_hub();
         let session_id = "new-session-abc123";
+        let capabilities = SessionGraphCapabilities {
+            models: None,
+            modes: None,
+            available_commands: vec![AvailableCommand {
+                name: "list".to_string(),
+                description: "List files".to_string(),
+                input: None,
+            }],
+            config_options: Vec::new(),
+            autonomous_enabled: true,
+        };
 
         let result = session_open_result_for_new_session(
             &db,
             &hub,
-            session_id,
-            CanonicalAgentId::Copilot,
-            "/test/project".to_string(),
-            None,
-            None,
+            new_session_open_input(session_id, capabilities.clone()),
         )
         .await;
 
@@ -584,6 +842,13 @@ mod tests {
         assert!(found.interactions.is_empty());
         assert_eq!(found.turn_state, SessionTurnState::Idle);
         assert_eq!(found.message_count, 0);
+        assert_eq!(
+            found.lifecycle.status,
+            crate::acp::lifecycle::LifecycleStatus::Reserved
+        );
+        assert!(!found.lifecycle.actionability.can_send);
+        assert_eq!(found.capabilities.available_commands.len(), 1);
+        assert!(found.capabilities.autonomous_enabled);
         // open_token must be a valid UUID
         assert!(Uuid::parse_str(&found.open_token).is_ok());
     }
@@ -598,16 +863,12 @@ mod tests {
         let session_id = "new-with-seed-abc";
         seed_session_metadata(&db, session_id, "copilot").await;
         // Simulate a seed journal event already persisted before open completes
-        append_tool_call_event(&db, session_id).await;
+        append_frontier_barrier(&db, session_id).await;
 
         let result = session_open_result_for_new_session(
             &db,
             &hub,
-            session_id,
-            CanonicalAgentId::Copilot,
-            "/test/project".to_string(),
-            None,
-            None,
+            new_session_open_input(session_id, SessionGraphCapabilities::empty()),
         )
         .await;
 
@@ -617,6 +878,430 @@ mod tests {
         assert_eq!(found.last_event_seq, 1, "seed event should yield seq=1");
     }
 
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_does_not_require_local_snapshot_tables() {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-translated-open";
+        seed_session_metadata(&db, session_id, "copilot").await;
+        append_frontier_barrier(&db, session_id).await;
+
+        let provider_snapshot = make_provider_thread_snapshot("provider-read", "Provider title");
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::Copilot);
+        let expected_transcript =
+            TranscriptSnapshot::from_stored_entries(1, &provider_snapshot.entries);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.last_event_seq, 1);
+        assert_eq!(found.transcript_snapshot.revision, 1);
+        assert_eq!(found.transcript_snapshot, expected_transcript);
+        assert_eq!(
+            found.lifecycle.status,
+            crate::acp::lifecycle::LifecycleStatus::Detached
+        );
+        assert!(found.lifecycle.actionability.can_resume);
+        assert!(found.capabilities.available_commands.is_empty());
+        assert_eq!(found.operations.len(), 1);
+        let operation = &found.operations[0];
+        assert_eq!(operation.tool_call_id, "provider-read");
+        assert_eq!(operation.kind, Some(ToolKind::Read));
+        assert_eq!(operation.provider_status, ToolCallStatus::Completed);
+        assert_eq!(operation.title.as_deref(), Some("Read file"));
+        assert!(matches!(
+            operation.arguments,
+            ToolArguments::Read {
+                file_path: Some(ref file_path),
+                ..
+            } if file_path == "/provider/README.md"
+        ));
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_normalizes_tool_transcript_ids_to_match_operations() {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-normalized-tool-open";
+        seed_session_metadata(&db, session_id, "cursor").await;
+        append_frontier_barrier(&db, session_id).await;
+
+        let provider_snapshot =
+            make_provider_thread_snapshot("provider-tool\ncursor-call", "Provider title");
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::Cursor);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.transcript_snapshot.entries.len(), 1);
+        assert_eq!(
+            found.transcript_snapshot.entries[0].entry_id,
+            "provider-tool%0Acursor-call"
+        );
+        assert_eq!(
+            found.transcript_snapshot.entries[0].segments,
+            vec![crate::acp::transcript_projection::TranscriptSegment::Text {
+                segment_id: "provider-tool%0Acursor-call:tool".to_string(),
+                text: "Read file".to_string(),
+            }]
+        );
+        assert_eq!(found.operations.len(), 1);
+        let operation = &found.operations[0];
+        assert_eq!(operation.tool_call_id, "provider-tool%0Acursor-call");
+        assert_eq!(
+            operation.source_link,
+            crate::acp::projections::OperationSourceLink::TranscriptLinked {
+                entry_id: "provider-tool%0Acursor-call".to_string()
+            }
+        );
+        assert_ne!(
+            operation.operation_state,
+            crate::acp::projections::OperationState::Degraded
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_restores_runtime_lifecycle_for_attach() {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let runtime_registry = SessionGraphRuntimeRegistry::new();
+        let session_id = "provider-open-runtime-restore";
+        seed_session_metadata(&db, session_id, "copilot").await;
+        append_frontier_barrier(&db, session_id).await;
+
+        let provider_snapshot = make_provider_thread_snapshot("provider-read", "Provider title");
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::Copilot);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            Some(&runtime_registry),
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        let runtime_snapshot = runtime_registry.snapshot_for_session(session_id);
+
+        assert_eq!(runtime_snapshot.graph_revision, found.graph_revision);
+        assert_eq!(
+            runtime_snapshot.lifecycle.status,
+            crate::acp::lifecycle::LifecycleStatus::Detached
+        );
+        assert_eq!(
+            runtime_snapshot.lifecycle.detached_reason,
+            Some(crate::acp::lifecycle::DetachedReason::RestoredRequiresAttach)
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_merges_replayed_operation_evidence() {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-duplicate-operation-open";
+        seed_session_metadata(&db, session_id, "copilot").await;
+        append_frontier_barrier(&db, session_id).await;
+
+        let provider_snapshot = SessionThreadSnapshot {
+            entries: vec![
+                make_tool_call_entry("provider-read"),
+                make_sparse_tool_call_entry("provider-read"),
+            ],
+            title: "Provider title".to_string(),
+            created_at: "2026-04-23T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::Copilot);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.operations.len(), 1);
+        let operation = &found.operations[0];
+        assert_eq!(operation.tool_call_id, "provider-read");
+        assert_eq!(operation.title.as_deref(), Some("Read file"));
+        assert_eq!(operation.kind, Some(ToolKind::Read));
+        assert_eq!(operation.provider_status, ToolCallStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_downgrades_stale_active_operations_when_journal_is_ahead(
+    ) {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-stale-active-operation-open";
+        seed_session_metadata(&db, session_id, "copilot").await;
+        append_frontier_barrier(&db, session_id).await;
+        append_frontier_barrier(&db, session_id).await;
+
+        let provider_snapshot = SessionThreadSnapshot {
+            entries: vec![make_running_tool_call_entry("provider-read")],
+            title: "Provider title".to_string(),
+            created_at: "2026-04-23T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::Copilot);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.last_event_seq, 2);
+        assert_eq!(found.turn_state, SessionTurnState::Idle);
+        assert_eq!(found.operations.len(), 1);
+        let operation = &found.operations[0];
+        assert_eq!(
+            operation.operation_state,
+            crate::acp::projections::OperationState::Degraded
+        );
+        assert_eq!(
+            operation
+                .degradation_reason
+                .as_ref()
+                .map(|reason| reason.code.clone()),
+            Some(crate::acp::projections::OperationDegradationCode::AbsentFromHistory)
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_closes_historical_active_operation_without_journal_gap()
+    {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-historical-active-operation-open";
+        seed_session_metadata(&db, session_id, "copilot").await;
+
+        let provider_snapshot = SessionThreadSnapshot {
+            entries: vec![make_running_tool_call_entry("provider-read")],
+            title: "Provider title".to_string(),
+            created_at: "2026-04-23T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::Copilot);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.turn_state, SessionTurnState::Completed);
+        assert_eq!(found.operations.len(), 1);
+        let operation = &found.operations[0];
+        assert_eq!(operation.tool_call_id, "provider-read");
+        assert_eq!(operation.provider_status, ToolCallStatus::InProgress);
+        assert_eq!(
+            operation.operation_state,
+            crate::acp::projections::OperationState::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_does_not_reopen_tool_interrupted_by_later_user_message()
+    {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-user-boundary-tool-open";
+        seed_session_metadata(&db, session_id, "copilot").await;
+
+        let provider_snapshot = SessionThreadSnapshot {
+            entries: vec![
+                make_running_tool_call_entry("provider-write"),
+                make_user_entry("user-resumed", "i ran the command myself, proceed"),
+            ],
+            title: "Provider title".to_string(),
+            created_at: "2026-04-23T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::Copilot);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.turn_state, SessionTurnState::Completed);
+        assert!(!found.lifecycle.actionability.can_send);
+        assert_eq!(found.operations.len(), 1);
+        let operation = &found.operations[0];
+        assert_eq!(operation.tool_call_id, "provider-write");
+        assert_eq!(operation.provider_status, ToolCallStatus::InProgress);
+        assert_eq!(
+            operation.operation_state,
+            crate::acp::projections::OperationState::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_marks_historical_pending_interactions_unresolved() {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-historical-pending-interaction-open";
+        seed_session_metadata(&db, session_id, "copilot").await;
+
+        let provider_snapshot = SessionThreadSnapshot {
+            entries: vec![make_pending_plan_approval_entry("provider-plan")],
+            title: "Provider title".to_string(),
+            created_at: "2026-04-23T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::Copilot);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.turn_state, SessionTurnState::Completed);
+        assert_eq!(found.interactions.len(), 1);
+        let interaction = &found.interactions[0];
+        assert_eq!(interaction.state, InteractionState::Unresolved);
+        assert!(interaction.reply_handler.is_none());
+        assert_eq!(found.operations.len(), 1);
+        assert_eq!(
+            found.operations[0].operation_state,
+            crate::acp::projections::OperationState::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_does_not_reactivate_stale_historical_error() {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let session_id = "provider-stale-error-open";
+        seed_session_metadata(&db, session_id, "claude-code").await;
+        append_frontier_barrier(&db, session_id).await;
+        append_frontier_barrier(&db, session_id).await;
+        append_frontier_barrier(&db, session_id).await;
+
+        let provider_snapshot = SessionThreadSnapshot {
+            entries: vec![
+                make_user_entry("user-1", "hi"),
+                make_error_entry(
+                    "error-1",
+                    "Failed to authenticate. API Error: 401 {\"error\":{\"message\":\"User not found.\",\"code\":401}}",
+                ),
+            ],
+            title: "hi".to_string(),
+            created_at: "2026-04-23T00:00:00Z".to_string(),
+            current_mode_id: None,
+        };
+        let replay_context = replay_context_for_session(session_id, CanonicalAgentId::ClaudeCode);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert_eq!(found.last_event_seq, 3);
+        assert_eq!(found.graph_revision, 3);
+        assert_eq!(found.turn_state, SessionTurnState::Idle);
+        assert!(found.active_turn_failure.is_none());
+        assert_eq!(found.transcript_snapshot.entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn provider_thread_snapshot_open_marks_alias_request_without_rewriting_canonical_id() {
+        let db = setup_db().await;
+        let hub = make_hub();
+        let canonical_session_id = "canonical-provider-session";
+        let requested_session_id = "provider-session-alias";
+        seed_session_metadata(&db, canonical_session_id, "copilot").await;
+        let provider_snapshot = make_provider_thread_snapshot("provider-read", "Provider title");
+        let replay_context =
+            replay_context_for_session(canonical_session_id, CanonicalAgentId::Copilot);
+
+        let result = session_open_result_from_thread_snapshot(
+            &db,
+            &hub,
+            None,
+            &replay_context,
+            requested_session_id,
+            &provider_snapshot,
+        )
+        .await;
+
+        let SessionOpenResult::Found(found) = result else {
+            panic!("expected Found, got {result:?}");
+        };
+        assert!(found.is_alias);
+        assert_eq!(found.requested_session_id, requested_session_id);
+        assert_eq!(found.canonical_session_id, canonical_session_id);
+    }
     // -----------------------------------------------------------------------
     // Happy path: open token guarantees reservation is armed after assembly
     // -----------------------------------------------------------------------
@@ -629,11 +1314,7 @@ mod tests {
         let result = session_open_result_for_new_session(
             &db,
             &hub,
-            session_id,
-            CanonicalAgentId::Copilot,
-            "/test/project".to_string(),
-            None,
-            None,
+            new_session_open_input(session_id, SessionGraphCapabilities::empty()),
         )
         .await;
 
@@ -659,11 +1340,7 @@ mod tests {
         let result = session_open_result_for_new_session(
             &db,
             &hub,
-            session_id,
-            CanonicalAgentId::Copilot,
-            "/test/project".to_string(),
-            None,
-            None,
+            new_session_open_input(session_id, SessionGraphCapabilities::empty()),
         )
         .await;
 
@@ -691,11 +1368,7 @@ mod tests {
         let result = session_open_result_for_new_session(
             &db,
             &hub,
-            session_id,
-            CanonicalAgentId::Copilot,
-            "/test/project".to_string(),
-            None,
-            None,
+            new_session_open_input(session_id, SessionGraphCapabilities::empty()),
         )
         .await;
 
@@ -737,11 +1410,7 @@ mod tests {
         let result = session_open_result_for_new_session(
             &db,
             &hub,
-            session_id,
-            CanonicalAgentId::Copilot,
-            "/test/project".to_string(),
-            None,
-            None,
+            new_session_open_input(session_id, SessionGraphCapabilities::empty()),
         )
         .await;
 
@@ -779,11 +1448,7 @@ mod tests {
         let result = session_open_result_for_new_session(
             &db,
             &hub,
-            session_id,
-            CanonicalAgentId::Copilot,
-            "/test/project".to_string(),
-            None,
-            None,
+            new_session_open_input(session_id, SessionGraphCapabilities::empty()),
         )
         .await;
 
@@ -808,11 +1473,7 @@ mod tests {
         let result = session_open_result_for_new_session(
             &db,
             &hub,
-            session_id,
-            CanonicalAgentId::Copilot,
-            "/test/project".to_string(),
-            None,
-            None,
+            new_session_open_input(session_id, SessionGraphCapabilities::empty()),
         )
         .await;
 
@@ -860,6 +1521,8 @@ mod tests {
         let err = SessionOpenResult::Error(SessionOpenError {
             requested_session_id: "bad-session".to_string(),
             message: "Something went wrong".to_string(),
+            reason: SessionOpenErrorReason::ParseFailure,
+            retryable: false,
         });
         let json = serde_json::to_string(&err).expect("serialize");
         let back: SessionOpenResult = serde_json::from_str(&json).expect("deserialize");
@@ -868,5 +1531,7 @@ mod tests {
         };
         assert_eq!(e.requested_session_id, "bad-session");
         assert_eq!(e.message, "Something went wrong");
+        assert!(matches!(e.reason, SessionOpenErrorReason::ParseFailure));
+        assert!(!e.retryable);
     }
 }

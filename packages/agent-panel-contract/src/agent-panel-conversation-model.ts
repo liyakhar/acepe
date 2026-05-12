@@ -1,4 +1,15 @@
-export type AgentPanelToolStatus = "pending" | "running" | "done" | "error";
+export type AgentPanelToolStatus =
+	| "pending"
+	| "running"
+	| "done"
+	| "error"
+	| "blocked"
+	| "cancelled"
+	| "degraded";
+export type AgentPanelToolPresentationState =
+	| "resolved"
+	| "pending_operation"
+	| "degraded_operation";
 
 export type AgentPanelToolKind =
 	| "read"
@@ -13,6 +24,9 @@ export type AgentPanelToolKind =
 	| "skill"
 	| "task"
 	| "task_output"
+	| "browser"
+	| "sql"
+	| "unclassified"
 	| "other";
 
 export interface AgentPanelUserEntry {
@@ -63,6 +77,23 @@ export interface AgentPanelLintDiagnostic {
 	severity?: string | null;
 }
 
+export interface AgentPanelToolEditDiffEntry {
+	readonly filePath?: string | null;
+	readonly fileName?: string | null;
+	readonly additions?: number;
+	readonly deletions?: number;
+	readonly oldString?: string | null;
+	readonly newString?: string | null;
+}
+
+export interface AgentPanelSearchMatch {
+	filePath: string;
+	fileName: string;
+	lineNumber: number;
+	content: string;
+	isMatch: boolean;
+}
+
 export interface AgentPanelToolCallEntry {
 	id: string;
 	type: "tool_call";
@@ -79,6 +110,10 @@ export interface AgentPanelToolCallEntry {
 	searchPath?: string;
 	searchFiles?: readonly string[];
 	searchResultCount?: number;
+	searchMode?: "content" | "files" | "count";
+	searchNumFiles?: number;
+	searchNumMatches?: number;
+	searchMatches?: readonly AgentPanelSearchMatch[];
 	url?: string | null;
 	resultText?: string | null;
 	webSearchLinks?: readonly AgentPanelWebSearchLink[];
@@ -90,9 +125,12 @@ export interface AgentPanelToolCallEntry {
 	taskPrompt?: string | null;
 	taskResultText?: string | null;
 	taskChildren?: readonly AgentPanelConversationEntry[];
+	presentationState?: AgentPanelToolPresentationState;
+	degradedReason?: string | null;
 	todos?: readonly AgentPanelTodoItem[];
 	question?: AgentPanelQuestion | null;
 	lintDiagnostics?: readonly AgentPanelLintDiagnostic[];
+	readonly editDiffs?: readonly AgentPanelToolEditDiffEntry[];
 }
 
 export interface AgentPanelThinkingEntry {

@@ -1,11 +1,18 @@
 import type {
+	AssistantTextDeltaPayload,
 	CapabilityPreviewState,
+	InteractionSnapshot,
+	OperationSnapshot,
+	PlanData,
+	SessionGraphActivity,
 	SessionGraphCapabilities,
 	SessionGraphLifecycle,
 	SessionGraphRevision,
 	SessionStateEnvelope,
 	SessionStateGraph,
+	SessionTurnState,
 	TranscriptDelta,
+	TurnFailureSnapshot,
 	UsageTelemetryData,
 } from "../../services/acp-types.js";
 import {
@@ -34,6 +41,10 @@ export type SessionStateCommand =
 			telemetry: UsageTelemetryData;
 	  }
 	| {
+			kind: "applyPlan";
+			plan: PlanData;
+	  }
+	| {
 			kind: "refreshSnapshot";
 			fromRevision: number;
 			toRevision: number;
@@ -41,6 +52,21 @@ export type SessionStateCommand =
 	| {
 			kind: "applyTranscriptDelta";
 			delta: TranscriptDelta;
+	  }
+	| {
+			kind: "applyGraphPatches";
+			revision: SessionGraphRevision;
+			activity: SessionGraphActivity;
+			turnState: SessionTurnState;
+			activeTurnFailure: TurnFailureSnapshot | null;
+			lastTerminalTurnId: string | null;
+			lastAgentMessageId: string | null;
+			operationPatches: OperationSnapshot[];
+			interactionPatches: InteractionSnapshot[];
+	  }
+	| {
+			kind: "applyAssistantTextDelta";
+			delta: AssistantTextDeltaPayload;
 	  };
 
 function commandFromDeltaResolution(
@@ -104,9 +130,54 @@ export function routeSessionStateEnvelope(
 					telemetry: envelope.payload.telemetry,
 				},
 			];
-		case "delta":
-			return commandFromDeltaResolution(
-				resolveSessionStateDelta(sessionId, currentTranscriptRevision, envelope.payload.delta)
+		case "plan":
+			return [
+				{
+					kind: "applyPlan",
+					plan: envelope.payload.plan,
+				},
+			];
+		case "delta": {
+			const resolution = resolveSessionStateDelta(
+				sessionId,
+				currentTranscriptRevision,
+				envelope.payload.delta
 			);
+			const commands = commandFromDeltaResolution(resolution);
+			if (resolution.kind === "refreshSnapshot") {
+				return commands;
+			}
+			const operationPatches = envelope.payload.delta.operationPatches ?? [];
+			const interactionPatches = envelope.payload.delta.interactionPatches ?? [];
+			const includesActivity = envelope.payload.delta.changedFields?.includes("activity") ?? false;
+			const includesLastAgentMessageId =
+				envelope.payload.delta.changedFields?.includes("lastAgentMessageId") ?? false;
+			if (
+				operationPatches.length > 0 ||
+				interactionPatches.length > 0 ||
+				includesActivity ||
+				includesLastAgentMessageId
+			) {
+				commands.push({
+					kind: "applyGraphPatches",
+					revision: envelope.payload.delta.toRevision,
+					activity: envelope.payload.delta.activity,
+					turnState: envelope.payload.delta.turnState,
+					activeTurnFailure: envelope.payload.delta.activeTurnFailure ?? null,
+					lastTerminalTurnId: envelope.payload.delta.lastTerminalTurnId ?? null,
+					lastAgentMessageId: envelope.payload.delta.lastAgentMessageId ?? null,
+					operationPatches,
+					interactionPatches,
+				});
+			}
+			return commands;
+		}
+		case "assistantTextDelta":
+			return [
+				{
+					kind: "applyAssistantTextDelta",
+					delta: envelope.payload.delta,
+				},
+			];
 	}
 }

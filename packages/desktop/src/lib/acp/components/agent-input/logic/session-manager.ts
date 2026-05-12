@@ -1,6 +1,5 @@
 import type { ResultAsync } from "neverthrow";
-
-import type { SessionStore } from "../../../store/session-store.svelte.js";
+import type { SessionCreationResult, SessionStore } from "../../../store/session-store.svelte.js";
 import { MessageSendError, SessionCreationError } from "../errors/agent-input-error.js";
 import type { Attachment } from "../types/attachment.js";
 
@@ -52,6 +51,25 @@ export interface CreateSessionOptions {
 	readonly launchToken?: string;
 }
 
+export interface CreatedSessionHandle {
+	readonly sessionId: string;
+	readonly deferredCreation: boolean;
+}
+
+function sessionCreationHandle(result: SessionCreationResult): CreatedSessionHandle {
+	if (result.kind === "pending") {
+		return {
+			sessionId: result.sessionId,
+			deferredCreation: true,
+		};
+	}
+
+	return {
+		sessionId: result.session.id,
+		deferredCreation: false,
+	};
+}
+
 /**
  * Creates a new session using the store.
  *
@@ -74,7 +92,7 @@ export interface CreateSessionOptions {
 export function createSession(
 	store: SessionStore,
 	options: CreateSessionOptions
-): ResultAsync<string, SessionCreationError> {
+): ResultAsync<CreatedSessionHandle, SessionCreationError> {
 	return store
 		.createSession({
 			agentId: options.agentId,
@@ -86,7 +104,7 @@ export function createSession(
 			worktreePath: options.worktreePath,
 			launchToken: options.launchToken,
 		})
-		.map((session) => session.id)
+		.map(sessionCreationHandle)
 		.mapErr(
 			(error) =>
 				new SessionCreationError(

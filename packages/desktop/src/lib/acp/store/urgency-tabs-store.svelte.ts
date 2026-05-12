@@ -203,6 +203,7 @@ export class UrgencyTabsStore {
 					statusChangedAt: Date.now(),
 					connectionError: null,
 					activeTurnFailure: null,
+					activity: null,
 				};
 
 		// Get pending question for this session
@@ -222,6 +223,8 @@ export class UrgencyTabsStore {
 				: null;
 		const runtimeState =
 			sessionId !== null ? this.sessionStore.getSessionRuntimeState(sessionId) : null;
+		const canonicalProjection =
+			sessionId !== null ? this.sessionStore.getCanonicalSessionProjection(sessionId) : null;
 
 		// Derive project path from session or panel
 		const projectPath = sessionIdentity?.projectPath ?? panel.projectPath ?? null;
@@ -229,7 +232,9 @@ export class UrgencyTabsStore {
 		const title = sessionMetadata?.title ?? null;
 		const workProjection = deriveLiveSessionWorkProjection({
 			runtimeState,
-			hotState,
+			canonicalProjection,
+			currentModeId:
+				sessionId !== null ? this.sessionStore.getSessionCurrentModeId(sessionId) : null,
 			currentStreamingToolCall,
 			interactionSnapshot: {
 				pendingQuestion,
@@ -239,8 +244,17 @@ export class UrgencyTabsStore {
 			hasUnseenCompletion: false,
 		});
 		const workBucket = selectSessionWorkBucket(workProjection);
+		const lifecycleStatus =
+			sessionId !== null ? this.sessionStore.getSessionLifecycleStatus(sessionId) : null;
+		const failureMessage =
+			sessionId !== null ? this.sessionStore.getSessionConnectionError(sessionId) : null;
+		const failureRecord =
+			sessionId !== null ? this.sessionStore.getSessionActiveTurnFailure(sessionId) : null;
+		const canonicalHasError =
+			lifecycleStatus === "failed" || failureMessage !== null || failureRecord !== null;
+		const effectiveWorkBucket = workBucket === "error" && !canonicalHasError ? "idle" : workBucket;
 		const urgencyStatus = (() => {
-			switch (workBucket) {
+			switch (effectiveWorkBucket) {
 				case "answer_needed":
 					return "ready";
 				case "error":
@@ -254,14 +268,14 @@ export class UrgencyTabsStore {
 			}
 		})();
 
-		// Derive urgency
+		const isConnecting = lifecycleStatus === "activating" || lifecycleStatus === "reconnecting";
 		const urgency = deriveUrgency({
 			status: urgencyStatus,
 			hasPendingQuestion: pendingQuestion !== null || pendingPlanApproval !== null,
 			pendingQuestionText: pendingQuestion?.questions[0]?.question ?? null,
 			statusChangedAt: hotState.statusChangedAt,
-			connectionError: hotState.connectionError,
-			activeTurnFailure: hotState.activeTurnFailure ?? null,
+			connectionError: failureMessage,
+			activeTurnFailure: failureRecord,
 		});
 
 		return {
@@ -274,10 +288,10 @@ export class UrgencyTabsStore {
 			isFocused: panel.id === focusedPanelId,
 			hasPendingQuestion: pendingQuestion !== null || pendingPlanApproval !== null,
 			pendingQuestionText: pendingQuestion?.questions[0]?.question ?? null,
-			isStreaming: workBucket === "planning" || workBucket === "working",
-			hasError: workBucket === "error",
-			isConnecting: runtimeState?.connectionPhase === "connecting" || hotState.status === "loading",
-			isIdle: workBucket === "idle" || workBucket === "needs_review",
+			isStreaming: effectiveWorkBucket === "planning" || effectiveWorkBucket === "working",
+			hasError: canonicalHasError,
+			isConnecting,
+			isIdle: effectiveWorkBucket === "idle" || effectiveWorkBucket === "needs_review",
 		};
 	}
 }

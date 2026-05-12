@@ -16,30 +16,23 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
+use crate::acp::capability_resolution::{resolve_static_capabilities, ResolvedCapabilityStatus};
 use crate::acp::client::{
     InitializeResponse, ListSessionsResponse, NewSessionResponse, ResumeSessionResponse,
 };
-use crate::acp::client_session::{
-    apply_provider_model_fallback, default_modes, default_session_model_state, AvailableModel,
-    SessionModelState,
-};
+use crate::acp::client_session::{default_modes, default_session_model_state, SessionModelState};
 use crate::acp::client_trait::AgentClient;
 use crate::acp::client_transport::{
     apply_interaction_response_for_request, persist_interaction_transition,
 };
 use crate::acp::error::{AcpError, AcpResult};
-use crate::acp::model_display::build_models_for_display;
+use crate::acp::lifecycle::LifecycleStatus;
 use crate::acp::parsers::{get_parser, AgentType};
-use crate::acp::projections::{
-    InteractionPayload, InteractionResponse, InteractionState, ProjectionRegistry,
-    SessionProjectionSnapshot,
-};
+use crate::acp::projections::{InteractionResponse, InteractionState, ProjectionRegistry};
 use crate::acp::provider::{normalize_session_updates_for_runtime, AgentProvider};
 use crate::acp::reconciler::session_tool::{classify_raw_tool_call, ToolClassificationHints};
-use crate::acp::runtime_resolver::resolve_effective_runtime;
-use crate::acp::session_journal::load_stored_projection;
 use crate::acp::session_policy::SessionPolicyRegistry;
-use crate::acp::session_registry::{bind_provider_session_id_persisted, SessionRegistry};
+use crate::acp::session_registry::bind_provider_session_id_persisted;
 use crate::acp::session_update::{
     parse_normalized_questions, QuestionData, QuestionItem, SessionUpdate, ToolCallStatus,
     ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData, TurnErrorInfo, TurnErrorKind,
@@ -979,6 +972,7 @@ pub struct ClaudeCcSdkClient {
     pending_mode_id: Option<String>,
     pending_model_id: Option<String>,
     current_cwd: Option<PathBuf>,
+    pending_creation_attempt_id: Option<String>,
 }
 
 impl ClaudeCcSdkClient {
@@ -1013,6 +1007,7 @@ impl ClaudeCcSdkClient {
             pending_mode_id: None,
             pending_model_id: None,
             current_cwd: Some(cwd),
+            pending_creation_attempt_id: None,
         })
     }
 
@@ -1034,64 +1029,13 @@ impl ClaudeCcSdkClient {
     async fn restore_session_permission_approvals(&self, session_id: &str) {
         let _ = self.permission_bridge.drain_all_as_denied().await;
 
-        let approvals = match &self.db {
-            Some(db) => {
-                let metadata = match crate::db::repository::SessionMetadataRepository::get_by_id(
-                    db, session_id,
-                )
-                .await
-                {
-                    Ok(metadata) => metadata,
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            session_id = %session_id,
-                            "Failed to load session metadata for permission rehydration"
-                        );
-                        None
-                    }
-                };
-                let replay_context = match crate::db::repository::SessionMetadataRepository::resolve_existing_session_replay_context_from_metadata(
-                    session_id,
-                    metadata.as_ref(),
-                    crate::acp::session_descriptor::SessionCompatibilityInput::default(),
-                ) {
-                    Ok(replay_context) => Some(replay_context),
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            session_id = %session_id,
-                            "Failed to resolve replay context for permission rehydration"
-                        );
-                        None
-                    }
-                };
-
-                match replay_context {
-                    Some(replay_context) => match load_stored_projection(db, &replay_context).await
-                    {
-                        Ok(Some(projection)) => {
-                            build_reusable_permission_approval_entries(&projection)
-                        }
-                        Ok(None) => Vec::new(),
-                        Err(error) => {
-                            tracing::warn!(
-                                error = %error,
-                                session_id = %session_id,
-                                "Failed to load stored projection for permission rehydration"
-                            );
-                            Vec::new()
-                        }
-                    },
-                    None => Vec::new(),
-                }
-            }
-            None => Vec::new(),
-        };
-
         self.permission_bridge
-            .replace_reusable_approval_results(approvals)
+            .replace_reusable_approval_results(Vec::new())
             .await;
+        tracing::debug!(
+            session_id = %session_id,
+            "Skipped journal-backed permission approval rehydration"
+        );
     }
 
     async fn update_interaction_projection(&self, request_id: u64, result: &Value) {
@@ -1210,8 +1154,9 @@ impl ClaudeCcSdkClient {
             approval_callback_tracker: self.approval_callback_tracker.clone(),
         };
 
-        let mut builder = cc_sdk::ClaudeCodeOptions::builder().cwd(PathBuf::from(cwd));
-        builder = builder.session_id(session_id.to_string());
+        let mut builder = cc_sdk::ClaudeCodeOptions::builder()
+            .cwd(PathBuf::from(cwd))
+            .session_id(session_id.to_string());
         builder = builder.include_partial_messages(true);
         builder = builder.setting_sources(vec![
             cc_sdk::SettingSource::User,
@@ -1229,8 +1174,8 @@ impl ClaudeCcSdkClient {
             builder = builder.model(model_id.clone());
         }
 
-        if let Some(session_id) = resume {
-            builder = builder.resume(session_id);
+        if let Some(resume_session_id) = resume {
+            builder = builder.resume(resume_session_id);
         }
 
         if fork {
@@ -1297,6 +1242,7 @@ impl ClaudeCcSdkClient {
         let sid = session_id.clone();
         let db = self.db.clone();
         let app_handle = self.app_handle.clone();
+        let pending_creation_attempt_id = self.pending_creation_attempt_id.clone();
         let context = StreamingBridgeContext {
             dispatcher,
             bridge,
@@ -1308,6 +1254,7 @@ impl ClaudeCcSdkClient {
             provider,
             db,
             app_handle,
+            pending_creation_attempt_id,
         };
 
         let handle = tauri::async_runtime::spawn(async move {
@@ -1325,20 +1272,6 @@ impl ClaudeCcSdkClient {
     }
 
     async fn history_session_id_for_app_session(&self, session_id: &str) -> String {
-        if let Some(history_session_id) = self
-            .app_handle
-            .as_ref()
-            .and_then(|app_handle| {
-                app_handle
-                    .try_state::<SessionRegistry>()
-                    .map(|state| state.get_descriptor(session_id))
-            })
-            .flatten()
-            .and_then(|descriptor| descriptor.provider_session_id)
-        {
-            return history_session_id;
-        }
-
         match &self.db {
             Some(db) => crate::db::repository::SessionMetadataRepository::get_by_id(db, session_id)
                 .await
@@ -1359,17 +1292,7 @@ impl ClaudeCcSdkClient {
 
     async fn hydrated_session_model_state(&self) -> SessionModelState {
         let mut model_state = default_session_model_state();
-        let mut available_models = provider_models(self.provider.as_ref());
-
-        if available_models.is_empty() {
-            available_models = self.discover_models_from_provider_cli().await;
-        } else {
-            tracing::info!(
-                provider = %self.provider.id(),
-                default_model_count = available_models.len(),
-                "cc-sdk using provider default models; skipping synchronous CLI model discovery"
-            );
-        }
+        let available_models = self.discover_models_from_provider_cli().await;
 
         if !available_models.is_empty() {
             model_state.available_models = available_models;
@@ -1383,17 +1306,29 @@ impl ClaudeCcSdkClient {
                 model_state.current_model_id = model.model_id.clone();
             }
         }
-
-        apply_provider_model_fallback(self.provider.as_ref(), &mut model_state);
-        crate::acp::client_session::apply_provider_metadata(
+        let cwd = self
+            .current_cwd
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
+        let status = if model_state.available_models.is_empty() {
+            ResolvedCapabilityStatus::Partial
+        } else {
+            ResolvedCapabilityStatus::Resolved
+        };
+        if let Ok(resolved_capabilities) = resolve_static_capabilities(
             self.provider.as_ref(),
-            &mut model_state,
-        );
-
-        model_state.models_display = build_models_for_display(
-            &model_state.available_models,
-            self.provider.model_presentation_metadata(),
-        );
+            cwd.as_path(),
+            status,
+            model_state.clone(),
+            default_modes(),
+        ) {
+            model_state = SessionModelState {
+                available_models: resolved_capabilities.available_models,
+                current_model_id: resolved_capabilities.current_model_id,
+                models_display: resolved_capabilities.models_display,
+                provider_metadata: Some(resolved_capabilities.provider_metadata),
+            };
+        }
 
         tracing::info!(
             provider = %self.provider.id(),
@@ -1410,75 +1345,22 @@ impl ClaudeCcSdkClient {
     }
 
     async fn discover_models_from_provider_cli(&self) -> Vec<crate::acp::client::AvailableModel> {
-        let attempts = self.provider.model_discovery_commands();
-        if attempts.is_empty() {
-            return Vec::new();
-        }
-
-        for attempt in attempts {
-            let cwd = self
-                .current_cwd
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("."));
-            let runtime = resolve_effective_runtime(self.provider.id(), &cwd, &attempt, None);
-            tracing::info!(
-                provider = %self.provider.id(),
-                command = %runtime.command,
-                args = ?runtime.args,
-                "cc-sdk running provider model discovery command"
-            );
-
-            let mut command = tokio::process::Command::new(&runtime.command);
-            command.args(&runtime.args);
-            command.stdin(std::process::Stdio::null());
-            command.stdout(std::process::Stdio::piped());
-            command.stderr(std::process::Stdio::piped());
-            command.current_dir(&runtime.cwd);
-
-            for (key, value) in &runtime.env {
-                command.env(key, value);
-            }
-
-            let output = match timeout(Duration::from_secs(10), command.output()).await {
-                Ok(Ok(output)) => output,
-                Ok(Err(error)) => {
-                    tracing::debug!(
-                        command = %runtime.command,
-                        args = ?runtime.args,
-                        error = %error,
-                        "Claude model discovery command failed"
-                    );
-                    continue;
-                }
-                Err(_) => {
-                    tracing::debug!(
-                        command = %runtime.command,
-                        args = ?runtime.args,
-                        "Claude model discovery command timed out"
-                    );
-                    continue;
-                }
-            };
-
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let mut models = crate::acp::client::parse_model_discovery_output(&stdout);
-
-            tracing::info!(
-                provider = %self.provider.id(),
-                status = ?output.status.code(),
-                stdout = %crate::acp::client_transport::truncate_for_log(&stdout, 512),
-                stderr = %crate::acp::client_transport::truncate_for_log(&stderr, 512),
-                parsed_model_ids = ?models.iter().map(|model| model.model_id.clone()).collect::<Vec<_>>(),
-                "cc-sdk provider model discovery result"
-            );
-
-            if !models.is_empty() {
-                models.sort_by(|a, b| a.model_id.cmp(&b.model_id));
-                return models;
+        // For Claude Code: read the authoritative catalog snapshot rather than
+        // shelling out to `claude -p "..."` which costs a real API call per hydration.
+        // The catalog is warmed at startup and invalidated on install, so this is a
+        // cheap in-process read.
+        if let Some(app) = self.app_handle.as_ref() {
+            let read =
+                crate::acp::providers::claude_code_model_catalog::read_catalog_snapshot_for_app(
+                    app,
+                )
+                .await;
+            if let Some(snapshot) = read.snapshot {
+                return crate::acp::providers::claude_code_model_catalog::filter_to_picker_defaults(
+                    &snapshot.models,
+                );
             }
         }
-
         Vec::new()
     }
 
@@ -1569,18 +1451,6 @@ impl ClaudeCcSdkClient {
     }
 }
 
-fn provider_models(provider: &dyn AgentProvider) -> Vec<AvailableModel> {
-    provider
-        .default_model_candidates()
-        .into_iter()
-        .map(|candidate| AvailableModel {
-            model_id: candidate.model_id,
-            name: candidate.name,
-            description: candidate.description,
-        })
-        .collect()
-}
-
 fn map_to_claude_permission_mode(mode_id: &str) -> cc_sdk::PermissionMode {
     match mode_id {
         "plan" => cc_sdk::PermissionMode::Plan,
@@ -1614,6 +1484,7 @@ struct StreamingBridgeContext {
     provider: Arc<dyn AgentProvider>,
     db: Option<DbConn>,
     app_handle: Option<AppHandle>,
+    pending_creation_attempt_id: Option<String>,
 }
 
 fn terminal_tool_call_id(update: &SessionUpdate) -> Option<&str> {
@@ -1646,27 +1517,102 @@ async fn run_streaming_bridge(
         provider,
         db,
         app_handle,
+        pending_creation_attempt_id,
     } = context;
 
     tracing::info!(session_id = %session_id, "cc-sdk bridge: started, waiting for messages...");
     let mut message_count: u64 = 0;
     let mut turn_stream_state = crate::acp::parsers::cc_sdk_bridge::CcSdkTurnStreamState::default();
     let mut observed_provider_session_id: Option<String> = None;
+    let mut pending_creation_attempt_id = pending_creation_attempt_id;
+    let mut pending_creation_promoted = pending_creation_attempt_id.is_none();
+    let mut buffered_pending_creation_updates: Vec<SessionUpdate> = Vec::new();
 
     while let Some(result) = stream.next().await {
         match result {
             Ok(msg) => {
                 if let Some(provider_session_id) = provider_session_id_from_message(&msg) {
-                    if provider_session_id != session_id
+                    if let Some(attempt_id) = pending_creation_attempt_id.take() {
+                        match promote_verified_pending_creation_attempt(
+                            app_handle.as_ref(),
+                            db.as_ref(),
+                            &projection_registry,
+                            &attempt_id,
+                            &session_id,
+                            provider_session_id,
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                pending_creation_promoted = true;
+                                observed_provider_session_id =
+                                    Some(provider_session_id.to_string());
+                                for buffered_update in buffered_pending_creation_updates.drain(..) {
+                                    dispatch_cc_sdk_update(
+                                        &dispatcher,
+                                        &task_reconciler,
+                                        provider.as_ref(),
+                                        buffered_update,
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                tracing::error!(
+                                    session_id = %session_id,
+                                    provider_session_id = %provider_session_id,
+                                    error = %error,
+                                    "cc-sdk provider session identity could not promote pending creation attempt"
+                                );
+                                dispatcher.enqueue(AcpUiEvent::session_update(
+                                    SessionUpdate::TurnError {
+                                        error: TurnErrorData::Structured(TurnErrorInfo {
+                                            message: format!(
+                                                "Claude provider session identity could not be verified: {error}"
+                                            ),
+                                            kind: TurnErrorKind::Fatal,
+                                            code: None,
+                                            source: Some(TurnErrorSource::Transport),
+                                        }),
+                                        session_id: Some(session_id.clone()),
+                                        turn_id: None,
+                                    },
+                                ));
+                                break;
+                            }
+                        }
+                    } else if provider_session_id != session_id
                         && observed_provider_session_id.as_deref() != Some(provider_session_id)
                     {
-                        persist_provider_session_id_alias(
+                        if let Err(error) = persist_provider_session_id_alias(
                             app_handle.as_ref(),
                             db.as_ref(),
                             &session_id,
                             provider_session_id,
                         )
-                        .await;
+                        .await
+                        {
+                            tracing::error!(
+                                session_id = %session_id,
+                                provider_session_id = %provider_session_id,
+                                error = %error,
+                                "cc-sdk provider session identity could not be persisted"
+                            );
+                            dispatcher.enqueue(AcpUiEvent::session_update(
+                                SessionUpdate::TurnError {
+                                    error: TurnErrorData::Structured(TurnErrorInfo {
+                                        message: format!(
+                                            "Claude provider session identity could not be persisted: {error}"
+                                        ),
+                                        kind: TurnErrorKind::Fatal,
+                                        code: None,
+                                        source: Some(TurnErrorSource::Transport),
+                                    }),
+                                    session_id: Some(session_id.clone()),
+                                    turn_id: None,
+                                },
+                            ));
+                            break;
+                        }
                         observed_provider_session_id = Some(provider_session_id.to_string());
                     }
                 }
@@ -1805,9 +1751,13 @@ async fn run_streaming_bridge(
                     ) {
                         // Reset per-turn stream state but preserve model_id across turns
                         let preserved_model = turn_stream_state.model_id.clone();
+                        let preserved_terminal_assistant_error =
+                            turn_stream_state.saw_terminal_assistant_error;
                         turn_stream_state =
                             crate::acp::parsers::cc_sdk_bridge::CcSdkTurnStreamState::default();
                         turn_stream_state.model_id = preserved_model;
+                        turn_stream_state.saw_terminal_assistant_error =
+                            preserved_terminal_assistant_error;
                     }
                     if should_defer_turn_complete {
                         tracing::info!(
@@ -1819,6 +1769,10 @@ async fn run_streaming_bridge(
                     rewrite_generic_turn_failed_from_permission_deny(&bridge, &mut update).await;
                     if matches!(update, SessionUpdate::TurnComplete { .. }) {
                         bridge.clear_terminal_deny_message().await;
+                    }
+                    if !pending_creation_promoted {
+                        buffered_pending_creation_updates.push(update);
+                        continue;
                     }
                     dispatch_cc_sdk_update(
                         &dispatcher,
@@ -1848,6 +1802,17 @@ async fn run_streaming_bridge(
                 }));
                 break;
             }
+        }
+    }
+
+    if !pending_creation_promoted {
+        if let Some(attempt_id) = pending_creation_attempt_id.as_deref() {
+            fail_pending_creation_attempt(
+                db.as_ref(),
+                attempt_id,
+                "provider-identity-unverified: stream ended without provider session id",
+            )
+            .await;
         }
     }
 
@@ -2030,49 +1995,6 @@ fn build_reusable_permission_key_from_patterns(
 
 fn build_reusable_permission_key(tool_name: &str, raw_input: &Value) -> Option<String> {
     build_reusable_permission_key_from_patterns(tool_name, &build_permission_patterns(raw_input))
-}
-
-fn reusable_permission_result_from_response(response: &InteractionResponse) -> Option<Value> {
-    let InteractionResponse::Permission {
-        accepted: true,
-        option_id,
-        ..
-    } = response
-    else {
-        return None;
-    };
-
-    Some(serde_json::json!({
-        "outcome": {
-            "outcome": "selected",
-            "optionId": option_id.clone().unwrap_or_else(|| "allow".to_string())
-        }
-    }))
-}
-
-fn build_reusable_permission_approval_entries(
-    projection: &SessionProjectionSnapshot,
-) -> Vec<(String, Value)> {
-    projection
-        .interactions
-        .iter()
-        .filter_map(|interaction| {
-            if interaction.state != InteractionState::Approved {
-                return None;
-            }
-
-            let InteractionPayload::Permission(permission) = &interaction.payload else {
-                return None;
-            };
-            let response = interaction.response.as_ref()?;
-            let reusable_key = build_reusable_permission_key_from_patterns(
-                &permission.permission,
-                &permission.patterns,
-            )?;
-            let reusable_result = reusable_permission_result_from_response(response)?;
-            Some((reusable_key, reusable_result))
-        })
-        .collect()
 }
 
 fn build_permission_metadata(tool_name: &str, raw_input: &Value, agent_type: AgentType) -> Value {
@@ -2336,17 +2258,29 @@ async fn persist_provider_session_id_alias(
     db: Option<&DbConn>,
     session_id: &str,
     provider_session_id: &str,
-) {
-    if let Err(error) =
-        bind_provider_session_id_persisted(app_handle, db, session_id, provider_session_id).await
-    {
-        tracing::warn!(
-            session_id = %session_id,
-            provider_session_id = %provider_session_id,
-            error = %error,
-            "Failed to persist provider session ID alias"
-        );
+) -> AcpResult<()> {
+    if let Some(db) = db {
+        let row = crate::db::repository::SessionMetadataRepository::get_by_id(db, session_id)
+            .await
+            .map_err(|error| {
+                AcpError::InvalidState(format!(
+                    "failed to load Claude session metadata for identity verification: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                AcpError::InvalidState(format!(
+                    "Claude session metadata missing before provider identity binding: {session_id}"
+                ))
+            })?;
+
+        if row.is_acepe_managed && provider_session_id != session_id {
+            return Err(AcpError::InvalidState(format!(
+                "Claude reported provider session id {provider_session_id} instead of requested session id {session_id}"
+            )));
+        }
     }
+
+    bind_provider_session_id_persisted(app_handle, db, session_id, provider_session_id).await
 }
 
 fn collect_cc_sdk_updates_for_dispatch(
@@ -2377,6 +2311,114 @@ fn dispatch_cc_sdk_update(
     }
 }
 
+async fn fail_pending_creation_attempt(db: Option<&DbConn>, attempt_id: &str, reason: &str) {
+    if let Some(db) = db {
+        if let Err(error) = crate::db::repository::SessionMetadataRepository::fail_creation_attempt(
+            db, attempt_id, reason,
+        )
+        .await
+        {
+            tracing::warn!(
+                attempt_id = %attempt_id,
+                reason,
+                error = %error,
+                "Failed to mark pending Claude creation attempt as failed"
+            );
+        }
+    }
+}
+
+async fn reserve_promoted_claude_session(
+    supervisor: &crate::acp::lifecycle::SessionSupervisor,
+    db: &DbConn,
+    projection_registry: &ProjectionRegistry,
+    session_id: &str,
+) -> AcpResult<()> {
+    if let Some(checkpoint) = supervisor.snapshot_for_session(session_id) {
+        if checkpoint.lifecycle.status != LifecycleStatus::Reserved {
+            return Err(AcpError::InvalidState(format!(
+                "promoted Claude session {session_id} already has lifecycle status {:?}",
+                checkpoint.lifecycle.status
+            )));
+        }
+        return Ok(());
+    }
+
+    supervisor
+        .reserve(db, projection_registry, session_id)
+        .await
+        .map_err(|error| {
+            AcpError::InvalidState(format!(
+                "failed to reserve lifecycle checkpoint for promoted Claude session {session_id}: {error}"
+            ))
+        })
+        .map(|_| ())
+}
+
+async fn promote_verified_pending_creation_attempt(
+    app_handle: Option<&AppHandle>,
+    db: Option<&DbConn>,
+    projection_registry: &Arc<ProjectionRegistry>,
+    attempt_id: &str,
+    session_id: &str,
+    provider_session_id: &str,
+) -> AcpResult<()> {
+    if provider_session_id != session_id {
+        fail_pending_creation_attempt(
+            db,
+            attempt_id,
+            "provider-identity-integrity: reported id did not match requested id",
+        )
+        .await;
+        return Err(AcpError::InvalidState(format!(
+            "Claude reported provider session id {provider_session_id} instead of requested session id {session_id}"
+        )));
+    }
+
+    let db = match db {
+        Some(db) => db,
+        None => {
+            fail_pending_creation_attempt(
+                None,
+                attempt_id,
+                "provider-identity-promotion: database unavailable",
+            )
+            .await;
+            return Err(AcpError::InvalidState(
+                "database unavailable while promoting Claude creation attempt".to_string(),
+            ));
+        }
+    };
+
+    if let Err(error) = crate::db::repository::SessionMetadataRepository::promote_creation_attempt(
+        db,
+        attempt_id,
+        provider_session_id,
+    )
+    .await
+    {
+        let message = format!("failed to promote Claude creation attempt {attempt_id}: {error}");
+        fail_pending_creation_attempt(Some(db), attempt_id, &message).await;
+        return Err(AcpError::InvalidState(message));
+    }
+
+    if let Some(app_handle) = app_handle {
+        if let Some(supervisor) =
+            app_handle.try_state::<Arc<crate::acp::lifecycle::SessionSupervisor>>()
+        {
+            reserve_promoted_claude_session(
+                supervisor.inner(),
+                db,
+                projection_registry.as_ref(),
+                session_id,
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // AgentClient trait implementation
 // ---------------------------------------------------------------------------
@@ -2398,6 +2440,10 @@ impl AgentClient for ClaudeCcSdkClient {
         })
     }
 
+    fn bind_pending_creation_attempt(&mut self, attempt_id: Option<String>) {
+        self.pending_creation_attempt_id = attempt_id;
+    }
+
     async fn new_session(&mut self, cwd: String) -> AcpResult<NewSessionResponse> {
         let session_id = Uuid::new_v4().to_string();
         self.reset_stream_runtime_state();
@@ -2417,6 +2463,8 @@ impl AgentClient for ClaudeCcSdkClient {
         );
         Ok(NewSessionResponse {
             session_id,
+            creation_attempt_id: None,
+            deferred_creation: false,
             sequence_id: None,
             session_open: None,
             models,
@@ -2424,6 +2472,19 @@ impl AgentClient for ClaudeCcSdkClient {
             available_commands: vec![],
             config_options: vec![],
         })
+    }
+
+    fn begin_pre_reservation_drain(&self, session_id: &str) {
+        self.dispatcher.begin_pre_reservation_drain(session_id);
+    }
+
+    fn drain_pre_reservation_events(&self, session_id: &str) {
+        self.dispatcher.drain_pre_reservation_events(session_id);
+    }
+
+    fn discard_pre_reservation_events(&self, session_id: &str, reason: &'static str) {
+        self.dispatcher
+            .discard_pre_reservation_events(session_id, reason);
     }
 
     async fn resume_session(
@@ -2522,6 +2583,8 @@ impl AgentClient for ClaudeCcSdkClient {
             .await?;
         Ok(NewSessionResponse {
             session_id: new_session_id,
+            creation_attempt_id: None,
+            deferred_creation: false,
             sequence_id: None,
             session_open: None,
             models,
@@ -2837,112 +2900,20 @@ impl AgentClient for ClaudeCcSdkClient {
 mod tests {
     use super::permissions::PendingPermissionKind;
     use super::*;
-    use crate::acp::session_descriptor::{SessionCompatibilityInput, SessionReplayContext};
     use crate::acp::session_update::ContentChunk;
     use crate::acp::session_update::{
         PermissionData, ToolArguments, ToolCallData, ToolCallStatus, ToolKind,
     };
     use crate::db::migrations::Migrator;
-    use crate::db::repository::{SessionJournalEventRepository, SessionMetadataRepository};
+    use crate::db::repository::{
+        CreationAttemptStatus, SessionJournalEventRepository, SessionMetadataRepository,
+    };
     use cc_sdk::{CanUseTool, HookCallback};
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{LazyLock, Mutex as StdMutex};
 
     static HOME_ENV_LOCK: LazyLock<StdMutex<()>> = LazyLock::new(|| StdMutex::new(()));
-
-    struct TestModelDiscoveryProvider {
-        discovery_calls: Arc<AtomicUsize>,
-    }
-
-    struct CwdModelDiscoveryProvider {
-        target_cwd: String,
-    }
-
-    impl AgentProvider for TestModelDiscoveryProvider {
-        fn id(&self) -> &str {
-            "claude-code"
-        }
-
-        fn name(&self) -> &str {
-            "Test Claude Provider"
-        }
-
-        fn spawn_config(&self) -> crate::acp::provider::SpawnConfig {
-            crate::acp::provider::SpawnConfig {
-                command: "unused".to_string(),
-                args: vec![],
-                env: HashMap::new(),
-                env_strategy: None,
-            }
-        }
-
-        fn parser_agent_type(&self) -> AgentType {
-            AgentType::ClaudeCode
-        }
-
-        fn model_discovery_commands(&self) -> Vec<crate::acp::provider::SpawnConfig> {
-            self.discovery_calls.fetch_add(1, Ordering::SeqCst);
-            vec![crate::acp::provider::SpawnConfig {
-                command: "unused".to_string(),
-                args: vec![],
-                env: HashMap::new(),
-                env_strategy: None,
-            }]
-        }
-
-        fn default_model_candidates(&self) -> Vec<crate::acp::provider::ModelFallbackCandidate> {
-            vec![
-                crate::acp::provider::ModelFallbackCandidate {
-                    model_id: "claude-opus-4-6".to_string(),
-                    name: "Claude Opus 4.6".to_string(),
-                    description: Some("Most capable Claude model".to_string()),
-                },
-                crate::acp::provider::ModelFallbackCandidate {
-                    model_id: "claude-sonnet-4-5".to_string(),
-                    name: "Claude Sonnet 4.5".to_string(),
-                    description: Some("Balanced Claude model".to_string()),
-                },
-            ]
-        }
-    }
-
-    impl AgentProvider for CwdModelDiscoveryProvider {
-        fn id(&self) -> &str {
-            "claude-code"
-        }
-
-        fn name(&self) -> &str {
-            "Cwd Discovery Provider"
-        }
-
-        fn spawn_config(&self) -> crate::acp::provider::SpawnConfig {
-            crate::acp::provider::SpawnConfig {
-                command: "unused".to_string(),
-                args: vec![],
-                env: HashMap::new(),
-                env_strategy: None,
-            }
-        }
-
-        fn parser_agent_type(&self) -> AgentType {
-            AgentType::ClaudeCode
-        }
-
-        fn model_discovery_commands(&self) -> Vec<crate::acp::provider::SpawnConfig> {
-            vec![crate::acp::provider::SpawnConfig {
-                command: "python3".to_string(),
-                args: vec![
-                    "-c".to_string(),
-                    "import json, os, sys; target = sys.argv[1]; model = 'expected-model' if os.getcwd() == target else 'wrong-model'; print(json.dumps([{\"id\": model, \"name\": model}]))".to_string(),
-                    self.target_cwd.clone(),
-                ],
-                env: HashMap::new(),
-                env_strategy: None,
-            }]
-        }
-    }
 
     fn make_task_tool_call(id: &str) -> SessionUpdate {
         SessionUpdate::ToolCall {
@@ -3130,6 +3101,7 @@ mod tests {
             pending_mode_id: None,
             pending_model_id: None,
             current_cwd: Some(PathBuf::from("/tmp")),
+            pending_creation_attempt_id: None,
         }
     }
 
@@ -3141,18 +3113,6 @@ mod tests {
             .await
             .expect("Failed to run migrations");
         db
-    }
-
-    async fn replay_context_for_session(db: &DbConn, session_id: &str) -> SessionReplayContext {
-        let metadata = SessionMetadataRepository::get_by_id(db, session_id)
-            .await
-            .expect("load metadata");
-        SessionMetadataRepository::resolve_existing_session_replay_context_from_metadata(
-            session_id,
-            metadata.as_ref(),
-            SessionCompatibilityInput::default(),
-        )
-        .expect("replay context")
     }
 
     fn make_test_client() -> ClaudeCcSdkClient {
@@ -3252,7 +3212,19 @@ mod tests {
         let options = client.build_options("/tmp", "session-1", Some("resume-1".to_string()), true);
 
         assert_eq!(options.resume.as_deref(), Some("resume-1"));
+        assert_eq!(options.session_id.as_deref(), Some("session-1"));
         assert!(options.fork_session);
+    }
+
+    #[test]
+    fn build_options_keeps_session_id_for_resumed_stdin_messages() {
+        let client = make_test_client();
+
+        let options =
+            client.build_options("/tmp", "session-1", Some("session-1".to_string()), false);
+
+        assert_eq!(options.resume.as_deref(), Some("session-1"));
+        assert_eq!(options.session_id.as_deref(), Some("session-1"));
     }
 
     #[tokio::test]
@@ -3320,7 +3292,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_session_permission_approvals_rehydrates_restart_safe_cache() {
+    async fn restore_session_permission_approvals_does_not_rehydrate_from_journal() {
         let db = setup_test_db().await;
         let path = "/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte";
         SessionMetadataRepository::upsert(
@@ -3392,17 +3364,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            registration.ui_dispatch,
-            PermissionUiDispatch::ResolvedFromCache
-        );
-        assert!(matches!(
-            registration
-                .receiver
-                .await
-                .expect("cached approval should resolve immediately"),
-            cc_sdk::PermissionResult::Allow(_)
-        ));
+        assert_eq!(registration.ui_dispatch, PermissionUiDispatch::Emit);
     }
 
     #[tokio::test]
@@ -3435,33 +3397,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hydrated_session_model_state_skips_discovery_when_provider_has_default_models() {
-        let discovery_calls = Arc::new(AtomicUsize::new(0));
-        let client = make_test_client_with_provider(Arc::new(TestModelDiscoveryProvider {
-            discovery_calls: discovery_calls.clone(),
-        }));
-
-        let state = client.hydrated_session_model_state().await;
-
-        assert_eq!(discovery_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(state.available_models.len(), 2);
-        assert_eq!(state.available_models[0].model_id, "claude-opus-4-6");
-        assert_eq!(state.available_models[1].model_id, "claude-sonnet-4-5");
-    }
-
-    #[tokio::test]
-    async fn model_discovery_uses_current_cwd_without_cached_connect_options() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let canonical_cwd = temp.path().canonicalize().expect("canonical cwd");
-        let mut client = make_test_client_with_provider(Arc::new(CwdModelDiscoveryProvider {
-            target_cwd: canonical_cwd.to_string_lossy().into_owned(),
-        }));
-        client.current_cwd = Some(canonical_cwd);
+    async fn discover_models_from_provider_cli_returns_empty_without_app_handle() {
+        // cc-sdk is Claude-only and now reads from the authoritative model catalog
+        // via AppHandle. When no AppHandle is present (e.g. in pure unit tests),
+        // it must return an empty vec rather than shelling out to the old CLI probe
+        // that cost a real API bill per call. Catalog-backed discovery is exercised
+        // end-to-end in `claude_code_model_catalog::tests`.
+        let client = make_test_client();
+        assert!(client.app_handle.is_none());
 
         let models = client.discover_models_from_provider_cli().await;
-
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0].model_id, "expected-model");
+        assert!(models.is_empty());
     }
 
     #[test]
@@ -3490,6 +3436,139 @@ mod tests {
             provider_session_id_from_message(&message),
             Some("provider-session")
         );
+    }
+
+    #[tokio::test]
+    async fn provider_session_id_alias_persistence_errors_when_metadata_row_is_missing() {
+        let db = setup_test_db().await;
+
+        let error = persist_provider_session_id_alias(
+            None,
+            Some(&db),
+            "missing-claude-session",
+            "provider-session",
+        )
+        .await
+        .expect_err("missing metadata must fail provider identity binding");
+
+        assert!(
+            error
+                .to_string()
+                .contains("session metadata missing before provider identity binding"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_session_id_alias_persistence_rejects_new_session_identity_mismatch() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::ensure_exists(
+            &db,
+            "requested-claude-session",
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("metadata row");
+
+        let error = persist_provider_session_id_alias(
+            None,
+            Some(&db),
+            "requested-claude-session",
+            "different-provider-session",
+        )
+        .await
+        .expect_err("new Claude sessions must not accept a mismatched provider id");
+
+        assert!(
+            error
+                .to_string()
+                .contains("instead of requested session id"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_session_id_alias_persistence_rejects_canonical_session_identity_mismatch() {
+        let db = setup_test_db().await;
+        let attempt = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("attempt");
+        SessionMetadataRepository::promote_creation_attempt(
+            &db,
+            &attempt.id,
+            "requested-claude-session",
+        )
+        .await
+        .expect("promoted canonical session");
+
+        let error = persist_provider_session_id_alias(
+            None,
+            Some(&db),
+            "requested-claude-session",
+            "different-provider-session",
+        )
+        .await
+        .expect_err("canonical Claude sessions must not accept a mismatched provider id");
+
+        assert!(
+            error
+                .to_string()
+                .contains("instead of requested session id"),
+            "unexpected error: {error}"
+        );
+        let row = SessionMetadataRepository::get_by_id(&db, "requested-claude-session")
+            .await
+            .expect("load row")
+            .expect("row");
+        assert_eq!(row.history_session_id(), "requested-claude-session");
+    }
+
+    #[tokio::test]
+    async fn provider_session_id_alias_persistence_rejects_legacy_transcript_alias_repair() {
+        let db = setup_test_db().await;
+
+        SessionMetadataRepository::upsert(
+            &db,
+            "legacy-local-session".to_string(),
+            "Legacy".to_string(),
+            1704067300000,
+            "/project".to_string(),
+            "claude-code".to_string(),
+            "-project/legacy-local-session.jsonl".to_string(),
+            1704067300,
+            2048,
+        )
+        .await
+        .expect("legacy row");
+
+        let error = persist_provider_session_id_alias(
+            None,
+            Some(&db),
+            "legacy-local-session",
+            "legacy-provider-session",
+        )
+        .await
+        .expect_err("legacy alias repair is not a runtime identity path");
+
+        assert!(
+            error.to_string().contains("Provider session id mismatch"),
+            "unexpected error: {error}"
+        );
+
+        let row = SessionMetadataRepository::get_by_id(&db, "legacy-local-session")
+            .await
+            .expect("load row")
+            .expect("row");
+
+        assert_eq!(row.history_session_id(), "legacy-local-session");
     }
 
     // --- PermissionBridge tests ---
@@ -3893,26 +3972,16 @@ mod tests {
             Some(InteractionResponse::Permission { accepted: true, .. })
         ));
 
-        let replay_context = replay_context_for_session(&db, "session-1").await;
-        let stored_projection = load_stored_projection(&db, &replay_context)
+        let stored_events = SessionJournalEventRepository::list_serialized(&db, "session-1")
             .await
-            .expect("load stored projection")
-            .expect("stored projection should exist");
-        let stored_interaction = stored_projection
-            .interactions
-            .into_iter()
-            .find(|interaction| interaction.id == "permission-1")
-            .expect("stored interaction should be persisted");
-        assert_eq!(stored_interaction.state, InteractionState::Approved);
-        assert!(matches!(
-            stored_interaction.response,
-            Some(InteractionResponse::Permission { accepted: true, .. })
-        ));
+            .expect("list persisted interaction events");
+        assert!(stored_events
+            .iter()
+            .any(|event| event.event_kind == "interaction_transition"));
     }
 
     #[tokio::test]
-    async fn restore_session_permission_approvals_rehydrates_reusable_cache_from_descriptor_context(
-    ) {
+    async fn restore_session_permission_approvals_does_not_replay_journal_as_product_authority() {
         let db = setup_test_db().await;
         SessionMetadataRepository::upsert(
             &db,
@@ -3930,35 +3999,6 @@ mod tests {
 
         let path =
             "/Users/alex/Documents/acepe/packages/desktop/src/lib/components/ui/tooltip/tooltip-content.svelte";
-        let tool_call = SessionUpdate::ToolCall {
-            tool_call: ToolCallData {
-                id: "tooluse_read_1".to_string(),
-                name: "unknown".to_string(),
-                arguments: ToolArguments::Other {
-                    raw: serde_json::json!({ "path": path }),
-                },
-                raw_input: None,
-                status: ToolCallStatus::Pending,
-                result: None,
-                kind: Some(ToolKind::Other),
-                title: Some(format!("Viewing {path}")),
-                locations: None,
-                skill_meta: None,
-                normalized_questions: None,
-                normalized_todos: None,
-                normalized_todo_update: None,
-                parent_tool_use_id: None,
-                task_children: None,
-                question_answer: None,
-                awaiting_plan_approval: false,
-                plan_approval_request_id: None,
-            },
-            session_id: Some("session-restore".to_string()),
-        };
-        SessionJournalEventRepository::append_session_update(&db, "session-restore", &tool_call)
-            .await
-            .expect("append tool call update");
-
         let permission_update = SessionUpdate::PermissionRequest {
             permission: PermissionData {
                 id: "permission-restore".to_string(),
@@ -4021,12 +4061,8 @@ mod tests {
 
         assert_eq!(
             registration.ui_dispatch,
-            super::permissions::PermissionUiDispatch::ResolvedFromCache
+            super::permissions::PermissionUiDispatch::Emit
         );
-        assert!(matches!(
-            registration.receiver.await.expect("channel closed"),
-            cc_sdk::PermissionResult::Allow(_)
-        ));
     }
 
     #[tokio::test]
@@ -4085,17 +4121,12 @@ mod tests {
             .expect("interaction should remain addressable");
         assert_eq!(interaction.state, InteractionState::Rejected);
 
-        let replay_context = replay_context_for_session(&db, "session-1").await;
-        let stored_projection = load_stored_projection(&db, &replay_context)
+        let stored_events = SessionJournalEventRepository::list_serialized(&db, "session-1")
             .await
-            .expect("load stored projection")
-            .expect("stored projection should exist");
-        assert!(stored_projection
-            .interactions
-            .into_iter()
-            .any(|interaction| {
-                interaction.id == "permission-1" && interaction.state == InteractionState::Rejected
-            }));
+            .expect("list persisted interaction events");
+        assert!(stored_events
+            .iter()
+            .any(|event| event.event_kind == "interaction_transition"));
     }
 
     #[tokio::test]
@@ -4168,18 +4199,15 @@ mod tests {
             .expect("interaction should exist");
         assert_eq!(interaction.state, InteractionState::Answered);
 
-        let replay_context = replay_context_for_session(&db, "session-stream").await;
-        let stored_projection = load_stored_projection(&db, &replay_context)
+        let stored_events = SessionJournalEventRepository::list_serialized(&db, "session-stream")
             .await
-            .expect("load stored projection")
-            .expect("stored projection should exist");
-        assert!(stored_projection
-            .interactions
-            .into_iter()
-            .any(|interaction| {
-                interaction.id == "toolu_stream_only"
-                    && interaction.state == InteractionState::Answered
-            }));
+            .expect("list persisted interaction events");
+        assert!(stored_events
+            .iter()
+            .any(|event| event.event_kind == "interaction_snapshot"));
+        assert!(stored_events
+            .iter()
+            .all(|event| event.event_kind != "projection_update"));
     }
 
     #[tokio::test]
@@ -5750,6 +5778,7 @@ mod tests {
                 part_id: None,
                 message_id: None,
                 session_id: Some("session-ask".to_string()),
+                produced_at_monotonic_ms: None,
             },
         )
         .await;
@@ -6370,6 +6399,7 @@ mod tests {
             provider,
             db: None,
             app_handle: None,
+            pending_creation_attempt_id: None,
         };
 
         let stream = futures::stream::iter(vec![
@@ -6470,6 +6500,268 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_streaming_bridge_promotes_pending_creation_attempt_before_buffered_dispatch() {
+        let db = setup_test_db().await;
+        let attempt = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("attempt");
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
+        let context = StreamingBridgeContext {
+            dispatcher,
+            bridge: Arc::new(PermissionBridge::new()),
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+            provider,
+            db: Some(db.clone()),
+            app_handle: None,
+            pending_creation_attempt_id: Some(attempt.id.clone()),
+        };
+
+        let stream = futures::stream::iter(vec![
+            Ok(cc_sdk::Message::Assistant {
+                message: cc_sdk::AssistantMessage {
+                    content: vec![cc_sdk::ContentBlock::Text(cc_sdk::TextContent {
+                        text: "Buffered before provider id".to_string(),
+                    })],
+                    model: None,
+                    usage: None,
+                    error: None,
+                    parent_tool_use_id: None,
+                },
+            }),
+            Ok(cc_sdk::Message::StreamEvent {
+                uuid: "identity".to_string(),
+                session_id: "provider-canonical".to_string(),
+                event: serde_json::json!({ "type": "message_start", "message": { "content": [] } }),
+                parent_tool_use_id: None,
+            }),
+        ]);
+
+        run_streaming_bridge(stream, "provider-canonical".to_string(), context).await;
+
+        let row = SessionMetadataRepository::get_by_id(&db, "provider-canonical")
+            .await
+            .expect("load metadata")
+            .expect("promoted metadata");
+        assert_eq!(row.history_session_id(), "provider-canonical");
+
+        let captured = sink.lock().expect("sink lock");
+        assert!(captured.iter().any(|event| match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
+                matches!(update.as_ref(), SessionUpdate::AgentMessageChunk { .. })
+            }
+            _ => false,
+        }));
+    }
+
+    #[tokio::test]
+    async fn promote_verified_pending_creation_attempt_reuses_reserved_lifecycle_checkpoint() {
+        let db = setup_test_db().await;
+        let session_id = "provider-canonical";
+        let attempt = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("attempt");
+        let projection_registry = Arc::new(ProjectionRegistry::new());
+        let supervisor = Arc::new(crate::acp::lifecycle::SessionSupervisor::new());
+        let seeded = supervisor.seed_checkpoint(
+            session_id.to_string(),
+            crate::acp::lifecycle::LifecycleCheckpoint::new(
+                1,
+                crate::acp::lifecycle::LifecycleState::reserved(),
+                crate::acp::session_state_engine::SessionGraphCapabilities::empty(),
+            ),
+        );
+        assert!(seeded, "reserved first-send checkpoint should be seeded");
+
+        SessionMetadataRepository::promote_creation_attempt(&db, &attempt.id, session_id)
+            .await
+            .expect("promote metadata");
+        reserve_promoted_claude_session(
+            supervisor.as_ref(),
+            &db,
+            projection_registry.as_ref(),
+            session_id,
+        )
+        .await
+        .expect("reserved checkpoint should satisfy promotion");
+
+        let row = SessionMetadataRepository::get_by_id(&db, session_id)
+            .await
+            .expect("load metadata")
+            .expect("promoted metadata");
+        assert_eq!(row.history_session_id(), session_id);
+        assert_eq!(
+            supervisor
+                .snapshot_for_session(session_id)
+                .expect("checkpoint remains")
+                .lifecycle
+                .status,
+            LifecycleStatus::Reserved
+        );
+    }
+
+    #[tokio::test]
+    async fn run_streaming_bridge_promotes_pending_creation_before_buffered_auth_error() {
+        let db = setup_test_db().await;
+        let attempt = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("attempt");
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
+        let context = StreamingBridgeContext {
+            dispatcher,
+            bridge: Arc::new(PermissionBridge::new()),
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+            provider,
+            db: Some(db.clone()),
+            app_handle: None,
+            pending_creation_attempt_id: Some(attempt.id.clone()),
+        };
+
+        let stream = futures::stream::iter(vec![
+            Ok(cc_sdk::Message::Assistant {
+                message: cc_sdk::AssistantMessage {
+                    content: vec![cc_sdk::ContentBlock::Text(cc_sdk::TextContent {
+                        text: "Failed to authenticate. API Error: 401 {\"error\":{\"message\":\"User not found.\",\"code\":401}}".to_string(),
+                    })],
+                    model: None,
+                    usage: None,
+                    error: Some(cc_sdk::AssistantMessageError::AuthenticationFailed),
+                    parent_tool_use_id: None,
+                },
+            }),
+            Ok(cc_sdk::Message::Result {
+                subtype: "success".to_string(),
+                duration_ms: 100,
+                duration_api_ms: 100,
+                is_error: false,
+                num_turns: 1,
+                session_id: "provider-canonical".to_string(),
+                total_cost_usd: None,
+                usage: None,
+                model_usage: None,
+                result: None,
+                structured_output: None,
+                stop_reason: None,
+            }),
+        ]);
+
+        run_streaming_bridge(stream, "provider-canonical".to_string(), context).await;
+
+        let row = SessionMetadataRepository::get_by_id(&db, "provider-canonical")
+            .await
+            .expect("load metadata")
+            .expect("promoted metadata");
+        assert_eq!(row.history_session_id(), "provider-canonical");
+
+        let captured = sink.lock().expect("sink lock");
+        assert!(captured.iter().any(|event| match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
+                matches!(
+                    update.as_ref(),
+                    SessionUpdate::TurnError {
+                        error: TurnErrorData::Structured(payload),
+                        ..
+                    } if payload.message.contains("Failed to authenticate")
+                        && payload.message.contains("User not found")
+                        && payload.kind == TurnErrorKind::Fatal
+                        && payload.source == Some(TurnErrorSource::Transport)
+                )
+            }
+            _ => false,
+        }));
+        assert!(!captured.iter().any(|event| match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
+                matches!(update.as_ref(), SessionUpdate::TurnComplete { .. })
+            }
+            _ => false,
+        }));
+    }
+
+    #[tokio::test]
+    async fn run_streaming_bridge_fails_pending_creation_attempt_on_provider_id_mismatch() {
+        let db = setup_test_db().await;
+        let attempt = SessionMetadataRepository::create_creation_attempt(
+            &db,
+            "/project",
+            "claude-code",
+            None,
+        )
+        .await
+        .expect("attempt");
+        let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
+        let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
+        let context = StreamingBridgeContext {
+            dispatcher,
+            bridge: Arc::new(PermissionBridge::new()),
+            projection_registry: Arc::new(ProjectionRegistry::new()),
+            tool_call_tracker: Arc::new(ToolCallIdTracker::new()),
+            approval_callback_tracker: Arc::new(ApprovalCallbackTracker::new()),
+            task_reconciler: Arc::new(std::sync::Mutex::new(TaskReconciler::new())),
+            pending_questions: Arc::new(Mutex::new(HashMap::new())),
+            provider,
+            db: Some(db.clone()),
+            app_handle: None,
+            pending_creation_attempt_id: Some(attempt.id.clone()),
+        };
+
+        let stream = futures::stream::iter(vec![Ok(cc_sdk::Message::StreamEvent {
+            uuid: "identity".to_string(),
+            session_id: "different-provider-id".to_string(),
+            event: serde_json::json!({ "type": "message_start", "message": { "content": [] } }),
+            parent_tool_use_id: None,
+        })]);
+
+        run_streaming_bridge(stream, "requested-provider-id".to_string(), context).await;
+
+        assert!(
+            SessionMetadataRepository::get_by_id(&db, "requested-provider-id")
+                .await
+                .expect("load metadata")
+                .is_none()
+        );
+        let failed_attempt = SessionMetadataRepository::get_creation_attempt(&db, &attempt.id)
+            .await
+            .expect("load attempt")
+            .expect("attempt");
+        assert_eq!(
+            failed_attempt.status,
+            CreationAttemptStatus::Failed.as_str()
+        );
+
+        let captured = sink.lock().expect("sink lock");
+        assert!(captured.iter().any(|event| match &event.payload {
+            crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
+                matches!(update.as_ref(), SessionUpdate::TurnError { .. })
+            }
+            _ => false,
+        }));
+    }
+
+    #[tokio::test]
     async fn run_streaming_bridge_completes_unresolved_assistant_tool_use_without_raw_start() {
         let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
         let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
@@ -6484,6 +6776,7 @@ mod tests {
             provider,
             db: None,
             app_handle: None,
+            pending_creation_attempt_id: None,
         };
 
         let stream = futures::stream::iter(vec![
@@ -6557,7 +6850,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_streaming_bridge_fails_empty_bash_completion_when_callback_never_arrives() {
+    async fn run_streaming_bridge_completes_empty_bash_when_callback_never_arrives() {
         let (dispatcher, sink) = AcpUiEventDispatcher::test_sink();
         let provider = Arc::new(crate::acp::providers::claude_code::ClaudeCodeProvider);
         let context = StreamingBridgeContext {
@@ -6571,6 +6864,7 @@ mod tests {
             provider,
             db: None,
             app_handle: None,
+            pending_creation_attempt_id: None,
         };
 
         let stream = futures::stream::iter(vec![
@@ -6624,7 +6918,7 @@ mod tests {
         run_streaming_bridge(stream, "session-bridge".to_string(), context).await;
 
         let captured = sink.lock().expect("sink lock");
-        let failure = captured.iter().find_map(|event| match &event.payload {
+        let terminal_update = captured.iter().find_map(|event| match &event.payload {
             crate::acp::ui_event_dispatcher::AcpUiEventPayload::SessionUpdate(update) => {
                 match update.as_ref() {
                     SessionUpdate::ToolCallUpdate { update, .. }
@@ -6638,10 +6932,19 @@ mod tests {
             _ => None,
         });
 
-        let completion = failure.expect("expected a terminal bash tool update");
-        // CLI auto-approved and executed the tool - bridge marks as Completed
+        let completion = terminal_update.expect("expected a terminal bash tool update");
         assert_eq!(completion.status, Some(ToolCallStatus::Completed));
-        assert!(completion.failure_reason.is_none());
+        assert_eq!(completion.failure_reason, None);
+        assert_eq!(
+            completion
+                .result
+                .as_ref()
+                .and_then(|result| result.get("stderr"))
+                .and_then(|value| value.as_str()),
+            Some(
+                "Result unavailable: the agent resumed after this tool call but did not provide stdout/stderr to Acepe."
+            )
+        );
     }
 
     #[tokio::test]
@@ -6708,6 +7011,7 @@ mod tests {
             provider,
             db: None,
             app_handle: None,
+            pending_creation_attempt_id: None,
         };
 
         let stream = futures::stream::iter(vec![Ok(cc_sdk::Message::Result {

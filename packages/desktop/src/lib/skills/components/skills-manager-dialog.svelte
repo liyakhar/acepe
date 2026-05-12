@@ -1,12 +1,7 @@
 <script lang="ts">
 import { Plus } from "@lucide/svelte/icons";
 import { Button } from "$lib/components/ui/button/index.js";
-import {
-	Dialog,
-	DialogContent,
-	DialogHeader,
-	DialogTitle,
-} from "$lib/components/ui/dialog/index.js";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@acepe/ui/dialog";
 
 import SkillsPage from "./skills-page.svelte";
 

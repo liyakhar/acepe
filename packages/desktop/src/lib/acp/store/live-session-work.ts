@@ -1,5 +1,11 @@
+import type { SessionGraphActivity } from "../../services/acp-types.js";
+import {
+	type CanonicalSessionActivity,
+	selectCanonicalSessionActivity,
+} from "../logic/session-activity.js";
 import type { SessionRuntimeState } from "../logic/session-ui-state.js";
 import type { ToolCall } from "../types/tool-call.js";
+import type { CanonicalSessionProjection } from "./canonical-session-projection.js";
 import type { SessionOperationInteractionSnapshot } from "./operation-association.js";
 import { deriveSessionState, type SessionState } from "./session-state.js";
 import {
@@ -7,14 +13,14 @@ import {
 	type SessionCompactActivityKind,
 	type SessionWorkProjection,
 } from "./session-work-projection.js";
-import type { SessionHotState } from "./types.js";
 
 export interface LiveSessionWorkInput {
 	readonly runtimeState: SessionRuntimeState | null;
-	readonly hotState: Pick<
-		SessionHotState,
-		"status" | "currentMode" | "connectionError" | "activeTurnFailure"
-	>;
+	readonly canonicalProjection?: Pick<
+		CanonicalSessionProjection,
+		"lifecycle" | "activity" | "activeTurnFailure"
+	> | null;
+	readonly currentModeId: string | null;
 	readonly currentStreamingToolCall: ToolCall | null;
 	readonly interactionSnapshot: Pick<
 		SessionOperationInteractionSnapshot,
@@ -32,57 +38,180 @@ type LiveConnectionState =
 	| "paused"
 	| "error";
 
-function deriveLiveConnectionState(input: LiveSessionWorkInput): LiveConnectionState {
-	if (input.runtimeState === null) {
-		const hotStatus = input.hotState.status;
-		if (hotStatus === "idle") {
-			return "disconnected";
-		}
-		if (hotStatus === "loading" || hotStatus === "connecting") {
-			return "connecting";
-		}
-		if (hotStatus === "streaming") {
-			return "streaming";
-		}
-		if (hotStatus === "paused") {
-			return "paused";
-		}
-		if (hotStatus === "error") {
-			return "error";
-		}
-		return "ready";
+function normalizeLifecycle(input: LiveSessionWorkInput): {
+	connectionPhase: "disconnected" | "connecting" | "connected" | "failed";
+	activityPhase: "idle" | "awaiting_model" | "running" | "paused";
+} {
+	const canonical = input.canonicalProjection;
+	if (canonical == null) {
+		return {
+			connectionPhase: "disconnected",
+			activityPhase: "idle",
+		};
 	}
 
-	if (input.runtimeState.connectionPhase === "failed") {
+	const lifecycle = canonical.lifecycle;
+	const connectionPhase =
+		lifecycle.status === "failed"
+			? "failed"
+			: lifecycle.status === "reserved" ||
+					lifecycle.status === "detached" ||
+					lifecycle.status === "archived"
+				? "disconnected"
+				: lifecycle.status === "activating" || lifecycle.status === "reconnecting"
+					? "connecting"
+					: "connected";
+	const activityPhase =
+		canonical.activity.kind === "paused"
+			? "paused"
+			: canonical.activity.kind === "awaiting_model" ||
+					canonical.activity.kind === "waiting_for_user"
+				? "awaiting_model"
+				: canonical.activity.kind === "running_operation"
+					? "running"
+					: "idle";
+
+	return {
+		connectionPhase,
+		activityPhase,
+	};
+}
+
+function canonicalActivityFromGraphActivity(
+	activity: SessionGraphActivity | null | undefined
+): CanonicalSessionActivity | null {
+	if (activity == null) {
+		return null;
+	}
+
+	switch (activity.kind) {
+		case "awaiting_model":
+			return "awaiting_model";
+		case "running_operation":
+			return "running_operation";
+		case "waiting_for_user":
+			return "waiting_for_user";
+		case "paused":
+			return "paused";
+		case "error":
+			return "error";
+		case "idle":
+			return "idle";
+	}
+}
+
+function fallbackCanonicalActivity(input: LiveSessionWorkInput): CanonicalSessionActivity {
+	const canonical = input.canonicalProjection;
+	if (canonical == null) {
+		return "idle";
+	}
+
+	const lifecycle = normalizeLifecycle(input);
+
+	const canonicalHasFailure =
+		canonical.activeTurnFailure != null ||
+		canonical.lifecycle.status === "failed" ||
+		canonical.lifecycle.errorMessage != null;
+
+	return selectCanonicalSessionActivity({
+		lifecycle,
+		hasActiveOperation:
+			lifecycle.activityPhase === "running" || input.currentStreamingToolCall !== null,
+		hasPendingInput:
+			input.interactionSnapshot.pendingPlanApproval !== null ||
+			input.interactionSnapshot.pendingPermission !== null ||
+			input.interactionSnapshot.pendingQuestion !== null,
+		hasError: canonicalHasFailure,
+		hasUnseenCompletion: input.hasUnseenCompletion,
+	});
+}
+
+function liveActivityOverride(input: LiveSessionWorkInput): CanonicalSessionActivity | null {
+	const canonical = input.canonicalProjection;
+	if (canonical == null) {
+		return null;
+	}
+
+	const errorActive =
+		canonical.activeTurnFailure != null ||
+		canonical.lifecycle.status === "failed" ||
+		canonical.lifecycle.errorMessage != null;
+
+	if (errorActive) {
 		return "error";
 	}
 
-	if (input.runtimeState.connectionPhase === "connecting") {
-		return "connecting";
-	}
-
-	if (input.runtimeState.connectionPhase === "disconnected") {
-		return "disconnected";
-	}
-
-	if (input.hotState.status === "paused") {
+	if (canonical.activity.kind === "paused") {
 		return "paused";
 	}
 
-	if (input.runtimeState.activityPhase === "running" && input.currentStreamingToolCall !== null) {
+	if (
+		input.interactionSnapshot.pendingPlanApproval !== null ||
+		input.interactionSnapshot.pendingPermission !== null ||
+		input.interactionSnapshot.pendingQuestion !== null
+	) {
+		return "waiting_for_user";
+	}
+
+	if (input.currentStreamingToolCall !== null) {
+		return "running_operation";
+	}
+
+	if (input.runtimeState?.activityPhase === "running") {
+		return input.runtimeState.showThinking ? "awaiting_model" : "running_operation";
+	}
+
+	if (input.runtimeState?.activityPhase === "waiting_for_user") {
+		return "awaiting_model";
+	}
+
+	return null;
+}
+
+export function deriveLiveCanonicalActivity(input: LiveSessionWorkInput): CanonicalSessionActivity {
+	const graphBackedActivity = canonicalActivityFromGraphActivity(
+		input.canonicalProjection?.activity ?? null
+	);
+	if (graphBackedActivity === "idle") {
+		const overrideActivity = liveActivityOverride(input);
+		if (overrideActivity !== null) {
+			return overrideActivity;
+		}
+	}
+
+	if (graphBackedActivity !== null) {
+		return graphBackedActivity;
+	}
+
+	return fallbackCanonicalActivity(input);
+}
+
+function deriveLiveConnectionState(input: LiveSessionWorkInput): LiveConnectionState {
+	const lifecycle = normalizeLifecycle(input);
+	const canonicalActivity = deriveLiveCanonicalActivity(input);
+
+	if (canonicalActivity === "error") {
+		return "error";
+	}
+
+	if (lifecycle.connectionPhase === "connecting") {
+		return "connecting";
+	}
+
+	if (canonicalActivity === "paused") {
+		return "paused";
+	}
+
+	if (canonicalActivity === "running_operation") {
 		return "streaming";
 	}
 
-	if (input.runtimeState.showThinking) {
+	if (canonicalActivity === "awaiting_model" || canonicalActivity === "waiting_for_user") {
 		return "awaitingResponse";
 	}
 
-	if (input.runtimeState.activityPhase === "waiting_for_user") {
-		return "awaitingResponse";
-	}
-
-	if (input.runtimeState.activityPhase === "running") {
-		return "streaming";
+	if (lifecycle.connectionPhase === "disconnected") {
+		return "disconnected";
 	}
 
 	return "ready";
@@ -91,7 +220,7 @@ function deriveLiveConnectionState(input: LiveSessionWorkInput): LiveConnectionS
 export function deriveLiveSessionState(input: LiveSessionWorkInput): SessionState {
 	return deriveSessionState({
 		connectionState: deriveLiveConnectionState(input),
-		modeId: input.hotState.currentMode ? input.hotState.currentMode.id : null,
+		modeId: input.currentModeId,
 		tool: input.currentStreamingToolCall,
 		pendingQuestion: input.interactionSnapshot.pendingQuestion,
 		pendingPlanApproval: input.interactionSnapshot.pendingPlanApproval,
@@ -104,11 +233,16 @@ export function deriveLiveSessionWorkProjection(
 	input: LiveSessionWorkInput
 ): SessionWorkProjection {
 	const state = deriveLiveSessionState(input);
+	const canonicalActivity = deriveLiveCanonicalActivity(input);
+	const canonical = input.canonicalProjection;
+	const connectionError = canonical?.lifecycle.errorMessage ?? null;
+	const activeTurnFailure = canonical?.activeTurnFailure ?? null;
 	return deriveSessionWorkProjection({
 		state,
-		currentModeId: input.hotState.currentMode ? input.hotState.currentMode.id : null,
-		connectionError: input.hotState.connectionError,
-		activeTurnFailure: input.hotState.activeTurnFailure ?? null,
+		currentModeId: input.currentModeId,
+		connectionError,
+		activeTurnFailure,
+		canonicalActivity,
 	});
 }
 

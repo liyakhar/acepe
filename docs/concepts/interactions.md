@@ -47,6 +47,10 @@ Interactions should own:
 - linkage to the relevant operation or tool call,
 - enough metadata to render the right UX after reconnect.
 
+Interactions also participate in graph-backed session activity.
+
+When an interaction is pending, the session-level activity summary may legitimately become `waiting_for_user`, even if operations are still active underneath. That dominance must be decided in canonical graph-backed state so reopen, reconnect, queue, tab, and panel surfaces all agree.
+
 ## What the UI should not do
 
 The UI should not treat permissions, questions, or plan approvals as purely local component state.
@@ -60,7 +64,7 @@ Interaction association must be deterministic.
 That means shared code should prefer:
 
 - canonical operation linkage,
-- stable session + tool-call identity,
+- stable session + operation provenance key during migration,
 - provider-projected request identity,
 
 over:
@@ -78,4 +82,10 @@ If interactions are canonical:
 - keyboard shortcuts and action buttons can resolve the same pending interaction,
 - late-arriving operation data can still attach to the existing gate.
 
+And because the blocking interaction is linked into session activity, UI surfaces can explain why a session is waiting without inventing a second authority path from local modal state.
+
 If interactions are not canonical, reconnect becomes a race between UI timing and transport timing.
+
+## Final GOD endpoint
+
+Interactions own permission/question/approval decision lifecycle and link to canonical `operationId` when they block or enrich an operation. Legacy records keyed by provider tool-call IDs must rebind through the operation provenance key while journal data still exists. If a decision cannot safely rebind, it becomes an explicit unresolved interaction rather than disappearing or attaching by transcript timing.

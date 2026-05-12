@@ -99,6 +99,12 @@ describe("GitHub Badge Detection - Regex Patterns", () => {
 			expect(matches).toHaveLength(1);
 		});
 
+		it("should not match all-digit timestamps as bare commit SHAs", () => {
+			const text = "FIXQA4-1777748119374 Smooth streaming keeps token cadence. 1777748119374";
+			const matches = [...text.matchAll(GITHUB_COMMIT_SHA_PATTERN)];
+			expect(matches).toHaveLength(0);
+		});
+
 		it("should not match non-hex characters", () => {
 			const text = "xyz12345 is not hex";
 			const matches = [...text.matchAll(GITHUB_COMMIT_SHA_PATTERN)];

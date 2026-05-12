@@ -86,6 +86,7 @@ fn translate_text_delta(
             part_id: message_id.clone(),
             message_id,
             session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: None,
         }
     };
 

@@ -46,6 +46,14 @@ pub struct HistoryEntry {
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "prNumber")]
     pub pr_number: Option<i64>,
 
+    /// Ownership mode for the session-linked PR.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "prLinkMode"
+    )]
+    pub pr_link_mode: Option<String>,
+
     /// Whether the worktree path stored for this session no longer exists on disk.
     #[serde(
         default,
@@ -152,6 +160,8 @@ pub struct OrderedMessage {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<crate::cc_sdk::AssistantMessageError>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     pub is_meta: bool,

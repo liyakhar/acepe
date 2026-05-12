@@ -24,7 +24,7 @@ const toolName = $derived(permission.permission);
 		<!-- Header -->
 		<div class="flex items-center gap-2 px-3 py-2">
 			<Terminal weight="duotone" class="size-4 text-muted-foreground shrink-0" />
-			<span class="text-xs font-medium text-muted-foreground truncate">{toolName}</span>
+			<span class="text-sm font-medium text-muted-foreground truncate">{toolName}</span>
 		</div>
 
 		<!-- Command display -->

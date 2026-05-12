@@ -2,6 +2,7 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::acp::client_session::{SessionModelState, SessionModes};
+use crate::acp::lifecycle::FailureReason;
 
 use super::{
     AvailableCommand, AvailableCommandsData, ConfigOptionData, ConfigOptionUpdateData,
@@ -22,8 +23,12 @@ use super::{
 pub enum SessionUpdate {
     UserMessageChunk {
         chunk: ContentChunk,
+        #[serde(rename = "sessionId")]
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
+        #[serde(rename = "attemptId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
     },
 
     AgentMessageChunk {
@@ -34,6 +39,8 @@ pub enum SessionUpdate {
         message_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        produced_at_monotonic_ms: Option<u64>,
     },
 
     AgentThoughtChunk {
@@ -133,10 +140,17 @@ pub enum SessionUpdate {
     },
 
     /// Emitted by the async resume task when session connection fails.
+    ///
+    /// `failure_reason` carries the canonical classification (e.g.
+    /// `SessionGoneUpstream` for upstream-permanent failures, `ResumeFailed`
+    /// for transient/transport faults). `error` carries the raw provider
+    /// text verbatim for log/debug surfaces; user-facing English copy is
+    /// composed downstream in TS from `(agentId, failure_reason)`.
     ConnectionFailed {
         session_id: String,
         attempt_id: u64,
         error: String,
+        failure_reason: FailureReason,
     },
 }
 

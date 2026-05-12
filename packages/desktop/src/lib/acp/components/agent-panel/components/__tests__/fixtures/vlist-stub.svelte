@@ -6,8 +6,10 @@ import {
 	dataLengthHistory,
 	getDefaultViewportSize,
 	getRenderedItemAt,
+	recordRenderedItem,
 	scrollToIndexCalls,
 	shouldSuppressRenderedChildren,
+	shouldUseIndexKeys,
 } from "./vlist-stub-state.js";
 
 type VListStubProps = {
@@ -94,10 +96,16 @@ export function _setViewportSize(size: number): void {
 }
 
 function getRenderedItem(index: number): unknown {
-	return getRenderedItemAt(data, index);
+	const item = getRenderedItemAt(data, index);
+	recordRenderedItem(index, item === undefined);
+	return item;
 }
 
 function getRenderedKey(index: number): string | number {
+	if (shouldUseIndexKeys()) {
+		return index;
+	}
+
 	const item = getRenderedItem(index);
 	return getKey ? getKey(item, index) : index;
 }

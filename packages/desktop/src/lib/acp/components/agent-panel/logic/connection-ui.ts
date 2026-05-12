@@ -1,7 +1,9 @@
+import type { FailureReason } from "$lib/services/acp-types.js";
 import type { TurnState } from "../../../store/types.js";
 import type { ErrorMessage } from "../../../types/error-message.js";
 import type { PanelConnectionErrorDetails } from "../../../types/panel-connection-state";
 import { PanelConnectionState } from "../../../types/panel-connection-state";
+import { failureCopy } from "./failure-copy.js";
 
 export interface PanelErrorInfo {
 	readonly showError: boolean;
@@ -10,6 +12,12 @@ export interface PanelErrorInfo {
 	readonly details: string | null;
 	readonly referenceId: string | null;
 	readonly referenceSearchable: boolean;
+	/**
+	 * Canonical lifecycle failure classification when the error originates
+	 * from a session-level failure. `null` for unclassified cases (panel-level
+	 * errors, turn errors, or sessions whose lifecycle has no `failureReason`).
+	 */
+	readonly failureReason: FailureReason | null;
 }
 
 interface PanelErrorInputs {
@@ -18,6 +26,18 @@ interface PanelErrorInputs {
 	readonly sessionConnectionError: string | null;
 	readonly sessionTurnState?: TurnState;
 	readonly activeTurnError: ErrorMessage | null;
+	/**
+	 * Canonical lifecycle failure classification for the active session, or
+	 * `null` if none. Required so the panel can compose curated copy via
+	 * `failureCopy(agentId, failureReason)` instead of leaking raw provider
+	 * text into the inline error UI.
+	 */
+	readonly sessionFailureReason: FailureReason | null;
+	/**
+	 * Active session's agent id — used to key curated copy. Optional only for
+	 * pre-session call sites (where no session-level error can be present).
+	 */
+	readonly agentId: string | null;
 }
 
 function summarize(details: string | null): string | null {
@@ -50,17 +70,24 @@ export function derivePanelErrorInfo(inputs: PanelErrorInputs): PanelErrorInfo {
 			details: inputs.panelConnectionError?.message ?? null,
 			referenceId: inputs.panelConnectionError?.referenceId ?? null,
 			referenceSearchable: inputs.panelConnectionError?.referenceSearchable === true,
+			failureReason: null,
 		};
 	}
 
 	if (sessionHasError) {
+		const curated =
+			inputs.agentId !== null && inputs.sessionFailureReason !== null
+				? failureCopy(inputs.agentId, inputs.sessionFailureReason)
+				: null;
+		const display = curated ?? inputs.sessionConnectionError;
 		return {
 			showError: true,
 			title: "Connection error",
-			summary: summarize(inputs.sessionConnectionError),
-			details: inputs.sessionConnectionError,
+			summary: summarize(display),
+			details: display,
 			referenceId: null,
 			referenceSearchable: false,
+			failureReason: inputs.sessionFailureReason,
 		};
 	}
 
@@ -73,6 +100,7 @@ export function derivePanelErrorInfo(inputs: PanelErrorInputs): PanelErrorInfo {
 			details,
 			referenceId: inputs.activeTurnError.referenceId ?? null,
 			referenceSearchable: inputs.activeTurnError.referenceSearchable === true,
+			failureReason: null,
 		};
 	}
 
@@ -83,5 +111,6 @@ export function derivePanelErrorInfo(inputs: PanelErrorInputs): PanelErrorInfo {
 		details: null,
 		referenceId: null,
 		referenceSearchable: false,
+		failureReason: null,
 	};
 }

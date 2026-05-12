@@ -78,7 +78,7 @@ function handleTokenClick(tokenType: string, value: string) {
 	</div>
 {:else}
 	<!-- Regular user message with card container -->
-	<MessageInputContainer class="mb-2 border border-border">
+	<MessageInputContainer class="mb-2 border border-border" timestamp={message.sentAt}>
 		<div class="max-h-32 overflow-auto" data-scrollable>
 			{#each processedChunks as chunk, index (index)}
 				<div class="space-y-1.5">

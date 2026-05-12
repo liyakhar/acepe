@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.5.10] - 2026-05-10
+
+### Added
+- Streaming reveal now uses a canonical token-timing path with shared desktop timing helpers, a debug repro lab, and regression coverage for token-stream lifecycle edges
+- Agent panel rendering paths gained additional scene-model and viewport tests for live-session streaming, optimistic prompts, and transient virtualization failure modes
+
+### Changed
+- Assistant message streaming now reveals live text with stable pacing, shared stagger/fade timing, and instant agent-panel header expansion
+- Agent panel presentation continues moving toward the shared `@acepe/ui` scene/view layer, with desktop retaining controller responsibilities
+
+### Fixed
+- Assistant tokens no longer all appear instantly when the provider finishes before the reveal animation has settled
+- Historical/static assistant content no longer replays token animations when it enters the viewport
+- Streaming reveal layout now follows the height of currently revealed words instead of reserving the final message height
+- Fenced code blocks participate in reveal timing without breaking the text that follows them
+- Live streaming handoff from Virtua to the native fallback list now keeps the thread pinned to the latest row instead of jumping to the top
+- Optimistic user prompts remain transient and reveal-safe during live send/reconnect paths
+
+### Removed
+- Legacy assistant text reveal projector/controller paths and related tests were removed after the token reveal cutover
+
 ## [2026.4.16] - 2026-04-16
 
 ### Changed

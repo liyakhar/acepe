@@ -6,6 +6,7 @@ import { ACP_INBOUND_METHODS } from "../../constants/acp-methods.js";
 import { buildAcpPermissionId, type PermissionRequest } from "../../types/permission.js";
 import type { QuestionRequest } from "../../types/question.js";
 import type { AcpEventEnvelope } from "../acp-event-bridge.js";
+import { createTestAcpEventDrain } from "./fixtures/acp-event-drain-stub.js";
 
 const mockOpenAcpEventSource = vi.fn();
 
@@ -14,6 +15,7 @@ const mockUnlisten = vi.fn();
 let eventCallback: ((event: { payload: JsonValue }) => void) | null = null;
 
 vi.mock("../acp-event-bridge.js", () => ({
+	createAcpEventDrain: createTestAcpEventDrain,
 	openAcpEventSource: (...args: Parameters<typeof mockOpenAcpEventSource>) =>
 		mockOpenAcpEventSource(...args),
 }));

@@ -1,21 +1,30 @@
 <script lang="ts">
-import { AgentPanelShell } from "@acepe/ui/agent-panel";
+import {
+	AgentPanelShell,
+	type AgentPanelQuestionSelectEvent,
+	type AgentPanelSceneEntryModel,
+	type TokenRevealCss,
+} from "@acepe/ui/agent-panel";
 import { EmbeddedIconButton } from "@acepe/ui/panel-header";
 import ArrowUp from "@lucide/svelte/icons/arrow-up";
 import { Clock } from "phosphor-svelte";
-import { tick } from "svelte";
+import { onDestroy, onMount, tick } from "svelte";
 import { toast } from "svelte-sonner";
-import { createLocalReferenceDetails } from "$lib/errors/error-reference.js";
+import { deriveLocalReferenceId } from "$lib/errors/error-reference.js";
+import type { SessionStateGraph, SessionTurnState } from "../../../../services/acp-types.js";
+import type { TurnState } from "../../../store/types.js";
 import type { MergeStrategy } from "$lib/utils/tauri-client/git.js";
 import AgentAttachedFilePane from "../../../../components/main-app-view/components/content/agent-attached-file-pane.svelte";
 import type { Project } from "../../../logic/project-manager.svelte";
 import { checkpointStore } from "../../../store/checkpoint-store.svelte.js";
 import { getAgentStore } from "../../../store/index.js";
 import { getConnectionStore } from "../../../store/connection-store.svelte.js";
+import { getInteractionStore } from "../../../store/interaction-store.svelte.js";
 import { getPanelStore } from "../../../store/panel-store.svelte.js";
 import { getSessionStore } from "../../../store/session-store.svelte.js";
+import { api } from "../../../store/api.js";
+import { getChatPreferencesStore } from "../../../store/chat-preferences-store.svelte.js";
 import { mergeStrategyStore } from "../../../store/merge-strategy-store.svelte.js";
-import { formatSessionTitleForDisplay } from "../../../store/session-title-policy.js";
 import type { ModifiedFilesState } from "../../../types/modified-files-state.js";
 import { PanelConnectionEvent } from "../../../types/panel-connection-state.js";
 import { PanelConnectionState } from "../../../types/panel-connection-state.js";
@@ -25,15 +34,16 @@ import { getProjectColor, TAG_COLORS } from "../../../utils/colors";
 import { extractAttachmentsFromChunks } from "../../../utils/extract-content-attachments.js";
 import { createLogger } from "../../../utils/logger.js";
 import AgentInput from "../../agent-input/agent-input-ui.svelte";
+import AgentSelector from "../../agent-selector.svelte";
+import ProjectSelector from "../../project-selector.svelte";
 import { shouldDisableSendForFailedFirstSend } from "../../agent-input/logic/first-send-recovery.js";
 import type { Attachment } from "../../agent-input/types/attachment.js";
 import { CheckpointTimeline } from "../../checkpoint/index.js";
-import { aggregateFileEdits } from "../../modified-files/logic/aggregate-file-edits.js";
+import { aggregateFileEditsFromToolCalls } from "../../modified-files/logic/aggregate-file-edits.js";
 import type { PrGenerationConfig } from "../../modified-files/types/pr-generation-config.js";
 import * as agentModelPrefs from "../../../store/agent-model-preferences-store.svelte.js";
 import {
 	AgentPanelComposerFrame as SharedAgentPanelComposerFrame,
-	AgentPanelWorktreeStatusDisplay as SharedWorktreeStatusDisplay,
 	AgentPanelPlanHeader as SharedPlanHeader,
 } from "@acepe/ui/agent-panel";
 import PlanDialog from "../../plan-dialog.svelte";
@@ -47,15 +57,24 @@ import {
 	createResolvedWorktreeCloseConfirmationState,
 	createWorktreeCreationState,
 	copyTextToClipboard,
+	applyAgentPanelDisplayMemory,
+	applyAgentPanelDisplayModelToSceneEntries,
+	backfillSceneEntryTimestamps,
+	buildAgentPanelBaseModel,
+	createAgentPanelDisplayMemory,
+	deriveCanonicalAgentPanelSessionState,
+	deriveEffectiveCanonicalTurnPresentation,
 	derivePanelErrorInfo,
-	mapSessionStatusToUI,
+	mapCanonicalTurnStateToHotTurnState,
 	matchesWorktreeSetupContext,
+	resolveOptimisticUserEntryForGraph,
+	resolveVisibleEntryCount,
 	removeWorktreeAndMarkSessionWorktreeDeleted,
 	reduceWorktreeSetupEvent,
 	resolveEffectiveProjectPath,
-	resolveVisibleSessionEntries,
 	shouldConfirmWorktreeClose,
 } from "../logic";
+import { materializeAgentPanelSceneFromGraph } from "../../../session-state/agent-panel-graph-materializer.js";
 import { resolveAgentPanelWorktreePending } from "../logic/worktree-pending.js";
 import { getWorktreeDefaultStore } from "../../worktree/worktree-default-store.svelte.js";
 import { DEFAULT_BROWSER_HOME_URL } from "../../../constants/browser-defaults.js";
@@ -64,10 +83,21 @@ import { derivePanelViewState } from "../../../logic/panel-visibility.js";
 import { createPanelBranchLookupController } from "../logic/panel-branch-lookup.js";
 import type { WorktreeSetupState } from "../logic/worktree-setup-events.js";
 import { shouldAutoScrollOnPanelActivation } from "../logic/should-auto-scroll-on-panel-activation.js";
+import { deriveAgentPanelHeaderDisplayTitle } from "../logic/agent-panel-header-title.js";
+import { shouldShowPreSessionWorktreeCard } from "../logic/pre-session-worktree-card-visibility.js";
 import { resolveWorktreeToggleProjectPath } from "../logic/worktree-toggle-project-path.js";
+import type {
+	CanonicalSessionProjection,
+	RowTokenStream,
+} from "../../../store/canonical-session-projection.js";
 import { AgentPanelState } from "../state/agent-panel-state.svelte";
 import type { AgentPanelProps } from "../types";
+import {
+	createLegacyInteractionReplyHandler,
+	normalizeInteractionReplyHandler,
+} from "../../../types/reply-handler.js";
 import { AgentPanelFooter as SharedFooter } from "@acepe/ui/agent-panel";
+import WorktreeFooterButton from "../../shared/worktree-footer-button.svelte";
 import AgentPanelContent from "./agent-panel-content.svelte";
 import AgentPanelHeader from "./agent-panel-header.svelte";
 import AgentPanelResizeEdge from "./agent-panel-resize-edge.svelte";
@@ -97,6 +127,13 @@ import {
 	sendQueuedMessageNow,
 } from "../logic/queue-strip-handlers.js";
 import {
+	TOKEN_REVEAL_FADE_MS,
+	TOKEN_REVEAL_STEP_MS,
+	resolveTokenRevealSettleDelayMs,
+	shouldKeepTokenRevealTiming,
+	type TokenRevealTiming,
+} from "../../messages/token-reveal-motion.js";
+import {
 	copyStreamingLogPathToClipboard,
 	copyThreadContentToClipboard,
 	discardPreparedWorktreeSessionLaunch,
@@ -110,7 +147,6 @@ import {
 	openSessionInFinder,
 	openSessionRawFileInEditor,
 	openStreamingLog,
-	persistSessionPrNumber,
 	persistSessionWorktreePathAfterRename,
 	removeWorktreeFromDisk,
 	runCreatePrWorkflow,
@@ -119,6 +155,9 @@ import {
 	scheduleCheckpointReloadAfterRevert,
 	subscribeGitWorktreeSetupChannel,
 } from "../services/index.js";
+
+// Canonical-to-hot turn state mapping is provided by the shared logic module
+// (mapCanonicalTurnStateToHotTurnState) imported above.
 
 // ✅ Destructure props - this is idiomatic Svelte 5
 let {
@@ -161,11 +200,147 @@ let {
 // ✅ State managers (must be before derived values that use them)
 const sessionStore = getSessionStore();
 const panelStore = getPanelStore();
+const chatPreferencesStore = getChatPreferencesStore();
 const connectionStore = getConnectionStore();
+const interactionStore = getInteractionStore();
+const operationStore = sessionStore.getOperationStore();
 const agentStore = getAgentStore();
 const messageQueueStore = getMessageQueueStore();
 const logger = createLogger({ id: "agent-panel-render-trace", name: "AgentPanelRenderTrace" });
 let lastPanelTraceSignature = $state<string | null>(null);
+let agentPanelDisplayMemory = createAgentPanelDisplayMemory();
+let prefersReducedMotion = $state(false);
+
+function findRowTokenStream(
+	projection: CanonicalSessionProjection | null,
+	rowId: string
+): RowTokenStream | null {
+	if (projection === null) {
+		return null;
+	}
+
+	for (const rowTokenStream of projection.tokenStream.values()) {
+		if (rowTokenStream.rowId === rowId) {
+			return rowTokenStream;
+		}
+	}
+
+	return null;
+}
+
+function buildTokenRevealCss(
+	rowTokenStream: RowTokenStream | null,
+	projection: CanonicalSessionProjection | null,
+	streamingAnimationMode: "smooth" | "instant",
+	reducedMotion: boolean,
+	isStreaming: boolean
+): TokenRevealCss | undefined {
+	const clockAnchor = projection?.clockAnchor;
+	if (
+		rowTokenStream === null ||
+		rowTokenStream.wordCount < 1 ||
+		clockAnchor === null ||
+		clockAnchor === undefined
+	) {
+		return undefined;
+	}
+
+	const browserNowMs = globalThis.performance?.now();
+	if (browserNowMs === undefined) {
+		return undefined;
+	}
+
+	const rustStartOffsetMs =
+		rowTokenStream.firstDeltaProducedAtMonotonicMs - clockAnchor.rustMonotonicMs;
+	const browserElapsedMs = browserNowMs - clockAnchor.browserAnchorMs;
+	const baselineMs = rustStartOffsetMs - browserElapsedMs;
+	const revealMode = reducedMotion ? "instant" : streamingAnimationMode;
+
+	const tokenRevealCss = {
+		revealCount: rowTokenStream.wordCount,
+		revealedCharCount: rowTokenStream.accumulatedText.length,
+		baselineMs,
+		tokStepMs: TOKEN_REVEAL_STEP_MS,
+		tokFadeDurMs: TOKEN_REVEAL_FADE_MS,
+		mode: revealMode,
+	};
+
+	if (
+		!shouldKeepTokenRevealTiming({
+			isStreaming,
+			timing: tokenRevealCss,
+		})
+	) {
+		return undefined;
+	}
+
+	return tokenRevealCss;
+}
+
+function copyAssistantSceneEntryWithTokenReveal(
+	entry: AgentPanelSceneEntryModel,
+	sourceEntry: AgentPanelSceneEntryModel | undefined,
+	tokenRevealCss: TokenRevealCss | undefined
+): AgentPanelSceneEntryModel {
+	if (entry.type !== "assistant") {
+		return entry;
+	}
+
+	const sourceAssistantEntry = sourceEntry?.type === "assistant" ? sourceEntry : undefined;
+
+	return {
+		id: entry.id,
+		type: "assistant",
+		markdown: sourceAssistantEntry?.markdown ?? entry.markdown,
+		message: sourceAssistantEntry?.message ?? entry.message,
+		isStreaming: entry.isStreaming,
+		tokenRevealCss,
+		timestampMs: entry.timestampMs,
+	};
+}
+
+function collectSettlingTokenRevealTimings(
+	entries: readonly AgentPanelSceneEntryModel[]
+): readonly TokenRevealTiming[] {
+	const timings: TokenRevealTiming[] = [];
+
+	for (const entry of entries) {
+		if (entry.type !== "assistant" || entry.isStreaming === true) {
+			continue;
+		}
+
+		const tokenRevealCss = entry.tokenRevealCss;
+		if (tokenRevealCss === undefined) {
+			continue;
+		}
+
+		timings.push({
+			revealCount: tokenRevealCss.revealCount,
+			baselineMs: tokenRevealCss.baselineMs,
+			tokStepMs: tokenRevealCss.tokStepMs,
+			tokFadeDurMs: tokenRevealCss.tokFadeDurMs,
+			mode: tokenRevealCss.mode,
+		});
+	}
+
+	return timings;
+}
+
+onMount(() => {
+	const mediaQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? null;
+	if (mediaQuery === null) {
+		prefersReducedMotion = false;
+		return;
+	}
+	const updateReducedMotion = (event: MediaQueryList | MediaQueryListEvent): void => {
+		prefersReducedMotion = event.matches;
+	};
+	updateReducedMotion(mediaQuery);
+	mediaQuery.addEventListener("change", updateReducedMotion);
+	return () => {
+		mediaQuery.removeEventListener("change", updateReducedMotion);
+	};
+});
 
 // ============================================================
 // GRANULAR SESSION DATA - Fine-grained reactivity
@@ -177,6 +352,7 @@ const sessionIdentity = $derived(sessionId ? sessionStore.getSessionIdentity(ses
 
 // Metadata: title, createdAt, updatedAt (rarely changes)
 const sessionMetadata = $derived(sessionId ? sessionStore.getSessionMetadata(sessionId) : null);
+const sessionHotState = $derived(sessionId ? sessionStore.getHotState(sessionId) : null);
 
 // Entries: conversation content (changes frequently during streaming)
 // Merges any optimistic pending entry (shown before session creation) with real entries.
@@ -185,6 +361,23 @@ const sessionMetadata = $derived(sessionId ? sessionStore.getSessionMetadata(ses
 // reviewMode, etc.), not just pendingUserEntry. This causes extra recomputations during typing,
 // but the fast path returns the same array reference so Svelte skips DOM updates. Acceptable trade-off.
 const panelHotState = $derived(panelId ? panelStore.getHotState(panelId) : null);
+const preSessionPendingUserEntry = $derived(
+	sessionId === null || sessionId === undefined ? (panelHotState?.pendingUserEntry ?? null) : null
+);
+const hasCanonicalUserEntryInGraph = $derived.by(() => {
+	const entries = presentationSessionStateGraph?.transcriptSnapshot.entries ?? [];
+	return entries.some((entry) => entry.role === "user");
+});
+const optimisticUserEntryForGraph = $derived(
+	resolveOptimisticUserEntryForGraph({
+		panelPendingUserEntry: panelHotState?.pendingUserEntry ?? null,
+		sessionPendingOptimisticEntry: sessionHotState?.pendingSendIntent?.optimisticEntry ?? null,
+		hasCanonicalUserEntry: hasCanonicalUserEntryInGraph,
+	})
+);
+const hasImmediatePendingSendIntent = $derived(
+	(sessionHotState?.pendingSendIntent ?? null) !== null || optimisticUserEntryForGraph !== null
+);
 const panelSnapshot = $derived(panelId ? panelStore.getTopLevelPanel(panelId) : null);
 const panelPendingWorktreeEnabled = $derived(
 	panelSnapshot?.kind === "agent" ? (panelSnapshot.pendingWorktreeEnabled ?? null) : null
@@ -193,7 +386,7 @@ const panelPreparedWorktreeLaunch = $derived(
 	panelSnapshot?.kind === "agent" ? (panelSnapshot.preparedWorktreeLaunch ?? null) : null
 );
 const sessionEntries = $derived.by(() => {
-	const pending = panelHotState?.pendingUserEntry ?? null;
+	const pending = preSessionPendingUserEntry;
 	const real = sessionId ? sessionStore.getEntries(sessionId) : [];
 	if (!pending) return real;
 	if (real.length > 0 && real[0]?.type === "user") return real;
@@ -206,25 +399,21 @@ const firstMessageAttachments = $derived.by(() => {
 	return extractAttachmentsFromChunks(firstUserEntry.message.chunks ?? []);
 });
 
-// Hot state: status, isStreaming (changes during activity)
-const sessionHotState = $derived(sessionId ? sessionStore.getHotState(sessionId) : null);
-
-// Computed from granular data
-const FILE_MODIFYING_KINDS = new Set(["edit", "delete", "move"]);
-const hasEdits = $derived(
-	sessionEntries.some(
-		(e) => e.type === "tool_call" && e.message.kind && FILE_MODIFYING_KINDS.has(e.message.kind)
-	)
+const visibleEntryCount = $derived(
+	resolveVisibleEntryCount({
+		canonicalEntryCount: sessionEntries.length,
+		optimisticUserEntry: optimisticUserEntryForGraph,
+	})
 );
-const hasMessages = $derived(sessionEntries.length > 0);
+const hasMessages = $derived(visibleEntryCount > 0);
 const sessionProjectPath = $derived(sessionIdentity?.projectPath ?? null);
 const sessionAgentId = $derived(sessionIdentity?.agentId ?? null);
 const sessionWorktreePath = $derived(sessionIdentity?.worktreePath ?? null);
 const sessionTitle = $derived(sessionMetadata?.title ?? null);
 
-// Current model from session hot state (for PR popover default)
+// Current model from canonical capabilities (for PR popover default)
 const sessionCurrentModelId = $derived(
-	sessionId ? (sessionStore.getHotState(sessionId)?.currentModel?.id ?? null) : null
+	sessionId ? sessionStore.getSessionCurrentModelId(sessionId) : null
 );
 
 // ✅ State manager for local UI state only (drag, dialog)
@@ -253,11 +442,14 @@ let contentScrollViewport: HTMLElement | null = $state(null);
 let contentIsAtBottom = $state(true);
 let contentIsAtTop = $state(true);
 let contentIsStreaming = $state(false);
+let tokenRevealSettleRevision = $state(0);
 let panelConnectionState = $state<PanelConnectionState | null>(null);
 let panelConnectionError = $state<PanelConnectionErrorDetails | null>(null);
-let errorDismissed = $state(false);
-let fallbackInlineErrorReferenceId = $state<string | null>(null);
-let fallbackInlineErrorFingerprint = $state<string | null>(null);
+// Dismiss tracking: store the error fingerprint that the user dismissed.
+// `errorDismissed` is a $derived comparison against the current fingerprint —
+// when the error key changes (different failureReason or details), the
+// dismissal is automatically lifted without any $effect.
+let dismissedErrorKey = $state<string | null>(null);
 
 // Checkpoint timeline state
 let showCheckpointTimeline = $state(false);
@@ -289,7 +481,7 @@ function prepareForNextUserReveal() {
 		latestEntryId: sessionEntries.at(-1)?.id ?? null,
 		latestEntryType: sessionEntries.at(-1)?.type ?? null,
 	});
-	contentRef?.prepareForNextUserReveal({ force: true });
+	contentRef?.prepareForNextUserReveal();
 	return effectivePanelId;
 }
 
@@ -341,7 +533,50 @@ const browserSidebarUrl = $derived(
 );
 // Canonical runtime state from session machine.
 const runtimeState = $derived(sessionId ? sessionStore.getSessionRuntimeState(sessionId) : null);
-const entriesCount = $derived(sessionEntries.length);
+const canonicalProjection = $derived(
+	sessionId ? sessionStore.getCanonicalSessionProjection(sessionId) : null
+);
+const sessionStateGraph = $derived(sessionId ? sessionStore.getSessionStateGraph(sessionId) : null);
+const canonicalSessionTurnState = $derived(
+	sessionId ? sessionStore.getSessionTurnState(sessionId) : null
+);
+const hasObservedTerminalTurn = $derived((sessionHotState?.observedTerminalTurn ?? null) !== null);
+const effectiveTurnPresentation = $derived(
+	deriveEffectiveCanonicalTurnPresentation({
+		lifecycle: canonicalProjection?.lifecycle ?? null,
+		activity: sessionStateGraph?.activity ?? null,
+		turnState: sessionStateGraph?.turnState ?? null,
+		hasLocalObservedTerminalTurn: hasObservedTerminalTurn,
+	})
+);
+const presentationSessionStateGraph = $derived.by((): SessionStateGraph | null => {
+	const graph = sessionStateGraph;
+	if (graph === null || !effectiveTurnPresentation.hasTerminalOverride) {
+		return graph;
+	}
+
+	if (
+		effectiveTurnPresentation.activity === null ||
+		effectiveTurnPresentation.activity === undefined
+	) {
+		return graph;
+	}
+
+	return {
+		...graph,
+		activity: effectiveTurnPresentation.activity,
+		turnState: "Completed",
+	};
+});
+const effectiveCanonicalSessionTurnState = $derived(
+	(effectiveTurnPresentation.turnState ?? canonicalSessionTurnState) as SessionTurnState | null
+);
+const sessionTurnState = $derived(
+	effectiveCanonicalSessionTurnState !== null
+		? mapCanonicalTurnStateToHotTurnState(effectiveCanonicalSessionTurnState)
+		: "idle"
+);
+const entriesCount = $derived(visibleEntryCount);
 const hasSession = $derived(sessionId !== null);
 // Prefer active worktree path, then session worktree, then project paths.
 // NOTE: Must be defined before panelVisibility which uses effectiveProjectPath
@@ -361,29 +596,51 @@ const effectiveProjectName = $derived(
 		? project?.name
 		: (project?.name ?? (projectCount === 1 ? allProjects[0].name : undefined))
 );
+const preSessionSelectedProject = $derived.by(() => {
+	if (!worktreeToggleProjectPath) {
+		return null;
+	}
+	return allProjects.find((candidate) => candidate.path === worktreeToggleProjectPath) ?? null;
+});
 
 // ✅ Derived values from granular session data
 const effectivePanelAgentId = $derived(selectedAgentId ?? sessionAgentId);
-const agentName = $derived(effectivePanelAgentId);
-const sessionStatus = $derived.by(() => {
-	if (!sessionId && panelId && panelStore.getHotState(panelId).pendingUserEntry)
-		return "connecting";
-	const connectionPhase = runtimeState?.connectionPhase;
-	const activityPhase = runtimeState?.activityPhase;
-	if (!connectionPhase) return null;
-	if (connectionPhase === "failed") return "error";
-	if (connectionPhase === "connecting") return "connecting";
-	if (connectionPhase === "disconnected") return "idle";
-	if (activityPhase === "running") return "streaming";
-	return "ready";
+const agentName = $derived.by(() => {
+	if (!effectivePanelAgentId) {
+		return null;
+	}
+
+	const agent = availableAgents.find((candidate) => candidate.id === effectivePanelAgentId);
+	return agent?.name ?? effectivePanelAgentId;
 });
-const mappedSessionStatus = $derived(mapSessionStatusToUI(sessionStatus));
-const sessionIsStreaming = $derived(runtimeState?.activityPhase === "running");
-const sessionCanSubmit = $derived(runtimeState?.canSubmit ?? false);
-const sessionShowStop = $derived(runtimeState?.showStop ?? false);
-const sessionConnectionError = $derived(sessionHotState?.connectionError ?? null);
+const canonicalPanelSessionState = $derived.by(() =>
+	deriveCanonicalAgentPanelSessionState({
+		lifecycle: canonicalProjection?.lifecycle ?? null,
+		activity: effectiveTurnPresentation.activity ?? canonicalProjection?.activity ?? null,
+		turnState: effectiveCanonicalSessionTurnState,
+		hasEntries: sessionEntries.length > 0,
+		hasOptimisticPendingEntry: preSessionPendingUserEntry !== null,
+		hasLocalPendingSendIntent: (sessionHotState?.pendingSendIntent ?? null) !== null,
+		hasLocalObservedTerminalTurn: hasObservedTerminalTurn,
+	})
+);
+const panelSessionStatus = $derived(canonicalPanelSessionState.sessionStatus);
+const sessionIsConnected = $derived(canonicalPanelSessionState.isConnected);
+const sessionIsStreaming = $derived(canonicalPanelSessionState.isStreaming);
+const isAwaitingModelResponse = $derived(
+	effectiveTurnPresentation.activity?.kind === "awaiting_model"
+);
+const showPlanningIndicator = $derived(canonicalPanelSessionState.showPlanningIndicator);
+const sessionCanSubmit = $derived(canonicalPanelSessionState.canSubmit);
+const sessionShowStop = $derived(canonicalPanelSessionState.showStop);
+const sessionConnectionError = $derived(
+	sessionId ? sessionStore.getSessionConnectionError(sessionId) : null
+);
+const sessionFailureReason = $derived(
+	sessionId ? sessionStore.getSessionLifecycleFailureReason(sessionId) : null
+);
 const activeTurnError = $derived.by(() => {
-	const activeTurnFailure = sessionHotState?.activeTurnFailure;
+	const activeTurnFailure = sessionId ? sessionStore.getSessionActiveTurnFailure(sessionId) : null;
 	if (activeTurnFailure) {
 		return {
 			content: activeTurnFailure.message,
@@ -408,55 +665,39 @@ const errorInfo = $derived.by(() =>
 		panelConnectionState,
 		panelConnectionError,
 		sessionConnectionError,
-		sessionTurnState: sessionHotState?.turnState,
+		sessionTurnState: sessionTurnState,
 		activeTurnError,
+		sessionFailureReason,
+		agentId: sessionAgentId,
 	})
 );
+// Deterministic local reference id derived purely from error content.
+// When `errorInfo.referenceId` exists (panel-level error with an upstream id),
+// we use it directly; otherwise we mint a stable id from the (title, details)
+// fingerprint so the same error keeps the same id without an $effect.
+const fallbackInlineErrorReferenceId = $derived.by(() => {
+	if (!errorInfo.showError || errorInfo.details === null) {
+		return null;
+	}
+	if (errorInfo.referenceId !== null) {
+		return null;
+	}
+	return deriveLocalReferenceId(`${errorInfo.title}|${errorInfo.details}`);
+});
 const inlineErrorReferenceId = $derived(errorInfo.referenceId ?? fallbackInlineErrorReferenceId);
 const inlineErrorReferenceSearchable = $derived(
 	errorInfo.referenceId !== null ? errorInfo.referenceSearchable : false
 );
 
-// Reset dismiss state when error content changes so a new error is always visible
-$effect(() => {
-	const _details = errorInfo.details;
-	if (!errorInfo.showError) {
-		errorDismissed = false;
-	}
-});
-
-$effect(() => {
-	const details = errorInfo.details;
-	if (!errorInfo.showError || details === null) {
-		fallbackInlineErrorReferenceId = null;
-		fallbackInlineErrorFingerprint = null;
-		return;
-	}
-
-	if (errorInfo.referenceId !== null) {
-		fallbackInlineErrorReferenceId = null;
-		fallbackInlineErrorFingerprint = null;
-		return;
-	}
-
-	const nextFingerprint = `${errorInfo.title}|${details}`;
-	if (
-		fallbackInlineErrorFingerprint === nextFingerprint &&
-		fallbackInlineErrorReferenceId !== null
-	) {
-		return;
-	}
-
-	fallbackInlineErrorFingerprint = nextFingerprint;
-	fallbackInlineErrorReferenceId = createLocalReferenceDetails().referenceId;
-});
-
-const showInlineErrorCard = $derived(errorInfo.showError && !errorDismissed);
-const visibleSessionEntries = $derived.by(() =>
-	resolveVisibleSessionEntries({
-		sessionEntries,
-		activeTurnError,
-	})
+// Dismissal key: errors with the same (failureReason, details) pair are the
+// same logical error; if the user dismisses one, they dismiss the same error
+// across reactive reads. New failureReason or new details ⇒ new key ⇒ the
+// dismissal is automatically lifted (no $effect needed).
+const errorDismissalKey = $derived(
+	errorInfo.showError ? `${errorInfo.failureReason ?? "none"}::${errorInfo.details ?? ""}` : null
+);
+const errorDismissed = $derived(
+	errorDismissalKey !== null && dismissedErrorKey === errorDismissalKey
 );
 
 // Panel view state: single discriminated union from all inputs
@@ -464,12 +705,22 @@ const viewStateInput = $derived({
 	runtimeState,
 	entriesCount,
 	hasSession,
+	isAwaitingModelResponse,
 	showProjectSelection,
 	hasEffectiveProjectPath: !!effectiveProjectPath,
 	errorInfo,
 });
 const viewState = $derived(derivePanelViewState(viewStateInput));
 const panelViewKind = $derived(viewState.kind);
+
+// Suppress the inline error card when the big-page error variant is
+// rendering for the same failure — otherwise the user sees the duplicated
+// "Unable to load session" page AND a red inline card. The big page is
+// the primary treatment when there are no entries; the inline card is
+// the single surface inside an active conversation.
+const showInlineErrorCard = $derived(
+	errorInfo.showError && !errorDismissed && viewState.kind !== "error"
+);
 const worktreePending = $derived(
 	resolveAgentPanelWorktreePending({
 		activeWorktreePath: effectiveActiveWorktreePath,
@@ -480,12 +731,15 @@ const worktreePending = $derived(
 );
 let worktreeSetupState = $state<WorktreeSetupState | null>(null);
 const pendingWorktreeSetup = $derived(panelHotState ? panelHotState.pendingWorktreeSetup : null);
-const showPreSessionWorktreeCard = $derived(
-	sessionId === null &&
-		!pendingProjectSelection &&
-		worktreeToggleProjectPath !== null &&
-		pendingWorktreeSetup === null &&
-		!worktreeSetupState?.isVisible
+const showPreSessionWorktreeCard = $derived.by(() =>
+	shouldShowPreSessionWorktreeCard({
+		sessionId,
+		pendingProjectSelection,
+		worktreeToggleProjectPath,
+		hasPendingWorktreeSetup: pendingWorktreeSetup !== null,
+		worktreeSetupVisible: worktreeSetupState?.isVisible === true,
+		hasMessages,
+	})
 );
 
 $effect(() => {
@@ -634,9 +888,13 @@ const displayProjectName = $derived.by(() => {
 const sequenceId = $derived(sessionMetadata ? (sessionMetadata.sequenceId ?? null) : null);
 
 const displayTitle = $derived.by(() => {
-	if (!sessionTitle && !displayProjectName) return null;
-	return formatSessionTitleForDisplay(sessionTitle, displayProjectName, "Project");
+	return deriveAgentPanelHeaderDisplayTitle({
+		sessionTitle,
+		projectName: displayProjectName,
+		sessionEntries,
+	});
 });
+const graphHeaderTitle = $derived(displayTitle ?? "");
 const sessionDiffStats = $derived.by(() => {
 	if (!sessionId) return { insertions: 0, deletions: 0 };
 	const checkpoints = checkpointStore.getCheckpoints(sessionId);
@@ -647,6 +905,110 @@ const sessionCreatedAt = $derived(sessionMetadata?.createdAt ?? null);
 const sessionUpdatedAt = $derived(sessionMetadata?.updatedAt ?? null);
 
 const agentIconSrc = $derived(getAgentIcon(effectivePanelAgentId, effectiveTheme));
+const graphMaterializedScene = $derived(
+	materializeAgentPanelSceneFromGraph({
+		panelId: effectivePanelId,
+		graph: presentationSessionStateGraph,
+		header: {
+			title: graphHeaderTitle,
+			subtitle: sessionTitle,
+			agentIconSrc,
+			agentLabel: agentName,
+			projectLabel: displayProjectName,
+			projectColor,
+			sequenceId,
+		},
+		optimistic:
+			optimisticUserEntryForGraph != null
+				? {
+						pendingUserEntry: optimisticUserEntryForGraph,
+					}
+				: null,
+	})
+);
+const agentPanelBaseDisplayModel = $derived(
+	buildAgentPanelBaseModel({
+		panelId: effectivePanelId,
+		graph: presentationSessionStateGraph,
+		header: {
+			title: graphHeaderTitle,
+			agentName,
+		},
+		local: {
+			pendingUserEntry: optimisticUserEntryForGraph,
+			pendingSendIntent: hasImmediatePendingSendIntent,
+		},
+	})
+);
+const agentPanelDisplayResult = $derived.by(() => {
+	const result = applyAgentPanelDisplayMemory(agentPanelDisplayMemory, agentPanelBaseDisplayModel);
+	agentPanelDisplayMemory = result.memory;
+	return result;
+});
+const agentPanelDisplayModel = $derived(agentPanelDisplayResult.model);
+const graphSceneEntries = $derived.by(() => {
+	return backfillSceneEntryTimestamps(
+		applyAgentPanelDisplayModelToSceneEntries(
+			agentPanelDisplayModel,
+			agentPanelDisplayResult.memory,
+			graphMaterializedScene.conversation.entries
+		),
+		sessionEntries
+	);
+});
+const tokenRevealSceneEntries = $derived.by(() => {
+	tokenRevealSettleRevision;
+	const projection = canonicalProjection;
+	const streamingAnimationMode = chatPreferencesStore?.streamingAnimationMode ?? "smooth";
+	const sourceEntriesById = new Map<string, AgentPanelSceneEntryModel>();
+
+	for (const sourceEntry of graphMaterializedScene.conversation.entries) {
+		sourceEntriesById.set(sourceEntry.id, sourceEntry);
+	}
+
+	return graphSceneEntries.map((entry) => {
+		if (entry.type !== "assistant") {
+			return entry;
+		}
+
+		const tokenRevealCss = buildTokenRevealCss(
+			findRowTokenStream(projection, entry.id),
+			projection,
+			streamingAnimationMode,
+			prefersReducedMotion,
+			entry.isStreaming === true
+		);
+		if (tokenRevealCss === undefined) {
+			return entry;
+		}
+
+		return copyAssistantSceneEntryWithTokenReveal(
+			entry,
+			sourceEntriesById.get(entry.id),
+			tokenRevealCss
+		);
+	});
+});
+const tokenRevealSettleDelayMs = $derived(
+	resolveTokenRevealSettleDelayMs(collectSettlingTokenRevealTimings(tokenRevealSceneEntries))
+);
+$effect(() => {
+	const delayMs = tokenRevealSettleDelayMs;
+	if (delayMs === null) {
+		return;
+	}
+
+	const nextRevision = tokenRevealSettleRevision + 1;
+	const timeoutId = window.setTimeout(() => {
+		if (tokenRevealSettleRevision < nextRevision) {
+			tokenRevealSettleRevision = nextRevision;
+		}
+	}, delayMs);
+
+	return () => {
+		window.clearTimeout(timeoutId);
+	};
+});
 const isConnecting = $derived(
 	panelConnectionState === PanelConnectionState.CONNECTING ||
 		(!sessionId && panelId ? panelHotState?.pendingUserEntry !== null : false)
@@ -679,6 +1041,18 @@ const footerWorktreeStatus = $derived.by(() => {
 	return null;
 });
 
+/** All sessions in the session-panel's current project, used by the modified-header PR picker. */
+const projectSessionsForPr = $derived.by(() => {
+	if (!sessionProjectPath) return [];
+	return sessionStore.getSessionsForProject(sessionProjectPath);
+});
+
+/** Project matching the current session, used to render project-letter badges in the PR picker. */
+const projectForPr = $derived.by(() => {
+	if (!sessionProjectPath) return null;
+	return allProjects.find((p) => p.path === sessionProjectPath) ?? null;
+});
+
 const hasPlan = $derived(planState.plan !== null);
 const ATTACHED_COLUMN_WIDTH = 450;
 const PLAN_SIDEBAR_COLUMN_WIDTH = 450;
@@ -702,7 +1076,17 @@ let agentInputRef = $state<{
 	retrySend: () => void;
 	restoreQueuedMessage: (draft: string, attachments: readonly Attachment[]) => void;
 } | null>(null);
+let isRetryingConnection = $state(false);
+let retryBusyTimer: ReturnType<typeof setTimeout> | null = null;
 let headerRef: HTMLElement | undefined = $state();
+
+onDestroy(() => {
+	if (retryBusyTimer !== null) {
+		clearTimeout(retryBusyTimer);
+		retryBusyTimer = null;
+	}
+});
+
 const worktreeSetupMatchContext = $derived.by(() => {
 	const activeSetupState = worktreeSetupState?.isVisible ? worktreeSetupState : null;
 
@@ -860,7 +1244,7 @@ const debugPanelState = $derived.by(() => {
 		hasSession: sessionId !== null,
 		sessionId,
 		sessionTitle,
-		sessionStatus: mappedSessionStatus,
+		sessionStatus: panelSessionStatus,
 		sessionProjectPath,
 		sessionAgentId,
 		selectedAgentId,
@@ -887,7 +1271,7 @@ const debugPanelState = $derived.by(() => {
 	};
 });
 
-// Pure derivation of modified files from session entries.
+// Pure derivation of modified files from canonical operations.
 //
 // Previously computed via `$effect` + `setTimeout(0)` to defer aggregation
 // off the current reactive cascade. That pattern had two problems:
@@ -901,15 +1285,18 @@ const debugPanelState = $derived.by(() => {
 //      visible flicker in `ModifiedFilesHeader` and the files list
 //      across every sibling agent panel.
 //
-// Making this a `$derived` keeps the value synchronously consistent
-// with `sessionEntries` — Svelte 5 re-runs it only when its reactive
-// reads actually change, so unrelated panel-close cascades do not
-// touch it, and there is no in-between null state.
+// Making this a `$derived` keeps the value synchronously consistent.
+// Reading operationStore instead of sessionEntries prevents unrelated
+// assistant/transcript updates from rescanning the full conversation.
 const modifiedFilesState = $derived.by<ModifiedFilesState | null>(() => {
-	if (viewState.kind !== "conversation" || sessionEntries.length === 0) {
+	if (viewState.kind !== "conversation" || sessionId === null) {
 		return null;
 	}
-	const state = aggregateFileEdits(sessionEntries);
+	const toolCalls = operationStore.getSessionToolCalls(sessionId);
+	if (toolCalls.length === 0) {
+		return null;
+	}
+	const state = aggregateFileEditsFromToolCalls(toolCalls);
 	return state.fileCount > 0 ? state : null;
 });
 
@@ -1136,6 +1523,15 @@ function handleProjectSelected(project: Project) {
 	onCreateSessionForProject?.(project);
 }
 
+function handleComposerProjectSelected(project: Project) {
+	if (panelId) {
+		panelStore.setPanelProjectPath(panelId, project.path);
+		panelStore.movePanelToFront(panelId);
+		return;
+	}
+	handleProjectSelected(project);
+}
+
 function installAgentThenCreateSession(project: Project, agentId: string) {
 	handleProjectAgentSelected(project, agentId);
 }
@@ -1277,11 +1673,12 @@ async function handleCreatePr(config?: PrGenerationConfig) {
 			streamingShipData = data;
 		},
 		deps: {
-			updateSessionPrNumber: (id, n) => {
-				sessionStore.updateSession(id, { prNumber: n });
-			},
-			persistSessionPrNumber: (id, n) => {
-				void persistSessionPrNumber(id, n);
+			applyAutomaticSessionPrLink: async (id, projectPath, pr) => {
+				const result = await sessionStore.applyAutomaticPrLinkFromShipWorkflow(id, projectPath, pr);
+				return result.match(
+					(prNumber) => prNumber,
+					() => null
+				);
 			},
 		},
 	});
@@ -1300,6 +1697,7 @@ async function handleMergePr(strategy: MergeStrategy) {
 		},
 		onMerged: () => {
 			sessionStore.updateSession(sessionId, { prState: "MERGED" });
+			sessionStore.invalidatePrDetails(path, prNum);
 			fetchPrDetails({
 				sessionId,
 				projectPath: path,
@@ -1402,6 +1800,32 @@ function handlePanelKeyDown(e: KeyboardEvent) {
 }
 
 function handleRetryConnection() {
+	if (isRetryingConnection) {
+		return;
+	}
+	isRetryingConnection = true;
+	if (retryBusyTimer !== null) {
+		clearTimeout(retryBusyTimer);
+	}
+	// Auto-clear after a short window so the spinner doesn't hang forever
+	// if the underlying state machine doesn't bounce. The state-driven
+	// reactive clear below also resets it as soon as the error/turn state
+	// transitions away from the failure.
+	retryBusyTimer = setTimeout(() => {
+		isRetryingConnection = false;
+		retryBusyTimer = null;
+	}, 4000);
+
+	// Turn-level failure on an existing session: re-send the last user
+	// message in the same session instead of recreating the session.
+	// Recreating throws away the bound session and the user sees no change.
+	const isTurnFailure =
+		sessionId !== null && (activeTurnError !== null || sessionTurnState === "error");
+	if (isTurnFailure && agentInputRef) {
+		agentInputRef.retrySend();
+		return;
+	}
+
 	runPanelConnectionRetry({
 		sessionId,
 		panelId: panelId ?? undefined,
@@ -1409,7 +1833,7 @@ function handleRetryConnection() {
 		project,
 		effectivePanelAgentId,
 		onClearErrorDismissed: () => {
-			errorDismissed = false;
+			dismissedErrorKey = null;
 		},
 		onSendCancelToPanel: (id) => {
 			connectionStore.send(id, { type: PanelConnectionEvent.CANCEL });
@@ -1425,6 +1849,23 @@ function handleRetryConnection() {
 	});
 }
 
+// Clear the retry busy flag as soon as the underlying state advances
+// (turn becomes non-failed, error info clears, or panel reconnects).
+$effect(() => {
+	const stillFailed =
+		errorInfo.showError ||
+		activeTurnError !== null ||
+		sessionTurnState === "error" ||
+		panelConnectionState === PanelConnectionState.ERROR;
+	if (!stillFailed && isRetryingConnection) {
+		isRetryingConnection = false;
+		if (retryBusyTimer !== null) {
+			clearTimeout(retryBusyTimer);
+			retryBusyTimer = null;
+		}
+	}
+});
+
 function handleCancelConnection() {
 	// For now, just show a message that cancellation is not implemented
 	// In the future, this could cancel any pending session creation
@@ -1432,7 +1873,7 @@ function handleCancelConnection() {
 }
 
 function handleDismissError() {
-	errorDismissed = true;
+	dismissedErrorKey = errorDismissalKey;
 }
 
 function handleCopyInlineErrorReference() {
@@ -1513,8 +1954,8 @@ const todoState = $derived.by(() => {
 	if (!sessionId) return null;
 	const threadData: ThreadWithEntries = {
 		entries: sessionEntries,
-		isConnected: sessionHotState?.isConnected ?? false,
-		status: sessionStatus ?? "idle",
+		isConnected: sessionIsConnected,
+		status: panelSessionStatus,
 		isStreaming: sessionIsStreaming,
 	};
 	const result = todoManager.getTodoState(sessionId, threadData);
@@ -1690,6 +2131,57 @@ function handleQueueStripSendNow(messageId: string): void {
 	}
 }
 
+function handleQuestionSelect(event: AgentPanelQuestionSelectEvent): void {
+	const graph = presentationSessionStateGraph;
+	if (graph === null) {
+		toast.error("Question is not ready yet.");
+		return;
+	}
+
+	const interaction = graph.interactions.find((candidate) => candidate.id === event.entryId);
+	if (interaction === undefined || !("Question" in interaction.payload)) {
+		toast.error("Question is no longer available.");
+		return;
+	}
+
+	const payload = interaction.payload.Question;
+	const question = payload.questions[event.questionIndex];
+	if (question === undefined) {
+		toast.error("Question option is no longer available.");
+		return;
+	}
+
+	const replyHandler =
+		normalizeInteractionReplyHandler(interaction.reply_handler ?? payload.replyHandler) ??
+		createLegacyInteractionReplyHandler(interaction.id, interaction.json_rpc_request_id);
+	const answers = [
+		{
+			questionIndex: event.questionIndex,
+			answers: [event.label],
+		},
+	];
+	const answerMap: Record<string, string | string[]> = {};
+	answerMap[question.question] = question.multiSelect ? [event.label] : event.label;
+
+	void api
+		.replyInteraction({
+			sessionId: interaction.session_id,
+			interactionId: interaction.id,
+			replyHandler,
+			payload: {
+				kind: "question",
+				answers,
+				answerMap,
+			},
+		})
+		.match(
+			() => {},
+			(error) => {
+				toast.error(`Failed to answer question: ${error.message}`);
+			}
+		);
+}
+
 async function handlePlanSidebarSendMessage(sid: string, message: string): Promise<void> {
 	await sessionStore.sendMessage(sid, message).match(
 		() => {},
@@ -1725,10 +2217,13 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 			{isFullscreen}
 			{hideProjectBadge}
 			{sequenceId}
-			sessionStatus={mappedSessionStatus}
+			sessionStatus={panelSessionStatus}
+			projectPath={sessionProjectPath}
 			projectName={displayProjectName}
 			{projectColor}
 			{projectIconSrc}
+			linkedPr={sessionMetadata?.linkedPr ?? null}
+			prLinkMode={sessionMetadata?.prLinkMode ?? "automatic"}
 			{debugPanelState}
 			onClose={handleClose}
 			{onToggleFullscreen}
@@ -1817,7 +2312,7 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 						panelId={effectivePanelId}
 						{viewState}
 						{sessionId}
-						sessionEntries={visibleSessionEntries}
+						sceneEntries={tokenRevealSceneEntries}
 						sessionProjectPath={effectiveProjectPath ?? sessionProjectPath}
 						{allProjects}
 						onProjectSelected={handleProjectSelected}
@@ -1828,8 +2323,10 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 						{availableAgents}
 						{effectiveTheme}
 						{modifiedFilesState}
-						turnState={sessionHotState?.turnState ?? "idle"}
-						isWaitingForResponse={runtimeState?.showThinking ?? false}
+						turnState={agentPanelDisplayModel.turnState}
+						isWaitingForResponse={agentPanelDisplayModel.waiting.show}
+						waitingLabel={agentPanelDisplayModel.waiting.label}
+						onQuestionSelect={handleQuestionSelect}
 					/>
 				</div>
 				{#if viewState.kind === "conversation" && !contentIsAtTop}
@@ -1876,6 +2373,7 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 			{inlineErrorReferenceId}
 			{inlineErrorReferenceSearchable}
 			onRetryConnection={handleRetryConnection}
+			isRetryingConnection={isRetryingConnection}
 			onDismissError={handleDismissError}
 			onCopyInlineErrorReference={handleCopyInlineErrorReference}
 			inlineErrorIssueDraft={inlineErrorIssueDraft}
@@ -1896,13 +2394,17 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 			effectiveProjectPath={effectiveProjectPath ?? null}
 			sessionProjectPath={sessionProjectPath ?? null}
 			sessionEntries={sessionEntries}
-			sessionTurnState={sessionHotState?.turnState ?? "idle"}
+			sessionTurnState={canonicalSessionTurnState}
 			{effectivePathForGit}
 			{createdPr}
 			{createPrRunning}
 			{prCardRenderKey}
 			{prDetails}
 			{prFetchError}
+			linkedPr={sessionMetadata?.linkedPr ?? null}
+			prLinkMode={sessionMetadata?.prLinkMode ?? "automatic"}
+			{projectSessionsForPr}
+			{projectForPr}
 			{streamingShipData}
 			{modifiedFilesState}
 			onEnterReviewMode={handleEnterReviewMode}
@@ -1935,11 +2437,25 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 					widthClass="max-w-[60%]"
 				>
 					{#key inputRenderKey}
+						{#snippet preSessionAgentPicker()}
+							<div class="flex h-7 shrink-0 items-center">
+								<AgentSelector
+									{availableAgents}
+									currentAgentId={effectivePanelAgentId}
+									{onAgentChange}
+								/>
+								<div class="h-full w-px shrink-0 bg-border/50"></div>
+								<ProjectSelector
+									selectedProject={preSessionSelectedProject}
+									recentProjects={allProjects}
+									onProjectChange={handleComposerProjectSelected}
+								/>
+							</div>
+						{/snippet}
 						<AgentInput
 							bind:this={agentInputRef}
 							sessionId={sessionId ?? undefined}
-							{sessionStatus}
-							sessionIsConnected={sessionHotState?.isConnected ?? false}
+							sessionIsConnected={sessionIsConnected}
 							{sessionIsStreaming}
 							{sessionCanSubmit}
 							{sessionShowStop}
@@ -1969,6 +2485,7 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 							{selectedAgentId}
 							{availableAgents}
 							{onAgentChange}
+							agentProjectPicker={hasSession ? undefined : preSessionAgentPicker}
 							pendingProjectSelection={pendingProjectSelection && !isWaitingForSession}
 							onSessionCreated={handleSessionCreated}
 							onWillSend={prepareForNextUserReveal}
@@ -2025,13 +2542,15 @@ async function handlePlanSidebarSendMessage(sid: string, message: string): Promi
 					}}
 				>
 					{#snippet left()}
-						{#if footerWorktreeStatus}
-							<SharedWorktreeStatusDisplay
-								mode={footerWorktreeStatus.mode}
-								primaryLabel={footerWorktreeStatus.primaryLabel}
-								secondaryLabel={footerWorktreeStatus.secondaryLabel}
-							/>
-						{/if}
+						<div class="flex items-center divide-x divide-border/50">
+							{#if footerWorktreeStatus}
+								<WorktreeFooterButton
+									worktreePath={effectiveActiveWorktreePath}
+									label={footerWorktreeStatus.primaryLabel}
+									mode={footerWorktreeStatus.mode}
+								/>
+							{/if}
+						</div>
 					{/snippet}
 				</SharedFooter>
 			{/if}

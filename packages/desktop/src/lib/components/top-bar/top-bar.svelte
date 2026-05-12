@@ -33,6 +33,7 @@ interface Props {
 	onRetryUpdateClick?: () => void;
 	onDevShowUpdatePage?: () => void;
 	onDevShowDesignSystem?: () => void;
+	onDevShowStreamingReproLab?: () => void;
 	showSidebarToggle?: boolean;
 }
 
@@ -44,6 +45,7 @@ let {
 	onRetryUpdateClick,
 	onDevShowUpdatePage,
 	onDevShowDesignSystem,
+	onDevShowStreamingReproLab,
 	showSidebarToggle = true,
 }: Props = $props();
 
@@ -304,7 +306,7 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 			</Tooltip.Trigger>
 			<Tooltip.Content>Feedback</Tooltip.Content>
 		</Tooltip.Root>
-		{#if import.meta.env.DEV && (onDevShowUpdatePage || onDevShowDesignSystem)}
+		{#if import.meta.env.DEV && (onDevShowUpdatePage || onDevShowDesignSystem || onDevShowStreamingReproLab)}
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props }: DropdownMenuTriggerChildProps)}
@@ -344,6 +346,15 @@ function switchLayoutFamily(nextFamily: LayoutFamily): void {
 							>
 								<Palette class="size-4" weight="fill" />
 								<span>Design System</span>
+							</DropdownMenu.Item>
+						{/if}
+						{#if onDevShowStreamingReproLab}
+							<DropdownMenu.Item
+								class="cursor-pointer rounded-none px-2 py-1 text-[11px]"
+								onclick={onDevShowStreamingReproLab}
+							>
+								<Wrench class="size-4" weight="fill" />
+								<span>Streaming Repro Lab</span>
 							</DropdownMenu.Item>
 						{/if}
 					</DropdownMenu.Group>

@@ -1,3 +1,9 @@
+import type {
+	AgentAssistantEntry,
+	AgentPanelSceneEntryModel,
+	TokenRevealCss,
+} from "@acepe/ui/agent-panel";
+import { groupAssistantChunks } from "@acepe/ui/agent-panel";
 import type { SessionEntry } from "../../../application/dto/session.js";
 import type { AssistantMessage } from "../../../types/assistant-message.js";
 
@@ -5,19 +11,31 @@ type ThinkingEntry = {
 	type: "thinking";
 	id: "thinking-indicator";
 	startedAtMs?: number | null;
+	label?: string | null;
 };
 
 export type MergedAssistantDisplayEntry = {
 	type: "assistant_merged";
 	key: string;
 	memberIds: readonly string[];
+	markdown: string;
 	message: AssistantMessage;
 	timestamp?: Date;
 	latestTimestamp?: Date;
 	isStreaming?: boolean;
+	tokenRevealCss?: TokenRevealCss;
 };
 
-export type VirtualizedDisplayEntry = SessionEntry | MergedAssistantDisplayEntry | ThinkingEntry;
+type MissingDisplayEntry = {
+	type: "missing";
+	id: string;
+};
+
+export type VirtualizedDisplayEntry =
+	| SessionEntry
+	| MergedAssistantDisplayEntry
+	| ThinkingEntry
+	| MissingDisplayEntry;
 
 export const THINKING_DISPLAY_ENTRY: ThinkingEntry = {
 	type: "thinking",
@@ -48,6 +66,7 @@ function createMergedAssistantDisplayEntry(
 		type: "assistant_merged",
 		key: entry.id,
 		memberIds: [entry.id],
+		markdown: getMessageText(entry.message),
 		message: entry.message,
 		timestamp: entry.timestamp,
 		latestTimestamp: entry.timestamp,
@@ -68,6 +87,26 @@ function mergeAssistantMessages(
 	};
 }
 
+function _getLastMessageTextGroupIndex(entry: MergedAssistantDisplayEntry): number | null {
+	const groups = groupAssistantChunks(entry.message.chunks).messageGroups;
+	for (let index = groups.length - 1; index >= 0; index -= 1) {
+		if (groups[index]?.type === "text") {
+			return index;
+		}
+	}
+	return null;
+}
+
+function getMessageText(message: AssistantMessage): string {
+	let text = "";
+	for (const group of groupAssistantChunks(message.chunks).messageGroups) {
+		if (group.type === "text") {
+			text += group.text;
+		}
+	}
+	return text;
+}
+
 function mergeAssistantEntry(
 	previous: MergedAssistantDisplayEntry,
 	entry: SessionEntry & { type: "assistant" }
@@ -76,6 +115,7 @@ function mergeAssistantEntry(
 		type: "assistant_merged",
 		key: previous.key,
 		memberIds: previous.memberIds.concat(entry.id),
+		markdown: previous.markdown + getMessageText(entry.message),
 		message: mergeAssistantMessages(previous.message, entry.message),
 		timestamp: previous.timestamp ?? entry.timestamp,
 		latestTimestamp: entry.timestamp ?? previous.latestTimestamp,
@@ -132,6 +172,162 @@ export function buildVirtualizedDisplayEntries(
 	return merged;
 }
 
+// ===== SCENE-NATIVE MERGING =====
+
+function createMergedAssistantDisplayEntryFromScene(
+	entry: AgentAssistantEntry
+): MergedAssistantDisplayEntry {
+	const ts = entry.timestampMs !== undefined ? new Date(entry.timestampMs) : undefined;
+	return {
+		type: "assistant_merged",
+		key: entry.id,
+		memberIds: [entry.id],
+		markdown: entry.markdown,
+		message: createAssistantMessageFromSceneEntry(entry),
+		timestamp: ts,
+		latestTimestamp: ts,
+		isStreaming: entry.isStreaming,
+		tokenRevealCss: entry.tokenRevealCss,
+	};
+}
+
+function createAssistantMessageFromSceneEntry(entry: AgentAssistantEntry): AssistantMessage {
+	if (entry.message !== undefined) {
+		return {
+			chunks: entry.message.chunks,
+			model: entry.message.model,
+			displayModel: entry.message.displayModel,
+			receivedAt: entry.message.receivedAt,
+			thinkingDurationMs: entry.message.thinkingDurationMs,
+		};
+	}
+
+	return {
+		chunks: [{ type: "message", block: { type: "text", text: entry.markdown } }],
+	};
+}
+
+function mergeSceneAssistantEntry(
+	previous: MergedAssistantDisplayEntry,
+	entry: AgentAssistantEntry
+): MergedAssistantDisplayEntry {
+	return {
+		type: "assistant_merged",
+		key: previous.key,
+		memberIds: previous.memberIds.concat(entry.id),
+		markdown: previous.markdown + entry.markdown,
+		message: mergeAssistantMessages(previous.message, createAssistantMessageFromSceneEntry(entry)),
+		timestamp: previous.timestamp,
+		latestTimestamp:
+			entry.timestampMs !== undefined ? new Date(entry.timestampMs) : previous.latestTimestamp,
+		isStreaming: previous.isStreaming || entry.isStreaming,
+		tokenRevealCss: entry.tokenRevealCss,
+	};
+}
+
+function shouldMergeSceneAssistantEntry(
+	previous: MergedAssistantDisplayEntry,
+	entry: AgentAssistantEntry
+): boolean {
+	return (
+		previous.isStreaming !== true &&
+		entry.isStreaming !== true &&
+		previous.tokenRevealCss === undefined &&
+		entry.tokenRevealCss === undefined
+	);
+}
+
+/**
+ * Builds virtualized display entries from scene-model entries.
+ *
+ * Produces the same `VirtualizedDisplayEntry[]` shape as `buildVirtualizedDisplayEntries`,
+ * so `VList` keying and the streaming-indicator state machine are unchanged.
+ * Consecutive assistant entries are merged into a single `MergedAssistantDisplayEntry`.
+ * User and tool entries pass through as synthetic `SessionEntry`-compatible objects
+ * (content sourced from scene fields; the actual render is either the legacy desktop
+ * `UserMessage`/`AssistantMessage` component or `AgentPanelConversationEntry` for tools).
+ */
+export function buildVirtualizedDisplayEntriesFromScene(
+	sceneEntries: readonly AgentPanelSceneEntryModel[]
+): VirtualizedDisplayEntry[] {
+	const merged: VirtualizedDisplayEntry[] = [];
+
+	for (const entry of sceneEntries) {
+		if (entry.type === "assistant") {
+			const previous = merged.at(-1);
+			if (
+				previous !== undefined &&
+				isMergedAssistantDisplayEntry(previous) &&
+				shouldMergeSceneAssistantEntry(previous, entry)
+			) {
+				merged[merged.length - 1] = mergeSceneAssistantEntry(previous, entry);
+				continue;
+			}
+			merged.push(createMergedAssistantDisplayEntryFromScene(entry));
+			continue;
+		}
+
+		if (entry.type === "user") {
+			const syntheticUser = {
+				id: entry.id,
+				type: "user" as const,
+				timestamp: entry.timestampMs !== undefined ? new Date(entry.timestampMs) : undefined,
+				message: {
+					content: { type: "text" as const, text: entry.text },
+					chunks: [],
+				},
+			} satisfies SessionEntry;
+			merged.push(syntheticUser);
+			continue;
+		}
+
+		if (entry.type === "tool_call") {
+			// Synthetic stub — content never accessed in the scene render path because
+			// tool entries are always found in the scene index and rendered via
+			// AgentPanelConversationEntry, not getToolCallMessage.
+			const syntheticTool = {
+				id: entry.id,
+				type: "tool_call" as const,
+				message: {
+					id: entry.id,
+					name: entry.title,
+					arguments: { kind: "execute" as const },
+					status: "pending" as const,
+					awaitingPlanApproval: false,
+				},
+			} satisfies SessionEntry;
+			merged.push(syntheticTool);
+			continue;
+		}
+
+		if (entry.type === "thinking") {
+			merged.push({
+				type: THINKING_DISPLAY_ENTRY.type,
+				id: THINKING_DISPLAY_ENTRY.id,
+				startedAtMs: entry.startedAtMs,
+			});
+			continue;
+		}
+
+		if (entry.type === "missing") {
+			merged.push({
+				id: entry.id,
+				type: "missing",
+			});
+		}
+	}
+
+	return merged;
+}
+
+/**
+ * Returns the index of the last assistant entry in a scene entries array, or -1 if none.
+ * Scene-native equivalent of the legacy `findLastAssistantIndex(SessionEntry[])` helper.
+ */
+export function findLastAssistantSceneIndex(entries: readonly AgentPanelSceneEntryModel[]): number {
+	return entries.findLastIndex((e) => e.type === "assistant");
+}
+
 export function getVirtualizedDisplayEntryKey(entry: VirtualizedDisplayEntry): string {
 	if (entry.type === "assistant_merged") return entry.key;
 	if (entry.type === "thinking") return entry.id;
@@ -147,6 +343,10 @@ export function getVirtualizedDisplayEntryTimestampMs(
 
 	if (entry.type === "assistant_merged") {
 		return entry.timestamp?.getTime() ?? null;
+	}
+
+	if (entry.type === "missing") {
+		return null;
 	}
 
 	return entry.timestamp?.getTime() ?? null;

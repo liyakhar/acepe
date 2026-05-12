@@ -2,9 +2,11 @@ import type {
 	CapabilityPreviewState,
 	InteractionSnapshot,
 	OperationSnapshot,
+	SessionGraphActionability,
+	SessionGraphActivity,
+	SessionGraphActivityKind,
 	SessionGraphCapabilities,
 	SessionGraphLifecycle,
-	SessionGraphLifecycleStatus,
 	SessionGraphRevision,
 	SessionOpenFound,
 	SessionStateDelta,
@@ -16,9 +18,10 @@ import type {
 
 export type {
 	CapabilityPreviewState,
+	SessionGraphActivity,
+	SessionGraphActivityKind,
 	SessionGraphCapabilities,
 	SessionGraphLifecycle,
-	SessionGraphLifecycleStatus,
 	SessionGraphRevision,
 	SessionStateDelta,
 	SessionStateEnvelope,
@@ -27,11 +30,87 @@ export type {
 	SessionStateSnapshotMaterialization,
 };
 
-export function graphFromSessionOpenFound(
-	found: SessionOpenFound,
-	lifecycle: SessionGraphLifecycle,
-	capabilities: SessionGraphCapabilities
-): SessionStateGraph {
+function isActiveOperation(operation: OperationSnapshot): boolean {
+	return (
+		operation.operation_state === "pending" ||
+		operation.operation_state === "running" ||
+		operation.operation_state === "blocked"
+	);
+}
+
+function selectSessionGraphActivity(input: {
+	lifecycle: SessionGraphLifecycle;
+	turnState: SessionStateGraph["turnState"];
+	operations: OperationSnapshot[];
+	interactions: InteractionSnapshot[];
+	activeTurnFailure?: SessionStateGraph["activeTurnFailure"];
+}): SessionGraphActivity {
+	const activeOperations = input.operations.filter(isActiveOperation);
+	const blockingInteraction =
+		input.interactions.find((interaction) => interaction.state === "Pending") ?? null;
+	const dominantOperationId = activeOperations[0]?.id ?? null;
+
+	if (input.lifecycle.status === "failed" || input.activeTurnFailure != null) {
+		return {
+			kind: "error",
+			activeOperationCount: activeOperations.length,
+			activeSubagentCount: activeOperations.filter((operation) => operation.kind === "task").length,
+			dominantOperationId,
+			blockingInteractionId: blockingInteraction?.id ?? null,
+		};
+	}
+
+	if (input.lifecycle.status === "detached" || input.lifecycle.status === "archived") {
+		return {
+			kind: "paused",
+			activeOperationCount: activeOperations.length,
+			activeSubagentCount: activeOperations.filter((operation) => operation.kind === "task").length,
+			dominantOperationId,
+			blockingInteractionId: blockingInteraction?.id ?? null,
+		};
+	}
+
+	if (blockingInteraction !== null) {
+		return {
+			kind: "waiting_for_user",
+			activeOperationCount: activeOperations.length,
+			activeSubagentCount: activeOperations.filter((operation) => operation.kind === "task").length,
+			dominantOperationId,
+			blockingInteractionId: blockingInteraction.id,
+		};
+	}
+
+	if (activeOperations.length > 0) {
+		return {
+			kind: "running_operation",
+			activeOperationCount: activeOperations.length,
+			activeSubagentCount: activeOperations.filter((operation) => operation.kind === "task").length,
+			dominantOperationId,
+			blockingInteractionId: null,
+		};
+	}
+
+	if (input.turnState === "Running") {
+		return {
+			kind: "awaiting_model",
+			activeOperationCount: 0,
+			activeSubagentCount: 0,
+			dominantOperationId: null,
+			blockingInteractionId: null,
+		};
+	}
+
+	return {
+		kind: "idle",
+		activeOperationCount: 0,
+		activeSubagentCount: 0,
+		dominantOperationId: null,
+		blockingInteractionId: null,
+	};
+}
+
+export function graphFromSessionOpenFound(found: SessionOpenFound): SessionStateGraph {
+	assertOpenFoundHasGraphAuthority(found);
 	return {
 		requestedSessionId: found.requestedSessionId,
 		canonicalSessionId: found.canonicalSessionId,
@@ -52,9 +131,25 @@ export function graphFromSessionOpenFound(
 		messageCount: found.messageCount,
 		activeTurnFailure: found.activeTurnFailure,
 		lastTerminalTurnId: found.lastTerminalTurnId,
-		lifecycle,
-		capabilities,
+		lifecycle: found.lifecycle,
+		activity: selectSessionGraphActivity({
+			lifecycle: found.lifecycle,
+			turnState: found.turnState,
+			operations: found.operations,
+			interactions: found.interactions,
+			activeTurnFailure: found.activeTurnFailure,
+		}),
+		capabilities: found.capabilities,
 	};
+}
+
+function assertOpenFoundHasGraphAuthority(found: SessionOpenFound): void {
+	if (!found.lifecycle) {
+		throw new Error("Session open result is missing canonical lifecycle authority");
+	}
+	if (!found.capabilities) {
+		throw new Error("Session open result is missing canonical capabilities authority");
+	}
 }
 
 export function createSnapshotEnvelope(graph: SessionStateGraph): SessionStateEnvelope {
@@ -69,24 +164,6 @@ export function createSnapshotEnvelope(graph: SessionStateGraph): SessionStateEn
 	};
 }
 
-export function defaultSnapshotLifecycle(): SessionGraphLifecycle {
-	return {
-		status: "idle",
-		errorMessage: null,
-		canReconnect: true,
-	};
-}
-
-export function defaultSnapshotCapabilities(): SessionGraphCapabilities {
-	return {
-		models: null,
-		modes: null,
-		availableCommands: [],
-		configOptions: [],
-		autonomousEnabled: false,
-	};
-}
-
 export function materializeSnapshotGraph(
 	graph: SessionStateGraph
 ): SessionStateSnapshotMaterialization {
@@ -98,9 +175,7 @@ export function materializeSnapshotGraph(
 export function materializeSnapshotFromOpenFound(
 	found: SessionOpenFound
 ): SessionStateSnapshotMaterialization {
-	return materializeSnapshotGraph(
-		graphFromSessionOpenFound(found, defaultSnapshotLifecycle(), defaultSnapshotCapabilities())
-	);
+	return materializeSnapshotGraph(graphFromSessionOpenFound(found));
 }
 
 export function listGraphAuthorityIds(graph: SessionStateGraph): {

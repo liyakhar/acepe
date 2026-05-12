@@ -66,6 +66,45 @@ const InvalidStateSchema = z.object({
 	data: z.object({ message: z.string() }),
 });
 
+const CreationFailureKindSchema = z.enum([
+	"provider_failed_before_id",
+	"invalid_provider_session_id",
+	"provider_identity_mismatch",
+	"metadata_commit_failed",
+	"launch_token_unavailable",
+	"creation_attempt_expired",
+]);
+
+const CreationFailedSchema = z.object({
+	type: z.literal("creation_failed"),
+	data: z.object({
+		kind: CreationFailureKindSchema,
+		message: z.string(),
+		sessionId: z.string().nullable(),
+		creationAttemptId: z.string().nullable(),
+		retryable: z.boolean(),
+	}),
+});
+
+const ProviderHistoryFailureKindSchema = z.enum([
+	"provider_unavailable",
+	"provider_history_missing",
+	"provider_unparseable",
+	"provider_validation_failed",
+	"stale_lineage_recovery",
+	"internal",
+]);
+
+const ProviderHistoryFailedSchema = z.object({
+	type: z.literal("provider_history_failed"),
+	data: z.object({
+		kind: ProviderHistoryFailureKindSchema,
+		message: z.string(),
+		sessionId: z.string().nullable(),
+		retryable: z.boolean(),
+	}),
+});
+
 /**
  * Combined schema for all SerializableAcpError variants.
  */
@@ -83,6 +122,8 @@ export const SerializableAcpErrorSchema = z.discriminatedUnion("type", [
 	ChannelClosedSchema,
 	TimeoutSchema,
 	InvalidStateSchema,
+	CreationFailedSchema,
+	ProviderHistoryFailedSchema,
 ]);
 
 /**

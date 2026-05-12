@@ -6,6 +6,11 @@ import {
 	THREAD_FOLLOW_CONTROLLER_CONTEXT,
 	type ThreadFollowController,
 } from "../agent-panel/logic/thread-follow-controller.svelte.js";
+import {
+	shouldRestartRevealTargetAction,
+	type RevealTargetActionParams,
+} from "./logic/reveal-target-action-params.js";
+import { createRevealResizeScheduler } from "./logic/reveal-resize-scheduler.js";
 
 interface Props {
 	entryIndex: number;
@@ -31,32 +36,30 @@ const followController = getContext<ThreadFollowController | undefined>(
 	THREAD_FOLLOW_CONTROLLER_CONTEXT
 );
 
-type RevealTargetActionParams = {
-	controller: ThreadFollowController | undefined;
-	entryIndex: number;
-	entryKey: string;
-	observeRevealResize: boolean;
-	revealEntryIndex?: (index: number, force?: boolean) => boolean;
-};
-
 const revealTargetAction: Action<HTMLDivElement, RevealTargetActionParams> = (node, params) => {
 	let unregister = () => {};
 	let observer: ResizeObserver | null = null;
+	let currentParams = params;
+	const resizeScheduler = createRevealResizeScheduler(() => {
+		currentParams.controller?.requestLatestReveal();
+	});
 
 	function stop(): void {
 		unregister();
 		unregister = () => {};
 		observer?.disconnect();
 		observer = null;
+		resizeScheduler.cancel();
 	}
 
 	function start(nextParams: RevealTargetActionParams): void {
 		stop();
+		currentParams = nextParams;
 		if (!nextParams.controller || !nextParams.revealEntryIndex) return;
 
 		unregister = nextParams.controller.registerTarget(nextParams.entryKey, {
 			reveal(force?: boolean): boolean {
-				return nextParams.revealEntryIndex?.(nextParams.entryIndex, force) ?? false;
+				return currentParams.revealEntryIndex?.(currentParams.entryIndex, force) ?? false;
 			},
 			isMounted(): boolean {
 				return node.isConnected;
@@ -68,7 +71,7 @@ const revealTargetAction: Action<HTMLDivElement, RevealTargetActionParams> = (no
 		}
 
 		observer = new ResizeObserver(() => {
-			nextParams.controller?.requestLatestReveal();
+			resizeScheduler.request();
 		});
 		observer.observe(node);
 	}
@@ -77,7 +80,11 @@ const revealTargetAction: Action<HTMLDivElement, RevealTargetActionParams> = (no
 
 	return {
 		update(nextParams) {
-			start(nextParams);
+			const shouldRestart = shouldRestartRevealTargetAction(currentParams, nextParams);
+			currentParams = nextParams;
+			if (shouldRestart) {
+				start(nextParams);
+			}
 		},
 		destroy() {
 			stop();

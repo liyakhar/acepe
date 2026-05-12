@@ -763,9 +763,10 @@ pub async fn git_discard_prepared_worktree_session_launch(
         "Failed to discard prepared worktree session launch",
         async {
             let db = app.state::<DbConn>();
-            let reserved = SessionMetadataRepository::get_by_id(db.inner(), &launch_token)
-                .await
-                .map_err(|error| format!("Failed to load prepared worktree launch: {error}"))?;
+            let reserved =
+                SessionMetadataRepository::get_reserved_worktree_launch(db.inner(), &launch_token)
+                    .await
+                    .map_err(|error| format!("Failed to load prepared worktree launch: {error}"))?;
             let worktree_path = reserved.as_ref().and_then(|row| row.worktree_path.clone());
 
             SessionMetadataRepository::discard_reserved_worktree_launch(db.inner(), &launch_token)

@@ -23,7 +23,7 @@ const statusColor = $derived.by(() => {
 
 <div class="flex justify-start mb-4">
 	<Card class="max-w-[80%]">
-		<div class="p-4 space-y-2">
+		<div class="p-4 space-y-2 text-sm">
 			<div class="flex items-center gap-2">
 				<Badge variant={statusColor}>{toolCall.status}</Badge>
 				<span class="font-medium">{toolCall.name}</span>

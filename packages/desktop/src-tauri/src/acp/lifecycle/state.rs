@@ -20,6 +20,7 @@ pub enum DetachedReason {
     ReconnectExhausted,
     AbandonedInFlight,
     LegacyAmbiguousRestore,
+    ClosedByClient,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -28,6 +29,7 @@ pub enum FailureReason {
     DeterministicRestoreFault,
     ActivationFailed,
     ResumeFailed,
+    SessionGoneUpstream,
     ProviderSessionMismatch,
     CorruptedPersistedState,
     ExplicitErrorHandlingRequired,

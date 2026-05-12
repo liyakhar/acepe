@@ -47,7 +47,9 @@ fn visible_history_providers(app: &AppHandle) -> Vec<Arc<dyn AgentProvider>> {
 
 fn dedupe_project_infos(mut projects: Vec<ProjectInfo>) -> Vec<ProjectInfo> {
     let mut seen = HashSet::new();
-    projects.retain(|project| seen.insert(project.path.clone()));
+    projects.retain(|project| {
+        std::path::Path::new(&project.path).is_dir() && seen.insert(project.path.clone())
+    });
     projects
 }
 
@@ -129,6 +131,7 @@ pub async fn list_all_project_paths(app: AppHandle) -> CommandResult<Vec<Project
                         });
                     }
 
+                    let fallback_projects = dedupe_project_infos(fallback_projects);
                     tracing::info!("Fallback method found {} projects", fallback_projects.len());
                     return Ok(fallback_projects);
                 }
@@ -153,6 +156,13 @@ pub async fn count_sessions_for_project(
         "count_sessions_for_project",
         "Failed to count sessions for project",
         async {
+            if !std::path::Path::new(&project_path).is_dir() {
+                return Ok(ProjectSessionCounts {
+                    path: project_path,
+                    counts: HashMap::new(),
+                });
+            }
+
             let providers = visible_history_providers(&app);
             let mut counts = HashMap::new();
 
@@ -192,8 +202,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        is_worktree_project_path, should_fallback_to_legacy_project_discovery,
-        ProviderProjectDiscovery,
+        dedupe_project_infos, is_worktree_project_path,
+        should_fallback_to_legacy_project_discovery, ProviderProjectDiscovery,
     };
     use crate::acp::provider::ProjectDiscoveryCompleteness;
     use crate::history::commands::ProjectInfo;
@@ -268,5 +278,29 @@ mod tests {
             &discoveries,
             &projects
         ));
+    }
+
+    #[test]
+    fn discovery_filters_missing_project_paths_before_ui_import() {
+        let sandbox = TempDir::new().expect("temp dir");
+        let existing_project = sandbox.path().join("existing");
+        fs::create_dir(&existing_project).expect("create existing project");
+        let missing_project = sandbox.path().join("missing");
+
+        let projects = dedupe_project_infos(vec![
+            ProjectInfo {
+                path: existing_project.to_string_lossy().to_string(),
+                agent_id: "claude-code".to_string(),
+                is_worktree: false,
+            },
+            ProjectInfo {
+                path: missing_project.to_string_lossy().to_string(),
+                agent_id: "cursor".to_string(),
+                is_worktree: false,
+            },
+        ]);
+
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].path, existing_project.to_string_lossy());
     }
 }

@@ -104,6 +104,7 @@ A deterministic reconciler fixes that by making the ambiguity boundary explicit.
 - Do not let `ToolKind::Other` absorb classification misses that the backend could explain.
 - When a provider introduces a new tool, add it at the provider boundary or argument-shape classifier, not in UI subtitle/title helpers.
 - Treat streaming and non-streaming tool input as the same semantic pipeline with different transport timing.
+- Treat empty `rawInput` from a provider as an enrichment-boundary signal before blaming UI rendering. Cursor ACP sessions, for example, persist rich tool args under `~/.cursor/acp-sessions/<session-id>/store.db`, not only under the legacy `~/.cursor/chats` layout.
 - For every new fallback path, capture the exact failed signals (`signals_tried`) and log them in the session streaming log.
 
 ## Regression Coverage
@@ -117,4 +118,5 @@ A deterministic reconciler fixes that by making the ambiguity boundary explicit.
 ## Related Issues
 
 - `docs/solutions/best-practices/provider-owned-policy-and-identity-not-ui-projections-2026-04-09.md`
+- `docs/solutions/integration-issues/2026-04-30-cursor-acp-tool-call-id-normalization-and-enrichment-path.md`
 - `docs/plans/2026-04-18-001-refactor-tool-call-reconciler-plan.md`

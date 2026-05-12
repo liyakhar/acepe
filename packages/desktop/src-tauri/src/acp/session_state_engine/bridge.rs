@@ -2,18 +2,31 @@ use crate::acp::session_open_snapshot::SessionOpenFound;
 use crate::acp::session_state_engine::envelope::SessionStateEnvelope;
 use crate::acp::session_state_engine::protocol::{SessionStateDelta, SessionStatePayload};
 use crate::acp::session_state_engine::revision::SessionGraphRevision;
-use crate::acp::session_state_engine::selectors::{
-    SessionGraphCapabilities, SessionGraphLifecycle,
-};
+use crate::acp::session_state_engine::selectors::SessionGraphActivity;
 use crate::acp::session_state_engine::snapshot_builder::build_graph_from_open_found;
 use crate::acp::transcript_projection::TranscriptDeltaOperation;
 
-pub fn build_snapshot_envelope(
-    found: &SessionOpenFound,
-    lifecycle: SessionGraphLifecycle,
-    capabilities: SessionGraphCapabilities,
-) -> SessionStateEnvelope {
-    let graph = build_graph_from_open_found(found, lifecycle, capabilities);
+pub struct DeltaSessionProjectionFields {
+    pub activity: SessionGraphActivity,
+    pub turn_state: crate::acp::projections::SessionTurnState,
+    pub active_turn_failure: Option<crate::acp::projections::TurnFailureSnapshot>,
+    pub last_terminal_turn_id: Option<String>,
+    pub last_agent_message_id: Option<String>,
+}
+
+pub struct DeltaEnvelopeParts<'a> {
+    pub session_id: &'a str,
+    pub from_revision: SessionGraphRevision,
+    pub to_revision: SessionGraphRevision,
+    pub projection: DeltaSessionProjectionFields,
+    pub transcript_operations: Vec<TranscriptDeltaOperation>,
+    pub operation_patches: Vec<crate::acp::projections::OperationSnapshot>,
+    pub interaction_patches: Vec<crate::acp::projections::InteractionSnapshot>,
+    pub changed_fields: Vec<String>,
+}
+
+pub fn build_snapshot_envelope(found: &SessionOpenFound) -> SessionStateEnvelope {
+    let graph = build_graph_from_open_found(found);
     SessionStateEnvelope {
         session_id: graph.canonical_session_id.clone(),
         graph_revision: graph.revision.graph_revision,
@@ -24,23 +37,24 @@ pub fn build_snapshot_envelope(
     }
 }
 
-pub fn build_delta_envelope(
-    session_id: &str,
-    from_revision: SessionGraphRevision,
-    to_revision: SessionGraphRevision,
-    transcript_operations: Vec<TranscriptDeltaOperation>,
-    changed_fields: Vec<String>,
-) -> SessionStateEnvelope {
+pub fn build_delta_envelope(parts: DeltaEnvelopeParts<'_>) -> SessionStateEnvelope {
     SessionStateEnvelope {
-        session_id: session_id.to_string(),
-        graph_revision: to_revision.graph_revision,
-        last_event_seq: to_revision.last_event_seq,
+        session_id: parts.session_id.to_string(),
+        graph_revision: parts.to_revision.graph_revision,
+        last_event_seq: parts.to_revision.last_event_seq,
         payload: SessionStatePayload::Delta {
             delta: SessionStateDelta {
-                from_revision,
-                to_revision,
-                transcript_operations,
-                changed_fields,
+                from_revision: parts.from_revision,
+                to_revision: parts.to_revision,
+                activity: parts.projection.activity,
+                turn_state: parts.projection.turn_state,
+                active_turn_failure: parts.projection.active_turn_failure,
+                last_terminal_turn_id: parts.projection.last_terminal_turn_id,
+                last_agent_message_id: parts.projection.last_agent_message_id,
+                transcript_operations: parts.transcript_operations,
+                operation_patches: parts.operation_patches,
+                interaction_patches: parts.interaction_patches,
+                changed_fields: parts.changed_fields,
             },
         },
     }
@@ -53,12 +67,15 @@ mod tests {
     use crate::acp::session_state_engine::protocol::SessionStatePayload;
     use crate::acp::session_state_engine::revision::SessionGraphRevision;
     use crate::acp::session_state_engine::selectors::{
-        SessionGraphCapabilities, SessionGraphLifecycle,
+        SessionGraphActivity, SessionGraphCapabilities, SessionGraphLifecycle,
     };
     use crate::acp::transcript_projection::{TranscriptDeltaOperation, TranscriptSnapshot};
     use crate::acp::types::CanonicalAgentId;
 
-    use super::{build_delta_envelope, build_snapshot_envelope};
+    use super::{
+        build_delta_envelope, build_snapshot_envelope, DeltaEnvelopeParts,
+        DeltaSessionProjectionFields,
+    };
 
     #[test]
     fn bridge_builds_snapshot_envelope_from_open_found() {
@@ -82,15 +99,14 @@ mod tests {
             interactions: Vec::new(),
             turn_state: SessionTurnState::Idle,
             message_count: 0,
+            last_agent_message_id: None,
+            lifecycle: SessionGraphLifecycle::idle(),
+            capabilities: SessionGraphCapabilities::empty(),
             active_turn_failure: None,
             last_terminal_turn_id: None,
         };
 
-        let envelope = build_snapshot_envelope(
-            &found,
-            SessionGraphLifecycle::idle(),
-            SessionGraphCapabilities::empty(),
-        );
+        let envelope = build_snapshot_envelope(&found);
 
         assert_eq!(envelope.session_id, "canonical-1");
         assert_eq!(envelope.graph_revision, 9);
@@ -106,18 +122,27 @@ mod tests {
 
     #[test]
     fn bridge_builds_delta_envelope_from_transcript_operations() {
-        let envelope = build_delta_envelope(
-            "canonical-1",
-            SessionGraphRevision::new(11, 3, 11),
-            SessionGraphRevision::new(12, 4, 12),
-            vec![TranscriptDeltaOperation::ReplaceSnapshot {
+        let envelope = build_delta_envelope(DeltaEnvelopeParts {
+            session_id: "canonical-1",
+            from_revision: SessionGraphRevision::new(11, 3, 11),
+            to_revision: SessionGraphRevision::new(12, 4, 12),
+            projection: DeltaSessionProjectionFields {
+                activity: SessionGraphActivity::idle(),
+                turn_state: SessionTurnState::Idle,
+                active_turn_failure: None,
+                last_terminal_turn_id: None,
+                last_agent_message_id: Some("assistant-1".to_string()),
+            },
+            transcript_operations: vec![TranscriptDeltaOperation::ReplaceSnapshot {
                 snapshot: TranscriptSnapshot {
                     revision: 4,
                     entries: Vec::new(),
                 },
             }],
-            vec!["transcriptSnapshot".to_string()],
-        );
+            operation_patches: Vec::new(),
+            interaction_patches: Vec::new(),
+            changed_fields: vec!["transcriptSnapshot".to_string()],
+        });
 
         assert_eq!(envelope.graph_revision, 12);
         assert_eq!(envelope.last_event_seq, 12);
@@ -126,6 +151,7 @@ mod tests {
                 assert_eq!(delta.from_revision, SessionGraphRevision::new(11, 3, 11));
                 assert_eq!(delta.to_revision, SessionGraphRevision::new(12, 4, 12));
                 assert_eq!(delta.transcript_operations.len(), 1);
+                assert_eq!(delta.last_agent_message_id.as_deref(), Some("assistant-1"));
             }
             _ => panic!("expected delta payload"),
         }

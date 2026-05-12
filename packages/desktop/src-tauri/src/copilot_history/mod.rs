@@ -16,7 +16,9 @@ use crate::session_jsonl::types::{
 };
 use chrono::{TimeZone, Utc};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use tauri::AppHandle;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopilotListedSession {
@@ -67,17 +69,18 @@ pub async fn load_thread_snapshot(
     _cwd: &str,
     title: &str,
 ) -> Result<Option<SessionThreadSnapshot>, String> {
-    let session_state_root = parser::resolve_copilot_session_state_root()?;
-    let transcript_path = resolve_transcript_path(&session_state_root, replay_context);
-
-    match parser::parse_copilot_session_at_root(&session_state_root, &transcript_path, title).await
+    match load_thread_snapshot_from_disk(
+        &replay_context.history_session_id,
+        replay_context.source_path.as_deref(),
+        title,
+    )
+    .await
     {
         Ok(snapshot) => Ok(Some(snapshot)),
         Err(error) => {
             tracing::info!(
                 session_id = %replay_context.local_session_id,
                 history_session_id = %replay_context.history_session_id,
-                transcript_path = %transcript_path.display(),
                 error = %error,
                 "Copilot session disk parse failed"
             );
@@ -86,6 +89,23 @@ pub async fn load_thread_snapshot(
     }
 }
 
+pub async fn load_thread_snapshot_from_disk(
+    session_id: &str,
+    source_path: Option<&str>,
+    title: &str,
+) -> Result<SessionThreadSnapshot, String> {
+    let session_state_root = parser::resolve_copilot_session_state_root()?;
+    let transcript_path = match source_path {
+        Some(path) if !path.is_empty() && !parser::is_missing_transcript_marker(path) => {
+            PathBuf::from(path)
+        }
+        _ => events_jsonl_path_for_session(&session_state_root, session_id),
+    };
+
+    parser::parse_copilot_session_at_root(&session_state_root, &transcript_path, title).await
+}
+
+#[cfg(test)]
 fn resolve_transcript_path(
     session_state_root: &Path,
     replay_context: &SessionReplayContext,
@@ -150,25 +170,6 @@ fn stored_block_from_content(block: &ContentBlock) -> StoredContentBlock {
             block_type: "audio".to_string(),
             text: None,
         },
-    }
-}
-
-fn combine_user_blocks(chunks: &[StoredContentBlock]) -> StoredContentBlock {
-    let texts = chunks
-        .iter()
-        .filter_map(|chunk| chunk.text.as_deref())
-        .collect::<Vec<_>>();
-
-    if texts.is_empty() {
-        return chunks.first().cloned().unwrap_or(StoredContentBlock {
-            block_type: "text".to_string(),
-            text: Some(String::new()),
-        });
-    }
-
-    StoredContentBlock {
-        block_type: "text".to_string(),
-        text: Some(texts.join("")),
     }
 }
 
@@ -407,15 +408,6 @@ impl ReplayAccumulator {
     ) {
         let block = stored_block_from_content(&chunk.content);
 
-        if let Some(StoredEntry::User { message, .. }) = self.entries.last_mut() {
-            message.chunks.push(block);
-            message.content = combine_user_blocks(&message.chunks);
-            if message.sent_at.is_none() {
-                message.sent_at = timestamp;
-            }
-            return;
-        }
-
         let id = format!("user-{}", self.next_user_index);
         self.next_user_index += 1;
         self.entries.push(StoredEntry::User {
@@ -577,6 +569,7 @@ mod tests {
                             aggregation_hint: None,
                         },
                         session_id: Some(session_id.to_string()),
+                        attempt_id: None,
                     },
                 ),
                 (
@@ -591,6 +584,7 @@ mod tests {
                         part_id: None,
                         message_id: Some("assistant-1".to_string()),
                         session_id: Some(session_id.to_string()),
+                        produced_at_monotonic_ms: None,
                     },
                 ),
                 (
@@ -834,6 +828,7 @@ mod tests {
                         part_id: None,
                         message_id: Some("assistant-1".to_string()),
                         session_id: Some(session_id.to_string()),
+                        produced_at_monotonic_ms: None,
                     },
                 ),
             ],
@@ -850,6 +845,57 @@ mod tests {
                 );
             }
             other => panic!("expected assistant entry, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn replay_conversion_keeps_distinct_user_messages_separate_without_assistant_content() {
+        let session_id = "copilot-session-consecutive-users";
+        let converted = convert_replay_updates_to_session(
+            session_id,
+            "Copilot Session",
+            &[
+                (
+                    1_710_000_020_000,
+                    crate::acp::session_update::SessionUpdate::UserMessageChunk {
+                        chunk: ContentChunk {
+                            content: ContentBlock::Text {
+                                text: "continue".to_string(),
+                            },
+                            aggregation_hint: None,
+                        },
+                        session_id: Some(session_id.to_string()),
+                        attempt_id: None,
+                    },
+                ),
+                (
+                    1_710_000_021_000,
+                    crate::acp::session_update::SessionUpdate::UserMessageChunk {
+                        chunk: ContentChunk {
+                            content: ContentBlock::Text {
+                                text: "continue".to_string(),
+                            },
+                            aggregation_hint: None,
+                        },
+                        session_id: Some(session_id.to_string()),
+                        attempt_id: None,
+                    },
+                ),
+            ],
+        );
+
+        assert_eq!(converted.entries.len(), 2);
+        match (&converted.entries[0], &converted.entries[1]) {
+            (
+                StoredEntry::User { message: first, .. },
+                StoredEntry::User {
+                    message: second, ..
+                },
+            ) => {
+                assert_eq!(first.content.text.as_deref(), Some("continue"));
+                assert_eq!(second.content.text.as_deref(), Some("continue"));
+            }
+            other => panic!("expected two user entries, got {:?}", other),
         }
     }
 
@@ -871,6 +917,7 @@ mod tests {
                             aggregation_hint: None,
                         },
                         session_id: Some(session_id.to_string()),
+                        attempt_id: None,
                     },
                 ),
                 (
@@ -885,6 +932,7 @@ mod tests {
                         part_id: None,
                         message_id: None,
                         session_id: Some(session_id.to_string()),
+                        produced_at_monotonic_ms: None,
                     },
                 ),
                 (

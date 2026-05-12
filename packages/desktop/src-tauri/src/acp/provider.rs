@@ -6,8 +6,10 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tauri::AppHandle;
 
+use crate::acp::capability_resolution::ResolvedCapabilities;
 use crate::acp::client_session::{SessionModelState, SessionModes};
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::client_updates::process_through_reconciler;
@@ -63,9 +65,65 @@ pub struct ModelFallbackCandidate {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct BackendIdentityPolicy {
-    pub requires_persisted_provider_session_id: bool,
-    pub prefers_incoming_provider_session_id_alias: bool,
+pub struct BackendIdentityPolicy;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderHistoryLoadError {
+    ProviderUnavailable { message: String },
+    ProviderHistoryMissing { message: String },
+    ProviderUnparseable { message: String },
+    ProviderValidationFailed { message: String },
+    StaleLineageRecovery { message: String },
+    Internal { message: String },
+}
+
+impl ProviderHistoryLoadError {
+    pub fn provider_unavailable(message: impl Into<String>) -> Self {
+        Self::ProviderUnavailable {
+            message: message.into(),
+        }
+    }
+
+    pub fn provider_history_missing(message: impl Into<String>) -> Self {
+        Self::ProviderHistoryMissing {
+            message: message.into(),
+        }
+    }
+
+    pub fn provider_unparseable(message: impl Into<String>) -> Self {
+        Self::ProviderUnparseable {
+            message: message.into(),
+        }
+    }
+
+    pub fn provider_validation_failed(message: impl Into<String>) -> Self {
+        Self::ProviderValidationFailed {
+            message: message.into(),
+        }
+    }
+
+    pub fn stale_lineage_recovery(message: impl Into<String>) -> Self {
+        Self::StaleLineageRecovery {
+            message: message.into(),
+        }
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::Internal {
+            message: message.into(),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::ProviderUnavailable { message }
+            | Self::ProviderHistoryMissing { message }
+            | Self::ProviderUnparseable { message }
+            | Self::ProviderValidationFailed { message }
+            | Self::StaleLineageRecovery { message }
+            | Self::Internal { message } => message,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -74,53 +132,10 @@ pub struct ProviderReconnectPolicy {
     pub outbound_launch_mode_id: Option<String>,
 }
 
-impl BackendIdentityPolicy {
-    pub fn missing_provider_session_id(self, provider_session_id: Option<&str>) -> bool {
-        self.requires_persisted_provider_session_id && provider_session_id.is_none()
-    }
-
-    pub fn normalize_provider_session_id(
-        self,
-        local_session_id: &str,
-        provider_session_id: &str,
-    ) -> Option<String> {
-        if provider_session_id == local_session_id {
-            None
-        } else {
-            Some(provider_session_id.to_string())
-        }
-    }
-
-    pub fn provider_session_id_for_existing_session(
-        self,
-        local_session_id: &str,
-        incoming_session_id: &str,
-        persisted_provider_session_id: Option<&str>,
-    ) -> Option<String> {
-        if self.prefers_incoming_provider_session_id_alias {
-            return self.normalize_provider_session_id(local_session_id, incoming_session_id);
-        }
-
-        persisted_provider_session_id
-            .filter(|provider_session_id| *provider_session_id != local_session_id)
-            .map(ToOwned::to_owned)
-    }
-
-    pub fn history_session_id<'a>(
-        self,
-        local_session_id: &'a str,
-        provider_session_id: Option<&'a str>,
-    ) -> &'a str {
-        let _ = self;
-        provider_session_id.unwrap_or(local_session_id)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PlanAdapterPolicy {
     pub parses_wrapper_plan_from_text_stream: bool,
     pub finalizes_wrapper_plan_on_turn_end: bool,
-    pub clears_message_tracker_on_prompt_response: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +195,19 @@ pub enum PreconnectionSlashMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub enum PreconnectionCapabilityMode {
+    Unsupported,
+    StartupGlobal,
+    ProjectScoped,
+}
+
+/// Display-only provider metadata for frontend capability projection.
+///
+/// This type is constructed by backend provider adapters, never deserialized
+/// from provider responses, and must not carry credentials, tokens, bearer
+/// material, or provider error text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct FrontendProviderProjection {
     pub provider_brand: &'static str,
     pub display_name: &'static str,
@@ -189,6 +217,7 @@ pub struct FrontendProviderProjection {
     pub default_alias: Option<&'static str>,
     pub reasoning_effort_support: bool,
     pub preconnection_slash_mode: PreconnectionSlashMode,
+    pub preconnection_capability_mode: PreconnectionCapabilityMode,
 }
 
 impl Default for FrontendProviderProjection {
@@ -202,6 +231,7 @@ impl Default for FrontendProviderProjection {
             default_alias: None,
             reasoning_effort_support: false,
             preconnection_slash_mode: PreconnectionSlashMode::Unsupported,
+            preconnection_capability_mode: PreconnectionCapabilityMode::Unsupported,
         }
     }
 }
@@ -275,9 +305,9 @@ pub trait AgentProvider: Send + Sync {
         Vec::new()
     }
 
-    /// Provider-owned model catalog for agents that do not expose a list-models API.
-    fn default_model_candidates(&self) -> Vec<ModelFallbackCandidate> {
-        Vec::new()
+    /// Timeout for provider-owned model discovery commands.
+    fn model_discovery_timeout(&self) -> Duration {
+        Duration::from_secs(10)
     }
 
     /// Parser agent type used for ACP session update parsing and model display grouping.
@@ -418,8 +448,13 @@ pub trait AgentProvider: Send + Sync {
         _app: &'a AppHandle,
         _context: &'a SessionContext,
         _replay_context: &'a SessionReplayContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<SessionThreadSnapshot>, String>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<SessionThreadSnapshot>, ProviderHistoryLoadError>>
+                + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async { Ok(None) })
     }
 
@@ -457,6 +492,26 @@ pub trait AgentProvider: Send + Sync {
         _cwd: Option<&'a Path>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<AvailableCommand>, String>> + Send + 'a>> {
         Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// Provider-owned capability loading before a session exists.
+    fn list_preconnection_capabilities<'a>(
+        &'a self,
+        _app: &'a AppHandle,
+        _cwd: Option<&'a Path>,
+    ) -> Pin<Box<dyn Future<Output = ResolvedCapabilities> + Send + 'a>> {
+        let provider_metadata = self.frontend_projection();
+        Box::pin(async move {
+            ResolvedCapabilities {
+                status: crate::acp::capability_resolution::ResolvedCapabilityStatus::Unsupported,
+                available_models: Vec::new(),
+                current_model_id: String::new(),
+                models_display: Default::default(),
+                provider_metadata,
+                available_modes: Vec::new(),
+                current_mode_id: String::new(),
+            }
+        })
     }
 
     /// Provider-owned hook for enriching parsed session updates before shared processing.
@@ -518,12 +573,6 @@ pub trait AgentProvider: Send + Sync {
     fn uses_wrapper_plan_streaming(&self) -> bool {
         self.plan_adapter_policy()
             .parses_wrapper_plan_from_text_stream
-    }
-
-    /// Whether per-session message-id tracker should be cleared on prompt response.
-    fn clear_message_tracker_on_prompt_response(&self) -> bool {
-        self.plan_adapter_policy()
-            .clears_message_tracker_on_prompt_response
     }
 }
 

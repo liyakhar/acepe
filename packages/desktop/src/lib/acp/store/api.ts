@@ -64,9 +64,10 @@ export function newSession(
  */
 export function sendPrompt(
 	sessionId: string,
-	content: ReadonlyArray<Record<string, unknown> & { type: string }>
+	content: ReadonlyArray<Record<string, unknown> & { type: string }>,
+	attemptId?: string
 ): ResultAsync<void, AppError> {
-	return tauriClient.acp.sendPrompt(sessionId, content);
+	return tauriClient.acp.sendPrompt(sessionId, content, attemptId);
 }
 
 /**

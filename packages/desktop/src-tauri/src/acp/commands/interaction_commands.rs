@@ -209,7 +209,7 @@ fn set_pending_config_option(
     config_id: &str,
     value: &str,
 ) -> crate::acp::session_state_engine::selectors::SessionGraphCapabilities {
-    capabilities.config_options = capabilities
+    let updated_options = capabilities
         .config_options
         .into_iter()
         .map(|option| {
@@ -223,6 +223,8 @@ fn set_pending_config_option(
             }
         })
         .collect();
+    capabilities.config_options =
+        crate::acp::session_update::sanitize_config_options_for_canonical(updated_options);
     capabilities
 }
 
@@ -230,7 +232,9 @@ fn config_options_from_response(
     response: &serde_json::Value,
 ) -> Option<Vec<crate::acp::session_update::ConfigOptionData>> {
     let config_options = response.get("configOptions")?.clone();
-    serde_json::from_value(config_options).ok()
+    serde_json::from_value(config_options)
+        .map(crate::acp::session_update::sanitize_config_options_for_canonical)
+        .ok()
 }
 
 pub(crate) async fn acp_set_model_for_handle<R: tauri::Runtime>(
@@ -418,6 +422,7 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
     app: &AppHandle<R>,
     session_id: String,
     request: Value,
+    attempt_id: Option<String>,
 ) -> Result<(), SerializableAcpError> {
     tracing::debug!(session_id = %session_id, "acp_send_prompt called");
 
@@ -426,6 +431,7 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
     let mut prompt_request: PromptRequest = serde_json::from_value(json!({
         "sessionId": session_id,
         "prompt": request,
+        "attemptId": attempt_id,
         "stream": true
     }))
     .map_err(|e| SerializableAcpError::SerializationError {
@@ -445,7 +451,11 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
         .is_some_and(|checkpoint| {
             checkpoint.lifecycle.status == crate::acp::lifecycle::LifecycleStatus::Reserved
         });
-    let ready_dispatch_permit = if reserved_before_send {
+    let has_supervisor_snapshot = supervisor
+        .as_ref()
+        .and_then(|state| state.inner().snapshot_for_session(&session_id))
+        .is_some();
+    let ready_dispatch_permit = if reserved_before_send || !has_supervisor_snapshot {
         None
     } else {
         supervisor
@@ -477,7 +487,11 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
                 message: error.to_string(),
             })?;
     }
-    let synthetic_user_update = synthetic_user_message_update(&session_id, &prompt_request.prompt);
+    let synthetic_user_update = synthetic_user_message_update(
+        &session_id,
+        &prompt_request.prompt,
+        prompt_request.attempt_id.as_deref(),
+    );
     let result = timeout(
         SESSION_CLIENT_OPERATION_TIMEOUT,
         client_guard.send_prompt_fire_and_forget(prompt_request),
@@ -520,6 +534,11 @@ pub(crate) async fn send_prompt_with_app_handle<R: tauri::Runtime>(
                 session_id: session_id.clone(),
                 attempt_id: 0,
                 error: error.to_string(),
+                // Activation-path fallback inside `acp_send_prompt`'s
+                // Reserved-lifecycle branch. This is not a resume
+                // boundary — the classifier is intentionally not invoked
+                // here. Treat as a generic transient/transport failure.
+                failure_reason: crate::acp::lifecycle::FailureReason::ResumeFailed,
             },
         };
 
@@ -544,10 +563,11 @@ pub async fn acp_send_prompt(
     app: AppHandle,
     session_id: String,
     request: Value,
+    attempt_id: Option<String>,
 ) -> CommandResult<()> {
     expected_acp_command_result(
         "acp_send_prompt",
-        send_prompt_with_app_handle(&app, session_id, request).await,
+        send_prompt_with_app_handle(&app, session_id, request, attempt_id).await,
     )
 }
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { ConnectionError } from "$lib/acp/errors/app-error.js";
 import type { SessionOpenHydrator } from "$lib/acp/store/services/session-open-hydrator.js";
 import type { SessionStore } from "$lib/acp/store/session-store.svelte.js";
 import type { SessionOpenResult } from "$lib/services/acp-types.js";
@@ -13,7 +14,7 @@ type SessionOpenStore = Pick<
 	SessionStore,
 	| "setSessionLoading"
 	| "setSessionLoaded"
-	| "setSessionOpenMissing"
+	| "setLocalCreatedSessionLoaded"
 	| "getSessionCold"
 	| "connectSession"
 >;
@@ -39,7 +40,7 @@ describe("openPersistedSession", () => {
 		sessionStore = {
 			setSessionLoading: mock(() => {}),
 			setSessionLoaded: mock(() => {}),
-			setSessionOpenMissing: mock(() => {}),
+			setLocalCreatedSessionLoaded: mock(() => {}),
 			connectSession: mock(() => okAsync({} as any)),
 			getSessionCold: mock(() => ({
 				id: "session-1",
@@ -160,6 +161,86 @@ describe("openPersistedSession", () => {
 		});
 	});
 
+	it("hydrates the open snapshot before marking loaded and connecting for manual and startup opens", async () => {
+		const sources = ["session-handler", "initialization-manager"] as const;
+
+		for (const source of sources) {
+			const sessionId = source === "session-handler" ? "manual-session" : "startup-session";
+			const panelId = source === "session-handler" ? "manual-panel" : "startup-panel";
+			const callOrder: string[] = [];
+
+			sessionStore.setSessionLoading = mock((loadedSessionId: string) => {
+				callOrder.push(`loading:${loadedSessionId}`);
+			});
+			sessionStore.setSessionLoaded = mock((loadedSessionId: string) => {
+				callOrder.push(`loaded:${loadedSessionId}`);
+			});
+			const connectSession: SessionOpenStore["connectSession"] = (connectedSessionId: string) => {
+				callOrder.push(`connect:${connectedSessionId}`);
+				return okAsync({
+					id: connectedSessionId,
+					title: "Session",
+					projectPath: "/project",
+					agentId: "claude-code",
+					createdAt: new Date(),
+					updatedAt: new Date(),
+					parentId: null,
+				});
+			};
+			sessionStore.connectSession = mock(connectSession);
+			sessionStore.getSessionCold = mock(() => ({
+				id: sessionId,
+				title: "Session",
+				projectPath: "/project",
+				agentId: "claude-code",
+				sourcePath: `/tmp/${sessionId}.jsonl`,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+				parentId: null,
+			}));
+			sessionOpenHydrator.beginAttempt = mock(() => `request-${sessionId}`);
+			sessionOpenHydrator.hydrateFound = mock(() => {
+				callOrder.push(`hydrate:${sessionId}`);
+				return okAsync({
+					canonicalSessionId: sessionId,
+					openToken: `open-token-${sessionId}`,
+					applied: true,
+				});
+			});
+			sessionOpenHydrator.clearAttempt = mock(() => {
+				callOrder.push(`clear:${panelId}`);
+			});
+			sessionOpenHydrator.isCurrentAttempt = mock(() => true);
+			getSessionOpenResultMock.mockImplementation(() => {
+				callOrder.push(`open:${sessionId}`);
+				return okAsync(createFoundResult(sessionId));
+			});
+
+			openPersistedSession({
+				panelId,
+				sessionId,
+				sessionStore,
+				sessionOpenHydrator,
+				getSessionOpenResult: getSessionOpenResultMock,
+				timeoutMs: 10_000,
+				source,
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(callOrder).toEqual([
+				`loading:${sessionId}`,
+				`open:${sessionId}`,
+				`hydrate:${sessionId}`,
+				`loaded:${sessionId}`,
+				`clear:${panelId}`,
+				`connect:${sessionId}`,
+			]);
+			resetOpenPersistedSessionForTests();
+		}
+	});
+
 	it("reconnects hydrated sessions even when the snapshot was already current", async () => {
 		sessionOpenHydrator = {
 			beginAttempt: mock(() => "request-1"),
@@ -211,6 +292,34 @@ describe("openPersistedSession", () => {
 
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.connectSession).toHaveBeenCalledWith("session-1", {
+			openToken: "open-token-1",
+		});
+	});
+
+	it("does not let a slow reconnect trip the session-open timeout after hydration", async () => {
+		sessionStore.connectSession = mock(
+			() =>
+				ResultAsync.fromSafePromise(new Promise<never>(() => {})) as unknown as ReturnType<
+					SessionOpenStore["connectSession"]
+				>
+		);
+
+		openPersistedSession({
+			panelId: "panel-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 5,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		expect(sessionOpenHydrator.clearAttempt).toHaveBeenCalledWith("panel-1");
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledTimes(1);
 		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
 		expect(sessionStore.connectSession).toHaveBeenCalledWith("session-1", {
 			openToken: "open-token-1",
@@ -315,7 +424,7 @@ describe("openPersistedSession", () => {
 		expect(sessionOpenHydrator.hydrateFound).toHaveBeenCalled();
 	});
 
-	it("surfaces an explicit non-openable error without connecting when the result is missing", async () => {
+	it("surfaces an explicit non-openable result without connecting when the result is missing", async () => {
 		getSessionOpenResultMock.mockImplementation(
 			() =>
 				okAsync({
@@ -335,15 +444,233 @@ describe("openPersistedSession", () => {
 		});
 
 		await new Promise((resolve) => setTimeout(resolve, 0));
+		// GOD: canonical lifecycle envelope (SessionGoneUpstream) drives UI;
+		// open-persisted-session just unwinds local in-flight bookkeeping.
 		expect(sessionOpenHydrator.clearAttempt).toHaveBeenCalledWith("panel-1");
-		expect(sessionStore.setSessionOpenMissing).toHaveBeenCalledWith(
-			"session-1",
-			"This session can't be reopened because no canonical session state is available."
-		);
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
 		expect(sessionStore.connectSession).not.toHaveBeenCalled();
 	});
 
-	it("uses Cursor-specific copy for legacy store.db history sessions", async () => {
+	it("falls back to local reattach when Rust cannot open a local-created snapshot", async () => {
+		getSessionOpenResultMock.mockImplementation(
+			() =>
+				okAsync({
+					outcome: "missing",
+					requestedSessionId: "session-1",
+				} as SessionOpenResult) as unknown as ReturnType<typeof getSessionOpenResultMock>
+		);
+		sessionStore.getSessionCold = mock(() => ({
+			id: "session-1",
+			title: "Session 1",
+			projectPath: "/project",
+			agentId: "cursor",
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			sessionLifecycleState: "created" as const,
+			parentId: null,
+		}));
+
+		openPersistedSession({
+			panelId: "panel-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "initialization-manager",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(getSessionOpenResultMock).toHaveBeenCalledTimes(1);
+		expect(sessionOpenHydrator.clearAttempt).toHaveBeenCalledWith("panel-1");
+		expect(sessionStore.setSessionLoading).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.setLocalCreatedSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.setSessionLoaded).not.toHaveBeenCalled();
+		expect(sessionStore.connectSession).toHaveBeenCalledWith("session-1");
+	});
+
+	it("falls back to local reattach when local-created snapshot open rejects", async () => {
+		getSessionOpenResultMock.mockImplementation(
+			() =>
+				errAsync(new Error("open snapshot unavailable")) as unknown as ReturnType<
+					typeof getSessionOpenResultMock
+				>
+		);
+		sessionStore.getSessionCold = mock(() => ({
+			id: "session-1",
+			title: "Session 1",
+			projectPath: "/project",
+			agentId: "cursor",
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			sessionLifecycleState: "created" as const,
+			parentId: null,
+		}));
+
+		openPersistedSession({
+			panelId: "panel-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(getSessionOpenResultMock).toHaveBeenCalledTimes(1);
+		expect(sessionStore.setSessionLoading).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.setLocalCreatedSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.setSessionLoaded).not.toHaveBeenCalled();
+		expect(sessionStore.connectSession).toHaveBeenCalledWith("session-1");
+	});
+
+	it("hydrates local-created sessions when Rust can open a canonical snapshot", async () => {
+		sessionStore.getSessionCold = mock(() => ({
+			id: "session-1",
+			title: "Session 1",
+			projectPath: "/project",
+			agentId: "cursor",
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			sessionLifecycleState: "created" as const,
+			parentId: null,
+		}));
+
+		openPersistedSession({
+			panelId: "panel-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(getSessionOpenResultMock).toHaveBeenCalledTimes(1);
+		expect(sessionOpenHydrator.hydrateFound).toHaveBeenCalledTimes(1);
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.connectSession).toHaveBeenCalledWith("session-1", {
+			openToken: "open-token-1",
+		});
+		expect(sessionStore.setLocalCreatedSessionLoaded).not.toHaveBeenCalled();
+	});
+
+	it("does not synthesize TS-side reattach failure messages when local-created reattach fails", async () => {
+		// GOD: failure surfaces via canonical lifecycle envelope
+		// (FailureReason::SessionGoneUpstream / ResumeFailed). The TS-side
+		// string-match gate and friendly-message fallback have been retired —
+		// open-persisted-session must not write any UI state on reattach failure
+		// other than logging.
+		getSessionOpenResultMock.mockImplementation(
+			() =>
+				okAsync({
+					outcome: "missing",
+					requestedSessionId: "session-1",
+				} as SessionOpenResult) as unknown as ReturnType<typeof getSessionOpenResultMock>
+		);
+		sessionStore.getSessionCold = mock(() => ({
+			id: "session-1",
+			title: "Session 1",
+			projectPath: "/project",
+			agentId: "cursor",
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			sessionLifecycleState: "created" as const,
+			parentId: null,
+		}));
+		sessionStore.connectSession = mock(() =>
+			errAsync(new ConnectionError("session-1", new Error("Resource not found: Session session-1")))
+		);
+
+		openPersistedSession({
+			panelId: "panel-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "initialization-manager",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(getSessionOpenResultMock).toHaveBeenCalledTimes(1);
+		expect(sessionStore.connectSession).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.setLocalCreatedSessionLoaded).not.toHaveBeenCalled();
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
+		// Must NOT carry symbols of the deleted gate.
+		expect(
+			(sessionStore as unknown as Record<string, unknown>)["setSessionOpenMissing"]
+		).toBeUndefined();
+		expect(
+			(sessionStore as unknown as Record<string, unknown>)["setLocalPersistedSessionProbeStatus"]
+		).toBeUndefined();
+	});
+
+	it("surfaces provider parse failures via canonical lifecycle without connecting", async () => {
+		// GOD: Rust emits ConnectionFailed envelope for parseFailure; UI is
+		// canonical-driven. open-persisted-session must not synthesize copy.
+		getSessionOpenResultMock.mockImplementation(
+			() =>
+				okAsync({
+					outcome: "error",
+					requestedSessionId: "session-1",
+					message: "Claude provider history parse failed: invalid JSON",
+					reason: "parseFailure",
+					retryable: false,
+				} as SessionOpenResult) as unknown as ReturnType<typeof getSessionOpenResultMock>
+		);
+
+		openPersistedSession({
+			panelId: "panel-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(sessionOpenHydrator.clearAttempt).toHaveBeenCalledWith("panel-1");
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.connectSession).not.toHaveBeenCalled();
+	});
+
+	it("surfaces retryable internal errors via canonical lifecycle without connecting", async () => {
+		// GOD: Rust emits ConnectionFailed envelope (ResumeFailed for retryable);
+		// UI reads lifecycle.failureReason. No TS-side copy synthesis here.
+		getSessionOpenResultMock.mockImplementation(
+			() =>
+				okAsync({
+					outcome: "error",
+					requestedSessionId: "session-1",
+					message: "database is locked while loading session-1",
+					reason: "internal",
+					retryable: true,
+				} as SessionOpenResult) as unknown as ReturnType<typeof getSessionOpenResultMock>
+		);
+
+		openPersistedSession({
+			panelId: "panel-1",
+			sessionId: "session-1",
+			sessionStore,
+			sessionOpenHydrator,
+			getSessionOpenResult: getSessionOpenResultMock,
+			timeoutMs: 10_000,
+			source: "session-handler",
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(sessionOpenHydrator.clearAttempt).toHaveBeenCalledWith("panel-1");
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.connectSession).not.toHaveBeenCalled();
+	});
+
+	it("does not synthesize Cursor-specific copy for legacy store.db history sessions", async () => {
+		// GOD: agent-specific copy lives in TS failure-copy mapper (Unit 5),
+		// keyed on (agentId, lifecycle.failureReason) — never synthesized here.
 		sessionStore.getSessionCold = mock(() => ({
 			id: "session-1",
 			title: "Cursor Session",
@@ -373,10 +700,9 @@ describe("openPersistedSession", () => {
 		});
 
 		await new Promise((resolve) => setTimeout(resolve, 0));
-		expect(sessionStore.setSessionOpenMissing).toHaveBeenCalledWith(
-			"session-1",
-			"This Cursor history session is view-only and can't be reopened because no canonical resumable state was persisted."
-		);
+		expect(sessionOpenHydrator.clearAttempt).toHaveBeenCalledWith("panel-1");
+		expect(sessionStore.setSessionLoaded).toHaveBeenCalledWith("session-1");
+		expect(sessionStore.connectSession).not.toHaveBeenCalled();
 	});
 });
 
@@ -405,6 +731,20 @@ function createFoundResult(
 		operations: [],
 		interactions: [],
 		turnState: "Idle",
+		lifecycle: {
+			status: "ready",
+			actionability: {
+				canSend: true,
+				canResume: false,
+				canRetry: false,
+				canArchive: false,
+				canConfigure: true,
+				recommendedAction: "send",
+				recoveryPhase: "none",
+				compactStatus: "ready",
+			},
+		},
+		capabilities: {},
 		...overrides,
 	};
 }

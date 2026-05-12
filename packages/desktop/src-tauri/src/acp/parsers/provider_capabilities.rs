@@ -7,7 +7,7 @@ use crate::acp::parsers::{
 };
 use crate::acp::provider::{
     BackendIdentityPolicy, FrontendProviderProjection, FrontendVariantGroup, HistoryReplayFamily,
-    HistoryReplayPolicy, PlanAdapterPolicy, PreconnectionSlashMode,
+    HistoryReplayPolicy, PlanAdapterPolicy, PreconnectionCapabilityMode, PreconnectionSlashMode,
 };
 use crate::acp::session_update::PlanSource;
 
@@ -90,26 +90,16 @@ const CODEX_ENRICHMENT: InvocationEnrichment = InvocationEnrichment {
     location_path_hint: false,
 };
 
-const GENERIC_BACKEND_IDENTITY_POLICY: BackendIdentityPolicy = BackendIdentityPolicy {
-    requires_persisted_provider_session_id: false,
-    prefers_incoming_provider_session_id_alias: false,
-};
-
-const CLAUDE_BACKEND_IDENTITY_POLICY: BackendIdentityPolicy = BackendIdentityPolicy {
-    requires_persisted_provider_session_id: true,
-    prefers_incoming_provider_session_id_alias: true,
-};
+const GENERIC_BACKEND_IDENTITY_POLICY: BackendIdentityPolicy = BackendIdentityPolicy;
 
 const DEFAULT_PLAN_ADAPTER_POLICY: PlanAdapterPolicy = PlanAdapterPolicy {
     parses_wrapper_plan_from_text_stream: false,
     finalizes_wrapper_plan_on_turn_end: false,
-    clears_message_tracker_on_prompt_response: false,
 };
 
 const CODEX_PLAN_ADAPTER_POLICY: PlanAdapterPolicy = PlanAdapterPolicy {
     parses_wrapper_plan_from_text_stream: true,
     finalizes_wrapper_plan_on_turn_end: true,
-    clears_message_tracker_on_prompt_response: true,
 };
 
 const PROVIDER_OWNED_HISTORY_REPLAY_POLICY: HistoryReplayPolicy = HistoryReplayPolicy {
@@ -121,7 +111,7 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
         provider_id: "claude-code",
         agent: AgentType::ClaudeCode,
         parser: &ClaudeCodeParser,
-        backend_identity_policy: CLAUDE_BACKEND_IDENTITY_POLICY,
+        backend_identity_policy: GENERIC_BACKEND_IDENTITY_POLICY,
         plan_adapter_policy: DEFAULT_PLAN_ADAPTER_POLICY,
         history_replay_policy: PROVIDER_OWNED_HISTORY_REPLAY_POLICY,
         frontend_projection: FrontendProviderProjection {
@@ -133,6 +123,7 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
             default_alias: Some("default"),
             reasoning_effort_support: false,
             preconnection_slash_mode: PreconnectionSlashMode::StartupGlobal,
+            preconnection_capability_mode: PreconnectionCapabilityMode::StartupGlobal,
         },
         transport_family: TransportFamily::SharedChat,
         tool_vocabulary: ToolVocabulary::ClaudeCode,
@@ -159,6 +150,7 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
             default_alias: None,
             reasoning_effort_support: false,
             preconnection_slash_mode: PreconnectionSlashMode::ProjectScoped,
+            preconnection_capability_mode: PreconnectionCapabilityMode::ProjectScoped,
         },
         transport_family: TransportFamily::SharedChat,
         tool_vocabulary: ToolVocabulary::Copilot,
@@ -185,6 +177,7 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
             default_alias: None,
             reasoning_effort_support: false,
             preconnection_slash_mode: PreconnectionSlashMode::ProjectScoped,
+            preconnection_capability_mode: PreconnectionCapabilityMode::ProjectScoped,
         },
         transport_family: TransportFamily::OpenCodeEvents,
         tool_vocabulary: ToolVocabulary::OpenCode,
@@ -211,6 +204,7 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
             default_alias: Some("auto"),
             reasoning_effort_support: false,
             preconnection_slash_mode: PreconnectionSlashMode::StartupGlobal,
+            preconnection_capability_mode: PreconnectionCapabilityMode::StartupGlobal,
         },
         transport_family: TransportFamily::CursorAcp,
         tool_vocabulary: ToolVocabulary::Cursor,
@@ -237,6 +231,7 @@ static PROVIDER_CAPABILITIES: [ProviderCapabilities; 5] = [
             default_alias: None,
             reasoning_effort_support: true,
             preconnection_slash_mode: PreconnectionSlashMode::StartupGlobal,
+            preconnection_capability_mode: PreconnectionCapabilityMode::StartupGlobal,
         },
         transport_family: TransportFamily::CodexAcp,
         tool_vocabulary: ToolVocabulary::Codex,
@@ -327,25 +322,11 @@ mod tests {
     }
 
     #[test]
-    fn provider_capabilities_capture_identity_policy() {
+    fn provider_capabilities_use_provider_canonical_identity() {
         let claude = provider_capabilities(AgentType::ClaudeCode);
-        assert!(
-            claude
-                .backend_identity_policy
-                .requires_persisted_provider_session_id
-        );
-        assert!(
-            claude
-                .backend_identity_policy
-                .prefers_incoming_provider_session_id_alias
-        );
-
         let cursor = provider_capabilities(AgentType::Cursor);
-        assert!(
-            !cursor
-                .backend_identity_policy
-                .requires_persisted_provider_session_id
-        );
+        assert_eq!(claude.backend_identity_policy, BackendIdentityPolicy);
+        assert_eq!(cursor.backend_identity_policy, BackendIdentityPolicy);
     }
 
     #[test]
@@ -357,11 +338,6 @@ mod tests {
                 .parses_wrapper_plan_from_text_stream
         );
         assert!(codex.plan_adapter_policy.finalizes_wrapper_plan_on_turn_end);
-        assert!(
-            codex
-                .plan_adapter_policy
-                .clears_message_tracker_on_prompt_response
-        );
         assert_eq!(
             codex.frontend_projection.variant_group,
             FrontendVariantGroup::ReasoningEffort

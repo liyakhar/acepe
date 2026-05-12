@@ -1,6 +1,47 @@
 import { describe, expect, it } from "bun:test";
 
-import { mapSessionStatusToUI } from "../session-status-mapper";
+import type { SessionGraphLifecycle } from "$lib/services/acp-types.js";
+import {
+	deriveCanonicalAgentPanelSessionState,
+	deriveEffectiveCanonicalTurnPresentation,
+	mapCanonicalSessionToPanelStatus,
+	mapSessionStatusToUI,
+} from "../session-status-mapper";
+
+function lifecycle(
+	status: SessionGraphLifecycle["status"],
+	canResume = false,
+	canRetry = false,
+	canSend = status === "ready"
+): SessionGraphLifecycle {
+	return {
+		status,
+		detachedReason: status === "detached" ? "restoredRequiresAttach" : null,
+		failureReason: status === "failed" ? "resumeFailed" : null,
+		errorMessage: status === "failed" ? "Connection failed" : null,
+		actionability: {
+			canSend,
+			canResume,
+			canRetry,
+			canArchive: status !== "archived",
+			canConfigure: canSend,
+			recommendedAction: canSend ? "send" : canResume ? "resume" : canRetry ? "retry" : "wait",
+			recoveryPhase:
+				status === "detached"
+					? "detached"
+					: status === "failed"
+						? "failed"
+						: status === "activating"
+							? "activating"
+							: status === "reconnecting"
+								? "reconnecting"
+								: status === "archived"
+									? "archived"
+									: "none",
+			compactStatus: status,
+		},
+	};
+}
 
 describe("mapSessionStatusToUI", () => {
 	it('should map "idle" to "empty"', () => {
@@ -37,5 +78,217 @@ describe("mapSessionStatusToUI", () => {
 
 	it('should map "paused" to "empty"', () => {
 		expect(mapSessionStatusToUI("paused")).toBe("empty");
+	});
+});
+
+describe("mapCanonicalSessionToPanelStatus", () => {
+	it("maps ready/sendable lifecycle to connected presentation", () => {
+		expect(
+			mapCanonicalSessionToPanelStatus({
+				lifecycle: lifecycle("ready"),
+				activity: {
+					kind: "idle",
+					activeOperationCount: 0,
+					activeSubagentCount: 0,
+					dominantOperationId: null,
+					blockingInteractionId: null,
+				},
+				turnState: "Idle",
+				hasEntries: true,
+			})
+		).toBe("connected");
+	});
+
+	it("maps detached/restorable lifecycle to idle instead of empty", () => {
+		expect(
+			mapCanonicalSessionToPanelStatus({
+				lifecycle: lifecycle("detached", true),
+				activity: {
+					kind: "paused",
+					activeOperationCount: 0,
+					activeSubagentCount: 0,
+					dominantOperationId: null,
+					blockingInteractionId: null,
+				},
+				turnState: "Idle",
+				hasEntries: true,
+			})
+		).toBe("idle");
+	});
+
+	it("maps reserved and activating lifecycle to warming explicitly", () => {
+		expect(mapCanonicalSessionToPanelStatus({ lifecycle: lifecycle("reserved") })).toBe("warming");
+		expect(mapCanonicalSessionToPanelStatus({ lifecycle: lifecycle("activating") })).toBe(
+			"warming"
+		);
+	});
+
+	it("maps failed retryable lifecycle to error presentation", () => {
+		expect(mapCanonicalSessionToPanelStatus({ lifecycle: lifecycle("failed", false, true) })).toBe(
+			"error"
+		);
+	});
+
+	it("maps archived lifecycle to idle read-only presentation", () => {
+		expect(mapCanonicalSessionToPanelStatus({ lifecycle: lifecycle("archived") })).toBe("idle");
+	});
+});
+
+describe("deriveCanonicalAgentPanelSessionState", () => {
+	it("uses completed idle canonical state for send-ready reopened sessions", () => {
+		const state = deriveCanonicalAgentPanelSessionState({
+			lifecycle: lifecycle("ready"),
+			activity: {
+				kind: "idle",
+				activeOperationCount: 0,
+				activeSubagentCount: 0,
+				dominantOperationId: null,
+				blockingInteractionId: null,
+			},
+			turnState: "Completed",
+			hasEntries: true,
+		});
+
+		expect(state).toEqual({
+			sessionStatus: "done",
+			isConnected: true,
+			isStreaming: false,
+			showPlanningIndicator: false,
+			canSubmit: true,
+			showStop: false,
+		});
+	});
+
+	it("keeps pre-canonical optimistic sends in warming presentation", () => {
+		const state = deriveCanonicalAgentPanelSessionState({
+			lifecycle: null,
+			activity: null,
+			turnState: null,
+			hasEntries: true,
+			hasOptimisticPendingEntry: true,
+		});
+
+		expect(state).toEqual({
+			sessionStatus: "warming",
+			isConnected: false,
+			isStreaming: false,
+			showPlanningIndicator: true,
+			canSubmit: false,
+			showStop: false,
+		});
+	});
+
+	it("uses awaiting-model canonical state for planning and stop affordances", () => {
+		const state = deriveCanonicalAgentPanelSessionState({
+			lifecycle: lifecycle("ready", false, false, false),
+			activity: {
+				kind: "awaiting_model",
+				activeOperationCount: 0,
+				activeSubagentCount: 0,
+				dominantOperationId: null,
+				blockingInteractionId: null,
+			},
+			turnState: "Running",
+			hasEntries: true,
+		});
+
+		expect(state).toEqual({
+			sessionStatus: "running",
+			isConnected: true,
+			isStreaming: true,
+			showPlanningIndicator: true,
+			canSubmit: false,
+			showStop: true,
+		});
+	});
+
+	it("uses local pending send intent for immediate in-session planning feedback", () => {
+		const state = deriveCanonicalAgentPanelSessionState({
+			lifecycle: lifecycle("ready", false, false, true),
+			activity: null,
+			turnState: "Completed",
+			hasEntries: true,
+			hasLocalPendingSendIntent: true,
+		});
+
+		expect(state).toEqual({
+			sessionStatus: "connected",
+			isConnected: true,
+			isStreaming: false,
+			showPlanningIndicator: true,
+			canSubmit: false,
+			showStop: false,
+		});
+	});
+
+	it("does not let local terminal observation override stale canonical awaiting-model state", () => {
+		const state = deriveCanonicalAgentPanelSessionState({
+			lifecycle: lifecycle("ready", false, false, true),
+			activity: {
+				kind: "awaiting_model",
+				activeOperationCount: 0,
+				activeSubagentCount: 0,
+				dominantOperationId: null,
+				blockingInteractionId: null,
+			},
+			turnState: "Running",
+			hasEntries: true,
+			hasLocalObservedTerminalTurn: true,
+		});
+
+		expect(state).toEqual({
+			sessionStatus: "running",
+			isConnected: true,
+			isStreaming: true,
+			showPlanningIndicator: true,
+			canSubmit: false,
+			showStop: true,
+		});
+	});
+});
+
+describe("deriveEffectiveCanonicalTurnPresentation", () => {
+	it("keeps stale awaiting-model graph canonical when local terminal diagnostics exist", () => {
+		const activity = {
+			kind: "awaiting_model" as const,
+			activeOperationCount: 0,
+			activeSubagentCount: 0,
+			dominantOperationId: null,
+			blockingInteractionId: null,
+		};
+		const presentation = deriveEffectiveCanonicalTurnPresentation({
+			lifecycle: lifecycle("ready", false, false, true),
+			activity,
+			turnState: "Running",
+			hasLocalObservedTerminalTurn: true,
+		});
+
+		expect(presentation).toEqual({
+			activity,
+			turnState: "Running",
+			hasTerminalOverride: false,
+		});
+	});
+
+	it("keeps a genuinely running operation running even after terminal observation", () => {
+		const activity = {
+			kind: "running_operation" as const,
+			activeOperationCount: 1,
+			activeSubagentCount: 0,
+			dominantOperationId: "op-1",
+			blockingInteractionId: null,
+		};
+		const presentation = deriveEffectiveCanonicalTurnPresentation({
+			lifecycle: lifecycle("ready", false, false, false),
+			activity,
+			turnState: "Running",
+			hasLocalObservedTerminalTurn: true,
+		});
+
+		expect(presentation).toEqual({
+			activity,
+			turnState: "Running",
+			hasTerminalOverride: false,
+		});
 	});
 });

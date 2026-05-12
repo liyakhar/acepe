@@ -9,6 +9,7 @@ import { tableWrapperPlugin } from "./table-wrapper.js";
 import { colorBadgePlugin } from "./color-badge.js";
 import { filePathBadgePlugin } from "./file-path-badge.js";
 import { githubBadgePlugin } from "./github-badge.js";
+import { tokenWordWrapPlugin } from "./token-word-wrap.js";
 
 /** Run before Shiki (language sanitization) */
 export const PRE_SHIKI_PLUGINS: MarkdownPlugin[] = [
@@ -23,6 +24,7 @@ export const POST_SHIKI_PLUGINS: MarkdownPlugin[] = [
 	colorBadgePlugin,
 	filePathBadgePlugin,
 	githubBadgePlugin,
+	tokenWordWrapPlugin,
 ];
 
 export function applyPlugins(md: MarkdownIt, plugins: MarkdownPlugin[]): void {

@@ -1,9 +1,8 @@
 import { createMarkdownRenderer } from "@acepe/ui/markdown";
-
-import { SUPPORTED_LANGUAGES } from "../components/tool-calls/tool-call-edit/constants/index.js";
 import { recordHotPathDiagnostic } from "./hot-path-diagnostics.js";
 import { rendererRepoContext } from "./renderer-repo-context.js";
 import { loadCursorLightTheme, loadCursorTheme } from "./shiki-theme.js";
+import { SUPPORTED_LANGUAGES } from "./tool-call-edit/constants/index.js";
 
 const api = createMarkdownRenderer({
 	loadDarkTheme: async () => {

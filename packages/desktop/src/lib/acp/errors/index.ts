@@ -1,4 +1,10 @@
-export { AcpError } from "./acp-error.js";
+export {
+	type AcpCreationFailureKind,
+	AcpError,
+	CreationFailedAcpError,
+	ProviderHistoryFailedAcpError,
+	type ProviderHistoryFailureKind,
+} from "./acp-error.js";
 export { CommandPaletteError, type CommandPaletteErrorCode } from "./command-palette-error.js";
 export { ConnectionError } from "./connection-error.js";
 export { deserializeAcpError, tryDeserializeAcpError } from "./deserialize-acp-error.js";

@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProtocolError } from "../../errors/index.js";
 import type { AcpEventEnvelope } from "../acp-event-bridge.js";
 import { EventSubscriber } from "../event-subscriber.js";
+import { createTestAcpEventDrain } from "./fixtures/acp-event-drain-stub.js";
 
 const mockOpenAcpEventSource = vi.fn();
 
 vi.mock("../acp-event-bridge.js", () => ({
+	createAcpEventDrain: createTestAcpEventDrain,
 	openAcpEventSource: (...args: Parameters<typeof mockOpenAcpEventSource>) =>
 		mockOpenAcpEventSource(...args),
 }));
@@ -161,7 +163,19 @@ describe("EventSubscriber", () => {
 					delta: {
 						fromRevision: { graphRevision: 3, transcriptRevision: 3, lastEventSeq: 8 },
 						toRevision: { graphRevision: 4, transcriptRevision: 4, lastEventSeq: 9 },
+						activity: {
+							kind: "idle",
+							activeOperationCount: 0,
+							activeSubagentCount: 0,
+							dominantOperationId: null,
+							blockingInteractionId: null,
+						},
+						turnState: "Running",
+						activeTurnFailure: null,
+						lastTerminalTurnId: null,
 						transcriptOperations: [],
+						operationPatches: [],
+						interactionPatches: [],
 						changedFields: ["transcriptSnapshot"],
 					},
 				},

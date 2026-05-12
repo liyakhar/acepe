@@ -104,27 +104,39 @@ async fn update_question_projection(
     let response = InteractionResponse::Question {
         answers: json!(parsed_answers),
     };
-    if projection_registry
-        .resolve_interaction(session_id, question_id, state.clone(), response.clone())
-        .is_none()
-    {
+    let Some(interaction_patch) = projection_registry.resolve_interaction(
+        session_id,
+        question_id,
+        state.clone(),
+        response.clone(),
+    ) else {
         tracing::debug!(
             session_id = %session_id,
             question_id = %question_id,
             "Question interaction projection missing during reply"
         );
         return;
-    }
+    };
 
-    if let Err(error) = SessionJournalEventRepository::append_interaction_transition(
-        db.inner(),
-        session_id,
-        question_id,
-        state,
-        response,
-    )
-    .await
-    {
+    let persist_result = if interaction_patch.state == InteractionState::Answered {
+        SessionJournalEventRepository::append_interaction_snapshot(
+            db.inner(),
+            session_id,
+            interaction_patch,
+        )
+        .await
+    } else {
+        SessionJournalEventRepository::append_interaction_transition(
+            db.inner(),
+            session_id,
+            question_id,
+            state,
+            response,
+        )
+        .await
+    };
+
+    if let Err(error) = persist_result {
         tracing::error!(
             error = %error,
             session_id = %session_id,

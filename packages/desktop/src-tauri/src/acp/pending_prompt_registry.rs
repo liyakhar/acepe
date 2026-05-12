@@ -11,14 +11,16 @@ static PENDING_PROMPT_ECHOES: LazyLock<DashMap<String, VecDeque<String>>> =
 pub(crate) fn synthetic_user_message_update(
     session_id: &str,
     prompt: &[ContentBlock],
+    attempt_id: Option<&str>,
 ) -> Option<SessionUpdate> {
-    let text = prompt_text(prompt)?;
+    let text = prompt_display_text(prompt)?;
     Some(SessionUpdate::UserMessageChunk {
         chunk: ContentChunk {
             content: ContentBlock::Text { text },
             aggregation_hint: None,
         },
         session_id: Some(session_id.to_string()),
+        attempt_id: attempt_id.map(str::to_string),
     })
 }
 
@@ -70,24 +72,28 @@ pub(crate) fn discard_pending_prompt_echo(session_id: &str) {
     }
 }
 
-fn prompt_text(prompt: &[ContentBlock]) -> Option<String> {
-    let text_blocks = prompt
+fn prompt_display_text(prompt: &[ContentBlock]) -> Option<String> {
+    let blocks = prompt
         .iter()
         .filter_map(|block| match block {
             ContentBlock::Text { text } if !text.trim().is_empty() => Some(text.clone()),
+            ContentBlock::Image { .. } => Some("[Image]".to_string()),
             _ => None,
         })
         .collect::<Vec<_>>();
 
-    if text_blocks.is_empty() {
+    if blocks.is_empty() {
         return None;
     }
 
-    Some(text_blocks.join("\n"))
+    Some(blocks.join("\n"))
 }
 
 fn session_text_pair(update: &SessionUpdate) -> Option<(String, String)> {
-    let SessionUpdate::UserMessageChunk { chunk, session_id } = update else {
+    let SessionUpdate::UserMessageChunk {
+        chunk, session_id, ..
+    } = update
+    else {
         return None;
     };
     let session_id = session_id.clone()?;
@@ -113,14 +119,50 @@ mod tests {
             &[ContentBlock::Text {
                 text: "hello".to_string(),
             }],
+            None,
         )
         .expect("synthetic update");
 
         match update {
-            SessionUpdate::UserMessageChunk { chunk, session_id } => {
+            SessionUpdate::UserMessageChunk {
+                chunk,
+                session_id,
+                attempt_id,
+            } => {
                 assert_eq!(session_id.as_deref(), Some("session-build"));
+                assert_eq!(attempt_id, None);
                 match chunk.content {
                     ContentBlock::Text { text } => assert_eq!(text, "hello"),
+                    _ => panic!("expected text chunk"),
+                }
+            }
+            _ => panic!("expected user message chunk"),
+        }
+    }
+
+    #[test]
+    fn builds_synthetic_user_message_from_image_only_prompt() {
+        let update = synthetic_user_message_update(
+            "session-image",
+            &[ContentBlock::Image {
+                data: "base64-image".to_string(),
+                mime_type: "image/png".to_string(),
+                uri: Some("file:///tmp/prompt.png".to_string()),
+            }],
+            None,
+        )
+        .expect("synthetic update");
+
+        match update {
+            SessionUpdate::UserMessageChunk {
+                chunk,
+                session_id,
+                attempt_id,
+            } => {
+                assert_eq!(session_id.as_deref(), Some("session-image"));
+                assert_eq!(attempt_id, None);
+                match chunk.content {
+                    ContentBlock::Text { text } => assert_eq!(text, "[Image]"),
                     _ => panic!("expected text chunk"),
                 }
             }
@@ -136,6 +178,7 @@ mod tests {
             &[ContentBlock::Text {
                 text: "hello".to_string(),
             }],
+            None,
         )
         .expect("synthetic update");
 
@@ -154,6 +197,7 @@ mod tests {
             &[ContentBlock::Text {
                 text: "hello".to_string(),
             }],
+            None,
         )
         .expect("synthetic update");
 

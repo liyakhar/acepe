@@ -4,6 +4,7 @@ export type {
 	AgentPanelActionId,
 	AgentPanelActionState,
 	AgentAssistantEntry,
+	AssistantRenderBlockContext,
 	AgentPanelAttachedFilePaneModel,
 	AgentPanelAttachedFileTab,
 	AgentPanelBadge,
@@ -25,6 +26,7 @@ export type {
 	AgentPanelPrCardModel,
 	AgentPanelPrCommitItem,
 	AgentPanelQueuedMessage,
+	AgentPanelQuestionSelectEvent,
 	AgentPanelSceneEntryModel,
 	AgentPanelSceneModel,
 	AgentPanelSceneStatus,
@@ -37,6 +39,7 @@ export type {
 	AgentThinkingEntry,
 	AgentTodoItem,
 	AgentTodoStatus,
+	AgentToolEditDiffEntry,
 	AgentToolEntry,
 	AgentToolKind,
 	AgentToolStatus,
@@ -136,6 +139,12 @@ export {
 	getReviewWorkspaceDefaultIndex,
 	resolveReviewWorkspaceSelectedIndex,
 } from "./components/agent-panel/index.js";
+export type {
+	PrChecksItem,
+	PrChecksItemConclusion,
+	PrChecksItemStatus,
+} from "./components/pr-checks/index.js";
+export { PrChecksList, PrChecksSummary } from "./components/pr-checks/index.js";
 export {
 	AgentPanelScene,
 	AgentPanelSceneConversation,
@@ -280,6 +289,9 @@ export { GitHubBadge } from "./components/github-badge/index.js";
 export {
 	ArrowRightIcon,
 	BuildIcon,
+	DotmSquare18Spinner,
+	DotmTriangle17Spinner,
+	DotmTriangle20Spinner,
 	LoadingIcon,
 	PlanIcon,
 	RevertIcon,
@@ -303,6 +315,7 @@ export { Input, Root as InputRoot } from "./components/input/index.js";
 export type {
 	KanbanCardData,
 	KanbanColumnGroup,
+	KanbanPrFooterData,
 	KanbanPermissionData,
 	KanbanQuestionData,
 	KanbanQuestionOption,
@@ -316,6 +329,7 @@ export type {
 	KanbanScenePlacementSource,
 	KanbanScenePermissionFooterData,
 	KanbanScenePlanApprovalFooterData,
+	KanbanScenePrFooterData,
 	KanbanSceneQuestionFooterData,
 	KanbanTaskCardData,
 	KanbanToolData,
@@ -326,6 +340,7 @@ export {
 	KanbanColumn,
 	KanbanCompactComposer,
 	KanbanSceneBoard,
+	KanbanScenePrFooter,
 } from "./components/kanban/index.js";
 export { MarkdownDisplay } from "./components/markdown/index.js";
 export {

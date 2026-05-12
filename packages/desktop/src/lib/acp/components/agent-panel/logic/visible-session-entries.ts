@@ -6,16 +6,16 @@ interface ResolveVisibleSessionEntriesInput {
 	readonly activeTurnError: ErrorMessage | null;
 }
 
-function canonicalErrorSource(source: ErrorMessage["source"]): string {
-	return source ?? "unknown";
+function optionalFieldMatches<T>(left: T | undefined, right: T | undefined): boolean {
+	return left === undefined || right === undefined || left === right;
 }
 
 function matchesErrorMessage(left: ErrorMessage, right: ErrorMessage): boolean {
 	return (
 		left.content === right.content &&
-		left.code === right.code &&
-		left.kind === right.kind &&
-		canonicalErrorSource(left.source) === canonicalErrorSource(right.source)
+		optionalFieldMatches(left.code, right.code) &&
+		optionalFieldMatches(left.kind, right.kind) &&
+		optionalFieldMatches(left.source, right.source)
 	);
 }
 

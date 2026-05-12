@@ -58,6 +58,22 @@ interface GitDialogState extends GitModalPanel {
 	initialTarget?: GitPanelInitialTarget;
 }
 
+type ReactiveValue<T> = {
+	current: T;
+};
+
+class ReactiveValueBox<T> implements ReactiveValue<T> {
+	current = $state<T>(undefined as T);
+
+	constructor(current: T) {
+		this.current = current;
+	}
+}
+
+function createReactiveValue<T>(current: T): ReactiveValue<T> {
+	return new ReactiveValueBox(current);
+}
+
 export class PanelStore {
 	workspacePanels = $state<WorkspacePanel[]>([]);
 	focusedPanelId = $state<string | null>(null);
@@ -70,11 +86,14 @@ export class PanelStore {
 
 	// Hot state (transient, frequently changing)
 	private hotState = new SvelteMap<string, PanelHotState>();
+	private topLevelAgentPanelsById = new SvelteMap<string, Panel>();
+	private topLevelAgentPanelRefs = new Map<string, ReactiveValue<Panel | null>>();
 
 	// Track in-flight opens
 	private openingSessionIds = new SvelteSet<string>();
 	private suppressedAutoSessionSignals = new SvelteMap<string, string>();
 	private latestLiveSessionSignals = new SvelteMap<string, string>();
+	private attachedFilePanelsByOwnerPanelId = new SvelteMap<string, FilePanel[]>();
 	private activeFilePanelIdByOwnerPanelId = new SvelteMap<string, string>();
 	private activeTopLevelFilePanelIdByProject = new SvelteMap<string, string>();
 	private nextTerminalTabCreatedAt = 1;
@@ -233,7 +252,9 @@ export class PanelStore {
 	}
 
 	set panels(nextPanels: Panel[]) {
+		this.syncTopLevelAgentPanelIndex(nextPanels);
 		this.replaceWorkspacePanels("agent", nextPanels);
+		this.clearRemovedTopLevelAgentPanelRefs(nextPanels);
 	}
 
 	get filePanels(): FilePanel[] {
@@ -243,7 +264,88 @@ export class PanelStore {
 	}
 
 	set filePanels(nextPanels: FilePanel[]) {
+		this.syncAttachedFilePanelIndex(nextPanels);
 		this.replaceWorkspacePanels("file", nextPanels);
+	}
+
+	private syncTopLevelAgentPanelIndex(nextPanels: readonly Panel[]): void {
+		for (const panel of nextPanels) {
+			const current = this.topLevelAgentPanelsById.get(panel.id);
+			const isSame =
+				current !== undefined &&
+				current.id === panel.id &&
+				current.sessionId === panel.sessionId &&
+				current.width === panel.width &&
+				current.pendingProjectSelection === panel.pendingProjectSelection &&
+				current.pendingWorktreeEnabled === panel.pendingWorktreeEnabled &&
+				current.preparedWorktreeLaunch === panel.preparedWorktreeLaunch &&
+				current.selectedAgentId === panel.selectedAgentId &&
+				current.projectPath === panel.projectPath &&
+				current.agentId === panel.agentId &&
+				current.sourcePath === panel.sourcePath &&
+				current.worktreePath === panel.worktreePath &&
+				current.sessionTitle === panel.sessionTitle &&
+				current.autoCreated === panel.autoCreated;
+			if (!isSame) {
+				this.topLevelAgentPanelsById.set(panel.id, panel);
+				const ref = this.topLevelAgentPanelRefs.get(panel.id);
+				if (ref) {
+					ref.current = panel;
+				}
+			} else if (!this.topLevelAgentPanelRefs.has(panel.id)) {
+				this.topLevelAgentPanelRefs.set(panel.id, createReactiveValue(panel));
+			}
+		}
+	}
+
+	private clearRemovedTopLevelAgentPanelRefs(nextPanels: readonly Panel[]): void {
+		const nextIds = new Set(nextPanels.map((panel) => panel.id));
+		for (const panelId of this.topLevelAgentPanelsById.keys()) {
+			if (nextIds.has(panelId)) {
+				continue;
+			}
+			this.topLevelAgentPanelsById.delete(panelId);
+			this.topLevelAgentPanelRefs.delete(panelId);
+		}
+	}
+
+	private syncAttachedFilePanelIndex(nextPanels: readonly FilePanel[]): void {
+		const groupedPanels = new Map<string, FilePanel[]>();
+		for (const panel of nextPanels) {
+			if (panel.ownerPanelId === null) {
+				continue;
+			}
+			const existing = groupedPanels.get(panel.ownerPanelId);
+			if (existing) {
+				existing.push(panel);
+			} else {
+				groupedPanels.set(panel.ownerPanelId, [panel]);
+			}
+		}
+		for (const ownerPanelId of this.attachedFilePanelsByOwnerPanelId.keys()) {
+			if (!groupedPanels.has(ownerPanelId)) {
+				this.attachedFilePanelsByOwnerPanelId.delete(ownerPanelId);
+			}
+		}
+		for (const [ownerPanelId, panels] of groupedPanels.entries()) {
+			const current = this.attachedFilePanelsByOwnerPanelId.get(ownerPanelId);
+			const isSame =
+				current !== undefined &&
+				current.length === panels.length &&
+				current.every(
+					(panel, index) =>
+						panel.id === panels[index]?.id &&
+						panel.filePath === panels[index]?.filePath &&
+						panel.projectPath === panels[index]?.projectPath &&
+						panel.ownerPanelId === panels[index]?.ownerPanelId &&
+						panel.width === panels[index]?.width &&
+						panel.targetLine === panels[index]?.targetLine &&
+						panel.targetColumn === panels[index]?.targetColumn
+				);
+			if (!isSame) {
+				this.attachedFilePanelsByOwnerPanelId.set(ownerPanelId, panels);
+			}
+		}
 	}
 
 	get terminalPanels(): TerminalWorkspacePanel[] {
@@ -385,6 +487,42 @@ export class PanelStore {
 
 	getTopLevelPanel(panelId: string): WorkspacePanel | undefined {
 		return this.findTopLevelWorkspacePanel(panelId);
+	}
+
+	getTopLevelAgentPanel(panelId: string): Panel | undefined {
+		return this.topLevelAgentPanelsById.get(panelId);
+	}
+
+	getTopLevelAgentPanelRef(panelId: string): ReactiveValue<Panel | null> {
+		const existing = this.topLevelAgentPanelRefs.get(panelId);
+		if (existing) {
+			return existing;
+		}
+		const ref = createReactiveValue<Panel | null>(
+			this.topLevelAgentPanelsById.get(panelId) ?? null
+		);
+		this.topLevelAgentPanelRefs.set(panelId, ref);
+		return ref;
+	}
+
+	getTopLevelAgentPanelIds(): string[] {
+		return this.panels.map((panel) => panel.id);
+	}
+
+	getTopLevelAgentPanelProjectRefs(): Array<{
+		readonly id: string;
+		readonly sessionProjectPath: string | null;
+		readonly sessionSequenceId: number | null;
+	}> {
+		return this.panels.map((panel) => {
+			const session =
+				panel.sessionId !== null ? this.sessionStore.getSessionCold(panel.sessionId) : undefined;
+			return {
+				id: panel.id,
+				sessionProjectPath: session?.projectPath ?? panel.projectPath ?? null,
+				sessionSequenceId: session?.sequenceId ?? null,
+			};
+		});
 	}
 
 	/**
@@ -1350,7 +1488,7 @@ export class PanelStore {
 	}
 
 	getAttachedFilePanels(ownerPanelId: string): FilePanel[] {
-		return this.filePanels.filter((panel) => panel.ownerPanelId === ownerPanelId);
+		return this.attachedFilePanelsByOwnerPanelId.get(ownerPanelId) ?? [];
 	}
 
 	getActiveFilePanelId(ownerPanelId: string): string | null {

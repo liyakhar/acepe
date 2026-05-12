@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::acp::session_update::{SessionUpdate, TurnErrorData};
+use crate::acp::session_update::{SessionUpdate, ToolCallData, ToolKind, TurnErrorData};
 use crate::acp::transcript_projection::snapshot::{
     TranscriptEntry, TranscriptEntryRole, TranscriptSegment, TranscriptSnapshot,
 };
@@ -37,6 +37,7 @@ pub enum TranscriptDeltaOperation {
     AppendEntry {
         entry: TranscriptEntry,
     },
+    #[serde(rename_all = "camelCase")]
     AppendSegment {
         entry_id: String,
         role: TranscriptEntryRole,
@@ -51,7 +52,9 @@ pub enum TranscriptDeltaOperation {
 impl TranscriptDeltaOperation {
     fn from_session_update(event_seq: i64, update: &SessionUpdate) -> Option<Vec<Self>> {
         match update {
-            SessionUpdate::UserMessageChunk { chunk, .. } => text_chunk_from_block(
+            SessionUpdate::UserMessageChunk {
+                chunk, attempt_id, ..
+            } => text_chunk_from_block(
                 &chunk.content,
                 || format!("user-event-{event_seq}"),
                 TranscriptEntryRole::User,
@@ -63,6 +66,7 @@ impl TranscriptDeltaOperation {
                         entry_id: format!("user-event-{event_seq}"),
                         role: TranscriptEntryRole::User,
                         segments: vec![segment],
+                        attempt_id: attempt_id.clone(),
                     },
                 }]
             }),
@@ -92,19 +96,25 @@ impl TranscriptDeltaOperation {
                     segment,
                 }]
             }),
-            SessionUpdate::ToolCall { tool_call, .. } => Some(vec![Self::AppendEntry {
-                entry: TranscriptEntry {
-                    entry_id: tool_call.id.clone(),
-                    role: TranscriptEntryRole::Tool,
-                    segments: vec![TranscriptSegment::Text {
-                        segment_id: format!("{}:tool", tool_call.id),
-                        text: tool_call
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| tool_call.name.clone()),
-                    }],
-                },
-            }]),
+            SessionUpdate::ToolCall { tool_call, .. } => {
+                if should_skip_unanswered_question_tool_row(tool_call) {
+                    return None;
+                }
+                Some(vec![Self::AppendEntry {
+                    entry: TranscriptEntry {
+                        entry_id: tool_call.id.clone(),
+                        role: TranscriptEntryRole::Tool,
+                        segments: vec![TranscriptSegment::Text {
+                            segment_id: format!("{}:tool", tool_call.id),
+                            text: tool_call
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| tool_call.name.clone()),
+                        }],
+                        attempt_id: None,
+                    },
+                }])
+            }
             SessionUpdate::TurnError { error, turn_id, .. } => Some(vec![Self::AppendEntry {
                 entry: TranscriptEntry {
                     entry_id: turn_id
@@ -112,11 +122,17 @@ impl TranscriptDeltaOperation {
                         .unwrap_or_else(|| format!("error-event-{event_seq}")),
                     role: TranscriptEntryRole::Error,
                     segments: vec![error_segment(event_seq, error)],
+                    attempt_id: None,
                 },
             }]),
             _ => None,
         }
     }
+}
+
+#[cfg(test)]
+fn should_skip_unanswered_question_tool_row(tool_call: &ToolCallData) -> bool {
+    matches!(tool_call.kind, Some(ToolKind::Question)) && tool_call.question_answer.is_none()
 }
 
 #[cfg(test)]
@@ -173,6 +189,7 @@ mod tests {
             part_id: Some("part-1".to_string()),
             message_id: Some("assistant-1".to_string()),
             session_id: Some("session-1".to_string()),
+            produced_at_monotonic_ms: None,
         };
 
         let delta = TranscriptDelta::from_session_update(7, &update).expect("delta");
@@ -190,6 +207,32 @@ mod tests {
                 },
             }]
         );
+    }
+
+    #[test]
+    fn transcript_delta_serializes_append_segment_wire_fields_as_camel_case() {
+        let delta = TranscriptDelta {
+            event_seq: 7,
+            session_id: "session-1".to_string(),
+            snapshot_revision: 7,
+            operations: vec![TranscriptDeltaOperation::AppendSegment {
+                entry_id: "assistant-1".to_string(),
+                role: TranscriptEntryRole::Assistant,
+                segment: TranscriptSegment::Text {
+                    segment_id: "assistant-1:part-1".to_string(),
+                    text: "hello".to_string(),
+                },
+            }],
+        };
+
+        let json = serde_json::to_value(delta).expect("serialize transcript delta");
+        let operation = &json["operations"][0];
+        let segment = &operation["segment"];
+
+        assert_eq!(operation["entryId"], "assistant-1");
+        assert!(operation.get("entry_id").is_none());
+        assert_eq!(segment["segmentId"], "assistant-1:part-1");
+        assert!(segment.get("segment_id").is_none());
     }
 
     #[test]

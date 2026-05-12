@@ -22,7 +22,7 @@ export class ThreadFollowController {
 	private pendingForce = false;
 	private pendingRequireLatest = true;
 	private pendingNextLatestForce = false;
-	private pendingNextUserForce = false;
+	private pendingNextUserReveal = false;
 	private revealFramesRemaining = 0;
 	private revealRafId: number | null = null;
 	/** Incremented on reset() so stale RAF callbacks become no-ops. */
@@ -40,10 +40,10 @@ export class ThreadFollowController {
 			this.scheduleReveal(targetKey, force);
 		}
 		if (targetKey === this.options.getLatestUserTargetKey()) {
-			const force = this.pendingNextUserForce;
-			this.pendingNextUserForce = false;
-			if (force) {
-				this.scheduleReveal(targetKey, true, { requireLatest: false });
+			const shouldReveal = this.pendingNextUserReveal;
+			this.pendingNextUserReveal = false;
+			if (shouldReveal) {
+				this.scheduleReveal(targetKey, false, { requireLatest: false });
 			}
 		}
 		return () => {
@@ -69,8 +69,8 @@ export class ThreadFollowController {
 		this.pendingNextLatestForce = this.pendingNextLatestForce || (options?.force ?? false);
 	}
 
-	prepareForNextUserReveal(options?: { force?: boolean }): void {
-		this.pendingNextUserForce = this.pendingNextUserForce || (options?.force ?? false);
+	prepareForNextUserReveal(_options?: { force?: boolean }): void {
+		this.pendingNextUserReveal = true;
 	}
 
 	reset(): void {
@@ -85,7 +85,7 @@ export class ThreadFollowController {
 		this.pendingForce = false;
 		this.pendingRequireLatest = true;
 		this.pendingNextLatestForce = false;
-		this.pendingNextUserForce = false;
+		this.pendingNextUserReveal = false;
 		this.revealFramesRemaining = 0;
 		this.targets.clear();
 	}

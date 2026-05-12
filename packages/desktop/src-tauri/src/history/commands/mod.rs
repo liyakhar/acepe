@@ -12,7 +12,7 @@ use crate::codex_history::parser as codex_parser;
 use crate::codex_history::scanner as codex_scanner;
 use crate::cursor_history::parser as cursor_parser;
 use crate::cursor_history::plan_loader as cursor_plan_loader;
-use crate::db::repository::SessionMetadataRepository;
+use crate::db::repository::{SessionLifecycleState, SessionMetadataRepository};
 use crate::history::scan_cache::ScanCache;
 use crate::opencode_history::parser as opencode_parser;
 use crate::session_jsonl::parser as session_jsonl_parser;

@@ -40,6 +40,45 @@ function createFoundResult(overrides?: Partial<SessionOpenFound>): SessionOpenFo
 		interactions,
 		turnState,
 		messageCount,
+		lifecycle: {
+			status: "ready",
+			actionability: {
+				canSend: true,
+				canResume: false,
+				canRetry: false,
+				canArchive: false,
+				canConfigure: true,
+				recommendedAction: "send",
+				recoveryPhase: "none",
+				compactStatus: "ready",
+			},
+		},
+		capabilities: {},
+	};
+}
+
+function createFoundResultWithoutLifecycle(): Omit<SessionOpenFound, "lifecycle"> {
+	const found = createFoundResult();
+	return {
+		requestedSessionId: found.requestedSessionId,
+		canonicalSessionId: found.canonicalSessionId,
+		isAlias: found.isAlias,
+		lastEventSeq: found.lastEventSeq,
+		graphRevision: found.graphRevision,
+		openToken: found.openToken,
+		agentId: found.agentId,
+		projectPath: found.projectPath,
+		worktreePath: found.worktreePath,
+		sourcePath: found.sourcePath,
+		transcriptSnapshot: found.transcriptSnapshot,
+		sessionTitle: found.sessionTitle,
+		operations: found.operations,
+		interactions: found.interactions,
+		turnState: found.turnState,
+		messageCount: found.messageCount,
+		capabilities: found.capabilities,
+		activeTurnFailure: found.activeTurnFailure ?? null,
+		lastTerminalTurnId: found.lastTerminalTurnId ?? null,
 	};
 }
 
@@ -166,11 +205,40 @@ describe("SessionOpenHydrator", () => {
 		expect(updatePanelSession).not.toHaveBeenCalled();
 	});
 
+	it("fails closed when a found snapshot lacks backend lifecycle authority", async () => {
+		const requestToken = hydrator.beginAttempt("panel-1");
+		const found = createFoundResultWithoutLifecycle();
+
+		const result = await hydrator.hydrateFound(
+			"panel-1",
+			requestToken,
+			// @ts-expect-error Intentionally simulates a stale IPC payload.
+			found
+		);
+
+		expect(result.isErr()).toBe(true);
+		expect(replaceSessionOpenSnapshot).not.toHaveBeenCalled();
+		expect(replaceSessionStateGraph).not.toHaveBeenCalled();
+	});
+
+	it("fails closed when a created snapshot lacks backend lifecycle authority", async () => {
+		const found = createFoundResultWithoutLifecycle();
+
+		const result = await hydrator.hydrateCreated(
+			// @ts-expect-error Intentionally simulates a stale IPC payload.
+			found
+		);
+
+		expect(result.isErr()).toBe(true);
+		expect(replaceSessionOpenSnapshot).not.toHaveBeenCalled();
+		expect(replaceSessionStateGraph).not.toHaveBeenCalled();
+	});
+
 	// ==========================================================================
 	// Unit 0: Characterization — pre-cutover session hydration invariants
 	// ==========================================================================
 
-	it("[characterize] pre-cutover session with no sourcePath hydrates successfully through open path", async () => {
+	it("[characterize] pre-cutover session with no sourcePath hydrates successfully through provider-authoritative open", async () => {
 		// A session recorded before the canonical materialization was in place will
 		// arrive with sourcePath: null and lastEventSeq: 0. It must still hydrate
 		// through the current open path without error.
@@ -196,7 +264,7 @@ describe("SessionOpenHydrator", () => {
 	});
 
 	// ==========================================================================
-	// U7 E2E proof: canonical snapshot invariants
+	// U7 E2E proof: canonical provider-open invariants
 	// ==========================================================================
 
 	it("[E2E] openToken from found result is preserved verbatim through hydrateFound", async () => {
@@ -262,7 +330,9 @@ describe("SessionOpenHydrator", () => {
 			tool_call_id: "tool-read-1",
 			name: "Read",
 			kind: "read" as const,
-			status: "in_progress" as const,
+			provider_status: "in_progress" as const,
+			operation_state: "running" as const,
+			source_link: { kind: "transcript_linked" as const, entry_id: "tool-read-entry-1" },
 			title: "Read /repo/src/main.ts",
 			arguments: { kind: "read" as const, file_path: "/repo/src/main.ts" },
 			progressive_arguments: null,
@@ -287,6 +357,6 @@ describe("SessionOpenHydrator", () => {
 		const snapshotArg = (replaceSessionOpenSnapshot.mock.calls as any)[0]?.[0];
 		expect(snapshotArg?.operations).toHaveLength(1);
 		expect(snapshotArg?.operations[0]?.id).toBe("op-read-1");
-		expect(snapshotArg?.operations[0]?.status).toBe("in_progress");
+		expect(snapshotArg?.operations[0]?.provider_status).toBe("in_progress");
 	});
 });

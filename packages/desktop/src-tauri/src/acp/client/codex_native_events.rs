@@ -87,6 +87,7 @@ fn translate_text_delta(
             part_id: item_id.clone(),
             message_id: item_id,
             session_id: Some(session_id.to_string()),
+            produced_at_monotonic_ms: None,
         }
     };
 
@@ -653,6 +654,7 @@ mod tests {
                 part_id,
                 message_id,
                 session_id,
+                produced_at_monotonic_ms: _,
             } => {
                 match &chunk.content {
                     ContentBlock::Text { text } => assert_eq!(text, "working"),

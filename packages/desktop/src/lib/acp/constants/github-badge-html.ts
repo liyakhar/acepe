@@ -27,8 +27,9 @@ export const GITHUB_ICON_PR = `<svg xmlns="http://www.w3.org/2000/svg" width="14
 /** Matches PR/Issue shorthand: owner/repo#123 */
 export const GITHUB_PR_SHORTHAND_PATTERN = /\b([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)#(\d+)\b/g;
 
-/** Matches commit SHAs: 7-40 hex characters (not preceded by @) */
-export const GITHUB_COMMIT_SHA_PATTERN = /(?<!@)\b([a-f0-9]{7,40})\b/g;
+/** Matches bare commit SHAs: 7-40 lowercase hex characters with at least one a-f letter */
+export const GITHUB_COMMIT_SHA_PATTERN =
+	/(?<!@)\b(?=[a-f0-9]{7,40}\b)(?=[a-f0-9]*[a-f][a-f0-9]*\b)([a-f0-9]{7,40})\b/g;
 
 /** Matches git references: @abc1234 */
 export const GITHUB_GIT_REF_PATTERN = /@([a-f0-9]{7,40})\b/g;
@@ -42,6 +43,13 @@ export type GitHubReference =
 	| { type: "pr"; owner: string; repo: string; number: number }
 	| { type: "commit"; sha: string; owner?: string; repo?: string }
 	| { type: "issue"; owner: string; repo: string; number: number };
+
+export function isBareCommitSHA(value: string): boolean {
+	GITHUB_COMMIT_SHA_PATTERN.lastIndex = 0;
+	const match = GITHUB_COMMIT_SHA_PATTERN.exec(value);
+	GITHUB_COMMIT_SHA_PATTERN.lastIndex = 0;
+	return match !== null && match[0] === value;
+}
 
 /**
  * Parses a PR shorthand reference (owner/repo#123).

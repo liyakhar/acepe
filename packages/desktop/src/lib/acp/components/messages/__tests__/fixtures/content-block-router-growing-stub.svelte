@@ -12,10 +12,11 @@ interface Props {
 	block: TextBlock | OtherBlock;
 	isStreaming?: boolean;
 	projectPath?: string;
-	onRevealActivityChange?: (active: boolean) => void;
 }
 
-let { block, isStreaming = false, onRevealActivityChange }: Props = $props();
+// Test fake only: it can grow content and toggle local text, but it does not
+// report reveal lifecycle authority back to any parent.
+let { block }: Props = $props();
 let lineCount = $state(1);
 let revealActive = $state(false);
 let hasInitializedReveal = $state(false);
@@ -36,18 +37,6 @@ $effect(() => {
 		revealActive = false;
 		hasInitializedReveal = false;
 	}
-});
-
-$effect(() => {
-	const nextActive =
-		isTextBlock(block) && (block.text.includes("[reveal-active]") ? revealActive : isStreaming);
-	onRevealActivityChange?.(nextActive);
-});
-
-$effect(() => {
-	return () => {
-		onRevealActivityChange?.(false);
-	};
 });
 </script>
 

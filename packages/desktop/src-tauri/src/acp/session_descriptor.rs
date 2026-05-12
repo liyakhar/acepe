@@ -1,14 +1,10 @@
 use crate::acp::error::SerializableAcpError;
-use crate::acp::parsers::provider_capabilities::{
-    all_provider_capabilities, find_provider_capabilities_by_id,
-};
 use crate::acp::parsers::AgentType;
 use crate::acp::types::CanonicalAgentId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionDescriptorFacts {
     pub local_session_id: String,
-    pub provider_session_id: Option<String>,
     pub agent_id: Option<CanonicalAgentId>,
     pub project_path: Option<String>,
     pub worktree_path: Option<String>,
@@ -19,7 +15,6 @@ impl SessionDescriptorFacts {
     pub fn for_session(local_session_id: &str) -> Self {
         Self {
             local_session_id: local_session_id.to_string(),
-            provider_session_id: None,
             agent_id: None,
             project_path: None,
             worktree_path: None,
@@ -39,7 +34,6 @@ pub struct SessionCompatibilityInput {
 pub enum SessionDescriptorMissingFact {
     CanonicalAgentId,
     ProjectPath,
-    ProviderSessionId,
 }
 
 impl SessionDescriptorMissingFact {
@@ -47,7 +41,6 @@ impl SessionDescriptorMissingFact {
         match self {
             Self::CanonicalAgentId => "canonical_agent_id",
             Self::ProjectPath => "project_path",
-            Self::ProviderSessionId => "provider_session_id",
         }
     }
 }
@@ -63,7 +56,6 @@ pub enum SessionDescriptorCompatibility {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionDescriptor {
     pub local_session_id: String,
-    pub provider_session_id: Option<String>,
     pub history_session_id: String,
     pub agent_id: CanonicalAgentId,
     pub project_path: String,
@@ -209,14 +201,6 @@ fn format_missing_facts(missing_facts: &[SessionDescriptorMissingFact]) -> Strin
         .join(", ")
 }
 
-fn backend_identity_policy(
-    agent_id: &CanonicalAgentId,
-) -> crate::acp::provider::BackendIdentityPolicy {
-    find_provider_capabilities_by_id(all_provider_capabilities(), agent_id.as_str())
-        .map(|capabilities| capabilities.backend_identity_policy)
-        .unwrap_or_default()
-}
-
 fn push_missing_fact(
     missing_facts: &mut Vec<SessionDescriptorMissingFact>,
     fact: SessionDescriptorMissingFact,
@@ -264,25 +248,11 @@ pub fn resolve_existing_session_descriptor(
         }
     };
 
-    let identity_policy = backend_identity_policy(&resolved_agent_id);
-
-    if identity_policy.missing_provider_session_id(facts.provider_session_id.as_deref()) {
-        push_missing_fact(
-            &mut missing_facts,
-            SessionDescriptorMissingFact::ProviderSessionId,
-        );
-    }
-
     let worktree_path = facts.worktree_path.clone();
     let effective_cwd = worktree_path
         .clone()
         .unwrap_or_else(|| resolved_project_path.clone());
-    let history_session_id = identity_policy
-        .history_session_id(
-            &facts.local_session_id,
-            facts.provider_session_id.as_deref(),
-        )
-        .to_string();
+    let history_session_id = facts.local_session_id.clone();
     let source_path = facts
         .source_path
         .clone()
@@ -295,7 +265,6 @@ pub fn resolve_existing_session_descriptor(
 
     Ok(SessionDescriptor {
         local_session_id: facts.local_session_id,
-        provider_session_id: facts.provider_session_id,
         history_session_id,
         agent_id: resolved_agent_id,
         project_path: resolved_project_path,
@@ -352,24 +321,8 @@ pub fn resolve_live_pending_session_resume(
     requested_cwd: &str,
     explicit_agent_override: Option<CanonicalAgentId>,
 ) -> Result<ResolvedResumeSession, SessionDescriptorResolutionError> {
-    let mut descriptor =
+    let descriptor =
         resolve_existing_session_descriptor(facts, SessionCompatibilityInput::default())?;
-
-    if let SessionDescriptorCompatibility::ReadOnly { missing_facts } =
-        descriptor.compatibility.clone()
-    {
-        if missing_facts != vec![SessionDescriptorMissingFact::ProviderSessionId] {
-            return Err(
-                SessionDescriptorResolutionError::ExistingSessionNotResumable {
-                    session_id: descriptor.local_session_id,
-                    missing_facts,
-                },
-            );
-        }
-
-        descriptor.compatibility = SessionDescriptorCompatibility::Canonical;
-        descriptor.history_session_id = descriptor.local_session_id.clone();
-    }
 
     if let Some(override_agent_id) = explicit_agent_override {
         if override_agent_id != descriptor.agent_id {
@@ -443,11 +396,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_existing_session_descriptor_marks_claude_without_provider_id_as_read_only() {
+    fn resolve_existing_session_descriptor_uses_canonical_id_without_provider_alias() {
         let descriptor = resolve_existing_session_descriptor(
             SessionDescriptorFacts {
                 local_session_id: "session-1".to_string(),
-                provider_session_id: None,
                 agent_id: Some(CanonicalAgentId::ClaudeCode),
                 project_path: Some("/repo".to_string()),
                 worktree_path: None,
@@ -460,11 +412,32 @@ mod tests {
         assert_eq!(descriptor.history_session_id, "session-1");
         assert_eq!(
             descriptor.compatibility,
-            SessionDescriptorCompatibility::ReadOnly {
-                missing_facts: vec![SessionDescriptorMissingFact::ProviderSessionId]
-            }
+            SessionDescriptorCompatibility::Canonical
         );
-        assert!(!descriptor.is_resumable());
+        assert!(descriptor.is_resumable());
+    }
+
+    #[test]
+    fn resolve_existing_session_descriptor_accepts_provider_owned_canonical_identity_without_alias()
+    {
+        let descriptor = resolve_existing_session_descriptor(
+            SessionDescriptorFacts {
+                local_session_id: "provider-owned-session".to_string(),
+                agent_id: Some(CanonicalAgentId::ClaudeCode),
+                project_path: Some("/repo".to_string()),
+                worktree_path: None,
+                source_path: None,
+            },
+            SessionCompatibilityInput::default(),
+        )
+        .expect("descriptor");
+
+        assert_eq!(descriptor.history_session_id, "provider-owned-session");
+        assert_eq!(
+            descriptor.compatibility,
+            SessionDescriptorCompatibility::Canonical
+        );
+        assert!(descriptor.is_resumable());
     }
 
     #[test]
@@ -472,7 +445,6 @@ mod tests {
         let error = resolve_existing_session_resume(
             SessionDescriptorFacts {
                 local_session_id: "session-1".to_string(),
-                provider_session_id: None,
                 agent_id: Some(CanonicalAgentId::Copilot),
                 project_path: Some("/repo".to_string()),
                 worktree_path: None,
@@ -498,7 +470,6 @@ mod tests {
         let resolved = resolve_live_pending_session_resume(
             SessionDescriptorFacts {
                 local_session_id: "session-1".to_string(),
-                provider_session_id: None,
                 agent_id: Some(CanonicalAgentId::ClaudeCode),
                 project_path: Some("/repo".to_string()),
                 worktree_path: None,
@@ -517,11 +488,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_existing_session_fork_uses_history_session_id_for_parent() {
+    fn resolve_existing_session_fork_uses_canonical_session_id_for_parent() {
         let resolved = resolve_existing_session_fork(
             SessionDescriptorFacts {
                 local_session_id: "session-1".to_string(),
-                provider_session_id: Some("provider-1".to_string()),
                 agent_id: Some(CanonicalAgentId::ClaudeCode),
                 project_path: Some("/repo".to_string()),
                 worktree_path: None,
@@ -532,7 +502,7 @@ mod tests {
         )
         .expect("fork target");
 
-        assert_eq!(resolved.fork_parent_session_id, "provider-1");
+        assert_eq!(resolved.fork_parent_session_id, "session-1");
         assert_eq!(resolved.launch_agent_id, CanonicalAgentId::ClaudeCode);
     }
 
@@ -541,7 +511,6 @@ mod tests {
         let resolved = resolve_existing_session_fork(
             SessionDescriptorFacts {
                 local_session_id: "session-1".to_string(),
-                provider_session_id: None,
                 agent_id: Some(CanonicalAgentId::Copilot),
                 project_path: Some("/repo".to_string()),
                 worktree_path: None,
@@ -557,11 +526,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_existing_session_fork_rejects_missing_provider_id_for_claude() {
-        let error = resolve_existing_session_fork(
+    fn resolve_existing_session_fork_allows_canonical_claude_without_provider_alias() {
+        let resolved = resolve_existing_session_fork(
             SessionDescriptorFacts {
                 local_session_id: "session-1".to_string(),
-                provider_session_id: None,
                 agent_id: Some(CanonicalAgentId::ClaudeCode),
                 project_path: Some("/repo".to_string()),
                 worktree_path: None,
@@ -570,14 +538,8 @@ mod tests {
             "/fallback",
             None,
         )
-        .expect_err("fork target should fail");
+        .expect("canonical fork target");
 
-        assert_eq!(
-            error,
-            SessionDescriptorResolutionError::ExistingSessionNotForkable {
-                session_id: "session-1".to_string(),
-                missing_facts: vec![SessionDescriptorMissingFact::ProviderSessionId]
-            }
-        );
+        assert_eq!(resolved.fork_parent_session_id, "session-1");
     }
 }

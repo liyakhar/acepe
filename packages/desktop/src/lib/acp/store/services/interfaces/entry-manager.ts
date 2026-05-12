@@ -7,9 +7,8 @@
 
 import type { ResultAsync } from "neverthrow";
 
-import type { ContentChunk, ToolCallData } from "../../../../services/converted-session-types.js";
+import type { ContentChunk } from "../../../../services/converted-session-types.js";
 import type { AppError } from "../../../errors/app-error.js";
-import type { ToolCallUpdate } from "../../../types/tool-call.js";
 import type { SessionEntry } from "../../types.js";
 
 /**
@@ -67,16 +66,6 @@ export interface IEntryManager {
 	clearEntries(sessionId: string): void;
 
 	/**
-	 * Create a new tool call entry from full ToolCallData.
-	 */
-	createToolCallEntry(sessionId: string, toolCallData: ToolCallData): void;
-
-	/**
-	 * Update tool call entry.
-	 */
-	updateToolCallEntry(sessionId: string, update: ToolCallUpdate): void;
-
-	/**
 	 * Aggregate assistant chunk.
 	 * Appends chunk content to the current assistant entry, creating a new entry if needed.
 	 */
@@ -91,6 +80,12 @@ export interface IEntryManager {
 	 * Clear any in-progress assistant aggregation state for a session.
 	 */
 	clearStreamingAssistantEntry(sessionId: string): void;
+
+	/**
+	 * Start a fresh assistant turn. The next assistant chunks must not merge into
+	 * a prior assistant entry, even when a provider reuses or omits message IDs.
+	 */
+	startNewAssistantTurn(sessionId: string): void;
 
 	/**
 	 * Mark all still-streaming tool call entries as not streaming.

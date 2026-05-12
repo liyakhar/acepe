@@ -7,7 +7,7 @@ use crate::acp::parsers::provider_capabilities::{
 use crate::acp::parsers::types::ParsedUsageTelemetry;
 use crate::acp::provider::{
     BackendIdentityPolicy, FrontendProviderProjection, FrontendVariantGroup, HistoryReplayFamily,
-    HistoryReplayPolicy, PlanAdapterPolicy, PreconnectionSlashMode,
+    HistoryReplayPolicy, PlanAdapterPolicy, PreconnectionCapabilityMode, PreconnectionSlashMode,
 };
 use crate::acp::providers::CustomAgentConfig;
 use crate::acp::registry::AgentRegistry;
@@ -21,14 +21,10 @@ static FUTURE_PROVIDER_CAPABILITIES: [ProviderCapabilities; 1] = [ProviderCapabi
     provider_id: "future-shared-chat",
     agent: AgentType::ClaudeCode,
     parser: &FutureSharedChatParser,
-    backend_identity_policy: BackendIdentityPolicy {
-        requires_persisted_provider_session_id: false,
-        prefers_incoming_provider_session_id_alias: false,
-    },
+    backend_identity_policy: BackendIdentityPolicy,
     plan_adapter_policy: PlanAdapterPolicy {
         parses_wrapper_plan_from_text_stream: false,
         finalizes_wrapper_plan_on_turn_end: false,
-        clears_message_tracker_on_prompt_response: false,
     },
     history_replay_policy: HistoryReplayPolicy {
         family: HistoryReplayFamily::SharedCanonical,
@@ -42,6 +38,7 @@ static FUTURE_PROVIDER_CAPABILITIES: [ProviderCapabilities; 1] = [ProviderCapabi
         default_alias: None,
         reasoning_effort_support: false,
         preconnection_slash_mode: PreconnectionSlashMode::Unsupported,
+        preconnection_capability_mode: PreconnectionCapabilityMode::Unsupported,
     },
     transport_family: TransportFamily::SharedChat,
     tool_vocabulary: ToolVocabulary::ClaudeCode,

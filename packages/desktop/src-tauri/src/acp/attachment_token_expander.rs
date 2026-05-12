@@ -160,6 +160,7 @@ mod tests {
                     text: "no tokens here".to_string(),
                 },
             ],
+            attempt_id: None,
             stream: Some(true),
         };
 

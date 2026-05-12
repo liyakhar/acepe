@@ -52,29 +52,33 @@
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
 						<Tooltip.Content
-							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md"
 							sideOffset={4}
 						>
 							{warmingLabel}
 						</Tooltip.Content>
 					</Tooltip.Portal>
 				</Tooltip.Root>
-			{:else if status === "connected"}
+			{:else if status === "connected" || status === "done" || status === "idle" || status === "running"}
 				<Tooltip.Root>
 					<Tooltip.Trigger>
-						<div class="animate-in zoom-in-50 duration-300 text-success">
+						<div
+							class="animate-in zoom-in-50 duration-300 {status === 'idle'
+								? 'text-muted-foreground'
+								: 'text-success'}"
+						>
 							<IconCircleCheckFilled {size} />
 						</div>
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
 						<Tooltip.Content
-							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md"
 							sideOffset={4}
 						>
 							<div class="space-y-1.5">
 								<div class="font-medium">{connectedLabel}</div>
 								{#if agentId}
-									<table class="text-xs">
+									<table class="text-sm">
 										<tbody>
 											<tr>
 												<td class="pr-3 text-muted-foreground">Agent ID:</td>
@@ -101,7 +105,7 @@
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
 						<Tooltip.Content
-							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md"
+							class="z-[var(--overlay-z)] rounded-md bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md"
 							sideOffset={4}
 						>
 							{errorLabel}

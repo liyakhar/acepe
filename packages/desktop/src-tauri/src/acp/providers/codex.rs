@@ -1,6 +1,10 @@
 use super::super::provider::{
     command_exists, AgentProvider, ProjectDiscoveryCompleteness, ProjectPathListing, SpawnConfig,
 };
+use crate::acp::capability_resolution::{
+    failed_capabilities, resolve_static_capabilities, ResolvedCapabilityStatus,
+};
+use crate::acp::client::codex_native_config::load_codex_native_config_state;
 use crate::acp::client_trait::CommunicationMode;
 use crate::acp::runtime_resolver::SpawnEnvStrategy;
 use crate::acp::session_descriptor::SessionReplayContext;
@@ -82,6 +86,40 @@ impl AgentProvider for CodexProvider {
         })
     }
 
+    fn list_preconnection_capabilities<'a>(
+        &'a self,
+        _app: &'a AppHandle,
+        cwd: Option<&'a Path>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = crate::acp::capability_resolution::ResolvedCapabilities>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            let effective_cwd = cwd
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| PathBuf::from("."));
+            match load_codex_native_config_state(effective_cwd.as_path()) {
+                Ok(state) => match resolve_static_capabilities(
+                    self,
+                    effective_cwd.as_path(),
+                    ResolvedCapabilityStatus::Resolved,
+                    crate::acp::client::codex_native_config::build_codex_native_session_model_state_with_state(
+                        &state,
+                    ),
+                    crate::acp::client_session::default_modes(),
+                ) {
+                    Ok(capabilities) => capabilities,
+                    Err(error) => failed_capabilities(self, error.to_string()),
+                },
+                Err(error) => failed_capabilities(self, error.to_string()),
+            }
+        })
+    }
+
     fn icon(&self) -> &str {
         "codex"
     }
@@ -96,8 +134,17 @@ impl AgentProvider for CodexProvider {
         _app: &'a AppHandle,
         context: &'a SessionContext,
         _replay_context: &'a SessionReplayContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<SessionThreadSnapshot>, String>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        Option<SessionThreadSnapshot>,
+                        crate::acp::provider::ProviderHistoryLoadError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async move {
             let session_id = &context.local_session_id;
 
@@ -115,7 +162,11 @@ impl AgentProvider for CodexProvider {
                         error = %error,
                         "Codex session parse failed"
                     );
-                    Ok(None)
+                    Err(
+                        crate::acp::provider::ProviderHistoryLoadError::provider_unparseable(
+                            format!("Codex provider history load failed: {error}"),
+                        ),
+                    )
                 }
             }
         })

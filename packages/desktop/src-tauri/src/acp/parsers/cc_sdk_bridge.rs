@@ -9,8 +9,8 @@ use super::{get_parser, AgentType};
 use crate::acp::session_update::{
     build_tool_call_from_raw, build_tool_call_update_from_raw, ContentChunk, QuestionData,
     RawToolCallInput, RawToolCallUpdateInput, SessionUpdate, ToolArguments, ToolCallData,
-    ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData, UsageTelemetryData,
-    UsageTelemetryTokens,
+    ToolCallStatus, ToolCallUpdateData, ToolKind, ToolReference, TurnErrorData, TurnErrorInfo,
+    TurnErrorKind, TurnErrorSource, UsageTelemetryData, UsageTelemetryTokens,
 };
 use crate::acp::types::ContentBlock;
 use crate::cc_sdk::{self as cc_sdk, Message};
@@ -27,12 +27,24 @@ pub struct CcSdkTurnStreamState {
     pub pending_tool_calls: VecDeque<PendingToolCallState>,
     /// True after Claude reports stop_reason=tool_use and before the next message_start arrives.
     pub awaiting_tool_turn_resume: bool,
+    /// True after an Assistant message already emitted the terminal provider error for this turn.
+    pub saw_terminal_assistant_error: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingToolCallState {
     pub tool_call_id: String,
     pub tool_name: String,
+}
+
+const MISSING_TOOL_RESULT_MESSAGE: &str =
+    "Result unavailable: the agent resumed after this tool call but did not provide stdout/stderr to Acepe.";
+
+fn tool_requires_observable_result(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "Bash" | "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "NotebookWrite"
+    )
 }
 
 fn note_pending_tool_call(stream_state: &mut CcSdkTurnStreamState, tool_call: &ToolCallData) {
@@ -74,14 +86,17 @@ fn take_synthetic_tool_completions_for_resumed_tool_turn(
     let mut synthetic_updates = Vec::new();
 
     while let Some(pending_tool_call) = stream_state.pending_tool_calls.pop_front() {
-        // When the next message_start arrives with pending tool calls still unresolved,
-        // it means the CLI handled the tool without going through can_use_tool (e.g.
-        // auto-approved Bash commands). Mark as Completed — if Claude is continuing,
-        // the CLI resolved the tool one way or another.
+        let missing_result = tool_requires_observable_result(&pending_tool_call.tool_name);
         synthetic_updates.push(SessionUpdate::ToolCallUpdate {
             update: ToolCallUpdateData {
                 tool_call_id: pending_tool_call.tool_call_id,
                 status: Some(ToolCallStatus::Completed),
+                result: missing_result.then(|| {
+                    serde_json::json!({
+                        "stderr": MISSING_TOOL_RESULT_MESSAGE
+                    })
+                }),
+                failure_reason: None,
                 ..Default::default()
             },
             session_id: session_id.clone(),
@@ -158,7 +173,7 @@ pub fn translate_cc_sdk_message_with_mut_turn_state(
                 total_cost_usd,
                 result,
                 effective_sid,
-                stream_state.model_id.as_deref(),
+                stream_state,
             )
         }
 
@@ -185,6 +200,23 @@ fn translate_assistant(
     if stream_state.model_id.is_none() {
         stream_state.model_id = message.model.clone();
     }
+    if let Some(error) = message.error.as_ref() {
+        if message.parent_tool_use_id.is_none() {
+            if let Some(usage) = message.usage.as_ref() {
+                if let Some(telemetry) = build_usage_telemetry_from_json(usage, session_id.clone())
+                {
+                    updates.push(SessionUpdate::UsageTelemetryUpdate { data: telemetry });
+                }
+            }
+        }
+        updates.push(SessionUpdate::TurnError {
+            error: assistant_message_error_to_turn_error(error, &message),
+            session_id,
+            turn_id: None,
+        });
+        stream_state.saw_terminal_assistant_error = true;
+        return updates;
+    }
 
     let parent_tool_use_id = message.parent_tool_use_id.clone();
 
@@ -205,6 +237,7 @@ fn translate_assistant(
                     part_id: None,
                     message_id: None,
                     session_id: session_id.clone(),
+                    produced_at_monotonic_ms: None,
                 });
             }
 
@@ -292,6 +325,67 @@ fn translate_assistant(
     }
 
     updates
+}
+
+fn assistant_message_error_to_turn_error(
+    error: &cc_sdk::AssistantMessageError,
+    message: &cc_sdk::AssistantMessage,
+) -> TurnErrorData {
+    let message = assistant_error_text(message).unwrap_or_else(|| match error {
+        cc_sdk::AssistantMessageError::AuthenticationFailed => {
+            "Claude authentication failed.".to_string()
+        }
+        cc_sdk::AssistantMessageError::BillingError => "Claude billing error.".to_string(),
+        cc_sdk::AssistantMessageError::RateLimit => "Claude rate limit exceeded.".to_string(),
+        cc_sdk::AssistantMessageError::InvalidRequest => "Claude rejected the request.".to_string(),
+        cc_sdk::AssistantMessageError::ServerError => "Claude server error.".to_string(),
+        cc_sdk::AssistantMessageError::Unknown => {
+            "Claude returned an unknown provider error.".to_string()
+        }
+    });
+    let kind = match error {
+        cc_sdk::AssistantMessageError::AuthenticationFailed
+        | cc_sdk::AssistantMessageError::BillingError
+        | cc_sdk::AssistantMessageError::InvalidRequest => TurnErrorKind::Fatal,
+        cc_sdk::AssistantMessageError::RateLimit
+        | cc_sdk::AssistantMessageError::ServerError
+        | cc_sdk::AssistantMessageError::Unknown => TurnErrorKind::Recoverable,
+    };
+    TurnErrorData::Structured(TurnErrorInfo {
+        code: extract_status_code(&message),
+        message,
+        kind,
+        source: Some(TurnErrorSource::Transport),
+    })
+}
+
+fn assistant_error_text(message: &cc_sdk::AssistantMessage) -> Option<String> {
+    let parts = message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            cc_sdk::ContentBlock::Text(text) if !text.text.trim().is_empty() => {
+                Some(text.text.trim().to_string())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
+}
+
+fn extract_status_code(message: &str) -> Option<i32> {
+    let marker = "API Error:";
+    let start = message.find(marker)? + marker.len();
+    let digits = message[start..]
+        .trim_start()
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>();
+    digits.parse::<i32>().ok()
 }
 
 fn build_question_request_update(
@@ -435,6 +529,7 @@ fn translate_stream_event(
                         part_id: None,
                         message_id: None,
                         session_id,
+                        produced_at_monotonic_ms: None,
                     }]
                 }
 
@@ -545,7 +640,7 @@ fn translate_result(
     total_cost_usd: Option<f64>,
     result: Option<String>,
     session_id: Option<String>,
-    model_id: Option<&str>,
+    stream_state: &mut CcSdkTurnStreamState,
 ) -> Vec<SessionUpdate> {
     let mut updates: Vec<SessionUpdate> = Vec::new();
 
@@ -556,7 +651,7 @@ fn translate_result(
             model_usage,
             total_cost_usd,
             session_id.clone(),
-            model_id,
+            stream_state.model_id.as_deref(),
         );
         updates.push(SessionUpdate::UsageTelemetryUpdate { data: telemetry });
     }
@@ -567,6 +662,8 @@ fn translate_result(
             session_id,
             turn_id: None,
         });
+    } else if stream_state.saw_terminal_assistant_error {
+        stream_state.saw_terminal_assistant_error = false;
     } else {
         updates.push(SessionUpdate::TurnComplete {
             session_id,
@@ -799,7 +896,9 @@ fn build_result_telemetry(
 #[cfg(test)]
 mod tests {
     use super::{
-        translate_cc_sdk_message, translate_cc_sdk_message_with_turn_state, CcSdkTurnStreamState,
+        translate_cc_sdk_message, translate_cc_sdk_message_with_mut_turn_state,
+        translate_cc_sdk_message_with_turn_state, CcSdkTurnStreamState,
+        MISSING_TOOL_RESULT_MESSAGE,
     };
     use crate::acp::agent_context::with_agent;
     use crate::acp::parsers::AgentType;
@@ -809,8 +908,8 @@ mod tests {
     };
     use crate::acp::types::ContentBlock;
     use crate::cc_sdk::{
-        self as cc_sdk, AssistantMessage, ContentBlock as CcContentBlock, Message, TextContent,
-        ThinkingContent,
+        self as cc_sdk, AssistantMessage, AssistantMessageError, ContentBlock as CcContentBlock,
+        Message, TextContent, ThinkingContent,
     };
 
     #[test]
@@ -843,6 +942,92 @@ mod tests {
                 ContentBlock::Text { text } if text == "Hello from assistant"
             ) && session_id == "session-1"
         ));
+    }
+
+    #[test]
+    fn translates_assistant_authentication_error_to_turn_error() {
+        let updates = translate_cc_sdk_message_with_turn_state(
+            AgentType::ClaudeCode,
+            Message::Assistant {
+                message: AssistantMessage {
+                    content: vec![CcContentBlock::Text(TextContent {
+                        text: "Failed to authenticate. API Error: 401 {\"error\":{\"message\":\"User not found.\",\"code\":401}}".to_string(),
+                    })],
+                    model: None,
+                    usage: None,
+                    error: Some(AssistantMessageError::AuthenticationFailed),
+                    parent_tool_use_id: None,
+                },
+            },
+            Some("session-auth".to_string()),
+            CcSdkTurnStreamState::default(),
+        );
+
+        assert!(matches!(
+            updates.as_slice(),
+            [SessionUpdate::TurnError {
+                error: crate::acp::session_update::TurnErrorData::Structured(payload),
+                session_id: Some(session_id),
+                ..
+            }] if session_id == "session-auth"
+                && payload.message.contains("Failed to authenticate")
+                && payload.message.contains("User not found")
+                && payload.kind == crate::acp::session_update::TurnErrorKind::Fatal
+                && payload.code == Some(401)
+                && payload.source == Some(crate::acp::session_update::TurnErrorSource::Transport)
+        ));
+    }
+
+    #[test]
+    fn suppresses_success_result_after_assistant_authentication_error() {
+        let mut stream_state = CcSdkTurnStreamState::default();
+        let auth_updates = translate_cc_sdk_message_with_mut_turn_state(
+            AgentType::ClaudeCode,
+            Message::Assistant {
+                message: AssistantMessage {
+                    content: vec![CcContentBlock::Text(TextContent {
+                        text: "Failed to authenticate. API Error: 401 {\"error\":{\"message\":\"User not found.\",\"code\":401}}".to_string(),
+                    })],
+                    model: None,
+                    usage: None,
+                    error: Some(AssistantMessageError::AuthenticationFailed),
+                    parent_tool_use_id: None,
+                },
+            },
+            Some("session-auth".to_string()),
+            &mut stream_state,
+        );
+        assert!(matches!(
+            auth_updates.as_slice(),
+            [SessionUpdate::TurnError { .. }]
+        ));
+
+        let result_updates = translate_cc_sdk_message_with_mut_turn_state(
+            AgentType::ClaudeCode,
+            Message::Result {
+                subtype: "success".to_string(),
+                duration_ms: 100,
+                duration_api_ms: 100,
+                is_error: false,
+                num_turns: 1,
+                session_id: "session-auth".to_string(),
+                total_cost_usd: None,
+                usage: None,
+                model_usage: None,
+                result: None,
+                structured_output: None,
+                stop_reason: None,
+            },
+            Some("session-auth".to_string()),
+            &mut stream_state,
+        );
+
+        assert!(
+            !result_updates
+                .iter()
+                .any(|update| matches!(update, SessionUpdate::TurnComplete { .. })),
+            "success-shaped Result must not overwrite a prior assistant authentication error"
+        );
     }
 
     #[test]
@@ -1285,10 +1470,12 @@ mod tests {
     }
 
     #[test]
-    fn next_message_start_completes_unresolved_tool_without_callback() {
+    fn next_message_start_completes_resultless_bash_without_callback() {
         // When a tool_use is pending and the next message_start arrives without
-        // a can_use_tool callback, the CLI handled the tool on its own (e.g.
-        // auto-approved). The bridge should mark it Completed, not Failed.
+        // a can_use_tool callback, Copilot has resumed without giving Acepe a
+        // tool-result payload. The bridge should complete the tool turn so the
+        // UI does not claim the command failed, while still surfacing that
+        // stdout/stderr were unavailable.
         let mut stream_state = CcSdkTurnStreamState::default();
 
         let _ = super::translate_cc_sdk_message_with_mut_turn_state(
@@ -1356,8 +1543,9 @@ mod tests {
                     if update.tool_call_id == "toolu_resume_me"
                         && update.status == Some(ToolCallStatus::Completed)
                         && update.failure_reason.is_none()
+                        && update.result.as_ref().and_then(|result| result.get("stderr")).and_then(|value| value.as_str()) == Some(MISSING_TOOL_RESULT_MESSAGE)
             )),
-            "bridge should synthesize a completed terminal update for unresolved tool_use turns when the CLI handles them without can_use_tool"
+            "bridge should complete resumed Bash tools while surfacing unavailable output"
         );
     }
 
@@ -1777,11 +1965,11 @@ mod tests {
     }
 
     #[test]
-    fn auto_approved_bash_without_callback_completes_not_fails() {
+    fn auto_approved_bash_without_callback_surfaces_missing_result() {
         // When the CLI auto-approves a Bash command (e.g. read-only commands),
         // it executes without sending a can_use_tool control message.
-        // The bridge should mark such tools as Completed, not Failed,
-        // because the CLI handled the tool successfully.
+        // If no ToolResult block arrives before the next assistant turn, Acepe
+        // has no stdout/stderr to render and should surface that explicitly.
         let mut stream_state = CcSdkTurnStreamState::default();
 
         // Step 1: Bash tool_use starts on the stream
@@ -1847,8 +2035,8 @@ mod tests {
             &mut stream_state,
         );
 
-        // The bridge should synthesize a Completed update, not Failed.
-        // The CLI handled the tool — the bridge should not second-guess it.
+        // The bridge should not synthesize an empty success for Bash. If the
+        // provider resumes without a result block, Acepe cannot render stdout.
         let synthetic_update = updates.iter().find(|update| {
             matches!(
                 update,
@@ -1863,15 +2051,15 @@ mod tests {
         );
 
         if let Some(SessionUpdate::ToolCallUpdate { update, .. }) = synthetic_update {
+            assert_eq!(update.status, Some(ToolCallStatus::Completed));
+            assert_eq!(update.failure_reason, None);
             assert_eq!(
-                update.status,
-                Some(ToolCallStatus::Completed),
-                "auto-approved Bash tool should be marked Completed, not Failed"
-            );
-            assert!(
-                update.failure_reason.is_none(),
-                "auto-approved Bash tool should have no failure_reason, got: {:?}",
-                update.failure_reason
+                update
+                    .result
+                    .as_ref()
+                    .and_then(|result| result.get("stderr"))
+                    .and_then(|value| value.as_str()),
+                Some(MISSING_TOOL_RESULT_MESSAGE)
             );
         }
     }

@@ -8,16 +8,24 @@ import {
 import { getPermissionStore } from "../../store/permission-store.svelte.js";
 import { getSessionStore } from "../../store/session-store.svelte.js";
 import type { SessionEntry } from "../../application/dto/session-entry.js";
-import type { TurnState } from "../../store/types.js";
+import type { SessionTurnState } from "../../../services/acp-types.js";
 import type { ToolCall } from "../../types/tool-call.js";
 import type { PermissionRequest } from "../../types/permission.js";
 import { Colors, COLOR_NAMES } from "../../utils/colors.js";
-import ToolCallEdit from "./tool-call-edit.svelte";
+import { AgentToolEdit } from "@acepe/ui/agent-panel";
+import { mapToolCallToSceneEntry } from "../agent-panel/scene/desktop-agent-panel-scene.js";
+import { mapCanonicalTurnStateToHotTurnState } from "../../store/canonical-turn-state-mapping.js";
 import { extractCompactPermissionDisplay } from "./permission-display.js";
 import {
 	isPermissionRepresentedByToolCall,
 	visiblePermissionsForSessionBar,
 } from "./permission-visibility.js";
+import { useTheme } from "../../../components/theme/context.svelte.js";
+import { getWorkerPool } from "../../utils/worker-pool-singleton.js";
+import {
+	pierreDiffsUnsafeCSS,
+	registerCursorThemeForPierreDiffs,
+} from "../../utils/pierre-diffs-theme.js";
 
 interface Props {
 	sessionId: string;
@@ -27,7 +35,7 @@ interface Props {
 	showCommandWhenRepresented?: boolean;
 	showCompactEditPreview?: boolean;
 	entries?: readonly SessionEntry[];
-	turnState?: TurnState;
+	turnState?: SessionTurnState | null;
 }
 
 let {
@@ -61,9 +69,7 @@ const isRepresentedByToolCall = $derived.by(() => {
 	return isPermissionRepresentedByToolCall(currentPermission, sessionId, operationStore);
 });
 const sessionProgress = $derived(permissionStore.getSessionProgress(sessionId));
-const effectiveTurnState = $derived(
-	turnStateProp ?? sessionStore.getHotState(sessionId)?.turnState
-);
+const effectiveTurnState = $derived(turnStateProp ?? sessionStore.getSessionTurnState(sessionId));
 const currentToolCall = $derived.by((): ToolCall | null => {
 	const toolCallId = currentPermission?.tool?.callID;
 	if (!toolCallId) {
@@ -75,6 +81,10 @@ const currentToolCall = $derived.by((): ToolCall | null => {
 const showEditPreview = $derived(
 	showCompactEditPreview && currentToolCall !== null && currentToolCall.kind === "edit"
 );
+
+// ===== EDIT TOOL THEME =====
+const themeState = useTheme();
+const editTheme = $derived(themeState.effectiveTheme);
 </script>
 
 
@@ -120,13 +130,23 @@ const showEditPreview = $derived(
 
 		{#snippet editPreview()}
 			{#if showEditPreview && currentToolCall}
-				<ToolCallEdit
-					toolCall={currentToolCall}
-					turnState={effectiveTurnState}
-					projectPath={projectPath ?? undefined}
-					pendingPermission={currentPermission}
-					defaultExpanded={false}
-				/>
+				{@const mappedTurnState = effectiveTurnState !== null ? mapCanonicalTurnStateToHotTurnState(effectiveTurnState) : undefined}
+				{@const sceneEntry = mapToolCallToSceneEntry(currentToolCall, mappedTurnState, false, null)}
+				{#if sceneEntry.type === "tool_call" && sceneEntry.editDiffs !== undefined}
+					<AgentToolEdit
+						diffs={sceneEntry.editDiffs}
+						filePath={sceneEntry.filePath}
+						status={sceneEntry.status}
+						awaitingApproval={true}
+						defaultExpanded={false}
+						iconBasePath="/svgs/icons"
+						theme={editTheme}
+						themeNames={{ dark: "Cursor Dark", light: "pierre-light" }}
+						workerPool={getWorkerPool()}
+						onBeforeRender={registerCursorThemeForPierreDiffs}
+						unsafeCSS={pierreDiffsUnsafeCSS}
+					/>
+				{/if}
 			{/if}
 		{/snippet}
 	</SharedAgentPanelPermissionBar>

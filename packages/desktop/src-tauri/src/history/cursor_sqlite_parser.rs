@@ -293,6 +293,7 @@ fn build_text_message(
         content_blocks: vec![ContentBlock::Text { text }],
         model,
         usage: None,
+        error: None,
         request_id: None,
         is_meta: false,
         source_tool_use_id: None,
@@ -422,6 +423,7 @@ fn convert_cursor_store_message(msg: CursorStoreMessage, index: usize) -> Result
         content_blocks,
         model: msg.model,
         usage: None, // Cursor doesn't store token usage in blobs
+        error: None,
         request_id: None,
         is_meta: false,
         source_tool_use_id: None, // Cursor doesn't support skill meta messages
@@ -495,6 +497,7 @@ fn convert_cursor_tool_message(msg: CursorStoreMessage, index: usize) -> Result<
         content_blocks,
         model: msg.model,
         usage: None,
+        error: None,
         request_id: None,
         is_meta: false,
         source_tool_use_id: None,

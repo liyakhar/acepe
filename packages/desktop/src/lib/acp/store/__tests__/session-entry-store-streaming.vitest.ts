@@ -19,9 +19,11 @@ function applyStreamingArguments(
 	store: SessionEntryStore,
 	sessionId: string,
 	toolCallId: string,
-	streamingArguments: Parameters<SessionEntryStore["updateToolCallEntry"]>[1]["streamingArguments"]
+	streamingArguments: Parameters<
+		SessionEntryStore["updateToolCallTranscriptEntry"]
+	>[1]["streamingArguments"]
 ): void {
-	store.updateToolCallEntry(sessionId, {
+	store.updateToolCallTranscriptEntry(sessionId, {
 		toolCallId,
 		status: null,
 		result: null,
@@ -42,9 +44,9 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 		store = new SessionEntryStore();
 	});
 
-	describe("updateToolCallEntry / getStreamingArguments", () => {
-		it("should store and retrieve streaming arguments from canonical updates", () => {
-			store.createToolCallEntry("session1", {
+	describe("updateToolCallTranscriptEntry / getStreamingArguments", () => {
+		it("should store and retrieve streaming arguments from transcript-only updates", () => {
+			store.recordToolCallTranscriptEntry("session1", {
 				id: "tool1",
 				name: "Edit",
 				arguments: {
@@ -76,7 +78,7 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 		});
 
 		it("should track tool calls per session", () => {
-			store.createToolCallEntry("session1", {
+			store.recordToolCallTranscriptEntry("session1", {
 				id: "tool1",
 				name: "Bash",
 				arguments: { kind: "execute", command: null },
@@ -88,7 +90,7 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 				result: null,
 				awaitingPlanApproval: false,
 			});
-			store.createToolCallEntry("session1", {
+			store.recordToolCallTranscriptEntry("session1", {
 				id: "tool2",
 				name: "Search",
 				arguments: { kind: "search", query: null, file_path: null },
@@ -100,7 +102,7 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 				result: null,
 				awaitingPlanApproval: false,
 			});
-			store.createToolCallEntry("session2", {
+			store.recordToolCallTranscriptEntry("session2", {
 				id: "tool3",
 				name: "Read",
 				arguments: { kind: "read", file_path: null },
@@ -128,7 +130,7 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 		});
 
 		it("should overwrite when setting same tool call again", () => {
-			store.createToolCallEntry("session1", {
+			store.recordToolCallTranscriptEntry("session1", {
 				id: "tool1",
 				name: "Edit",
 				arguments: {
@@ -167,7 +169,7 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 
 	describe("clearStreamingArguments", () => {
 		it("should clear streaming arguments", () => {
-			store.createToolCallEntry("session1", {
+			store.recordToolCallTranscriptEntry("session1", {
 				id: "tool1",
 				name: "Edit",
 				arguments: {
@@ -197,7 +199,7 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 
 	describe("clearEntries", () => {
 		it("should clear all streaming arguments for session", () => {
-			store.createToolCallEntry("session1", {
+			store.recordToolCallTranscriptEntry("session1", {
 				id: "tool1",
 				name: "Bash",
 				arguments: { kind: "execute", command: null },
@@ -209,7 +211,7 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 				result: null,
 				awaitingPlanApproval: false,
 			});
-			store.createToolCallEntry("session1", {
+			store.recordToolCallTranscriptEntry("session1", {
 				id: "tool2",
 				name: "Bash",
 				arguments: { kind: "execute", command: null },
@@ -221,7 +223,7 @@ describe("SessionEntryStore - Streaming Arguments", () => {
 				result: null,
 				awaitingPlanApproval: false,
 			});
-			store.createToolCallEntry("session2", {
+			store.recordToolCallTranscriptEntry("session2", {
 				id: "tool3",
 				name: "Bash",
 				arguments: { kind: "execute", command: null },
@@ -257,7 +259,7 @@ describe("SessionEntryStore - Transcript Deltas", () => {
 		store = new SessionEntryStore();
 	});
 
-	it("hydrates transcript snapshots through the compatibility adapter", () => {
+	it("hydrates transcript snapshots into spine entries", () => {
 		const snapshot: TranscriptSnapshot = {
 			revision: 5,
 			entries: [
@@ -297,9 +299,9 @@ describe("SessionEntryStore - Transcript Deltas", () => {
 		]);
 	});
 
-	it("preserves structured tool data when a transcript snapshot rehydrates the same tool id", () => {
+	it("keeps transcript snapshot tool rows as spine entries instead of preserving structured operation data", () => {
 		const timestamp = new Date("2026-04-16T00:00:00.000Z");
-		store.createToolCallEntry("session-1", {
+		store.recordToolCallTranscriptEntry("session-1", {
 			id: "tool-1",
 			name: "Edit File",
 			arguments: {
@@ -365,77 +367,56 @@ describe("SessionEntryStore - Transcript Deltas", () => {
 		expect(entry.message).toMatchObject({
 			id: "tool-1",
 			name: "Edit File",
-			kind: "edit",
+			kind: "other",
 			title: "Edit File",
 			arguments: {
-				kind: "edit",
-				edits: [
-					{
-						filePath: "/tmp/example.ts",
-						oldString: "before",
-						newString: "after",
-					},
-				],
+				kind: "other",
+				raw: null,
 			},
 		});
 		expect(entry.message.arguments).toEqual({
-			kind: "edit",
-			edits: [
-				{
-					filePath: "/tmp/example.ts",
-					oldString: "before",
-					newString: "after",
-				},
-			],
+			kind: "other",
+			raw: null,
 		});
-		expect(store.getOperationStore().getByToolCallId("session-1", "tool-1")).toMatchObject({
-			toolCallId: "tool-1",
-			kind: "edit",
-		});
-		expect(store.getOperationStore().getLastToolCall("session-1")).toMatchObject({
-			id: "tool-1",
-			kind: "edit",
-		});
+		expect(store.getOperationStore().getByToolCallId("session-1", "tool-1")).toBeUndefined();
+		expect(store.getOperationStore().getLastToolCall("session-1")).toBeNull();
 	});
 
 	it("does not clear canonical tool operations when a delta replaces the transcript snapshot", () => {
 		const timestamp = new Date("2026-04-16T00:00:00.000Z");
-		store.createToolCallEntry("session-1", {
-			id: "tool-1",
-			name: "Edit File",
-			arguments: {
+		store.getOperationStore().replaceSessionOperations("session-1", [
+			{
+				id: "op-tool-1",
+				session_id: "session-1",
+				tool_call_id: "tool-1",
+				operation_provenance_key: "tool-1",
+				name: "Edit File",
+				arguments: {
+					kind: "edit",
+					edits: [
+						{
+							filePath: "/tmp/example.ts",
+							oldString: "before",
+							newString: "after",
+							content: null,
+						},
+					],
+				},
+				provider_status: "completed",
+				operation_state: "completed",
+				source_link: { kind: "transcript_linked", entry_id: "tool-1" },
+				result: null,
 				kind: "edit",
-				edits: [
-					{
-						filePath: "/tmp/example.ts",
-						oldString: "before",
-						newString: "after",
-					},
-				],
+				title: "Edit File",
+				progressive_arguments: null,
+				command: null,
+				normalized_todos: null,
+				parent_tool_call_id: null,
+				parent_operation_id: null,
+				child_tool_call_ids: [],
+				child_operation_ids: [],
 			},
-			rawInput: {
-				edits: [
-					{
-						filePath: "/tmp/example.ts",
-						oldString: "before",
-						newString: "after",
-					},
-				],
-			},
-			status: "completed",
-			result: null,
-			kind: "edit",
-			title: "Edit File",
-			locations: null,
-			skillMeta: null,
-			normalizedQuestions: null,
-			normalizedTodos: null,
-			parentToolUseId: null,
-			taskChildren: null,
-			questionAnswer: null,
-			awaitingPlanApproval: false,
-			planApprovalRequestId: null,
-		});
+		]);
 
 		store.applyTranscriptDelta(
 			"session-1",
@@ -622,14 +603,11 @@ describe("SessionEntryStore - Transcript Deltas", () => {
 			},
 		]);
 
-		expect(operationStore.getByToolCallId("session-1", "tool-1")).toMatchObject({
-			toolCallId: "tool-1",
-			sourceEntryId: "tool-1",
-			title: "Read file\nstdout ready",
-		});
+		expect(operationStore.getByToolCallId("session-1", "tool-1")).toBeUndefined();
+		expect(operationStore.getSessionOperations("session-1")).toHaveLength(0);
 	});
 
-	it("reconciles a canonical user append entry onto the optimistic user row", () => {
+	it("does not reconcile canonical user append entries by matching optimistic text", () => {
 		store.addEntry("session-1", {
 			id: "optimistic-user-local",
 			type: "user",
@@ -662,17 +640,82 @@ describe("SessionEntryStore - Transcript Deltas", () => {
 
 		expect(store.getEntries("session-1")).toEqual([
 			{
-				id: "user-event-7",
+				id: "optimistic-user-local",
 				type: "user",
 				message: {
-					id: "user-event-7",
+					id: "optimistic-user-local",
 					content: { type: "text", text: "hello" },
 					chunks: [{ type: "text", text: "hello" }],
 					sentAt: new Date("2026-04-16T00:00:01.000Z"),
 				},
 				timestamp: new Date("2026-04-16T00:00:01.000Z"),
 			},
+			{
+				id: "user-event-7",
+				type: "user",
+				message: {
+					id: "user-event-7",
+					content: { type: "text", text: "hello" },
+					chunks: [{ type: "text", text: "hello" }],
+				},
+				timestamp: new Date("2026-04-16T00:00:02.000Z"),
+			},
 		]);
+	});
+
+	it("appends canonical user entries even when matching optimistic text exists before assistant output", () => {
+		store.addEntry("session-1", {
+			id: "optimistic-user-local",
+			type: "user",
+			message: {
+				id: "optimistic-user-local",
+				content: { type: "text", text: "hello" },
+				chunks: [{ type: "text", text: "hello" }],
+				sentAt: new Date("2026-04-16T00:00:01.000Z"),
+			},
+			timestamp: new Date("2026-04-16T00:00:01.000Z"),
+		});
+		store.addEntry("session-1", {
+			id: "assistant-1",
+			type: "assistant",
+			message: {
+				chunks: [
+					{
+						type: "message",
+						block: { type: "text", text: "response" },
+					},
+				],
+			},
+			timestamp: new Date("2026-04-16T00:00:02.000Z"),
+		});
+
+		const delta: TranscriptDelta = {
+			eventSeq: 7,
+			sessionId: "session-1",
+			snapshotRevision: 7,
+			operations: [
+				{
+					kind: "appendEntry",
+					entry: {
+						entryId: "user-event-7",
+						role: "user",
+						segments: [{ kind: "text", segmentId: "user-event-7:block:0", text: "hello" }],
+					},
+				},
+			],
+		};
+
+		store.applyTranscriptDelta("session-1", delta, new Date("2026-04-16T00:00:03.000Z"));
+
+		expect(store.getEntries("session-1").map((entry) => entry.id)).toEqual([
+			"optimistic-user-local",
+			"assistant-1",
+			"user-event-7",
+		]);
+		expect(store.getEntries("session-1")[2]).toMatchObject({
+			id: "user-event-7",
+			type: "user",
+		});
 	});
 });
 
@@ -698,7 +741,7 @@ describe("SessionEntryStore - Assistant/Tool Boundary", () => {
 			true
 		);
 
-		store.createToolCallEntry("session1", {
+		store.recordToolCallTranscriptEntry("session1", {
 			id: "tool-1",
 			name: "Read",
 			arguments: { kind: "read", file_path: "/tmp/file.txt" },
@@ -744,7 +787,7 @@ describe("SessionEntryStore - Assistant/Tool Boundary", () => {
 			true
 		);
 
-		store.createToolCallEntry("session1", {
+		store.recordToolCallTranscriptEntry("session1", {
 			id: "tool-2",
 			name: "Read",
 			arguments: { kind: "read", file_path: "/tmp/file.txt" },
@@ -786,6 +829,138 @@ describe("SessionEntryStore - Assistant/Tool Boundary", () => {
 			expect(postToolAssistant.message.chunks[1].block).toEqual({
 				type: "text",
 				text: "post-tool part 2",
+			});
+		}
+	});
+
+	it("starts a new assistant entry for a new user turn even when the provider reuses messageId", async () => {
+		await store.aggregateAssistantChunk(
+			"session1",
+			{ content: { type: "text", text: "first answer" } },
+			"provider-message",
+			false
+		);
+
+		store.startNewAssistantTurn("session1");
+		store.addEntry("session1", {
+			id: "user-2",
+			type: "user",
+			message: createUserMessage("second prompt"),
+			timestamp: new Date("2026-04-26T00:00:00.000Z"),
+		});
+
+		await store.aggregateAssistantChunk(
+			"session1",
+			{ content: { type: "text", text: "second " } },
+			"provider-message",
+			false
+		);
+		await store.aggregateAssistantChunk(
+			"session1",
+			{ content: { type: "text", text: "answer" } },
+			"provider-message",
+			false
+		);
+
+		const entries = store.getEntries("session1");
+		expect(entries).toHaveLength(3);
+		expect(entries[0].type).toBe("assistant");
+		expect(entries[1].type).toBe("user");
+		expect(entries[2].type).toBe("assistant");
+		expect(entries[2].id).not.toBe("provider-message");
+
+		const firstAssistant = entries[0];
+		const secondAssistant = entries[2];
+		if (firstAssistant.type === "assistant") {
+			expect(firstAssistant.message.chunks).toHaveLength(1);
+			expect(firstAssistant.message.chunks[0].block).toEqual({
+				type: "text",
+				text: "first answer",
+			});
+		}
+		if (secondAssistant.type === "assistant") {
+			expect(secondAssistant.message.chunks).toHaveLength(2);
+			expect(secondAssistant.message.chunks[0].block).toEqual({
+				type: "text",
+				text: "second ",
+			});
+			expect(secondAssistant.message.chunks[1].block).toEqual({
+				type: "text",
+				text: "answer",
+			});
+		}
+	});
+
+	it("keeps canonical assistant deltas after a new user turn when the provider reuses entryId", () => {
+		store.applyTranscriptDelta(
+			"session1",
+			{
+				eventSeq: 1,
+				sessionId: "session1",
+				snapshotRevision: 1,
+				operations: [
+					{
+						kind: "appendEntry",
+						entry: {
+							entryId: "provider-message",
+							role: "assistant",
+							segments: [
+								{
+									kind: "text",
+									segmentId: "provider-message:segment:1",
+									text: "first answer",
+								},
+							],
+						},
+					},
+				],
+			},
+			new Date("2026-04-26T00:00:00.000Z")
+		);
+		store.addEntry("session1", {
+			id: "user-2",
+			type: "user",
+			message: createUserMessage("second prompt"),
+			timestamp: new Date("2026-04-26T00:00:01.000Z"),
+		});
+		store.applyTranscriptDelta(
+			"session1",
+			{
+				eventSeq: 2,
+				sessionId: "session1",
+				snapshotRevision: 2,
+				operations: [
+					{
+						kind: "appendSegment",
+						entryId: "provider-message",
+						role: "assistant",
+						segment: {
+							kind: "text",
+							segmentId: "provider-message:segment:2",
+							text: "second answer",
+						},
+					},
+				],
+			},
+			new Date("2026-04-26T00:00:02.000Z")
+		);
+
+		const entries = store.getEntries("session1");
+		expect(entries).toHaveLength(3);
+		expect(entries[0].type).toBe("assistant");
+		expect(entries[1].type).toBe("user");
+		expect(entries[2].type).toBe("assistant");
+		expect(entries[2].id).not.toBe("provider-message");
+		if (entries[0].type === "assistant") {
+			expect(entries[0].message.chunks[0].block).toEqual({
+				type: "text",
+				text: "first answer",
+			});
+		}
+		if (entries[2].type === "assistant") {
+			expect(entries[2].message.chunks[0].block).toEqual({
+				type: "text",
+				text: "second answer",
 			});
 		}
 	});
