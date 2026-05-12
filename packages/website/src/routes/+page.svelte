@@ -709,24 +709,24 @@ const features = [
 </div>
 
 				<!-- Feature cards -->
-				<div class="flex flex-col gap-6 md:gap-8">
-					{#each features as feature}
-						<Card class="feature-card feature-section-card relative isolate flex h-auto flex-col gap-6 overflow-hidden rounded-xl border-0 bg-card p-6 shadow-none md:min-h-[560px] md:gap-8 md:p-10">
+				<div class="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8 md:pb-16">
+					{#each features as feature, featureIndex}
+						<Card class="feature-card feature-section-card relative isolate flex h-auto flex-col gap-5 overflow-hidden rounded-xl border-0 bg-card p-5 shadow-none transition-transform md:min-h-[420px] md:gap-6 md:p-7 {featureIndex % 2 === 1 ? 'md:translate-y-16' : ''}">
 								<!-- Grained orange shader bg (matches site Grain Gradient) -->
 								<div class="pointer-events-none absolute inset-0 -z-10">
 									<FeatureCardShader />
 									<div class="absolute inset-0 bg-gradient-to-b from-transparent via-background/10 to-background/50"></div>
 								</div>
-								<div class="mb-6 flex flex-col items-start text-left">
-									<h3 class="mb-3 text-2xl font-semibold tracking-[-0.02em] md:text-4xl">
+								<div class="mb-2 flex flex-col items-start text-left">
+									<h3 class="mb-3 text-2xl font-semibold tracking-[-0.02em] md:text-3xl">
 										{feature.label}
 									</h3>
-									<p class="max-w-[760px] text-[13px] leading-relaxed text-muted-foreground md:text-sm">
+									<p class="max-w-[520px] text-[13px] leading-relaxed text-muted-foreground">
 										{feature.description}
 									</p>
 								</div>
 
-								<div class="showcase flex flex-1 items-center justify-center w-full max-w-3xl self-center">
+								<div class="showcase flex flex-1 items-center justify-center w-full max-w-lg self-center">
 										{#if feature.id === "multi-agent"}
 											<div class="overflow-hidden rounded-xl border border-border/60 bg-muted/35">
 												<div class="grid grid-cols-3">
