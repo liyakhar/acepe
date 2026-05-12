@@ -302,7 +302,9 @@ export class OperationStore {
 		);
 		const transcriptEntryId = transcriptSourceEntryId(operation.sourceLink);
 		if (transcriptEntryId !== null) {
-			this.operationIdByEntryKey.delete(createSessionToolKey(operation.sessionId, transcriptEntryId));
+			this.operationIdByEntryKey.delete(
+				createSessionToolKey(operation.sessionId, transcriptEntryId)
+			);
 		}
 	}
 

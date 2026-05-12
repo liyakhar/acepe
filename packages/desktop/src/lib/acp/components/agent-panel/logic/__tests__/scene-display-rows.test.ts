@@ -1,5 +1,5 @@
-import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import { describe, expect, it } from "bun:test";
+import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import {
 	buildSceneDisplayRows,
 	getSceneDisplayRowKey,

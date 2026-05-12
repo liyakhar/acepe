@@ -646,9 +646,9 @@ describe("desktop agent panel scene adapter", () => {
 			type: "tool_call",
 			kind: "read",
 		});
-		expect(conversation.entries[5]?.type === "tool_call" ? conversation.entries[5].lintDiagnostics : null).toBe(
-			undefined
-		);
+		expect(
+			conversation.entries[5]?.type === "tool_call" ? conversation.entries[5].lintDiagnostics : null
+		).toBe(undefined);
 		expect(conversation.entries[6]).toMatchObject({
 			type: "tool_call",
 			kind: "task_output",

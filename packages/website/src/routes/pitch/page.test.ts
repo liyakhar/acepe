@@ -80,7 +80,7 @@ describe("pitch route contract", () => {
 	it("renders a readable label for every thesis beat used by the deck", () => {
 		const { body } = render(Page);
 
-		expect(body).toContain("Why now urgency");
+		expect(body).toContain("Market / Why now");
 	});
 
 	it("falls back to qualitative proof when numeric evidence is not verified", () => {

@@ -1,7 +1,7 @@
 import type {
 	AgentAssistantEntry,
-	AgentPanelSessionStatus,
 	AgentPanelSceneEntryModel,
+	AgentPanelSessionStatus,
 	AssistantMessage,
 	AssistantMessageChunk,
 	ContentBlock,
@@ -272,10 +272,7 @@ export function buildAgentPanelBaseModel(input: AgentPanelDisplayInput): AgentPa
 	};
 }
 
-function shouldResetMemory(
-	memory: AgentPanelDisplayMemory,
-	model: AgentPanelBaseModel
-): boolean {
+function shouldResetMemory(memory: AgentPanelDisplayMemory, model: AgentPanelBaseModel): boolean {
 	return memory.sessionId !== model.sessionId || memory.turnId !== model.turnId;
 }
 
@@ -302,9 +299,7 @@ function applyDisplayTextToRow(
 
 	const previousText = previousTexts.get(row.id) ?? "";
 	const displayText =
-		row.canonicalText.length === 0 && previousText.length > 0
-			? previousText
-			: row.canonicalText;
+		row.canonicalText.length === 0 && previousText.length > 0 ? previousText : row.canonicalText;
 	nextTexts.set(row.id, displayText);
 	return {
 		id: row.id,

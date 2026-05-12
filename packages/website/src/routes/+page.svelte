@@ -21,6 +21,8 @@ import AgentIconsRow from "$lib/components/agent-icons-row.svelte";
 import Header from "$lib/components/header.svelte";
 import FeatureShowcase from "$lib/components/feature-showcase.svelte";
 import HeroShaderStage from "$lib/components/hero-shader-stage.svelte";
+import FeatureCardShader from "$lib/components/feature-card-shader.svelte";
+import LazyFeatureMount from "$lib/components/lazy-feature-mount.svelte";
 import DevShaderSwitcher from "$lib/components/dev-shader-switcher.svelte";
 import Card from "$lib/components/ui/card/card.svelte";
 import {
@@ -34,6 +36,14 @@ import {
 	Lightning,
 	MagnifyingGlass,
 	GithubLogo,
+	Kanban,
+	GitPullRequest,
+	Globe,
+	Terminal,
+	Microphone,
+	Check,
+	ShieldCheck,
+	Plug,
 } from "phosphor-svelte";
 
 let { data } = $props();
@@ -406,19 +416,6 @@ const features = [
 		],
 	},
 	{
-		id: "sql-studio",
-		icon: HardDrives,
-		label: "SQL Studio",
-		tag: "data",
-		description:
-			"Query PostgreSQL, MySQL, and SQLite without leaving the app. Schema explorer, SQL editor, and results grid in one overlay.",
-		usecases: [
-			"Connect to local or remote databases with saved connections",
-			"Browse schemas and tables, run queries, inspect results",
-			"Execute data-changing SQL with explicit write mode control",
-		],
-	},
-	{
 		id: "queue",
 		icon: Queue,
 		label: "Attention Queue",
@@ -429,6 +426,149 @@ const features = [
 			"Answer-needed sessions stay at the top until you respond",
 			"See errors and active work before idle sessions",
 			"Switch context quickly without hunting through terminals",
+		],
+	},
+	{
+		id: "parallel",
+		icon: ArrowsOutSimple,
+		label: "Parallel Sessions & Focus",
+		tag: "workflow",
+		description:
+			"Split your screen between agents working on different tasks. Tab between sessions like a browser. Go full-screen on one when you need to dig in.",
+		usecases: [
+			"Run agents on separate tasks and see all of them making progress at once",
+			"Work across multiple repos at the same time without losing track",
+			"Have 10 agents working across different projects with full visibility into each",
+		],
+	},
+	{
+		id: "kanban",
+		icon: Kanban,
+		label: "Kanban Board",
+		tag: "view",
+		description:
+			"See every session as a card across columns: Working, Needs review, Done. Drag-and-drop, batch actions, project grouping — without leaving the app.",
+		usecases: [
+			"Triage dozens of sessions at a glance",
+			"Group by project, status, or attention level",
+			"Move sessions through your pipeline like JIRA tickets",
+		],
+	},
+	{
+		id: "git",
+		icon: GitBranch,
+		label: "Git Panel",
+		tag: "git",
+		description:
+			"Stage, commit, and push from inside Acepe. Diff hunks, file history, branch switching, and stash management — without leaving your agent's window.",
+		usecases: [
+			"Stage and commit agent changes with one keystroke",
+			"Browse history and stashes inline",
+			"Push branches and resolve conflicts without context switching",
+		],
+	},
+	{
+		id: "pr",
+		icon: GitPullRequest,
+		label: "PR Workflow",
+		tag: "ship",
+		description:
+			"Open, review, and merge pull requests inside Acepe. The agent drafts the PR, you review the diff, and ship — all in one surface.",
+		usecases: [
+			"Generate PR titles and descriptions from session work",
+			"Review diffs file-by-file with the same UI as the agent",
+			"Merge or request changes without opening GitHub",
+		],
+	},
+	{
+		id: "review",
+		icon: Check,
+		label: "Review Workspace",
+		tag: "verify",
+		description:
+			"Inspect every modified file before you ship. Side-by-side diffs, accept/reject per hunk, and PR card preview — the gate between agent output and main.",
+		usecases: [
+			"Step through every file the agent touched",
+			"Accept or reject changes hunk by hunk",
+			"Preview the PR card before opening it",
+		],
+	},
+	{
+		id: "browser",
+		icon: Globe,
+		label: "Embedded Browser",
+		tag: "verify",
+		description:
+			"Pin a browser pane next to your agent. Watch the dev server reload as the agent edits — no alt-tabbing, no broken loops.",
+		usecases: [
+			"Verify UI changes the moment the agent saves",
+			"Inspect rendered output, console, and network in-app",
+			"Share the browser context with the agent for visual debugging",
+		],
+	},
+	{
+		id: "terminal",
+		icon: Terminal,
+		label: "Terminal Drawer",
+		tag: "tools",
+		description:
+			"A real terminal pinned to every session. Run scripts, tail logs, and inspect agent output side by side without leaving the panel.",
+		usecases: [
+			"Tail logs while the agent is mid-task",
+			"Run quick scripts without leaving the session",
+			"Multiple terminal tabs per agent panel",
+		],
+	},
+	{
+		id: "voice",
+		icon: Microphone,
+		label: "Voice Input",
+		tag: "input",
+		description:
+			"Dictate prompts with your voice. Real-time transcription, push-to-talk, and language model selection — for when typing slows you down.",
+		usecases: [
+			"Brain-dump a task at the speed of speech",
+			"Switch transcription models for accuracy or latency",
+			"Hands-free prompting while reviewing code",
+		],
+	},
+	{
+		id: "permissions",
+		icon: ShieldCheck,
+		label: "Permissions & Autonomy",
+		tag: "control",
+		description:
+			"Decide which tools the agent runs without asking. Per-tool, per-session permission control with a one-click autonomous mode for trusted work.",
+		usecases: [
+			"Allow file edits but require permission for shell commands",
+			"Run trusted tasks fully autonomous, gate the rest",
+			"Per-session permission scopes that survive restart",
+		],
+	},
+	{
+		id: "skills",
+		icon: Plug,
+		label: "Skills & MCP",
+		tag: "extend",
+		description:
+			"Plug in skills and MCP servers to give every agent the same superpowers. Search, fetch, run scripts, query APIs — across providers, in one place.",
+		usecases: [
+			"Share skills across Claude, Codex, Cursor, and OpenCode",
+			"Connect MCP servers once, use them everywhere",
+			"Build custom tools your whole team can run",
+		],
+	},
+	{
+		id: "sql-studio",
+		icon: HardDrives,
+		label: "SQL Studio",
+		tag: "data",
+		description:
+			"Query PostgreSQL, MySQL, and SQLite without leaving the app. Schema explorer, SQL editor, and results grid in one overlay.",
+		usecases: [
+			"Connect to local or remote databases with saved connections",
+			"Browse schemas and tables, run queries, inspect results",
+			"Execute data-changing SQL with explicit write mode control",
 		],
 	},
 ];
@@ -552,21 +692,21 @@ const features = [
 			</div>
 		</section>
 
-		<!-- Features Section -->
-		<section class="border-t border-border/50 px-4 py-24 md:px-6 md:py-32">
-			<div class="mx-auto max-w-6xl">
-				<div class="mb-16 flex flex-col items-center text-center">
-					<div class="mb-5 flex items-center gap-2">
-						<span class="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50">//</span>
-						<span class="font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Features</span>
-					</div>
-					<h2 class="mb-4 text-3xl leading-[1.2] font-semibold tracking-[-0.03em] md:text-[44px]">
-						{"Everything an ADE should have"}
-					</h2>
-					<p class="max-w-[600px] text-[15px] leading-[1.7] text-muted-foreground md:text-[17px]">
-						{"For developers who run AI agents every day."}
-					</p>
-				</div>
+<!-- Features Section -->
+<section class="border-t border-border/50 px-4 py-24 md:px-6 md:py-32">
+<div class="mx-auto max-w-6xl">
+<div class="mb-16 flex flex-col items-center text-center">
+<div class="mb-5 flex items-center gap-2">
+<span class="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50">//</span>
+<span class="font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Features</span>
+</div>
+<h2 class="mb-4 text-3xl leading-[1.2] font-semibold tracking-[-0.03em] md:text-[44px]">
+{"Everything an ADE should have"}
+</h2>
+<p class="max-w-[600px] text-[15px] leading-[1.7] text-muted-foreground md:text-[17px]">
+{"For developers who run AI agents every day."}
+</p>
+</div>
 
 				<!-- Feature cards -->
 				<div class="flex flex-col gap-6 md:gap-8">
@@ -935,34 +1075,6 @@ const features = [
 
 	:global(.feature-section-card) {
 		backdrop-filter: none;
-	}
-
-	.plan-showcase,
-	.checkpoint-showcase {
-		transform: scale(1);
-		transform-origin: center center;
-	}
-
-	.queue-showcase {
-		width: 90%;
-		margin: 0 auto;
-	}
-
-	/* Equalize top/bottom padding inside checkpoint file lists */
-	.checkpoint-showcase :global(.px-2.py-1) {
-		padding-top: 0.125rem;
-		padding-bottom: 0.125rem;
-	}
-
-	/* Indent question options in the queue showcase */
-	.showcase :global(.pl-2\.5.rounded-sm) {
-		margin-left: 2px;
-		margin-bottom: 1px;
-	}
-
-	/* Bottom margin on last option */
-	.queue-showcase :global(.pl-2\.5.rounded-sm:last-child) {
-		margin-bottom: 4px;
 	}
 
 </style>

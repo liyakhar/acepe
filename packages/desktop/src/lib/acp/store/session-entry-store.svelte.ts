@@ -77,10 +77,7 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 
 	constructor(operationStore?: OperationStore) {
 		this.operationStore = operationStore ?? new OperationStore();
-		this.transcriptToolCallBuffer = new TranscriptToolCallBuffer(
-			this,
-			this.entryIndex
-		);
+		this.transcriptToolCallBuffer = new TranscriptToolCallBuffer(this, this.entryIndex);
 	}
 
 	// ============================================
@@ -503,7 +500,6 @@ export class SessionEntryStore implements IEntryManager, IEntryStoreInternal {
 	getOperationStore(): OperationStore {
 		return this.operationStore;
 	}
-
 
 	// ============================================
 	// TOOL CALLS (delegated to TranscriptToolCallBuffer)

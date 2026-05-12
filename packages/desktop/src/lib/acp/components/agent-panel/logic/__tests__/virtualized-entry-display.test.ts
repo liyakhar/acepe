@@ -327,7 +327,7 @@ describe("buildVirtualizedDisplayEntriesFromScene", () => {
 		]);
 	});
 
-	it("merges consecutive assistant entries into a single MergedAssistantDisplayEntry", () => {
+	it("keeps a streaming assistant row separate from prior static assistant text", () => {
 		const scene: AgentPanelSceneEntryModel[] = [
 			{ type: "assistant", id: "a1", markdown: "first", isStreaming: false },
 			{ type: "assistant", id: "a2", markdown: "second", isStreaming: true },
@@ -335,14 +335,26 @@ describe("buildVirtualizedDisplayEntriesFromScene", () => {
 
 		const result = buildVirtualizedDisplayEntriesFromScene(scene);
 
-		expect(result).toHaveLength(1);
-		const entry = result[0]!;
-		expect(entry.type).toBe("assistant_merged");
-		if (entry.type === "assistant_merged") {
-			expect(entry.key).toBe("a1");
-			expect(entry.memberIds).toEqual(["a1", "a2"]);
-			expect(entry.isStreaming).toBe(true);
-			expect(entry.message.chunks).toHaveLength(2);
+		expect(result).toHaveLength(2);
+		expect(result[0]).toMatchObject({
+			type: "assistant_merged",
+			key: "a1",
+			memberIds: ["a1"],
+			markdown: "first",
+			isStreaming: false,
+		});
+		expect(result[1]).toMatchObject({
+			type: "assistant_merged",
+			key: "a2",
+			memberIds: ["a2"],
+			markdown: "second",
+			isStreaming: true,
+		});
+		if (result[0]?.type === "assistant_merged") {
+			expect(result[0].message.chunks).toHaveLength(1);
+		}
+		if (result[1]?.type === "assistant_merged") {
+			expect(result[1].message.chunks).toHaveLength(1);
 		}
 	});
 
@@ -461,8 +473,8 @@ describe("buildVirtualizedDisplayEntriesFromScene", () => {
 		const initialKeys = buildVirtualizedDisplayEntriesFromScene(initial).map((entry) =>
 			getVirtualizedDisplayEntryKey(entry)
 		);
-		const replacementKeys = buildVirtualizedDisplayEntriesFromScene(destructiveReplacement).map((entry) =>
-			getVirtualizedDisplayEntryKey(entry)
+		const replacementKeys = buildVirtualizedDisplayEntriesFromScene(destructiveReplacement).map(
+			(entry) => getVirtualizedDisplayEntryKey(entry)
 		);
 
 		expect(initialKeys).toEqual(["u1", "a1", "u2"]);

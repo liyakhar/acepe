@@ -1,9 +1,5 @@
 <script lang="ts">
 import { Kanban, Columns, Square, SquaresFour } from "phosphor-svelte";
-import AgentPanelDemo from "./agent-panel-demo.svelte";
-import LandingByProjectDemo from "./landing-by-project-demo.svelte";
-import LandingSingleDemo from "./landing-single-demo.svelte";
-import LandingKanbanDemo from "./landing-kanban-demo.svelte";
 
 interface Feature {
 	id: string;
@@ -43,17 +39,51 @@ let activeFeature = $state("agent");
 	<!-- Feature content -->
 	<div class="relative">
 		{#if activeFeature === "agent"}
-			<AgentPanelDemo />
+			{#await import("./agent-panel-demo.svelte")}
+				<div class="feature-showcase-loading">Loading demo</div>
+			{:then module}
+				{@const Demo = module.default}
+				<Demo />
+			{/await}
 		{:else if activeFeature === "by-project"}
-			<LandingByProjectDemo />
+			{#await import("./landing-by-project-demo.svelte")}
+				<div class="feature-showcase-loading">Loading demo</div>
+			{:then module}
+				{@const Demo = module.default}
+				<Demo />
+			{/await}
 		{:else if activeFeature === "single"}
-			<LandingSingleDemo />
+			{#await import("./landing-single-demo.svelte")}
+				<div class="feature-showcase-loading">Loading demo</div>
+			{:then module}
+				{@const Demo = module.default}
+				<Demo />
+			{/await}
 		{:else if activeFeature === "kanban"}
-			<LandingKanbanDemo />
+			{#await import("./landing-kanban-demo.svelte")}
+				<div class="feature-showcase-loading">Loading demo</div>
+			{:then module}
+				{@const Demo = module.default}
+				<Demo />
+			{/await}
 		{/if}
 	</div>
 </div>
 
 <style>
-	/* container intentionally empty — demo stands alone on the page */
+	.feature-showcase-loading {
+		display: flex;
+		aspect-ratio: 16 / 10.5;
+		width: 100%;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid var(--border);
+		border-radius: 0.75rem;
+		background: color-mix(in srgb, var(--background) 72%, transparent);
+		font-family: var(--font-mono);
+		font-size: 10px;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		color: var(--muted-foreground);
+	}
 </style>

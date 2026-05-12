@@ -117,8 +117,8 @@ setIconConfig({ basePath: "/svgs/icons" });
 // Use getters to ensure reactivity (values update when they change)
 setContext(SESSION_CONTEXT_KEY_EXPORT, {
 	get sessionId() {
-			return sessionId ?? undefined;
-		},
+		return sessionId ?? undefined;
+	},
 	get panelId() {
 		return panelId;
 	},
@@ -292,7 +292,9 @@ function createMissingSceneEntry(
 	entry: SceneDisplayRow | undefined,
 	index: number | undefined
 ): AgentPanelSceneEntryModel {
-	const displayKey = entry ? getSceneDisplayRowKey(entry) : `missing-entry-${String(index ?? "unknown")}`;
+	const displayKey = entry
+		? getSceneDisplayRowKey(entry)
+		: `missing-entry-${String(index ?? "unknown")}`;
 	reportMissingSceneEntry(entry, index, displayKey);
 	return {
 		id: `missing:${displayKey}`,
@@ -329,7 +331,6 @@ function getGraphSceneEntry(
 ): AgentPanelSceneEntryModel | undefined {
 	return findGraphSceneEntryForDisplayEntry(entry, sceneEntriesById);
 }
-
 
 let warnedMissingEntryKeys = new Set<string>();
 
@@ -459,9 +460,13 @@ const hasLiveAssistantDisplayEntry = $derived(
 );
 
 let holdNativeAfterRevealHandoff = $state(false);
-const hasActiveLiveTail = $derived(isWaitingForResponse || isStreaming || hasLiveAssistantDisplayEntry);
+const hasActiveLiveTail = $derived(
+	isWaitingForResponse || isStreaming || hasLiveAssistantDisplayEntry
+);
 const shouldUseNativeListForLiveTail = $derived(useNativeFallback || hasActiveLiveTail);
-const shouldUseNativeList = $derived(shouldUseNativeListForLiveTail || holdNativeAfterRevealHandoff);
+const shouldUseNativeList = $derived(
+	shouldUseNativeListForLiveTail || holdNativeAfterRevealHandoff
+);
 let previousShouldUseNativeList = $state(untrack(() => shouldUseNativeList));
 let previousShouldUseNativeListForLiveTail = $state(untrack(() => shouldUseNativeListForLiveTail));
 const nativeFallbackEntries = $derived.by((): readonly IndexedDisplayEntry[] => {

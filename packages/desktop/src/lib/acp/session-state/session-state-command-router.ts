@@ -11,8 +11,8 @@ import type {
 	SessionStateEnvelope,
 	SessionStateGraph,
 	SessionTurnState,
-	TurnFailureSnapshot,
 	TranscriptDelta,
+	TurnFailureSnapshot,
 	UsageTelemetryData,
 } from "../../services/acp-types.js";
 import {
@@ -149,8 +149,7 @@ export function routeSessionStateEnvelope(
 			}
 			const operationPatches = envelope.payload.delta.operationPatches ?? [];
 			const interactionPatches = envelope.payload.delta.interactionPatches ?? [];
-			const includesActivity =
-				envelope.payload.delta.changedFields?.includes("activity") ?? false;
+			const includesActivity = envelope.payload.delta.changedFields?.includes("activity") ?? false;
 			const includesLastAgentMessageId =
 				envelope.payload.delta.changedFields?.includes("lastAgentMessageId") ?? false;
 			if (

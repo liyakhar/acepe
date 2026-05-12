@@ -1,7 +1,6 @@
+import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
 import type { SessionGraphActivityKind } from "../../../../../services/acp-types.js";
 import type { PanelViewState } from "../../../../logic/panel-visibility.js";
 import type { CanonicalSessionProjection } from "../../../../store/canonical-session-projection.js";
@@ -129,7 +128,9 @@ vi.mock("../scene-content-viewport.svelte", async () => ({
 
 import AgentPanelContent from "../agent-panel-content.svelte";
 
-function createCanonicalProjection(activityKind: SessionGraphActivityKind): CanonicalSessionProjection {
+function createCanonicalProjection(
+	activityKind: SessionGraphActivityKind
+): CanonicalSessionProjection {
 	return {
 		lifecycle: {
 			status: "ready",

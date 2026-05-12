@@ -555,7 +555,10 @@ const presentationSessionStateGraph = $derived.by((): SessionStateGraph | null =
 		return graph;
 	}
 
-	if (effectiveTurnPresentation.activity === null || effectiveTurnPresentation.activity === undefined) {
+	if (
+		effectiveTurnPresentation.activity === null ||
+		effectiveTurnPresentation.activity === undefined
+	) {
 		return graph;
 	}
 
@@ -624,7 +627,9 @@ const canonicalPanelSessionState = $derived.by(() =>
 const panelSessionStatus = $derived(canonicalPanelSessionState.sessionStatus);
 const sessionIsConnected = $derived(canonicalPanelSessionState.isConnected);
 const sessionIsStreaming = $derived(canonicalPanelSessionState.isStreaming);
-const isAwaitingModelResponse = $derived(effectiveTurnPresentation.activity?.kind === "awaiting_model");
+const isAwaitingModelResponse = $derived(
+	effectiveTurnPresentation.activity?.kind === "awaiting_model"
+);
 const showPlanningIndicator = $derived(canonicalPanelSessionState.showPlanningIndicator);
 const sessionCanSubmit = $derived(canonicalPanelSessionState.canSubmit);
 const sessionShowStop = $derived(canonicalPanelSessionState.showStop);
@@ -689,9 +694,7 @@ const inlineErrorReferenceSearchable = $derived(
 // across reactive reads. New failureReason or new details ⇒ new key ⇒ the
 // dismissal is automatically lifted (no $effect needed).
 const errorDismissalKey = $derived(
-	errorInfo.showError
-		? `${errorInfo.failureReason ?? "none"}::${errorInfo.details ?? ""}`
-		: null
+	errorInfo.showError ? `${errorInfo.failureReason ?? "none"}::${errorInfo.details ?? ""}` : null
 );
 const errorDismissed = $derived(
 	errorDismissalKey !== null && dismissedErrorKey === errorDismissalKey
@@ -918,8 +921,8 @@ const graphMaterializedScene = $derived(
 		optimistic:
 			optimisticUserEntryForGraph != null
 				? {
-					pendingUserEntry: optimisticUserEntryForGraph,
-				}
+						pendingUserEntry: optimisticUserEntryForGraph,
+					}
 				: null,
 	})
 );
@@ -927,10 +930,10 @@ const agentPanelBaseDisplayModel = $derived(
 	buildAgentPanelBaseModel({
 		panelId: effectivePanelId,
 		graph: presentationSessionStateGraph,
-	header: {
-		title: graphHeaderTitle,
-		agentName,
-	},
+		header: {
+			title: graphHeaderTitle,
+			agentName,
+		},
 		local: {
 			pendingUserEntry: optimisticUserEntryForGraph,
 			pendingSendIntent: hasImmediatePendingSendIntent,
@@ -938,10 +941,7 @@ const agentPanelBaseDisplayModel = $derived(
 	})
 );
 const agentPanelDisplayResult = $derived.by(() => {
-	const result = applyAgentPanelDisplayMemory(
-		agentPanelDisplayMemory,
-		agentPanelBaseDisplayModel
-	);
+	const result = applyAgentPanelDisplayMemory(agentPanelDisplayMemory, agentPanelBaseDisplayModel);
 	agentPanelDisplayMemory = result.memory;
 	return result;
 });

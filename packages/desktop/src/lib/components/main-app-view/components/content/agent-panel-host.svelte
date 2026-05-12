@@ -164,7 +164,9 @@ const isWaitingForSession = $derived.by(() => {
 	return sessionId !== null && session === undefined;
 });
 const attachedFilePanels = $derived(panel ? panelStore.getAttachedFilePanels(panel.id) : []);
-const activeAttachedFilePanelId = $derived(panel ? panelStore.getActiveFilePanelId(panel.id) : null);
+const activeAttachedFilePanelId = $derived(
+	panel ? panelStore.getActiveFilePanelId(panel.id) : null
+);
 const reviewMode = $derived(panelHotState?.reviewMode ?? false);
 const reviewFilesState = $derived(panelHotState?.reviewFilesState ?? null);
 const reviewFileIndex = $derived(panelHotState?.reviewFileIndex ?? 0);

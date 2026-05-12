@@ -1,10 +1,10 @@
 <script lang="ts">
-	interface Props {
-		title?: string;
-		summary?: string;
-	}
+interface Props {
+	title?: string;
+	summary?: string;
+}
 
-	let { title = "", summary = "" }: Props = $props();
+let { title = "", summary = "" }: Props = $props();
 </script>
 
 <div data-testid="agent-error-card">

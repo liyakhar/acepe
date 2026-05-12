@@ -73,7 +73,9 @@ function hasCachedCapabilities(input: ResolveCapabilitySourceInput): boolean {
 }
 
 function hasUsableModels(capabilities: SessionCapabilities): boolean {
-	return capabilities.availableModels.length > 0 || hasUsableModelsDisplay(capabilities.modelsDisplay);
+	return (
+		capabilities.availableModels.length > 0 || hasUsableModelsDisplay(capabilities.modelsDisplay)
+	);
 }
 
 function resolveFallbackCapabilitySource(

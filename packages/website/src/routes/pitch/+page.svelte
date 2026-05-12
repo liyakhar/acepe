@@ -1,15 +1,8 @@
 <script lang="ts">
-import { BrandLockup, BrandShaderBackground } from "@acepe/ui";
+import { browser } from "$app/environment";
+import { BrandLockup } from "@acepe/ui";
+import HeroShaderStage from "$lib/components/hero-shader-stage.svelte";
 import { formatPitchProofValue, pitchSections } from "$lib/pitch/content.js";
-
-const thesisBeatLabels = {
-	"platform-neutral": "Platform-neutral control plane",
-	"why-acepe-wins": "Acepe wins at the operating layer",
-	"team-workflow-wedge": "Team workflow wedge first",
-	"raise-unlock": "Raise unlocks faster execution",
-	"first-party-agent-upside": "First-party agent is upside",
-	"why-now-urgency": "Why now urgency",
-} as const;
 
 const positioningRows = [
 	{
@@ -61,6 +54,56 @@ const milestones = [
 ] as const;
 
 const workflowSteps = ["Launch", "Monitor", "Unblock", "Review", "Ship"] as const;
+
+const viewModes = [
+	{
+		id: "agent",
+		label: "Side by Side",
+		color: "#99FFE4",
+		image: "/images/pitch/pitch-view-agent.webp",
+		w: 2540,
+		h: 1650,
+	},
+	{
+		id: "by-project",
+		label: "By Project",
+		color: "#FF8D20",
+		image: "/images/pitch/pitch-view-by-project.webp",
+		w: 2540,
+		h: 1650,
+	},
+	{
+		id: "single",
+		label: "Single Agent",
+		color: "#9858FF",
+		image: "/images/pitch/pitch-view-single.webp",
+		w: 2540,
+		h: 1650,
+	},
+	{
+		id: "kanban",
+		label: "Kanban",
+		color: "#FF78F7",
+		image: "/images/pitch/pitch-view-kanban.webp",
+		w: 2540,
+		h: 1650,
+	},
+] as const;
+
+let activeView = $state("agent");
+
+const agentIcons = [
+	{ name: "Claude Code", icon: "/svgs/agents/claude/claude-icon-dark.svg" },
+	{ name: "Codex", icon: "/svgs/agents/codex/codex-icon-dark.svg" },
+	{ name: "Cursor", icon: "/svgs/agents/cursor/cursor-icon-dark.svg" },
+	{ name: "Copilot", icon: "/svgs/agents/copilot/copilot-icon-dark.svg" },
+	{ name: "OpenCode", icon: "/svgs/agents/opencode/opencode-logo-dark.svg" },
+] as const;
+const slideTitleClass =
+	"max-w-4xl whitespace-pre-line text-3xl leading-[1.12] font-semibold tracking-[0.015em] sm:text-[2.75rem]";
+const slideDescriptionClass =
+	"text-muted-foreground text-base leading-7 text-pretty sm:text-lg max-w-2xl";
+const slideSummaryClass = `max-w-3xl ${slideDescriptionClass}`;
 </script>
 
 <svelte:head>
@@ -69,6 +112,7 @@ const workflowSteps = ["Launch", "Monitor", "Unblock", "Review", "Ship"] as cons
 		name="description"
 		content="Acepe investor pitch: the platform-neutral operating layer for agentic development."
 	/>
+	<link rel="preload" href="/images/pitch/pitch-view-agent.webp" as="image" type="image/webp" />
 	<style>
 		@page {
 			size: 13.333in 7.5in landscape;
@@ -89,6 +133,11 @@ const workflowSteps = ["Launch", "Monitor", "Unblock", "Review", "Ship"] as cons
 			opacity: 0.04;
 			mix-blend-mode: soft-light;
 			background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.65' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+		}
+
+		[data-pitch-section]:not(:first-of-type) {
+			content-visibility: auto;
+			contain-intrinsic-size: auto 30rem;
 		}
 
 		@media print {
@@ -138,19 +187,23 @@ const workflowSteps = ["Launch", "Monitor", "Unblock", "Review", "Ship"] as cons
 </svelte:head>
 
 <div class="bg-background text-foreground relative isolate min-h-screen overflow-hidden">
-	<BrandShaderBackground class="pointer-events-none opacity-80" fallback="gradient" />
+	<div class="pointer-events-none fixed inset-0 -z-10" data-pitch-print-hidden>
+		{#if browser}
+			<HeroShaderStage heightClass="h-screen" accentRing={false} />
+		{/if}
+	</div>
 
 	<main data-pitch-root class="relative">
 		<div data-pitch-stack class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-12 sm:px-8 lg:px-12">
 		<nav
 			data-pitch-print-hidden
 			aria-label="Pitch section navigation"
-			class="bg-card/70 border-border/60 sticky top-4 z-10 flex flex-wrap gap-2 rounded-2xl border p-3 backdrop-blur"
+			class="bg-card/70 border-border/60 sticky top-4 z-10 flex flex-wrap items-center justify-between gap-1.5 rounded-xl border px-5 py-2 backdrop-blur"
 		>
 			{#each pitchSections as section}
 				<a
 					href={`#${section.id}`}
-					class="bg-background/70 hover:bg-accent text-muted-foreground hover:text-foreground rounded-full px-3 py-1 text-xs font-medium transition-colors"
+					class="text-muted-foreground hover:bg-accent hover:text-foreground rounded-md px-2.5 py-1 text-[11px] font-medium tracking-[0.04em] transition-colors"
 				>
 					{section.title}
 				</a>
@@ -162,185 +215,176 @@ const workflowSteps = ["Launch", "Monitor", "Unblock", "Review", "Ship"] as cons
 					id={section.id}
 					data-pitch-section={section.id}
 					data-pitch-slide
-					class="bg-card/60 border-border/60 relative flex min-h-[28rem] flex-col gap-6 overflow-hidden rounded-[28px] border px-6 py-8 shadow-lg backdrop-blur sm:px-8 sm:py-10"
+					class="bg-card border-border/60 relative flex min-h-[30rem] flex-col gap-12 overflow-hidden rounded-2xl border px-10 py-14 sm:px-14 sm:py-16"
 					aria-labelledby={`${section.id}-headline`}
 				>
+					<div class="relative flex items-center justify-between gap-4">
+						<BrandLockup class="gap-2.5" markClass="h-6 w-6" wordmarkClass="text-[11px] tracking-[0.22em]" />
+						<p class="text-muted-foreground text-[10px] font-semibold tracking-[0.22em] uppercase">
+							{section.id === 'title' ? 'Investor pitch' : section.title}
+						</p>
+					</div>
 
 					{#if section.id === 'title'}
-						<div class="absolute inset-0 opacity-90">
-							<BrandShaderBackground class="rounded-[28px]" fallback="gradient" />
-						</div>
-						<div class="relative flex flex-col gap-4">
-							<div class="mb-2 flex flex-wrap items-center justify-between gap-4">
-								<BrandLockup class="gap-3" markClass="h-9 w-9" wordmarkClass="text-base tracking-[0.22em]" />
-								<p class="bg-background/55 border-border/50 rounded-full border px-3 py-1 text-[11px] font-semibold tracking-[0.18em] uppercase backdrop-blur">
-									Investor pitch
-								</p>
-							</div>
-							<h1 id={`${section.id}-headline`} class="max-w-4xl text-4xl leading-tight font-semibold tracking-[-0.04em] sm:text-5xl">
+						<div class="relative flex flex-col gap-6">
+							<h1 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h1>
-							<p class="text-muted-foreground max-w-3xl text-base leading-7 sm:text-lg">
+							<p class={slideDescriptionClass}>
 								{section.summary}
 							</p>
 						</div>
-						<div class="relative mt-auto grid gap-4 sm:grid-cols-2">
-							{#each section.body as paragraph}
-								<p class="text-sm leading-6 text-pretty opacity-80">{paragraph}</p>
-							{/each}
+						<div class="relative flex flex-col gap-5">
+							<div class="flex flex-wrap items-center gap-2">
+								{#each viewModes as view}
+									<button
+										type="button"
+										onclick={() => activeView = view.id}
+										class="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors {activeView === view.id ? 'bg-foreground text-background' : 'text-muted-foreground border border-border/40 hover:text-foreground'}"
+									>
+										<span class="inline-block h-2 w-2 rounded-full" style="background: {view.color}"></span>
+										{view.label}
+									</button>
+								{/each}
+							</div>
+							<div class="relative overflow-hidden rounded-lg border border-border/40">
+								{#each viewModes as view}
+									{#if activeView === view.id}
+										<img
+											src={view.image}
+											alt="Acepe {view.label} view"
+											width={view.w}
+											height={view.h}
+											class="h-auto w-full"
+											loading={view.id === "agent" ? "eager" : "lazy"}
+											decoding="async"
+											fetchpriority={view.id === "agent" ? "high" : "low"}
+										/>
+									{/if}
+								{/each}
+							</div>
 						</div>
 
 					{:else if section.id === 'problem'}
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
-							<p class="text-muted-foreground max-w-3xl text-base leading-7 sm:text-lg">{section.summary}</p>
-						</div>
-						<div class="relative grid gap-4 sm:grid-cols-2">
-							{#each section.body as paragraph, i}
-								<div class="bg-destructive/5 border-destructive/20 rounded-2xl border p-5">
-									<p class="text-destructive/80 mb-2 text-[10px] font-semibold tracking-wider uppercase">Pain point {i + 1}</p>
-									<p class="text-sm leading-6">{paragraph}</p>
-								</div>
-							{/each}
+							<div class="flex flex-col gap-3">
+								{#each section.body as paragraph}
+									<p class={slideDescriptionClass}>{paragraph}</p>
+								{/each}
+							</div>
 						</div>
 
 					{:else if section.id === 'workflow-failures'}
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
-							<p class="text-muted-foreground max-w-3xl text-base leading-7 sm:text-lg">{section.summary}</p>
-						</div>
-						<div class="relative space-y-3">
-							{#each section.body as paragraph}
-								<div class="bg-background/40 border-border/40 flex items-start gap-3 rounded-xl border p-4">
-									<span class="text-destructive/60 mt-0.5 shrink-0 text-base" aria-hidden="true">&#x2717;</span>
-									<p class="text-sm leading-6">{paragraph}</p>
-								</div>
-							{/each}
+							<div class="flex flex-col gap-3">
+								{#each section.body as paragraph}
+									<p class={slideDescriptionClass}>{paragraph}</p>
+								{/each}
+							</div>
 						</div>
 
 					{:else if section.id === 'solution'}
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
-							<p class="text-muted-foreground max-w-2xl text-base leading-7 sm:text-lg">{section.summary}</p>
-						</div>
-						<div class="relative grid gap-6 lg:grid-cols-[1fr_1fr]">
-							<div class="space-y-3">
+							<div class="flex flex-col gap-3">
 								{#each section.body as paragraph}
-									<p class="text-sm leading-6 text-pretty">{paragraph}</p>
+									<p class={slideDescriptionClass}>{paragraph}</p>
 								{/each}
 							</div>
-							<div data-pitch-diagram class="flex flex-col gap-0 text-xs">
-								<div class="bg-accent/20 border-accent/40 rounded-t-xl border border-b-0 px-4 py-3 text-center">
-									<p class="text-[10px] font-semibold tracking-wider uppercase">Acepe Operating Layer</p>
-									<div class="mt-2 flex flex-wrap justify-center gap-2">
-										<span class="bg-background/60 rounded-md px-2 py-1">Attention Queue</span>
-										<span class="bg-background/60 rounded-md px-2 py-1">Checkpoints</span>
-										<span class="bg-background/60 rounded-md px-2 py-1">SQL Studio</span>
-										<span class="bg-background/60 rounded-md px-2 py-1">Git Panel</span>
+						</div>
+						<div data-pitch-diagram class="flex flex-col gap-6">
+							<p class="text-muted-foreground text-sm">Works with the agents you already use</p>
+							<div class="flex flex-wrap items-center gap-6">
+								{#each agentIcons as agent}
+									<div class="flex items-center gap-2.5">
+										<img src={agent.icon} alt={agent.name} class="h-7 w-7 object-contain" />
+										<span class="text-sm font-medium">{agent.name}</span>
 									</div>
-								</div>
-								<div class="bg-muted/20 border-border/50 border px-4 py-2 text-center">
-									<p class="text-muted-foreground font-medium">Agent Client Protocol</p>
-								</div>
-								<div class="border-border/50 grid grid-cols-4 gap-px overflow-hidden rounded-b-xl border border-t-0 bg-border/20">
-									<div class="bg-background/60 px-2 py-2 text-center">Claude Code</div>
-									<div class="bg-background/60 px-2 py-2 text-center">Codex</div>
-									<div class="bg-background/60 px-2 py-2 text-center">Cursor</div>
-									<div class="bg-background/60 px-2 py-2 text-center">+ Any</div>
-								</div>
+								{/each}
+								<span class="text-muted-foreground/60 text-sm">+ any ACP agent</span>
 							</div>
 						</div>
 
 					{:else if section.id === 'product'}
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
 						</div>
-						<div class="relative flex flex-wrap items-center gap-2">
-							{#each workflowSteps as step, i}
-								<span class="bg-accent/15 border-accent/30 rounded-lg border px-3 py-1.5 text-xs font-medium">{step}</span>
-								{#if i < workflowSteps.length - 1}
-									<span class="text-muted-foreground text-sm" aria-hidden="true">&#x2192;</span>
-								{/if}
-							{/each}
-						</div>
-						<div class="relative overflow-hidden rounded-xl border border-border/40 bg-background/30">
-							<img
-								src="/images/landing/acepe-working-view.png"
-								alt="Acepe workspace showing parallel agent sessions, attention queue, and code review"
-								class="h-auto w-full"
-								loading="lazy"
-							/>
-						</div>
-						<div class="relative grid gap-4 sm:grid-cols-2">
-							{#each section.body as paragraph}
-								<p class="text-xs leading-5 text-pretty opacity-80">{paragraph}</p>
-							{/each}
+						<div class="relative flex flex-col gap-4">
+							<div class="flex items-center gap-1 rounded-full bg-background/40 border border-border/40 p-1 self-start">
+								{#each workflowSteps as step, i}
+									<span class="rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors {i === 0 ? 'bg-foreground text-background' : 'text-muted-foreground'}">{step}</span>
+								{/each}
+							</div>
+							<div class="relative overflow-hidden rounded-lg border border-border/40">
+								<img
+									src="/images/landing/acepe-working-view.webp"
+									alt="Acepe workspace showing parallel agent sessions, attention queue, and code review"
+									width="3024"
+									height="1898"
+									class="h-auto w-full"
+									loading="lazy"
+									decoding="async"
+								/>
+							</div>
 						</div>
 
 					{:else if section.id === 'market-why-now'}
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
-							<p class="text-muted-foreground max-w-3xl text-base leading-7 sm:text-lg">{section.summary}</p>
-						</div>
-						<div class="relative grid gap-6 lg:grid-cols-[1fr_1fr]">
-							<div class="space-y-3">
+							<div class="flex flex-col gap-3">
 								{#each section.body as paragraph}
-									<p class="text-sm leading-6 text-pretty">{paragraph}</p>
+									<p class={slideDescriptionClass}>{paragraph}</p>
 								{/each}
 							</div>
-							<div data-pitch-table class="bg-background/40 overflow-hidden rounded-xl border border-border/50">
-								<table class="w-full text-xs">
-									<thead>
-										<tr class="border-b border-border/40 bg-background/60">
-											<th class="px-3 py-2 text-left font-semibold">Approach</th>
-											<th class="px-3 py-2 text-left font-semibold">Agents</th>
-											<th class="px-3 py-2 text-left font-semibold">Visibility</th>
-											<th class="px-3 py-2 text-left font-semibold">Governance</th>
+						</div>
+						<div data-pitch-table class="bg-background/40 overflow-hidden rounded-xl border border-border/50">
+							<table class="w-full text-xs">
+								<thead>
+									<tr class="border-b border-border/40 bg-background/60">
+										<th class="px-3 py-2 text-left font-semibold">Approach</th>
+										<th class="px-3 py-2 text-left font-semibold">Agents</th>
+										<th class="px-3 py-2 text-left font-semibold">Visibility</th>
+										<th class="px-3 py-2 text-left font-semibold">Governance</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each positioningRows as row}
+										<tr class="border-b border-border/20 last:border-0 {row.approach === 'Acepe' ? 'bg-accent/15' : ''}">
+											<td class="px-3 py-2 font-medium {row.approach === 'Acepe' ? 'text-foreground' : 'text-muted-foreground'}">{row.approach}</td>
+											<td class="px-3 py-2 text-muted-foreground">{row.agents}</td>
+											<td class="px-3 py-2 text-muted-foreground">{row.visibility}</td>
+											<td class="px-3 py-2 text-muted-foreground">{row.governance}</td>
 										</tr>
-									</thead>
-									<tbody>
-										{#each positioningRows as row}
-											<tr class="border-b border-border/20 last:border-0 {row.approach === 'Acepe' ? 'bg-accent/15' : ''}">
-												<td class="px-3 py-2 font-medium {row.approach === 'Acepe' ? 'text-foreground' : 'text-muted-foreground'}">{row.approach}</td>
-												<td class="px-3 py-2 text-muted-foreground">{row.agents}</td>
-												<td class="px-3 py-2 text-muted-foreground">{row.visibility}</td>
-												<td class="px-3 py-2 text-muted-foreground">{row.governance}</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
+									{/each}
+								</tbody>
+							</table>
 						</div>
 
 					{:else if section.id === 'traction'}
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
-							<p class="text-muted-foreground max-w-3xl text-base leading-7 sm:text-lg">{section.summary}</p>
+							<p class={slideDescriptionClass}>{section.summary}</p>
 						</div>
 						{#if section.proofItems}
-							<div class="relative grid gap-4 sm:grid-cols-2">
+							<div class="relative flex flex-col gap-4">
 								{#each section.proofItems as proofItem}
-									<div class="bg-background/60 border-border/50 rounded-2xl border p-5">
-										<p class="text-muted-foreground mb-1 text-[10px] font-semibold tracking-wider uppercase">{proofItem.label}</p>
-										<p class="text-xl font-semibold">{formatPitchProofValue(proofItem)}</p>
+									<div class="border-border/50 border-l-2 pl-5">
+										<p class="text-muted-foreground mb-2 text-[10px] font-semibold tracking-[0.18em] uppercase">{proofItem.label}</p>
+										<p class="text-2xl font-semibold tracking-[-0.02em]">{formatPitchProofValue(proofItem)}</p>
 										{#if proofItem.note}
 											<p class="text-muted-foreground/70 mt-2 text-xs leading-5">{proofItem.note}</p>
 										{/if}
@@ -348,83 +392,49 @@ const workflowSteps = ["Launch", "Monitor", "Unblock", "Review", "Ship"] as cons
 								{/each}
 							</div>
 						{/if}
-						<div class="relative space-y-3">
-							{#each section.body as paragraph}
-								<p class="text-sm leading-6 text-pretty opacity-80">{paragraph}</p>
-							{/each}
-						</div>
 
 					{:else if section.id === 'business-model'}
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
-							<p class="text-muted-foreground max-w-3xl text-base leading-7 sm:text-lg">{section.summary}</p>
+							<p class={slideDescriptionClass}>{section.summary}</p>
 						</div>
-						<div class="relative grid gap-4 sm:grid-cols-3">
+						<div class="relative grid gap-px overflow-hidden rounded-lg border border-border/50 bg-border/30 sm:grid-cols-3">
 							{#each tiers as tier}
-								<div class="flex flex-col gap-2 rounded-2xl border p-5 {tier.name === 'Team' ? 'bg-accent/10 border-accent/40' : 'bg-background/50 border-border/50'}">
-									<p class="text-[10px] font-semibold tracking-wider uppercase">{tier.name}</p>
-									<p class="text-lg font-semibold">{tier.price}</p>
+								<div class="flex flex-col gap-2 p-5 {tier.name === 'Team' ? 'bg-accent/10' : 'bg-card/80'}">
+									<p class="text-muted-foreground text-[10px] font-semibold tracking-[0.18em] uppercase">{tier.name}</p>
+									<p class="text-lg font-semibold tracking-[-0.02em]">{tier.price}</p>
 									<p class="text-muted-foreground text-xs leading-5">{tier.features}</p>
 								</div>
 							{/each}
 						</div>
-						<div class="relative space-y-3">
-							{#each section.body as paragraph}
-								<p class="text-sm leading-6 text-pretty opacity-80">{paragraph}</p>
-							{/each}
-						</div>
 
 					{:else if section.id === 'ask'}
-						<div class="absolute inset-0 opacity-40">
-							<BrandShaderBackground class="rounded-[28px]" fallback="gradient" />
-						</div>
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
-							<p class="text-muted-foreground max-w-3xl text-base leading-7 sm:text-lg">{section.summary}</p>
+							<p class={slideDescriptionClass}>{section.summary}</p>
 						</div>
-						<div class="relative grid gap-3 sm:grid-cols-2">
+						<div class="relative flex flex-col gap-3">
 							{#each milestones as milestone}
-								<div class="bg-background/50 border-border/50 rounded-xl border p-4">
-									<p class="mb-1 text-sm font-semibold">{milestone.area}</p>
-									<p class="text-muted-foreground text-xs leading-5">{milestone.detail}</p>
-								</div>
+								<p class={slideDescriptionClass}>
+									<span class="text-foreground font-semibold">{milestone.area}.</span> {milestone.detail}
+								</p>
 							{/each}
-						</div>
-						<div class="relative space-y-3">
-							{#each section.body as paragraph}
-								<p class="text-sm leading-6 text-pretty opacity-80">{paragraph}</p>
-							{/each}
-						</div>
-						<div class="relative mt-auto">
-							<BrandLockup class="gap-2 opacity-60" markClass="h-5 w-5" wordmarkClass="text-xs tracking-[0.22em]" />
 						</div>
 
 					{:else}
-						<div class="relative flex flex-col gap-3">
-							<p class="text-muted-foreground text-xs font-semibold tracking-[0.2em] uppercase">{section.title}</p>
-							<h2 id={`${section.id}-headline`} class="max-w-4xl text-3xl leading-tight font-semibold tracking-[-0.04em] sm:text-4xl">
+						<div class="relative flex flex-col gap-6">
+							<h2 id={`${section.id}-headline`} class={slideTitleClass}>
 								{section.headline}
 							</h2>
-							<p class="text-muted-foreground max-w-3xl text-base leading-7 sm:text-lg">{section.summary}</p>
-						</div>
-						<div class="relative max-w-3xl space-y-4">
-							{#each section.body as paragraph}
-								<p class="text-base leading-7 text-pretty">{paragraph}</p>
-							{/each}
-						</div>
-					{/if}
-
-					{#if section.thesisBeats.length > 0}
-						<div class="relative mt-auto flex flex-wrap gap-1.5">
-							{#each section.thesisBeats as thesisBeat}
-								<span class="bg-accent/8 text-muted-foreground rounded-md px-2 py-0.5 text-[10px]">{thesisBeatLabels[thesisBeat]}</span>
-							{/each}
+							<div class="flex flex-col gap-3 max-w-3xl">
+								{#each section.body as paragraph}
+									<p class={slideDescriptionClass}>{paragraph}</p>
+								{/each}
+							</div>
 						</div>
 					{/if}
 
@@ -435,42 +445,6 @@ const workflowSteps = ["Launch", "Monitor", "Unblock", "Review", "Ship"] as cons
 						<p class="text-muted-foreground text-xs font-medium">
 							Slide {index + 1} / {pitchSections.length}
 						</p>
-
-						<div class="flex flex-wrap items-center gap-2">
-							{#if index > 0}
-								<a
-									data-pitch-prev={pitchSections[index - 1]?.id}
-									href={`#${pitchSections[index - 1]?.id}`}
-									class="bg-background/70 hover:bg-accent rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
-								>
-									Previous
-								</a>
-							{:else}
-								<span
-									aria-disabled="true"
-									class="bg-background/40 text-muted-foreground rounded-full px-3 py-1.5 text-sm font-medium"
-								>
-									Previous
-								</span>
-							{/if}
-
-							{#if index < pitchSections.length - 1}
-								<a
-									data-pitch-next={pitchSections[index + 1]?.id}
-									href={`#${pitchSections[index + 1]?.id}`}
-									class="bg-foreground text-background hover:opacity-90 rounded-full px-3 py-1.5 text-sm font-medium transition-opacity"
-								>
-									Next
-								</a>
-							{:else}
-								<span
-									aria-disabled="true"
-									class="bg-background/40 text-muted-foreground rounded-full px-3 py-1.5 text-sm font-medium"
-								>
-									Next
-								</span>
-							{/if}
-						</div>
 					</div>
 				</section>
 			{/each}

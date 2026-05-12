@@ -27,19 +27,34 @@ vi.mock(
 );
 
 vi.mock("$lib/acp/components/agent-panel/components/scene-content-viewport.svelte", async () => ({
-	default: (await import("$lib/acp/components/agent-panel/components/__tests__/fixtures/virtualized-entry-list-stub.svelte")).default,
+	default: (
+		await import(
+			"$lib/acp/components/agent-panel/components/__tests__/fixtures/virtualized-entry-list-stub.svelte"
+		)
+	).default,
 }));
 
 vi.mock("$lib/acp/components/agent-panel/components/project-selection-panel.svelte", async () => ({
-	default: (await import("$lib/acp/components/agent-panel/components/__tests__/fixtures/user-message-stub.svelte")).default,
+	default: (
+		await import(
+			"$lib/acp/components/agent-panel/components/__tests__/fixtures/user-message-stub.svelte"
+		)
+	).default,
 }));
 
-vi.mock("$lib/acp/components/agent-panel/components/ready-to-assist-placeholder.svelte", async () => ({
-	default: (await import("$lib/acp/components/agent-panel/components/__tests__/fixtures/user-message-stub.svelte")).default,
-}));
+vi.mock(
+	"$lib/acp/components/agent-panel/components/ready-to-assist-placeholder.svelte",
+	async () => ({
+		default: (
+			await import(
+				"$lib/acp/components/agent-panel/components/__tests__/fixtures/user-message-stub.svelte"
+			)
+		).default,
+	})
+);
 
-import StreamingReproLab from "../streaming-repro-lab.svelte";
 import { createStreamingReproController } from "../streaming-repro-controller";
+import StreamingReproLab from "../streaming-repro-lab.svelte";
 
 describe("StreamingReproLab", () => {
 	afterEach(() => {

@@ -4,12 +4,7 @@ import type { ChangelogEntry } from "$lib/changelog/index.js";
 import { CHANGELOG } from "$lib/changelog/index.js";
 import ChangelogModal from "$lib/components/changelog-modal/changelog-modal.svelte";
 import { Button } from "$lib/components/ui/button/index.js";
-import {
-	Dialog,
-	DialogContent,
-	DialogHeader,
-	DialogTitle,
-} from "@acepe/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@acepe/ui/dialog";
 import StreamingReproLab from "./debug-panel/streaming-repro-lab.svelte";
 
 interface Props {

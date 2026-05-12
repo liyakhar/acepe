@@ -5,8 +5,8 @@ import type {
 	SessionGraphCapabilities,
 	SessionGraphLifecycle,
 	SessionGraphRevision,
-	SessionStateGraph,
 	SessionStateEnvelope,
+	SessionStateGraph,
 } from "$lib/services/acp-types.js";
 
 import { SessionStore } from "../session-store.svelte.js";
@@ -42,7 +42,9 @@ function createIdleActivity(): SessionGraphActivity {
 	};
 }
 
-function createGraphLifecycle(status: SessionGraphLifecycle["status"] = "ready"): SessionGraphLifecycle {
+function createGraphLifecycle(
+	status: SessionGraphLifecycle["status"] = "ready"
+): SessionGraphLifecycle {
 	return {
 		status,
 		detachedReason: null,

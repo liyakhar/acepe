@@ -24,7 +24,9 @@ function applyStreamingArguments(
 	entryStore: SessionEntryStore,
 	sessionId: string,
 	toolCallId: string,
-	streamingArguments: Parameters<SessionEntryStore["updateToolCallTranscriptEntry"]>[1]["streamingArguments"]
+	streamingArguments: Parameters<
+		SessionEntryStore["updateToolCallTranscriptEntry"]
+	>[1]["streamingArguments"]
 ): void {
 	entryStore.updateToolCallTranscriptEntry(sessionId, {
 		toolCallId,

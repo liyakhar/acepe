@@ -11,10 +11,7 @@ import type { FailureReason } from "$lib/services/acp-types.js";
  * Layer ownership (GOD): Rust owns the `FailureReason` taxonomy. TypeScript
  * owns the user-facing words. i18n later = a single keyed table here.
  */
-export function failureCopy(
-	agentId: string,
-	failureReason: FailureReason
-): string | null {
+export function failureCopy(agentId: string, failureReason: FailureReason): string | null {
 	if (failureReason === "sessionGoneUpstream") {
 		return sessionGoneUpstreamCopy(agentId);
 	}

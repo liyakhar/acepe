@@ -26,11 +26,13 @@ const DEFAULT_VIEW_STATE: PanelViewState = { kind: "conversation", errorDetails:
 const DEFAULT_SESSION_ID = "streaming-repro-session";
 const DEFAULT_PANEL_ID = "streaming-repro-panel";
 
-let { controller = createStreamingReproController({
-	now: () => Date.now(),
-	hostMetrics: { width: 1280, height: 820 },
-	theme: "dark",
-}) }: Props = $props();
+let {
+	controller = createStreamingReproController({
+		now: () => Date.now(),
+		hostMetrics: { width: 1280, height: 820 },
+		theme: "dark",
+	}),
+}: Props = $props();
 
 let controllerRevision = $state(0);
 let phaseElapsedMs = $state(0);

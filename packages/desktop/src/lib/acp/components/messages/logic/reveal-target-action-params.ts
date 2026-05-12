@@ -16,7 +16,6 @@ export function shouldRestartRevealTargetAction(
 		nextParams.controller !== currentParams.controller ||
 		nextParams.entryKey !== currentParams.entryKey ||
 		nextParams.observeRevealResize !== currentParams.observeRevealResize ||
-		(nextParams.revealEntryIndex !== undefined) !==
-			(currentParams.revealEntryIndex !== undefined)
+		(nextParams.revealEntryIndex !== undefined) !== (currentParams.revealEntryIndex !== undefined)
 	);
 }

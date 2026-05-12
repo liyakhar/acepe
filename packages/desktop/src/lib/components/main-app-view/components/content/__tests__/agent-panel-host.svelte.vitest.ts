@@ -1,5 +1,9 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
+import { okAsync } from "neverthrow";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentPanelProps } from "$lib/acp/components/agent-panel/types/agent-panel-props.js";
+import { ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
+import { MainAppViewState } from "../../../logic/main-app-view-state.svelte.js";
 
 vi.mock("svelte", async () => {
 	const { createRequire } = await import("node:module");
@@ -36,12 +40,9 @@ vi.mock("$lib/acp/components/index.js", async () => ({
 	AgentPanel: (await import("./fixtures/agent-panel-host-throwing-agent-panel.svelte")).default,
 }));
 
-vi.mock(
-	"$lib/acp/components/agent-panel/components/agent-error-card.svelte",
-	async () => ({
-		default: (await import("./fixtures/agent-panel-host-error-card-stub.svelte")).default,
-	})
-);
+vi.mock("$lib/acp/components/agent-panel/components/agent-error-card.svelte", async () => ({
+	default: (await import("./fixtures/agent-panel-host-error-card-stub.svelte")).default,
+}));
 
 vi.mock("$lib/acp/store/index.js", () => ({
 	getPanelStore: () => hoisted.panelStore,
@@ -84,6 +85,21 @@ afterEach(() => {
 	cleanup();
 });
 
+function createProjectManager(): ProjectManager {
+	const projectManager = new ProjectManager();
+	projectManager.projectCount = 1;
+	projectManager.projects = [
+		{
+			path: "/repo",
+			name: "Repo",
+			createdAt: new Date(0),
+			color: "#123456",
+			iconPath: null,
+		},
+	];
+	return projectManager;
+}
+
 describe("AgentPanelHost", () => {
 	it("keeps the error fallback renderable after the panel ref is cleared", async () => {
 		const panelRef = {
@@ -104,47 +120,49 @@ describe("AgentPanelHost", () => {
 				sessionTitle: "Broken panel",
 			},
 		} as {
-			current:
-				| {
-						id: string;
-						kind: "agent";
-						ownerPanelId: null;
-						sessionId: string;
-						width: number;
-						pendingProjectSelection: boolean;
-						pendingWorktreeEnabled: null;
-						preparedWorktreeLaunch: null;
-						selectedAgentId: string;
-						projectPath: string;
-						agentId: string;
-						sourcePath: null;
-						worktreePath: null;
-						sessionTitle: string;
-				  }
-				| null;
+			current: {
+				id: string;
+				kind: "agent";
+				ownerPanelId: null;
+				sessionId: string;
+				width: number;
+				pendingProjectSelection: boolean;
+				pendingWorktreeEnabled: null;
+				preparedWorktreeLaunch: null;
+				selectedAgentId: string;
+				projectPath: string;
+				agentId: string;
+				sourcePath: null;
+				worktreePath: null;
+				sessionTitle: string;
+			} | null;
 		};
+
+		const state = Object.assign(Object.create(MainAppViewState.prototype), {
+			handlePanelAgentChange: vi.fn(),
+			handleClosePanel: vi.fn(() => {
+				panelRef.current = null;
+			}),
+			handleCreateSessionForProject: vi.fn(() => okAsync(undefined)),
+			handleResizePanel: vi.fn(),
+			handleToggleFullscreen: vi.fn(),
+			handleFocusPanel: vi.fn(),
+			openUserReportsWithDraft: vi.fn(),
+		}) as MainAppViewState;
+		const availableAgents: AgentPanelProps["availableAgents"] = [
+			{
+				id: "claude-code",
+				name: "Claude Code",
+				icon: "/svgs/agents/claude/claude-icon-dark.svg",
+			},
+		];
 
 		const props = {
 			panelId: "panel-1",
 			panelRef,
-			projectManager: {
-				projectCount: 1,
-				projects: [{ path: "/repo", name: "Repo", createdAt: new Date(0), color: "#123456" }],
-			},
-			state: {
-				handlePanelAgentChange: vi.fn(),
-				handleClosePanel: vi.fn(() => {
-					panelRef.current = null;
-				}),
-				handleCreateSessionForProject: vi.fn(() => ({ mapErr: vi.fn() })),
-				handleResizePanel: vi.fn(),
-				handleToggleFullscreen: vi.fn(),
-				handleFocusPanel: vi.fn(),
-				openUserReportsWithDraft: vi.fn(),
-			},
-			availableAgents: [
-				{ id: "claude-code", name: "Claude Code", icon: null, availability_kind: "available" },
-			],
+			projectManager: createProjectManager(),
+			state,
+			availableAgents,
 			hideProjectBadge: false,
 			isFullscreen: false,
 			isFocused: true,
@@ -153,7 +171,7 @@ describe("AgentPanelHost", () => {
 		const view = render(AgentPanelHost, props);
 
 		await fireEvent.click(view.getByTestId("trigger-close-crash"));
-		expect(props.state.handleClosePanel).toHaveBeenCalledTimes(1);
+		expect(state.handleClosePanel).toHaveBeenCalledTimes(1);
 
 		await waitFor(() => {
 			expect(view.getByTestId("agent-error-card")).toBeTruthy();

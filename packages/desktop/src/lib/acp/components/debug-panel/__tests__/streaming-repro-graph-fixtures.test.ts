@@ -1,12 +1,11 @@
 import { describe, expect, it } from "bun:test";
-
-import { materializeAgentPanelSceneFromGraph } from "$lib/acp/session-state/agent-panel-graph-materializer.js";
 import {
 	applyAgentPanelDisplayMemory,
 	applyAgentPanelDisplayModelToSceneEntries,
 	buildAgentPanelBaseModel,
 	createAgentPanelDisplayMemory,
 } from "$lib/acp/components/agent-panel/logic/agent-panel-display-model.js";
+import { materializeAgentPanelSceneFromGraph } from "$lib/acp/session-state/agent-panel-graph-materializer.js";
 
 import {
 	applyStreamingReproPhaseSceneOverrides,
@@ -31,9 +30,7 @@ describe("streaming-repro-graph-fixtures", () => {
 
 		expect(graph.turnState).toBe("Running");
 		expect(graph.activity.kind).toBe("awaiting_model");
-		expect(graph.transcriptSnapshot.entries.map((entry) => entry.entryId)).toEqual([
-			"user-1",
-		]);
+		expect(graph.transcriptSnapshot.entries.map((entry) => entry.entryId)).toEqual(["user-1"]);
 		expect(graph.lastAgentMessageId).toBeNull();
 	});
 

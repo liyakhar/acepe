@@ -1,3 +1,5 @@
+import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
+import type { AgentPanelGraphMaterializerInput } from "$lib/acp/session-state/agent-panel-graph-materializer.js";
 import type {
 	SessionGraphActionability,
 	SessionGraphActivity,
@@ -7,9 +9,6 @@ import type {
 	TranscriptEntry,
 	TranscriptSnapshot,
 } from "$lib/services/acp-types.js";
-import type { AgentPanelSceneEntryModel } from "@acepe/ui/agent-panel";
-
-import type { AgentPanelGraphMaterializerInput } from "$lib/acp/session-state/agent-panel-graph-materializer.js";
 
 import {
 	DEFAULT_STREAMING_REPRO_PRESETS,
@@ -59,12 +58,12 @@ function createTranscriptEntry(
 			text.length === 0
 				? []
 				: [
-					{
-						kind: "text",
-						segmentId: `${entryId}-segment-1`,
-						text,
-					},
-				],
+						{
+							kind: "text",
+							segmentId: `${entryId}-segment-1`,
+							text,
+						},
+					],
 		attemptId: null,
 	};
 }
@@ -87,7 +86,9 @@ function createActivity(phase: StreamingReproPhase): SessionGraphActivity {
 }
 
 function createGraph(phase: StreamingReproPhase): SessionStateGraph {
-	const transcriptEntries: TranscriptEntry[] = [createTranscriptEntry("user-1", "user", "Explain umbrellas slowly.")];
+	const transcriptEntries: TranscriptEntry[] = [
+		createTranscriptEntry("user-1", "user", "Explain umbrellas slowly."),
+	];
 	if (phase.lastAgentMessageId !== null) {
 		transcriptEntries.push(
 			createTranscriptEntry(phase.lastAgentMessageId, "assistant", phase.assistantText)

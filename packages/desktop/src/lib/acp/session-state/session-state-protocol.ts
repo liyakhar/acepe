@@ -109,9 +109,7 @@ function selectSessionGraphActivity(input: {
 	};
 }
 
-export function graphFromSessionOpenFound(
-	found: SessionOpenFound
-): SessionStateGraph {
+export function graphFromSessionOpenFound(found: SessionOpenFound): SessionStateGraph {
 	assertOpenFoundHasGraphAuthority(found);
 	return {
 		requestedSessionId: found.requestedSessionId,

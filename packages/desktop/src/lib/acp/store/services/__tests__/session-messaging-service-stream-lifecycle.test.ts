@@ -8,8 +8,8 @@
 
 import { okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { SessionEntryStore } from "../../session-entry-store.svelte.js";
 import type { CanonicalSessionProjection } from "../../canonical-session-projection.js";
+import { SessionEntryStore } from "../../session-entry-store.svelte.js";
 import type { IConnectionManager } from "../interfaces/connection-manager.js";
 import type { IEntryManager } from "../interfaces/entry-manager.js";
 import type { ISessionStateReader } from "../interfaces/session-state-reader.js";
@@ -39,7 +39,7 @@ function expectNoCanonicalOverlapHotStateWrites(updateHotState: ReturnType<typeo
 	for (const call of updateHotState.mock.calls) {
 		const updates = call[1];
 		for (const field of canonicalOverlapHotStateFields) {
-			expect(Object.prototype.hasOwnProperty.call(updates, field)).toBe(false);
+			expect(Object.hasOwn(updates, field)).toBe(false);
 		}
 	}
 }

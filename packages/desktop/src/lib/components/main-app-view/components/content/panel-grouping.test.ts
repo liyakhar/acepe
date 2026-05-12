@@ -254,11 +254,7 @@ describe("sortProjectGroupsForMultiLayout", () => {
 			{ pinnedProjectPath: "/tmp/zulu" }
 		);
 
-		expect(sorted.map((g) => g.projectPath)).toEqual([
-			"/tmp/zulu",
-			"/tmp/alpha",
-			"/tmp/bravo",
-		]);
+		expect(sorted.map((g) => g.projectPath)).toEqual(["/tmp/zulu", "/tmp/alpha", "/tmp/bravo"]);
 	});
 });
 

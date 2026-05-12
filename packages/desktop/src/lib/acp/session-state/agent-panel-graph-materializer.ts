@@ -21,7 +21,10 @@ import type {
 	TranscriptEntry,
 } from "../../services/acp-types.js";
 import type { SessionEntry } from "../application/dto/session-entry.js";
-import { mapSessionEntryToConversationEntry, mapToolCallToSceneEntry } from "../components/agent-panel/scene/desktop-agent-panel-scene.js";
+import {
+	mapSessionEntryToConversationEntry,
+	mapToolCallToSceneEntry,
+} from "../components/agent-panel/scene/desktop-agent-panel-scene.js";
 import { mapCanonicalTurnStateToHotTurnState } from "../store/canonical-turn-state-mapping.js";
 import { normalizeToolResult } from "../store/services/tool-result-normalizer.js";
 import type { ToolCall } from "../types/tool-call.js";

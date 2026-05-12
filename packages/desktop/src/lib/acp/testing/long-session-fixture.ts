@@ -1,5 +1,5 @@
-import type { SessionEntry } from "../application/dto/session.js";
 import type { OperationSnapshot } from "../../services/acp-types.js";
+import type { SessionEntry } from "../application/dto/session.js";
 import type { ToolCall } from "../types/tool-call.js";
 
 export type LongSessionFixtureScale = "short" | "long" | "doubled";

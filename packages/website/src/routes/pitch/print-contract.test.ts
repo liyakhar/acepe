@@ -5,20 +5,12 @@ import { describe, expect, it } from "vitest";
 const { default: Page } = await import("./+page.svelte");
 
 describe("pitch print and navigation contract", () => {
-	it("renders previous and next anchors for the presentation flow", () => {
+	it("hides chrome from print and uses top nav for section jumps", () => {
 		const { body } = render(Page);
-		const titleSectionMarkup = body.split('id="title"')[1]?.split("</section>")[0] ?? "";
-		const askSectionMarkup = body.split('id="ask"')[1]?.split("</section>")[0] ?? "";
 
-		expect(body).toContain('data-pitch-next="problem"');
-		expect(body).toContain('href="#problem"');
-		expect(body).toContain('data-pitch-prev="team"');
-		expect(body).toContain('href="#team"');
 		expect(body).toContain("data-pitch-print-hidden");
-		expect(titleSectionMarkup).not.toContain("data-pitch-prev=");
-		expect(titleSectionMarkup).toContain('aria-disabled="true"');
-		expect(askSectionMarkup).not.toContain("data-pitch-next=");
-		expect(askSectionMarkup).toContain('aria-disabled="true"');
+		expect(body).toContain('href="#problem"');
+		expect(body).toContain('href="#team"');
 	});
 
 	it("defines the authoritative print page contract in layout.css", async () => {

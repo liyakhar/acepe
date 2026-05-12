@@ -16,9 +16,7 @@ export function isPreCanonicalCreatedSession(input: {
 	readonly session: SessionCold;
 	readonly lifecycleStatus: SessionGraphLifecycle["status"] | null;
 }): boolean {
-	return (
-		isCreatedSessionWithoutSource(input.session) && input.lifecycleStatus === null
-	);
+	return isCreatedSessionWithoutSource(input.session) && input.lifecycleStatus === null;
 }
 
 function isCreatedSessionWithoutSource(session: SessionCold): boolean {

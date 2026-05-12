@@ -1,16 +1,12 @@
 import { describe, expect, it } from "bun:test";
-
+import type { LifecycleStatus, SessionGraphActivityKind } from "../../../services/acp-types.js";
+import type { CanonicalSessionProjection } from "../canonical-session-projection.js";
 import {
 	type NonAgentPanelToTabInput,
 	nonAgentPanelToTab,
 	type PanelToTabInput,
 	panelToTab,
 } from "../tab-bar-utils.js";
-import type {
-	LifecycleStatus,
-	SessionGraphActivityKind,
-} from "../../../services/acp-types.js";
-import type { CanonicalSessionProjection } from "../canonical-session-projection.js";
 import type {
 	BrowserWorkspacePanel,
 	FileWorkspacePanel,
@@ -247,12 +243,7 @@ describe("panelToTab", () => {
 		it("classifies canonical connection errors as error work buckets", () => {
 			const tab = panelToTab(
 				makeInput({
-					canonicalProjection: makeCanonicalProjection(
-						"failed",
-						"idle",
-						null,
-						"Resume failed"
-					),
+					canonicalProjection: makeCanonicalProjection("failed", "idle", null, "Resume failed"),
 				})
 			);
 			expect(tab.state.connection).toBe("error");

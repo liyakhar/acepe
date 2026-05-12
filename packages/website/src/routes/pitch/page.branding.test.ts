@@ -8,7 +8,6 @@ describe("pitch page branding contract", () => {
 	it("reuses Acepe brand primitives instead of route-local replacements", async () => {
 		const source = await readFile(new URL("./+page.svelte", import.meta.url), "utf8");
 
-		expect(source).toContain("BrandShaderBackground");
 		expect(source).toContain("BrandLockup");
 		expect(source).toContain("@acepe/ui");
 		expect(source).not.toContain("@font-face");
@@ -19,7 +18,7 @@ describe("pitch page branding contract", () => {
 		const { body } = render(Page);
 
 		expect(body).toContain("ACEPE");
-		expect(body).toContain("bg-card/60");
+		expect(body).toContain("bg-card");
 		expect(body).toContain("border-border/60");
 	});
 });

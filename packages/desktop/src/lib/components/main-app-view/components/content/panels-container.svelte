@@ -38,7 +38,10 @@ function arraysMatchById<T extends { readonly id: string }>(
 	return left.length === right.length && left.every((item, index) => item.id === right[index]?.id);
 }
 
-function agentArraysMatch(left: readonly AgentProjectRef[], right: readonly AgentProjectRef[]): boolean {
+function agentArraysMatch(
+	left: readonly AgentProjectRef[],
+	right: readonly AgentProjectRef[]
+): boolean {
 	return (
 		left.length === right.length &&
 		left.every(

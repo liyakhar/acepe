@@ -1,9 +1,11 @@
 import { cleanup, render, waitFor } from "@testing-library/svelte";
+import { okAsync } from "neverthrow";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import { ProjectManager } from "$lib/acp/logic/project-manager.svelte.js";
+import type { AgentStore } from "$lib/acp/store/agent-store.svelte.js";
 import { PanelStore } from "$lib/acp/store/panel-store.svelte.js";
 import type { SessionStore } from "$lib/acp/store/session-store.svelte.js";
-import type { AgentStore } from "$lib/acp/store/agent-store.svelte.js";
+import { MainAppViewState } from "../../logic/main-app-view-state.svelte.js";
 import {
 	getAgentPanelDestroyCount,
 	getAgentPanelMountCount,
@@ -44,7 +46,8 @@ vi.mock("svelte-sonner", () => ({
 }));
 
 vi.mock("$lib/acp/components/index.js", async () => ({
-	AgentPanel: (await import("./__tests__/fixtures/panels-container-agent-panel-stub.svelte")).default,
+	AgentPanel: (await import("./__tests__/fixtures/panels-container-agent-panel-stub.svelte"))
+		.default,
 }));
 
 vi.mock("$lib/acp/components/browser-panel/index.js", async () => ({
@@ -128,26 +131,38 @@ vi.mock("../../logic/spawnable-agents.js", () => ({
 
 const { default: PanelsContainer } = await import("./panels-container.svelte");
 
-function createProjectManager() {
-	return {
-		projectCount: 2,
-		projects: [
-			{ path: "/projects/alpha", name: "Alpha", createdAt: new Date(0), color: "#111111" },
-			{ path: "/projects/beta", name: "Beta", createdAt: new Date(0), color: "#222222" },
-		],
-	};
+function createProjectManager(): ProjectManager {
+	const projectManager = new ProjectManager();
+	projectManager.projectCount = 2;
+	projectManager.projects = [
+		{
+			path: "/projects/alpha",
+			name: "Alpha",
+			createdAt: new Date(0),
+			color: "#111111",
+			iconPath: null,
+		},
+		{
+			path: "/projects/beta",
+			name: "Beta",
+			createdAt: new Date(0),
+			color: "#222222",
+			iconPath: null,
+		},
+	];
+	return projectManager;
 }
 
-function createMainAppState() {
-	return {
+function createMainAppState(): MainAppViewState {
+	return Object.assign(Object.create(MainAppViewState.prototype), {
 		handleClosePanel: vi.fn(),
 		handleResizePanel: vi.fn(),
 		handlePanelAgentChange: vi.fn(),
 		handleToggleFullscreen: vi.fn(),
 		handleFocusPanel: vi.fn(),
-		handleCreateSessionForProject: vi.fn(() => ({ mapErr: vi.fn() })),
+		handleCreateSessionForProject: vi.fn(() => okAsync(undefined)),
 		openUserReportsWithDraft: vi.fn(),
-	};
+	}) as MainAppViewState;
 }
 
 function createPanelStore(): PanelStore {

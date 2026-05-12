@@ -1,9 +1,9 @@
+import type { CanonicalSessionProjection } from "../../store/canonical-session-projection.js";
 import type { SessionCold } from "./session-cold.js";
 import type { SessionEntry } from "./session-entry.js";
 import type { SessionIdentity } from "./session-identity.js";
 import type { SessionLinkedPr, SessionPrLinkMode } from "./session-linked-pr.js";
 import type { SessionStatus } from "./session-status.js";
-import type { CanonicalSessionProjection } from "../../store/canonical-session-projection.js";
 
 export interface SessionListState {
 	readonly status: SessionStatus;
@@ -82,7 +82,10 @@ export function deriveSessionListStateFromCanonical(
 		};
 	}
 
-	if (projection.lifecycle.status === "activating" || projection.lifecycle.status === "reconnecting") {
+	if (
+		projection.lifecycle.status === "activating" ||
+		projection.lifecycle.status === "reconnecting"
+	) {
 		return {
 			status: "connecting",
 			isConnected: false,

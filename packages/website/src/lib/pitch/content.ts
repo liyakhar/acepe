@@ -15,6 +15,7 @@ const requiredPitchThesisBeats: readonly PitchThesisBeat[] = [
 
 export const approvedPitchTitleHeadlines = [
 	"Acepe is the operating layer for agentic development",
+	"The Agentic\nDeveloper Environment",
 ] as const;
 
 export const pitchBeatSectionIds = {
@@ -127,12 +128,12 @@ export const pitchSections = createPitchSections([
 		id: "title",
 		title: "Title",
 		narrativeRole: "hero",
-		headline: "Acepe is the operating layer for agentic development",
+		headline: "The Agentic\nDeveloper Environment",
 		summary:
-			"A harness-neutral workspace for running, supervising, and shipping work from multiple coding agents at production quality.",
+			"One native workspace for every coding agent. Run them in parallel, review every change, and ship from plan to PR without leaving the window.",
 		body: [
-			"Developers are already using multiple agents. The missing layer is the system that makes those agents observable, governable, and shippable.",
-			"Acepe is built to own that operating layer without locking teams to one provider, one harness, or one future agent model.",
+			"Developers already launch many agents. What's missing is one place to see what's happening, unblock what's stuck, and know what's safe to ship.",
+			"Acepe is that place. It works with any model, provider, or agent harness.",
 		],
 		thesisBeats: ["platform-neutral", "why-acepe-wins"],
 	},
@@ -140,12 +141,12 @@ export const pitchSections = createPitchSections([
 		id: "problem",
 		title: "Problem",
 		narrativeRole: "narrative",
-		headline: "Multi-agent development is real, but the workflow around it is still brittle",
+		headline: "Launching agents is easy\nShipping their output is the bottleneck",
 		summary:
-			"Teams can launch many agents, but they still struggle to understand what is happening, what is blocked, and what is safe to ship.",
+			"Teams can run ten agents in parallel, then lose track of status, ownership, and what is actually safe to merge.",
 		body: [
-			"When teams move beyond a single assistant, visibility breaks down across sessions, tools, and partial results.",
-			"That lack of operating discipline turns agent output into more chaos instead of more throughput.",
+			"PRs pile up, context scatters across sessions, and nobody knows what needs attention next.",
+			"More agents should mean more shipped code. Right now it just means more chaos.",
 		],
 		thesisBeats: ["why-acepe-wins"],
 	},
@@ -153,12 +154,12 @@ export const pitchSections = createPitchSections([
 		id: "workflow-failures",
 		title: "Why current workflows fail",
 		narrativeRole: "narrative",
-		headline: "Today’s agent workflows are hard to govern under real production pressure",
+		headline: "Current tools break once agent work becomes parallel",
 		summary:
-			"The moment work becomes parallel, long-running, or review-sensitive, teams lose the thread.",
+			"Terminals and editors were built for one thread of work, not a fleet of long-running agents.",
 		body: [
-			"Operators jump between terminals, chats, and editors with no consistent view of ownership, attention, or decision state.",
-			"The result is fragile handoffs, weak reviewability, and a higher chance that valuable work dies before it ships.",
+			"You end up bouncing between four tools with no shared view of what's blocked, what's risky, or what's ready.",
+			"Handoffs get missed. Reviews get weaker. Good work stalls before it reaches main.",
 		],
 		thesisBeats: ["why-acepe-wins"],
 	},
@@ -166,12 +167,12 @@ export const pitchSections = createPitchSections([
 		id: "solution",
 		title: "Solution",
 		narrativeRole: "narrative",
-		headline: "Acepe gives teams one place to orchestrate serious agent work",
+		headline: "Acepe gives teams one workspace to run and ship agent work",
 		summary:
-			"It combines live session control, attention management, checkpoints, and structured context so parallel agent work remains actionable.",
+			"Attention queueing, checkpoints, and structured context. Many agents, one reviewable workflow.",
 		body: [
-			"Instead of replacing every harness, Acepe becomes the operator surface above them.",
-			"That lets teams benefit from the best available agents while keeping supervision, workflow control, and review discipline in one system.",
+			"Run Claude Code, Codex, Cursor, and any ACP agent side by side in one window.",
+			"One place to see status, unblock work, review changes, and ship to main.",
 		],
 		thesisBeats: ["platform-neutral", "why-acepe-wins"],
 	},
@@ -179,12 +180,12 @@ export const pitchSections = createPitchSections([
 		id: "product",
 		title: "Product",
 		narrativeRole: "proof",
-		headline: "Built for the real loop: launch, monitor, unblock, review, ship",
+		headline: "The real loop: launch, monitor, unblock, review, ship",
 		summary:
-			"Acepe brings side-by-side agents, attention queueing, checkpoints, and SQL Studio into one developer workspace.",
+			"Parallel sessions, attention queueing, checkpoints, and SQL Studio in one native desktop workspace.",
 		body: [
-			"The product is designed for developers who need many active sessions without losing confidence in what changed or why.",
-			"If Acepe later ships a first-party agent, it strengthens the platform rather than narrowing it to one proprietary workflow.",
+			"Built for developers juggling multiple agents, reviews, and half-finished outputs at once.",
+			"A first-party agent adds upside later. The core value is the workflow around every agent.",
 		],
 		thesisBeats: ["platform-neutral", "first-party-agent-upside"],
 	},
@@ -192,12 +193,12 @@ export const pitchSections = createPitchSections([
 		id: "market-why-now",
 		title: "Market / Why now",
 		narrativeRole: "narrative",
-		headline: "The agent layer is fragmenting fast, and teams need a control plane",
+		headline: "Agent tooling is fragmenting fast\nThe workflow layer is still open",
 		summary:
-			"More models, more harnesses, and more agent-native workflows create demand for a platform that can sit above the churn.",
+			"Claude Code, Codex, Cursor, Gemini, and open ACP agents are all growing. No one owns the workflow above them.",
 		body: [
-			"The winning product does not need to guess the one true harness. It needs to become the durable operator layer as the ecosystem expands.",
-			"Acepe is positioned to capture that shift because its value grows as the number of viable agents grows.",
+			"The winner doesn't pick one harness. It becomes the tool teams keep using as new agents show up.",
+			"Every new viable agent makes Acepe more useful, not less.",
 		],
 		thesisBeats: ["platform-neutral", "why-acepe-wins", "why-now-urgency"],
 	},
@@ -205,27 +206,27 @@ export const pitchSections = createPitchSections([
 		id: "traction",
 		title: "Traction",
 		narrativeRole: "proof",
-		headline: "Early proof should stay honest while the public story matures",
+		headline: "Developers are already showing up for the workflow",
 		summary:
-			"The pitch can show product energy now without pretending every growth metric is finalized and investor-ready.",
+			"The product is live and public. People respond to multi-agent supervision and review in one place, not just model access.",
 		body: [
-			"We can lead with clear product differentiation and early community response while keeping dated quantitative proof disciplined.",
-			"As stronger verified metrics arrive, the same content model can upgrade from qualitative proof to dated public evidence.",
+			"We're early. But the signal is specific: what gets people interested is running many agents and shipping from one window.",
+			"As usage numbers harden, this slide gets concrete metrics.",
 		],
 		thesisBeats: ["why-acepe-wins"],
 		proofItems: [
 			{
 				kind: "qualitative",
 				label: "Early traction",
-				text: "Early traction is strongest as qualitative proof until dated public metrics are finalized.",
+				text: "Interest is strongest around multi-agent supervision and one-window shipping, not model access.",
 			},
 			{
 				kind: "estimated_numeric",
-				label: "Community signal",
-				value: "41",
+				label: "GitHub signal",
+				value: "77",
 				unit: "GitHub stars",
 				estimateLabel: "estimate",
-				note: "Public repo signal shown with explicit estimate labeling until verification is locked.",
+				note: "Estimate shown until we update with a verified count.",
 			},
 		],
 	},
@@ -233,12 +234,12 @@ export const pitchSections = createPitchSections([
 		id: "business-model",
 		title: "Business model",
 		narrativeRole: "proof",
-		headline: "Keep solo adoption generous, then monetize team-managed agent workflows",
+		headline: "Free for solo\nPaid for team workflow\nEnterprise for control",
 		summary:
-			"The first paid wedge is not raw access to one model. It is the workflow layer teams need once multiple agents become operationally important.",
+			"The paid wedge isn't model access. It's what teams need once they're running many agents at once.",
 		body: [
-			"Free and local usage can stay broad to maximize adoption and ecosystem fit.",
-			"Paid expansion comes from shared visibility, approvals, coordination, auditability, and enterprise controls around agent work.",
+			"Solo and local use stay free. We want Acepe to be where agent-heavy development happens by default.",
+			"Teams pay for shared visibility, approvals, handoff, audit trails, SSO, and remote execution.",
 		],
 		thesisBeats: ["team-workflow-wedge", "first-party-agent-upside"],
 	},
@@ -246,12 +247,12 @@ export const pitchSections = createPitchSections([
 		id: "team",
 		title: "Team",
 		narrativeRole: "closing",
-		headline: "The team is building from firsthand pain, not a hypothetical workflow",
+		headline: "We built this because we needed it",
 		summary:
-			"Acepe is grounded in the daily reality of managing agent-heavy software work, which sharpens both product intuition and velocity.",
+			"Acepe comes from running many coding agents every day and getting frustrated with the workflow around them.",
 		body: [
-			"That proximity matters because the product category is still forming and requires tight iteration on real operator needs.",
-			"Investors are backing a team with a concrete point of view on where agentic development is going.",
+			"The category is still forming. What matters now is tight product judgment from people who live the problem.",
+			"We're building from daily use, not from a thesis about what developers might eventually want.",
 		],
 		thesisBeats: ["why-acepe-wins"],
 	},
@@ -259,13 +260,12 @@ export const pitchSections = createPitchSections([
 		id: "ask",
 		title: "Ask",
 		narrativeRole: "closing",
-		headline:
-			"The raise accelerates the control plane for the next generation of software development",
+		headline: "This raise makes Acepe the default workspace for agent-heavy teams",
 		summary:
-			"Capital lets Acepe turn a sharp product point of view into a faster product, stronger workflow depth, and clearer go-to-market proof.",
+			"Capital goes to product depth, team features, and getting in front of engineering teams while the market is open.",
 		body: [
-			"The raise unlocks faster productization of the operator layer, stronger team features, and more durable proof around adoption and retention.",
-			"The goal is to win the platform layer while the ecosystem is still open and before one harness becomes the accidental default.",
+			"Use of funds: deeper team workflow, remote agent execution, and focused go-to-market with engineering orgs.",
+			"The window is now. Agent tooling is growing fast, and nobody owns the workflow layer yet.",
 		],
 		thesisBeats: ["raise-unlock", "platform-neutral"],
 	},

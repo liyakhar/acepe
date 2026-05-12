@@ -920,7 +920,6 @@ describe("MarkdownText", () => {
 				const rendered = view.container.querySelector(".markdown-content strong");
 				expect(rendered?.textContent).toBe("bold");
 			});
-
 		});
 
 		it("renders the provided text prop even when token timing is active", async () => {
@@ -946,9 +945,7 @@ describe("MarkdownText", () => {
 			});
 
 			await waitFor(() => {
-				expect(view.container.textContent).toContain(
-					"Provided text should stay authoritative"
-				);
+				expect(view.container.textContent).toContain("Provided text should stay authoritative");
 			});
 			expect(view.container.textContent).not.toContain("Older reveal text");
 			expect(renderMarkdownSyncMock).toHaveBeenCalledWith(text, undefined);

@@ -196,9 +196,10 @@ export function groupAllPanelsByProject<
 	return groupOrder.map((key) => groupMap.get(key)!);
 }
 
-function compareAgentPanelSequence<
-	TAgent extends { sessionSequenceId?: number | null },
->(left: TAgent, right: TAgent): number {
+function compareAgentPanelSequence<TAgent extends { sessionSequenceId?: number | null }>(
+	left: TAgent,
+	right: TAgent
+): number {
 	const leftSequenceId = left.sessionSequenceId ?? null;
 	const rightSequenceId = right.sessionSequenceId ?? null;
 
@@ -234,10 +235,7 @@ export function sortProjectGroupsForMultiLayout<
 		readonly projectPath: string;
 		readonly projectName: string;
 	},
->(
-	groups: readonly G[],
-	options: { readonly pinnedProjectPath?: string | null } = {}
-): G[] {
+>(groups: readonly G[], options: { readonly pinnedProjectPath?: string | null } = {}): G[] {
 	const pinnedProjectPath = options.pinnedProjectPath ?? null;
 	return [...groups].sort((a, b) => {
 		if (pinnedProjectPath !== null && pinnedProjectPath !== "") {

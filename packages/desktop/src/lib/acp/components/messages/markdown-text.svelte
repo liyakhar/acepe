@@ -132,7 +132,12 @@ const isRenderingPartialText = $derived(isStreaming && tokenRevealCss === undefi
 const shouldDeferSettledRender = $derived(isRenderingPartialText);
 
 $effect(() => {
-	if (!projectPath || repoContext || shouldDeferSettledRender || !textNeedsRepoContext(renderText)) {
+	if (
+		!projectPath ||
+		repoContext ||
+		shouldDeferSettledRender ||
+		!textNeedsRepoContext(renderText)
+	) {
 		return;
 	}
 	// Fetch repo context once on mount

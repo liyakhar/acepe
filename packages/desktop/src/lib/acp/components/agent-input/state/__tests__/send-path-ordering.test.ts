@@ -27,8 +27,8 @@ mock.module("@tauri-apps/api/event", () => ({
 	listen: mock(async () => () => {}),
 }));
 
-import { materializeAgentPanelSceneFromGraph } from "../../../../session-state/agent-panel-graph-materializer.js";
 import type { SessionEntry } from "../../../../application/dto/session-entry.js";
+import { materializeAgentPanelSceneFromGraph } from "../../../../session-state/agent-panel-graph-materializer.js";
 import type { PanelStore } from "../../../../store/panel-store.svelte.js";
 import type { SessionStore } from "../../../../store/session-store.svelte.js";
 import { DEFAULT_PANEL_HOT_STATE } from "../../../../store/types.js";
@@ -57,9 +57,7 @@ function makeOrderedPanelStore(): {
 } {
 	const events: string[] = [];
 	const store: Partial<PanelStore> = {
-		getHotState: mock(() =>
-			Object.assign({}, DEFAULT_PANEL_HOT_STATE, { pendingUserEntry: null })
-		),
+		getHotState: mock(() => Object.assign({}, DEFAULT_PANEL_HOT_STATE, { pendingUserEntry: null })),
 		setPendingUserEntry: mock(() => {
 			events.push("set-pending");
 		}),
@@ -82,9 +80,7 @@ function makeOrderedSessionStore(
 		}),
 		sendMessage: mock(() => {
 			events.push("send-message");
-			return opts.sendFails
-				? errAsync(new Error("network error") as never)
-				: okAsync(undefined);
+			return opts.sendFails ? errAsync(new Error("network error") as never) : okAsync(undefined);
 		}),
 		getSessionCold: mock(() => session),
 	};

@@ -294,8 +294,8 @@ function createKeyboardNavConversation(): DemoConversationEntry[] {
 				{
 					filePath: "packages/desktop/src/lib/keyboard/panel-keyboard-handler.ts",
 					fileName: "panel-keyboard-handler.ts",
-					oldString: "case \"l\":",
-					newString: "case \"l\":\ncase \"[\":\ncase \"]\":",
+					oldString: 'case "l":',
+					newString: 'case "l":\ncase "[":\ncase "]":',
 					additions: 2,
 					deletions: 0,
 				},
@@ -778,9 +778,15 @@ function handleSubmit(panel: DemoPanel): void {
 		panel.editorRef.textContent = "";
 	}
 }
+
+interface Props {
+	bare?: boolean;
+}
+
+let { bare = false }: Props = $props();
 </script>
 
-<LandingDemoFrame interactive={true}>
+<LandingDemoFrame interactive={true} {bare}>
 	{#snippet children()}
 		{#snippet panelComposer(panel: DemoPanel)}
 			{@const currentModel = getCurrentModel(panel)}

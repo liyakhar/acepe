@@ -2,9 +2,9 @@ import type { AgentPanelSceneEntryModel, TokenRevealCss } from "@acepe/ui/agent-
 import { countWordsInMarkdown } from "@acepe/ui/markdown";
 
 import {
+	shouldKeepTokenRevealTiming,
 	TOKEN_REVEAL_FADE_MS,
 	TOKEN_REVEAL_STEP_MS,
-	shouldKeepTokenRevealTiming,
 } from "../messages/token-reveal-motion.js";
 import type { StreamingReproPhase, StreamingReproPreset } from "./streaming-repro-controller";
 

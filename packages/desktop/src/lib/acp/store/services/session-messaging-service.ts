@@ -12,10 +12,7 @@
  */
 
 import { errAsync, type ResultAsync } from "neverthrow";
-import type {
-	ContentBlock,
-	ContentChunk,
-} from "../../../services/converted-session-types.js";
+import type { ContentBlock, ContentChunk } from "../../../services/converted-session-types.js";
 import { isInlineImageAttachment } from "../../components/agent-input/logic/image-attachment.js";
 import type { Attachment } from "../../components/agent-input/types/attachment.js";
 import type { AppError } from "../../errors/app-error.js";
@@ -31,9 +28,7 @@ import { api } from "../api.js";
 import { checkpointStore } from "../checkpoint-store.svelte.js";
 import { serializeWithAttachments } from "../message-queue/message-queue-store.svelte.js";
 import type { SessionEntry } from "../types.js";
-import {
-	canActivateCreatedSessionWithFirstPrompt,
-} from "./first-send-activation.js";
+import { canActivateCreatedSessionWithFirstPrompt } from "./first-send-activation.js";
 import type {
 	IConnectionManager,
 	IEntryManager,
@@ -51,7 +46,12 @@ type UnrefableTimeout = ReturnType<typeof setTimeout> & {
 type PromptContentBlocks = {
 	readonly textContent: string;
 	readonly imageBlocks: ReadonlyArray<Extract<ContentBlock, { type: "image" }>>;
-	readonly contentBlocks: ReadonlyArray<{ type: string; text?: string; data?: string; mimeType?: string }>;
+	readonly contentBlocks: ReadonlyArray<{
+		type: string;
+		text?: string;
+		data?: string;
+		mimeType?: string;
+	}>;
 };
 
 function buildOptimisticUserEntry(
@@ -113,7 +113,8 @@ function buildPromptContentBlocks(
 		return null;
 	}
 
-	const contentBlocks: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [];
+	const contentBlocks: Array<{ type: string; text?: string; data?: string; mimeType?: string }> =
+		[];
 	for (const imageBlock of imageBlocks) {
 		contentBlocks.push({
 			type: imageBlock.type,
@@ -259,12 +260,7 @@ export class SessionMessagingService {
 		const imageBlocks = promptContent.imageBlocks;
 		const sendAttemptId = crypto.randomUUID();
 		const optimisticEntry = buildOptimisticUserEntry(textContent, imageBlocks, new Date());
-		this.setPendingSendIntent(
-			sessionId,
-			sendAttemptId,
-			textContent.length,
-			optimisticEntry
-		);
+		this.setPendingSendIntent(sessionId, sendAttemptId, textContent.length, optimisticEntry);
 
 		// Providers like Cursor can reuse/omit message IDs across prompts. Force the
 		// next assistant chunks into a new entry so the new answer stays after this prompt.

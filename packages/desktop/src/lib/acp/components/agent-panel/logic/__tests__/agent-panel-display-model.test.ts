@@ -12,12 +12,12 @@ import type {
 } from "$lib/services/acp-types.js";
 import type { SessionEntry } from "../../../../application/dto/session-entry.js";
 import {
+	type AgentPanelDisplayModel,
+	type AgentPanelDisplayRow,
 	applyAgentPanelDisplayMemory,
 	applyAgentPanelDisplayModelToSceneEntries,
 	buildAgentPanelBaseModel,
 	createAgentPanelDisplayMemory,
-	type AgentPanelDisplayModel,
-	type AgentPanelDisplayRow,
 } from "../agent-panel-display-model.js";
 
 function createActionability(canSend = true): SessionGraphActionability {

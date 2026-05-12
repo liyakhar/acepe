@@ -35,7 +35,7 @@ function expectNoCanonicalOverlapHotStateWrites(updateHotState: ReturnType<typeo
 	for (const call of updateHotState.mock.calls) {
 		const updates = call[1];
 		for (const field of canonicalOverlapHotStateFields) {
-			expect(Object.prototype.hasOwnProperty.call(updates, field)).toBe(false);
+			expect(Object.hasOwn(updates, field)).toBe(false);
 		}
 	}
 }
@@ -137,9 +137,11 @@ describe("SessionMessagingService.sendMessage", () => {
 
 		expect(result.isOk()).toBe(true);
 		// Tokens pass through unchanged — ACP provider handles decoding
-		expect(sendPrompt).toHaveBeenCalledWith("session-1", [
-			{ type: "text", text: "@[text:aGVsbG8gd29ybGQ=]\nPlease summarize this" },
-		], expect.any(String));
+		expect(sendPrompt).toHaveBeenCalledWith(
+			"session-1",
+			[{ type: "text", text: "@[text:aGVsbG8gd29ybGQ=]\nPlease summarize this" }],
+			expect.any(String)
+		);
 	});
 
 	it("allows a reserved created session to activate with its first prompt", async () => {
@@ -166,9 +168,11 @@ describe("SessionMessagingService.sendMessage", () => {
 		const result = await service.sendMessage("session-1", "diagnostic ping - reply ok");
 
 		expect(result.isOk()).toBe(true);
-		expect(sendPrompt).toHaveBeenCalledWith("session-1", [
-			{ type: "text", text: "diagnostic ping - reply ok" },
-		], expect.any(String));
+		expect(sendPrompt).toHaveBeenCalledWith(
+			"session-1",
+			[{ type: "text", text: "diagnostic ping - reply ok" }],
+			expect.any(String)
+		);
 	});
 
 	it("records a local pending send intent without writing canonical lifecycle fields", async () => {
@@ -183,23 +187,27 @@ describe("SessionMessagingService.sendMessage", () => {
 		const result = await service.sendMessage("session-1", "hello");
 
 		expect(result.isOk()).toBe(true);
-		expect(deps.hotStateManager.updateHotState).toHaveBeenCalledWith("session-1", {
-			pendingSendIntent: {
-				attemptId: expect.any(String),
-				startedAt: expect.any(Number),
-				promptLength: 5,
-				optimisticEntry: {
-					id: expect.any(String),
-					type: "user",
-					message: {
-						content: { type: "text", text: "hello" },
-						chunks: [{ type: "text", text: "hello" }],
-						sentAt: expect.any(Date),
+		expect(deps.hotStateManager.updateHotState).toHaveBeenCalledWith(
+			"session-1",
+			expect.objectContaining({
+				pendingSendIntent: {
+					attemptId: expect.any(String),
+					startedAt: expect.any(Number),
+					promptLength: 5,
+					optimisticEntry: {
+						id: expect.any(String),
+						type: "user",
+						message: {
+							content: { type: "text", text: "hello" },
+							chunks: [{ type: "text", text: "hello" }],
+							sentAt: expect.any(Date),
+						},
+						timestamp: expect.any(Date),
 					},
-					timestamp: expect.any(Date),
 				},
-			},
-		});
+				observedTerminalTurn: null,
+			})
+		);
 		expectNoCanonicalOverlapHotStateWrites(
 			deps.hotStateManager.updateHotState as ReturnType<typeof vi.fn>
 		);
@@ -313,23 +321,28 @@ describe("SessionMessagingService.sendMessage", () => {
 			code: null,
 			source: "unknown",
 		});
-		expect(deps.hotStateManager.updateHotState).toHaveBeenCalledWith("pending-session", {
-			pendingSendIntent: {
-				attemptId: expect.any(String),
-				startedAt: expect.any(Number),
-				promptLength: 5,
-				optimisticEntry: {
-					id: expect.any(String),
-					type: "user",
-					message: {
-						content: { type: "text", text: "hello" },
-						chunks: [{ type: "text", text: "hello" }],
-						sentAt: expect.any(Date),
+		expect(deps.hotStateManager.updateHotState).toHaveBeenNthCalledWith(
+			1,
+			"pending-session",
+			expect.objectContaining({
+				pendingSendIntent: {
+					attemptId: expect.any(String),
+					startedAt: expect.any(Number),
+					promptLength: 5,
+					optimisticEntry: {
+						id: expect.any(String),
+						type: "user",
+						message: {
+							content: { type: "text", text: "hello" },
+							chunks: [{ type: "text", text: "hello" }],
+							sentAt: expect.any(Date),
+						},
+						timestamp: expect.any(Date),
 					},
-					timestamp: expect.any(Date),
 				},
-			},
-		});
+				observedTerminalTurn: null,
+			})
+		);
 		expect(deps.hotStateManager.updateHotState).toHaveBeenLastCalledWith("pending-session", {
 			pendingSendIntent: null,
 		});
