@@ -36,121 +36,65 @@ const columns: readonly IllustrationColumn[] = [
 		id: "input",
 		label: "Input needed",
 		color: "#FFB020",
-		count: 1,
+		count: 4,
 		cards: [
-			{
-				id: "c1",
-				titleWidth: 78,
-				agent: "claude",
-				projectColor: "#9858FF",
-				insertions: 4,
-				deletions: 0,
-				accent: "question",
-			},
+			{ id: "c1", titleWidth: 78, agent: "claude", projectColor: "#9858FF", insertions: 4, deletions: 0, accent: "question" },
+			{ id: "c1b", titleWidth: 64, agent: "codex", projectColor: "#4AD0FF", insertions: 2, deletions: 1, accent: "question" },
+			{ id: "c1c", titleWidth: 70, agent: "cursor", projectColor: "#18D6C3", insertions: 7, deletions: 0, accent: "question" },
+			{ id: "c1d", titleWidth: 82, agent: "opencode", projectColor: "#FF8D20", insertions: 3, deletions: 2, accent: "question" },
 		],
 	},
 	{
 		id: "planning",
 		label: "Planning",
 		color: "#4AD0FF",
-		count: 2,
+		count: 5,
 		cards: [
-			{
-				id: "c2",
-				titleWidth: 82,
-				agent: "cursor",
-				projectColor: "#18D6C3",
-				insertions: 11,
-				deletions: 2,
-				accent: "streaming",
-			},
-			{
-				id: "c3",
-				titleWidth: 70,
-				agent: "claude",
-				projectColor: "#9858FF",
-				insertions: 8,
-				deletions: 0,
-				accent: "streaming",
-			},
+			{ id: "c2", titleWidth: 82, agent: "cursor", projectColor: "#18D6C3", insertions: 11, deletions: 2, accent: "streaming" },
+			{ id: "c3", titleWidth: 70, agent: "claude", projectColor: "#9858FF", insertions: 8, deletions: 0, accent: "streaming" },
+			{ id: "c3b", titleWidth: 76, agent: "opencode", projectColor: "#FF8D20", insertions: 5, deletions: 0, accent: null },
+			{ id: "c3c", titleWidth: 68, agent: "codex", projectColor: "#4AD0FF", insertions: 13, deletions: 4, accent: "streaming" },
+			{ id: "c3d", titleWidth: 80, agent: "claude", projectColor: "#9858FF", insertions: 9, deletions: 1, accent: null },
 		],
 	},
 	{
 		id: "working",
 		label: "Working",
 		color: "#9858FF",
-		count: 2,
+		count: 5,
 		cards: [
-			{
-				id: "c4",
-				titleWidth: 88,
-				agent: "codex",
-				projectColor: "#4AD0FF",
-				insertions: 38,
-				deletions: 9,
-				accent: "streaming",
-			},
-			{
-				id: "c5",
-				titleWidth: 74,
-				agent: "opencode",
-				projectColor: "#FF8D20",
-				insertions: 6,
-				deletions: 1,
-				accent: "streaming",
-			},
+			{ id: "c4", titleWidth: 88, agent: "codex", projectColor: "#4AD0FF", insertions: 38, deletions: 9, accent: "streaming" },
+			{ id: "c5", titleWidth: 74, agent: "opencode", projectColor: "#FF8D20", insertions: 6, deletions: 1, accent: "streaming" },
+			{ id: "c5b", titleWidth: 80, agent: "claude", projectColor: "#9858FF", insertions: 17, deletions: 3, accent: "streaming" },
+			{ id: "c5c", titleWidth: 72, agent: "cursor", projectColor: "#18D6C3", insertions: 24, deletions: 8, accent: "streaming" },
+			{ id: "c5d", titleWidth: 84, agent: "codex", projectColor: "#4AD0FF", insertions: 12, deletions: 2, accent: "streaming" },
 		],
 	},
 	{
 		id: "review",
 		label: "Needs Review",
 		color: "#FF78F7",
-		count: 2,
+		count: 5,
 		cards: [
-			{
-				id: "c6",
-				titleWidth: 84,
-				agent: "claude",
-				projectColor: "#9858FF",
-				insertions: 52,
-				deletions: 14,
-				accent: "review",
-			},
-			{
-				id: "c7",
-				titleWidth: 68,
-				agent: "codex",
-				projectColor: "#4AD0FF",
-				insertions: 29,
-				deletions: 11,
-				accent: "review",
-			},
+			{ id: "c6", titleWidth: 84, agent: "claude", projectColor: "#9858FF", insertions: 52, deletions: 14, accent: "review" },
+			{ id: "c7", titleWidth: 68, agent: "codex", projectColor: "#4AD0FF", insertions: 29, deletions: 11, accent: "review" },
+			{ id: "c7b", titleWidth: 72, agent: "cursor", projectColor: "#18D6C3", insertions: 18, deletions: 6, accent: "review" },
+			{ id: "c7c", titleWidth: 78, agent: "opencode", projectColor: "#FF8D20", insertions: 41, deletions: 9, accent: "review" },
+			{ id: "c7d", titleWidth: 66, agent: "claude", projectColor: "#9858FF", insertions: 23, deletions: 5, accent: "review" },
 		],
 	},
 	{
 		id: "done",
 		label: "Done",
 		color: "#22C55E",
-		count: 2,
+		count: 6,
 		cards: [
-			{
-				id: "c8",
-				titleWidth: 76,
-				agent: "cursor",
-				projectColor: "#18D6C3",
-				insertions: 14,
-				deletions: 4,
-				accent: "done",
-			},
-			{
-				id: "c9",
-				titleWidth: 72,
-				agent: "opencode",
-				projectColor: "#FF8D20",
-				insertions: 21,
-				deletions: 5,
-				accent: "done",
-			},
+			{ id: "c8", titleWidth: 76, agent: "cursor", projectColor: "#18D6C3", insertions: 14, deletions: 4, accent: "done" },
+			{ id: "c9", titleWidth: 72, agent: "opencode", projectColor: "#FF8D20", insertions: 21, deletions: 5, accent: "done" },
+			{ id: "c9b", titleWidth: 68, agent: "claude", projectColor: "#9858FF", insertions: 9, deletions: 2, accent: "done" },
+			{ id: "c9c", titleWidth: 80, agent: "codex", projectColor: "#4AD0FF", insertions: 33, deletions: 7, accent: "done" },
+			{ id: "c9d", titleWidth: 74, agent: "cursor", projectColor: "#18D6C3", insertions: 16, deletions: 3, accent: "done" },
+			{ id: "c9e", titleWidth: 82, agent: "opencode", projectColor: "#FF8D20", insertions: 28, deletions: 6, accent: "done" },
 		],
 	},
 ];
@@ -199,17 +143,17 @@ let { bare = false }: Props = $props();
 										</div>
 										{#if card.accent === "question"}
 											<span class="card-chip chip-question">
-												<ChatCircle class="size-3" weight="fill" />
+												<ChatCircle class="size-4" weight="fill" />
 												Answer
 											</span>
 										{:else if card.accent === "review"}
 											<span class="card-chip chip-review">
-												<GitBranch class="size-3" weight="fill" />
+												<GitBranch class="size-4" weight="fill" />
 												PR
 											</span>
 										{:else if card.accent === "streaming"}
 											<span class="card-chip chip-streaming">
-												<Lightning class="size-3" weight="fill" />
+												<Lightning class="size-4" weight="fill" />
 												Live
 											</span>
 										{:else if card.accent === "done"}
@@ -229,7 +173,7 @@ let { bare = false }: Props = $props();
 <style>
 	.kanban-illustration {
 		display: flex;
-		padding: 1rem 0.875rem;
+		padding: 1.75rem 1.5rem 0;
 		background:
 			radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--foreground) 4%, transparent) 0%, transparent 60%),
 			var(--background);
@@ -238,7 +182,7 @@ let { bare = false }: Props = $props();
 	.board {
 		display: grid;
 		grid-template-columns: repeat(5, minmax(0, 1fr));
-		gap: 0.625rem;
+		gap: 1.25rem;
 		width: 100%;
 		height: 100%;
 	}
@@ -246,31 +190,33 @@ let { bare = false }: Props = $props();
 	.column {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: 1rem;
 		min-width: 0;
-		padding: 0.5rem 0.5rem 0.625rem;
-		border-radius: 0.625rem;
+		padding: 1rem 0.875rem 1.25rem;
+		border-radius: 1.125rem;
 		background: color-mix(in srgb, var(--foreground) 3%, transparent);
 		border: 1px solid color-mix(in srgb, var(--foreground) 6%, transparent);
+		overflow: hidden;
 	}
 
 	.column-header {
 		display: flex;
 		align-items: center;
-		gap: 0.375rem;
-		padding: 0.125rem 0.125rem 0.25rem;
+		gap: 0.625rem;
+		padding: 0.25rem 0.125rem 0.5rem;
 		border-bottom: 1px dashed color-mix(in srgb, var(--foreground) 10%, transparent);
 	}
 
 	.column-dot {
-		width: 0.5rem;
-		height: 0.5rem;
+		width: 0.875rem;
+		height: 0.875rem;
 		border-radius: 999px;
-		box-shadow: 0 0 8px currentColor;
+		box-shadow: 0 0 14px currentColor;
+		flex-shrink: 0;
 	}
 
 	.column-label {
-		font-size: 0.625rem;
+		font-size: 1rem;
 		font-weight: 600;
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
@@ -282,10 +228,10 @@ let { bare = false }: Props = $props();
 
 	.column-count {
 		margin-left: auto;
-		font-size: 0.625rem;
+		font-size: 0.875rem;
 		font-weight: 500;
 		color: var(--muted-foreground);
-		padding: 0.0625rem 0.375rem;
+		padding: 0.125rem 0.625rem;
 		border-radius: 999px;
 		background: color-mix(in srgb, var(--foreground) 8%, transparent);
 	}
@@ -293,7 +239,7 @@ let { bare = false }: Props = $props();
 	.column-body {
 		display: flex;
 		flex-direction: column;
-		gap: 0.4375rem;
+		gap: 0.75rem;
 		min-height: 0;
 		flex: 1;
 	}
@@ -301,29 +247,31 @@ let { bare = false }: Props = $props();
 	.card {
 		display: flex;
 		flex-direction: column;
-		gap: 0.4375rem;
-		padding: 0.5rem 0.5625rem;
-		border-radius: 0.5rem;
+		gap: 0.75rem;
+		padding: 0.875rem 1rem 1rem;
+		border-radius: 0.875rem;
 		background: var(--background);
 		border: 1px solid color-mix(in srgb, var(--foreground) 9%, transparent);
-		box-shadow: 0 1px 0 color-mix(in srgb, var(--foreground) 4%, transparent);
+		box-shadow: 0 2px 0 color-mix(in srgb, var(--foreground) 4%, transparent);
+		flex-shrink: 0;
 	}
 
 	.card-top {
 		display: flex;
 		align-items: center;
-		gap: 0.3125rem;
+		gap: 0.5rem;
 	}
 
 	.card-agent {
-		width: 0.875rem;
-		height: 0.875rem;
+		width: 1.5rem;
+		height: 1.5rem;
 		border-radius: 999px;
 		overflow: hidden;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		background: color-mix(in srgb, var(--foreground) 6%, transparent);
+		flex-shrink: 0;
 	}
 
 	.card-agent img {
@@ -333,9 +281,10 @@ let { bare = false }: Props = $props();
 	}
 
 	.card-project-dot {
-		width: 0.3125rem;
-		height: 0.3125rem;
+		width: 0.5rem;
+		height: 0.5rem;
 		border-radius: 999px;
+		flex-shrink: 0;
 	}
 
 	.card-spacer {
@@ -343,22 +292,22 @@ let { bare = false }: Props = $props();
 	}
 
 	.card-pulse {
-		width: 0.375rem;
-		height: 0.375rem;
+		width: 0.625rem;
+		height: 0.625rem;
 		border-radius: 999px;
 		background: #22C55E;
-		box-shadow: 0 0 6px #22C55E;
+		box-shadow: 0 0 10px #22C55E;
 		animation: pulse 1.6s ease-in-out infinite;
 	}
 
 	.card-title-row {
 		display: flex;
 		flex-direction: column;
-		gap: 0.25rem;
+		gap: 0.4375rem;
 	}
 
 	.card-title-line {
-		height: 0.375rem;
+		height: 0.625rem;
 		border-radius: 999px;
 		background: color-mix(in srgb, var(--foreground) 22%, transparent);
 	}
@@ -371,15 +320,15 @@ let { bare = false }: Props = $props();
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.375rem;
+		gap: 0.5rem;
 	}
 
 	.card-diff {
 		display: flex;
 		align-items: center;
-		gap: 0.25rem;
+		gap: 0.375rem;
 		font-family: var(--font-mono);
-		font-size: 0.5625rem;
+		font-size: 0.9375rem;
 		font-weight: 600;
 	}
 
@@ -394,9 +343,9 @@ let { bare = false }: Props = $props();
 	.card-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.1875rem;
-		padding: 0.0625rem 0.3125rem;
-		font-size: 0.5625rem;
+		gap: 0.25rem;
+		padding: 0.1875rem 0.5rem;
+		font-size: 0.8125rem;
 		font-weight: 600;
 		border-radius: 999px;
 		line-height: 1;
@@ -420,7 +369,7 @@ let { bare = false }: Props = $props();
 	.chip-done {
 		color: #22C55E;
 		background: color-mix(in srgb, #22C55E 16%, transparent);
-		padding: 0.0625rem 0.375rem;
+		padding: 0.1875rem 0.625rem;
 	}
 
 	@keyframes pulse {
